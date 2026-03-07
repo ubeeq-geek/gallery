@@ -1,0 +1,25 @@
+{
+  "name": "@gallery/infra",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "presynth": "npm --workspace @gallery/api run build",
+    "predeploy": "npm --workspace @gallery/api run build",
+    "build": "tsc -p tsconfig.json",
+    "cdk": "npx cdk",
+    "deploy": "npx cdk deploy",
+    "synth": "npx cdk synth",
+    "test": "echo \"no tests\"",
+    "lint": "echo \"no lint\""
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.131.0",
+    "constructs": "^10.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "aws-cdk": "^2.241.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

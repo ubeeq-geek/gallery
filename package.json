@@ -1,0 +1,26 @@
+{
+  "name": "gallery-platform",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "infra"
+  ],
+  "scripts": {
+    "build": "npm run -ws build",
+    "test": "npm run -ws test",
+    "lint": "npm run -ws lint",
+    "dev:api": "npm --workspace @gallery/api run dev",
+    "dev:web": "npm --workspace @gallery/web run dev",
+    "dev:admin": "npm --workspace @gallery/admin run dev",
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\" \"npm run dev:admin\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.3.3"
+  }
+}

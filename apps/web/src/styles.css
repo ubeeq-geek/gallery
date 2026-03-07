@@ -1,0 +1,101 @@
+:root {
+  font-family: 'Avenir Next', 'Segoe UI', sans-serif;
+  color: #111;
+  background: #f4f2ee;
+}
+
+body {
+  margin: 0;
+}
+
+.auth-panel {
+  max-width: 1080px;
+  margin: 16px auto 0;
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #d0cac0;
+  border-radius: 12px;
+}
+
+.auth-nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.small {
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.success {
+  color: #237546;
+}
+
+.layout {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
+}
+
+.grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.grid.three {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.list-btn,
+.card-link,
+button,
+input,
+select {
+  font-size: 0.95rem;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid #d0cac0;
+}
+
+.card-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  background: #fff;
+}
+
+.badge {
+  margin-left: 8px;
+  font-size: 0.8rem;
+  color: #6c6354;
+}
+
+.inline-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.image-card img,
+.image-card video,
+img,
+video {
+  width: 100%;
+  border-radius: 10px;
+}
+
+.comment {
+  background: #fff;
+  padding: 12px;
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+
+.error {
+  color: #a62323;
+}

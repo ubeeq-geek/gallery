@@ -1,0 +1,7 @@
+node_modules
+dist
+coverage
+.env
+.env.*
+cdk.out
+.DS_Store
