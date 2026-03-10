@@ -5,6 +5,7 @@ import type { AppConfig } from './config';
 export interface AuthUser {
   userId: string;
   displayName: string;
+  email?: string;
   groups: string[];
 }
 
@@ -48,6 +49,7 @@ export const createOptionalAuthMiddleware = (config: AppConfig) => {
         req.authUser = {
           userId: devUserId,
           displayName: typeof req.headers['x-user-name'] === 'string' ? req.headers['x-user-name'] : 'Dev User',
+          email: typeof req.headers['x-user-email'] === 'string' ? req.headers['x-user-email'] : undefined,
           groups: devGroups
         };
       }
@@ -61,9 +63,11 @@ export const createOptionalAuthMiddleware = (config: AppConfig) => {
     try {
       const token = authHeader.slice('Bearer '.length);
       const payload = await verifier.verify(token);
+      const preferredUsername = typeof payload.preferred_username === 'string' ? payload.preferred_username : '';
       req.authUser = {
         userId: payload.sub,
-        displayName: (payload['cognito:username'] as string) || (payload.email as string) || 'User',
+        displayName: preferredUsername || (payload['cognito:username'] as string) || (payload.email as string) || 'User',
+        email: typeof payload.email === 'string' ? payload.email : undefined,
         groups: Array.isArray(payload['cognito:groups']) ? (payload['cognito:groups'] as string[]) : []
       };
     } catch {

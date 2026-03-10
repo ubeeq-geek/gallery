@@ -18,7 +18,7 @@ AWS-first gallery platform with:
 
 ## Requirements
 
-- Node `>=18` (Node 16 will fail Vite builds and is unsupported for this stack).
+- Node `>=20`
 - npm `>=9` recommended.
 - Default AWS region for this project is `ca-central-1`.
 
@@ -129,8 +129,32 @@ For a brand-new deployment (no legacy tables to migrate), seed `GalleryCore` dir
 # Preview only
 npm --workspace @gallery/api run seed:core -- --dry-run --region ca-central-1 --profile cdk-ca --gallery-core-table <GalleryCoreTableName>
 
-# Write sample artist/galleries/image+video metadata
-npm --workspace @gallery/api run seed:core -- --region ca-central-1 --profile cdk-ca --gallery-core-table <GalleryCoreTableName> --premium-password <your-password>
+# Write sample artist/galleries/image+video metadata (auto-discovers tables + media bucket)
+npm --workspace @gallery/api run seed:core -- --region ca-central-1 --profile cdk-ca --premium-password <your-password>
+
+# Reset all gallery metadata + artists/branding objects only
+npm --workspace @gallery/api run reset:core -- --region ca-central-1 --profile cdk-ca
+
+# Reset all gallery metadata + artists/branding objects first, then seed (single command option)
+npm --workspace @gallery/api run seed:core -- --reset --region ca-central-1 --profile cdk-ca --premium-password <your-password>
+```
+
+`seed:core` now also seeds default branding (`siteName=Ubeeq`, `theme=ubeeq`) and uploads [ubeeq-logo.svg](/Users/reganwolfrom/workspace/gallery/media/ubeeq-logo.svg) to S3 as `branding/ubeeq-logo.svg`.
+It now seeds three artists from `media/` filenames: `Anne Smith`, `Samuel Jones`, and `Ubeeq Girl`, with automatic free/premium split based on filename cues (`free`/`premium`) plus numbered ordering.
+Seeded S3 objects now use flat UUID keys: `artist_uuid/object_uuid` (no gallery/title path encoding).
+
+Optional flags:
+
+```bash
+--site-name "Ubeeq"
+--theme ubeeq|sand|forest|slate
+--logo-key branding/ubeeq-logo.svg
+--logo-file /absolute/path/to/logo.svg
+--skip-logo-upload
+--media-dir /absolute/path/to/media
+--skip-media-upload
+--skip-renditions
+--reset
 ```
 
 ## Store Integration (MVP)

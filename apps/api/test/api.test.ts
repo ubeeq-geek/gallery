@@ -36,6 +36,8 @@ describe('in-memory store behaviors', () => {
     await store.createComment({
       commentId: 'c1',
       userId: 'u1',
+      authorProfileType: 'user',
+      authorProfileId: 'u1',
       displayName: 'User',
       targetType: 'gallery',
       targetId: 'g1',
@@ -47,6 +49,8 @@ describe('in-memory store behaviors', () => {
     await store.createComment({
       commentId: 'c2',
       userId: 'u2',
+      authorProfileType: 'user',
+      authorProfileId: 'u2',
       displayName: 'User2',
       targetType: 'gallery',
       targetId: 'g1',

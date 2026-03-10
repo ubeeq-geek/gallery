@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from './api';
 import {
   changePassword,
@@ -7,51 +7,360 @@ import {
   confirmRegistration,
   forgotPassword,
   getCurrentUser,
-  register,
   setInitialPassword,
   signIn,
   signOut,
   type CurrentUser
 } from './cognitoAuth';
-import './styles.css';
 
-type Artist = { artistId: string; name: string; slug: string };
-type GallerySummary = { galleryId: string; title: string; slug: string; visibility: 'free' | 'premium' };
-type GalleryAsset = { imageId: string; assetType: 'image' | 'video'; previewUrl: string; previewPosterUrl?: string; favoriteCount: number };
-type Gallery = { galleryId: string; title: string; visibility: 'free' | 'premium'; favoriteCount: number; media: GalleryAsset[] };
-type Comment = { commentId: string; displayName: string; body: string; createdAt: string };
+type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string };
+type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
+type CollectionSummary = {
+  collectionId: string;
+  ownerUserId: string;
+  title: string;
+  description?: string;
+  coverImageId?: string;
+  visibility: 'public' | 'private';
+  insertedDate: string;
+  updatedDate: string;
+  imageCount: number;
+  favoriteCount: number;
+};
+type TrendingImage = {
+  imageId: string;
+  artistId: string;
+  artistName: string;
+  galleryId: string;
+  gallerySlug: string;
+  galleryVisibility?: 'free' | 'preview' | 'premium';
+  title: string;
+  previewUrl: string;
+  favoriteCount: number;
+  createdAt: string;
+};
+type ArtistProfilePayload = {
+  artistId: string;
+  name: string;
+  slug: string;
+  status: 'active' | 'inactive';
+  followerCount: number;
+  imageCount: number;
+  galleryCount: number;
+  trendingImages: TrendingImage[];
+  galleries: Array<{
+    galleryId: string;
+    title: string;
+    slug: string;
+    visibility: 'free' | 'preview' | 'premium';
+    createdAt: string;
+    imageCount: number;
+    favoriteCount: number;
+    galleryThumbnailUrl?: string;
+  }>;
+  publicFavoritesByType: {
+    images: Array<{ targetId: string; targetType?: 'image'; createdAt?: string; title?: string; previewUrl?: string }>;
+    galleries: Array<{ targetId: string; targetType?: 'gallery'; createdAt?: string; title?: string; slug?: string; galleryThumbnailUrl?: string }>;
+    collections: Array<{ targetId: string; targetType?: 'collection'; createdAt?: string; title?: string }>;
+  };
+  publicCollections: Array<{
+    collectionId: string;
+    title: string;
+    description?: string;
+    visibility: 'public' | 'private';
+    insertedDate: string;
+    updatedDate: string;
+    imageCount: number;
+    favoriteCount: number;
+  }>;
+};
+type GallerySummary = {
+  galleryId: string;
+  title: string;
+  slug: string;
+  visibility: 'free' | 'preview' | 'premium';
+  hasAccess?: boolean;
+  purchaseUrl?: string;
+  galleryThumbnailUrl?: string;
+  stackPreviewUrls?: string[];
+};
+type GalleryAsset = {
+  imageId: string;
+  assetType: 'image' | 'video';
+  previewUrl: string;
+  previewPosterUrl?: string;
+  thumbnailUrls?: {
+    w320?: string;
+    w640?: string;
+    w1280?: string;
+    w1920?: string;
+    square256?: string;
+    square512?: string;
+    square1024?: string;
+  };
+  favoriteCount: number;
+};
+type Gallery = {
+  galleryId: string;
+  title: string;
+  visibility: 'free' | 'preview' | 'premium';
+  hasAccess?: boolean;
+  purchaseUrl?: string;
+  coverMediaId?: string;
+  coverPreviewUrl?: string;
+  coverBlur?: boolean;
+  premiumTeaserMedia?: Array<{ imageId: string; assetType: 'image' | 'video'; previewUrl: string; previewPosterUrl?: string }>;
+  favoriteCount: number;
+  media: GalleryAsset[];
+};
+type Comment = {
+  commentId: string;
+  authorProfileType?: 'user' | 'artist';
+  authorProfileId?: string;
+  displayName: string;
+  body: string;
+  createdAt: string;
+};
+type SiteSettings = { siteName: string; theme: 'ubeeq' | 'sand' | 'forest' | 'slate'; logoUrl?: string };
+type UserProfile = {
+  userId: string;
+  username: string;
+  displayName?: string;
+  bio?: string;
+  location?: string;
+  website?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastUsernameChangeAt?: string;
+};
+type ManagedFavorite = {
+  targetType: 'gallery' | 'image' | 'collection';
+  targetId: string;
+  visibility?: 'public' | 'private';
+  createdAt: string;
+};
+type ManagedCollection = {
+  collectionId: string;
+  title: string;
+  description?: string;
+  visibility: 'public' | 'private';
+  imageCount: number;
+  favoriteCount: number;
+  updatedDate: string;
+  imageIds?: string[];
+};
+type StoredAccessToken = { token: string; expiresAt: number };
+type StoredAccessMap = Record<string, StoredAccessToken>;
 
-type AuthMode = 'signin' | 'register' | 'confirm' | 'forgot' | 'reset' | 'initial' | 'change';
+const GALLERY_ACCESS_STORAGE_KEY = 'gallery.access.tokens';
+const AUTH_PERSISTENCE_KEY = 'authPersistence';
+
+const readAccessMap = (): StoredAccessMap => {
+  try {
+    const raw = localStorage.getItem(GALLERY_ACCESS_STORAGE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as StoredAccessMap;
+  } catch {
+    return {};
+  }
+};
+
+const getStoredGalleryAccessToken = (slug: string): string | undefined => {
+  const map = readAccessMap();
+  const item = map[slug];
+  if (!item) return undefined;
+  if (Date.now() > item.expiresAt) {
+    delete map[slug];
+    localStorage.setItem(GALLERY_ACCESS_STORAGE_KEY, JSON.stringify(map));
+    return undefined;
+  }
+  return item.token;
+};
+
+const setStoredGalleryAccessToken = (slug: string, token: string, ttlSeconds: number) => {
+  const map = readAccessMap();
+  map[slug] = {
+    token,
+    expiresAt: Date.now() + ttlSeconds * 1000
+  };
+  localStorage.setItem(GALLERY_ACCESS_STORAGE_KEY, JSON.stringify(map));
+};
+
+type AuthMode = 'signin' | 'register' | 'confirm' | 'forgot' | 'initial';
 
 const authLinks: Array<{ mode: AuthMode; label: string }> = [
   { mode: 'signin', label: 'Sign In' },
-  { mode: 'register', label: 'Register' },
-  { mode: 'forgot', label: 'Forgot Password' },
-  { mode: 'change', label: 'Change Password' }
+  { mode: 'register', label: 'Create Account' }
 ];
 
-function HeaderAuth({ user, onSignOut }: { user: CurrentUser; onSignOut: () => Promise<void> }) {
+function AutoLoadSentinel({
+  enabled,
+  loading,
+  onLoadMore
+}: {
+  enabled: boolean;
+  loading: boolean;
+  onLoadMore: () => Promise<void> | void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!enabled || loading || !ref.current) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        void onLoadMore();
+      }
+    }, { rootMargin: '240px 0px' });
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, [enabled, loading, onLoadMore]);
+
+  if (!enabled) return null;
   return (
-    <section className="auth-panel">
-      {user ? (
-        <div className="auth-line">
-          <span>Signed in as <strong>{user.username}</strong></span>
-          <div className="auth-links">
-            <Link to="/auth/change">Change Password</Link>
-            <button onClick={() => void onSignOut()}>Sign Out</button>
+    <div ref={ref} className="inline-form mt-4">
+      <button onClick={() => void onLoadMore()} disabled={loading}>{loading ? 'Loading...' : 'Load more'}</button>
+    </div>
+  );
+}
+
+function HeaderAuth({
+  user,
+  onSignOut,
+  settings,
+  profile
+}: {
+  user: CurrentUser;
+  onSignOut: () => Promise<void>;
+  settings: SiteSettings;
+  profile?: UserProfile | null;
+}) {
+  const location = useLocation();
+  const closeUserMenus = () => {
+    document.querySelectorAll('details.user-menu[open]').forEach((item) => item.removeAttribute('open'));
+  };
+  const handleSignOutClick = async () => {
+    closeUserMenus();
+    await onSignOut();
+  };
+  const rawDisplay = (profile?.displayName || user?.displayName || '').trim();
+  const fallbackIdentity = (user?.email || user?.username || profile?.username || '').trim();
+  const initialsSource = rawDisplay || fallbackIdentity;
+  const menuSecondaryLabel = (user?.email || fallbackIdentity || '').trim();
+  const displayName = rawDisplay || initialsSource
+    .split('@')[0]
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+  const initials = initialsSource
+    .split('@')[0]
+    .split(/[.\s_-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('') || 'U';
+
+  return (
+    <>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <div className="brand">
+            <Link to="/" className="no-underline" aria-label="Go to home">
+              <div className="brand-css-logo" role="img" aria-label={`${settings.siteName} logo`}>
+                <div className="brand-css-orb-wrap">
+                  <div className="brand-css-orb">
+                    <div className="brand-css-orb-ring brand-css-orb-ring-outer" />
+                    <div className="brand-css-orb-ring brand-css-orb-ring-inner" />
+                    <div className="brand-css-orb-core" />
+                  </div>
+                </div>
+                <div>
+                  <div className="brand-css-wordmark">{settings.siteName}</div>
+                  <div className="brand-css-tagline">Creativity. Everywhere.</div>
+                </div>
+              </div>
+            </Link>
           </div>
+          <section className={`auth-panel ${user ? 'auth-panel-user auth-panel-user-desktop' : 'auth-panel-guest'}`}>
+            {user ? (
+              <div className="auth-line">
+                <details className="user-menu">
+                  <summary className="user-menu-trigger" aria-label="Open account menu">{initials}</summary>
+                  <div className="user-menu-items">
+                    <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
+                    <Link to="/settings" onClick={closeUserMenus}>Settings</Link>
+                    <button onClick={() => void handleSignOutClick()}>Sign Out</button>
+                  </div>
+                </details>
+              </div>
+            ) : (
+              <div className="auth-line">
+                <div className="auth-links">
+                  <Link
+                    to="/auth/signin"
+                    className={`auth-nav-btn auth-nav-btn-secondary${location.pathname.startsWith('/auth/signin') ? ' is-active' : ''}`}
+                  >
+                    Sign in
+                  </Link>
+                  <Link
+                    to="/auth/register"
+                    className={`auth-nav-btn auth-nav-btn-primary${location.pathname.startsWith('/auth/register') ? ' is-active' : ''}`}
+                  >
+                    Create account
+                  </Link>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
-      ) : (
-        <div className="auth-line">
-          <span>Account</span>
-          <div className="auth-links">
-            <Link to="/auth/signin">Sign In</Link>
-            <Link to="/auth/register">Register</Link>
-            <Link to="/auth/forgot">Forgot Password</Link>
+      </header>
+
+      {user && (
+        <div className="mobile-user-dock">
+          <div className="mobile-user-dock-inner">
+            <details className="user-menu">
+              <summary className="user-menu-trigger" aria-label="Open account menu">
+                <span className="mobile-user-email-label">{menuSecondaryLabel || displayName}</span>
+              </summary>
+              <div className="user-menu-items">
+                <div className="user-menu-sheet-handle" />
+                <div className="user-menu-profile">
+                  <div className="user-menu-profile-avatar">{initials}</div>
+                  <div>
+                    <div className="user-menu-profile-name">{displayName}</div>
+                    <div className="user-menu-profile-email">{menuSecondaryLabel || displayName}</div>
+                  </div>
+                </div>
+                <Link to="/settings" className="user-menu-settings-row" onClick={closeUserMenus}>
+                  <span>Settings</span>
+                  <span aria-hidden="true">›</span>
+                </Link>
+                <button className="user-menu-signout-btn" onClick={() => void handleSignOutClick()}>Sign out</button>
+              </div>
+            </details>
           </div>
         </div>
       )}
-    </section>
+
+      {!user && (
+        <div className="mobile-auth-dock">
+          <div className="mobile-auth-dock-inner">
+            <Link
+              to="/auth/signin"
+              className={`auth-nav-btn auth-nav-btn-secondary${location.pathname.startsWith('/auth/signin') ? ' is-active' : ''}`}
+            >
+              Sign in
+            </Link>
+            <Link
+              to="/auth/register"
+              className={`auth-nav-btn auth-nav-btn-primary${location.pathname.startsWith('/auth/register') ? ' is-active' : ''}`}
+            >
+              Create account
+            </Link>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -61,22 +370,60 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   const authMode = mode as AuthMode;
 
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [code, setCode] = useState('');
-  const [currentPassword, setCurrentPassword] = useState('');
+  const [forgotStage, setForgotStage] = useState<'request' | 'confirm'>('request');
+  const [keepSignedIn, setKeepSignedIn] = useState(() => localStorage.getItem(AUTH_PERSISTENCE_KEY) !== 'session');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
+  const [usernameReason, setUsernameReason] = useState<string>('');
+  const socialEnabled = Boolean(
+    import.meta.env.VITE_COGNITO_DOMAIN &&
+    import.meta.env.VITE_COGNITO_CLIENT_ID &&
+    import.meta.env.VITE_COGNITO_REDIRECT_URI
+  );
 
   useEffect(() => {
     if (authMode === 'initial') {
       setEmail(sessionStorage.getItem('auth.initial.username') || '');
     }
-    if (authMode === 'reset') {
-      setEmail(sessionStorage.getItem('auth.reset.username') || '');
+    if (authMode === 'forgot') {
+      setForgotStage('request');
+      setCode('');
+      setNewPassword('');
+      setConfirmPassword('');
     }
   }, [authMode]);
+
+  useEffect(() => {
+    if (authMode !== 'register') return;
+    const raw = username.trim();
+    if (!raw) {
+      setUsernameReason('');
+      setUsernameSuggestions([]);
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await api.checkUsername(raw) as { available: boolean; reasons?: string[]; suggestions?: string[] };
+        if (result.available) {
+          setUsernameReason('');
+          setUsernameSuggestions([]);
+          return;
+        }
+        setUsernameReason(result.reasons?.[0] || 'Username unavailable');
+        setUsernameSuggestions(result.suggestions || []);
+      } catch {
+        setUsernameReason('');
+        setUsernameSuggestions([]);
+      }
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [authMode, username]);
 
   const withFeedback = async (fn: () => Promise<void>) => {
     try {
@@ -89,7 +436,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   };
 
   const doSignIn = () => withFeedback(async () => {
-    const result = await signIn(email, password);
+    const result = await signIn(email, password, keepSignedIn);
     if (result.status === 'new_password_required') {
       sessionStorage.setItem('auth.initial.session', result.session);
       sessionStorage.setItem('auth.initial.username', result.username);
@@ -104,7 +451,13 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
     if (password !== confirmPassword) {
       throw new Error('Passwords do not match');
     }
-    await register(email, password);
+    const check = await api.checkUsername(username) as { available: boolean; reasons?: string[]; suggestions?: string[] };
+    if (!check.available) {
+      setUsernameReason(check.reasons?.[0] || 'Username unavailable');
+      setUsernameSuggestions(check.suggestions || []);
+      throw new Error(check.reasons?.[0] || 'Username unavailable');
+    }
+    await api.registerAccount(email, password, username);
     sessionStorage.setItem('auth.confirm.username', email);
     navigate('/auth/confirm');
     setMessage('Registration started. Check your email for the code.');
@@ -118,17 +471,20 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
 
   const doForgot = () => withFeedback(async () => {
     await forgotPassword(email);
-    sessionStorage.setItem('auth.reset.username', email);
-    navigate('/auth/reset');
+    setForgotStage('confirm');
+    setMessage('Reset code sent. Enter code and new password.');
   });
 
-  const doReset = () => withFeedback(async () => {
-    const username = email || sessionStorage.getItem('auth.reset.username') || '';
-    await confirmForgotPassword(username, code, newPassword);
+  const doForgotConfirm = () => withFeedback(async () => {
+    if (!email) throw new Error('Email is required');
+    await confirmForgotPassword(email, code, newPassword);
     navigate('/auth/signin');
   });
 
   const doInitialPassword = () => withFeedback(async () => {
+    if (newPassword !== confirmPassword) {
+      throw new Error('Passwords do not match');
+    }
     const username = sessionStorage.getItem('auth.initial.username') || email;
     const session = sessionStorage.getItem('auth.initial.session') || '';
     const loggedIn = await setInitialPassword(username, session, newPassword);
@@ -138,132 +494,1283 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
     navigate('/');
   });
 
-  const doChangePassword = () => withFeedback(async () => {
-    if (!user) {
-      throw new Error('Sign in first');
-    }
-    await changePassword(currentPassword, newPassword);
-    setMessage('Password changed');
-  });
+  const startSocialSignIn = (provider: 'Google' | 'SignInWithApple') => {
+    const domain = import.meta.env.VITE_COGNITO_DOMAIN;
+    const clientId = import.meta.env.VITE_COGNITO_CLIENT_ID;
+    const redirectUri = import.meta.env.VITE_COGNITO_REDIRECT_URI;
+    if (!domain || !clientId || !redirectUri) return;
+    const url = `https://${domain}/oauth2/authorize?identity_provider=${encodeURIComponent(provider)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent('openid email profile')}`;
+    window.location.href = url;
+  };
 
-  if (authMode === 'change' && !user) {
-    return <Navigate to="/auth/signin" replace />;
+  const isPrimaryAuth = authMode === 'signin' || authMode === 'register';
+
+  if (isPrimaryAuth) {
+    return (
+      <div className="layout auth-layout">
+        <div className="panel auth-card">
+          <div className="auth-card-header">
+            <h2>{authMode === 'signin' ? 'Welcome back' : 'Create account'}</h2>
+            <span className="badge">Secure sign-in</span>
+          </div>
+          <p className="small">{authMode === 'signin' ? 'Sign in to continue to your account.' : 'Create your account to continue.'}</p>
+          <input
+            name="email"
+            autoComplete="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          {authMode === 'register' && (
+            <>
+              <input
+                name="preferred_username"
+                autoComplete="new-password"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="Profile URL"
+                data-lpignore="true"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+              {usernameReason && <p className="error">{usernameReason}</p>}
+              {usernameSuggestions.length > 0 && (
+                <div className="username-suggestions">
+                  {usernameSuggestions.map((candidate) => (
+                    <button key={candidate} className="username-suggestion-pill" onClick={() => setUsername(candidate)}>
+                      {candidate}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          <div className="auth-inline-label">
+            <span>Password</span>
+            {authMode === 'signin' && <Link to="/auth/forgot">Forgot password?</Link>}
+          </div>
+          <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          {authMode === 'register' && (
+            <input
+              type="password"
+              className="auth-confirm-input"
+              placeholder="Confirm password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+            />
+          )}
+
+          {authMode === 'signin' && (
+            <label className="auth-checkbox">
+              <input type="checkbox" checked={keepSignedIn} onChange={(e) => setKeepSignedIn(e.target.checked)} />
+              <span>Keep me signed in on this device</span>
+            </label>
+          )}
+
+          {authMode === 'signin'
+            ? <button className="auth-primary-btn auth-submit-btn w-full" onClick={doSignIn}>Sign in</button>
+            : <button className="auth-primary-btn auth-submit-btn w-full" onClick={doRegister}>Create account</button>}
+
+          <div className="auth-divider"><span>or</span></div>
+          <div className="auth-social-grid">
+            <button className="auth-secondary-btn" disabled={!socialEnabled} onClick={() => startSocialSignIn('Google')}>Continue with Google</button>
+            <button className="auth-secondary-btn" disabled={!socialEnabled} onClick={() => startSocialSignIn('SignInWithApple')}>Continue with Apple</button>
+          </div>
+
+          <div className="auth-confirm-banner">
+            Need to confirm your account? <Link to="/auth/confirm">Confirm registration</Link>
+          </div>
+
+          <div className="small">
+            {authMode === 'signin'
+              ? <>New to Ubeeq? <Link to="/auth/register">Create an account</Link></>
+              : <>Already have an account? <Link to="/auth/signin">Sign in</Link></>}
+          </div>
+
+          {message && <p className="success">{message}</p>}
+          {error && <p className="error">{error}</p>}
+        </div>
+
+        <div className="auth-showcase panel">
+          <span className="auth-chip">Trusted access for collectors and creators</span>
+          <h1>{`${authMode === 'signin' ? 'Sign in' : 'Create your account'} to follow artists, favourite work, and unlock early access.`}</h1>
+          <p>A cleaner entrance experience for a curated gallery platform.</p>
+          <div className="auth-feature-grid">
+            <article><strong>Follow artists</strong><p>Unlock follower-access releases and stay current with new drops.</p></article>
+            <article><strong>Favourite pieces</strong><p>Build your own collection trail and surface relevant work faster.</p></article>
+            <article><strong>Early access</strong><p>See scheduled releases before wide release when artists enable it.</p></article>
+          </div>
+          <div className="auth-showcase-actions">
+            {authMode === 'signin'
+              ? <button className="auth-primary-btn" onClick={() => navigate('/auth/register')}>Create account</button>
+              : <button className="auth-primary-btn" onClick={() => navigate('/auth/signin')}>Sign in</button>}
+            <Link className="auth-secondary-btn" to="/">Browse public galleries</Link>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="layout">
-      <h1>Account: {authLinks.find((item) => item.mode === authMode)?.label || 'Auth'}</h1>
-      <div className="auth-page-links">
-        <Link to="/auth/signin">Sign In</Link>
-        <Link to="/auth/register">Register</Link>
-        <Link to="/auth/confirm">Confirm Registration</Link>
-        <Link to="/auth/forgot">Forgot Password</Link>
-        <Link to="/auth/reset">Reset Password</Link>
-        <Link to="/auth/change">Change Password</Link>
-      </div>
+      <div className="panel max-w-3xl">
+        <h1>Account</h1>
 
-      {(authMode === 'signin' || authMode === 'register' || authMode === 'confirm' || authMode === 'forgot' || authMode === 'reset' || authMode === 'initial') && (
-        <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-      )}
+        {(authMode === 'confirm' || authMode === 'forgot' || authMode === 'initial') && (
+          <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        )}
 
-      {(authMode === 'signin' || authMode === 'register') && (
-        <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      )}
+        {(authMode === 'confirm' || (authMode === 'forgot' && forgotStage === 'confirm')) && (
+          <input placeholder="Confirmation code" value={code} onChange={(e) => setCode(e.target.value)} />
+        )}
 
-      {authMode === 'register' && (
-        <input type="password" placeholder="Confirm password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
-      )}
+        {((authMode === 'forgot' && forgotStage === 'confirm') || authMode === 'initial') && (
+          <input type="password" placeholder="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+        )}
 
-      {(authMode === 'confirm' || authMode === 'reset') && (
-        <input placeholder="Confirmation code" value={code} onChange={(e) => setCode(e.target.value)} />
-      )}
+        {authMode === 'initial' && (
+          <input type="password" placeholder="Confirm password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+        )}
 
-      {(authMode === 'reset' || authMode === 'initial' || authMode === 'change') && (
-        <input type="password" placeholder="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-      )}
+        {authMode === 'confirm' && <button onClick={doConfirm}>Confirm Registration</button>}
+        {authMode === 'forgot' && forgotStage === 'request' && <button onClick={doForgot}>Send Reset Code</button>}
+        {authMode === 'forgot' && forgotStage === 'confirm' && <button onClick={doForgotConfirm}>Reset Password</button>}
+        {authMode === 'initial' && <button onClick={doInitialPassword}>Set Initial Password</button>}
 
-      {authMode === 'change' && (
-        <input type="password" placeholder="Current password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
-      )}
-
-      {authMode === 'signin' && <button onClick={doSignIn}>Sign In</button>}
-      {authMode === 'register' && <button onClick={doRegister}>Register</button>}
-      {authMode === 'confirm' && <button onClick={doConfirm}>Confirm Registration</button>}
-      {authMode === 'forgot' && <button onClick={doForgot}>Send Reset Code</button>}
-      {authMode === 'reset' && <button onClick={doReset}>Reset Password</button>}
-      {authMode === 'initial' && <button onClick={doInitialPassword}>Set Initial Password</button>}
-      {authMode === 'change' && <button onClick={doChangePassword}>Change Password</button>}
-
-      {message && <p className="success">{message}</p>}
-      {error && <p className="error">{error}</p>}
-    </div>
-  );
-}
-
-function HomePage() {
-  const [artists, setArtists] = useState<Artist[]>([]);
-  const [selected, setSelected] = useState<Artist | null>(null);
-  const [galleries, setGalleries] = useState<GallerySummary[]>([]);
-
-  useEffect(() => {
-    api.getArtists().then(setArtists).catch(console.error);
-  }, []);
-
-  useEffect(() => {
-    if (!selected) return;
-    api.getGalleriesByArtist(selected.slug).then(setGalleries).catch(console.error);
-  }, [selected]);
-
-  return (
-    <div className="layout">
-      <h1>Artist Galleries</h1>
-      <div className="grid two">
-        <section>
-          <h2>Artists</h2>
-          {artists.map((artist) => (
-            <button key={artist.artistId} className="list-btn" onClick={() => setSelected(artist)}>{artist.name}</button>
-          ))}
-        </section>
-        <section>
-          <h2>Galleries</h2>
-          {galleries.map((gallery) => (
-            <Link key={gallery.galleryId} className="card-link" to={`/gallery/${gallery.slug}`}>
-              {gallery.title} <span className="badge">{gallery.visibility}</span>
-            </Link>
-          ))}
-        </section>
+        {message && <p className="success">{message}</p>}
+        {error && <p className="error">{error}</p>}
       </div>
     </div>
   );
 }
 
-function GalleryPage() {
-  const { slug = '' } = useParams();
-  const [gallery, setGallery] = useState<Gallery | null>(null);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [commentBody, setCommentBody] = useState('');
-  const [password, setPassword] = useState('');
-  const [unlockToken, setUnlockToken] = useState<string>('');
-  const [premiumImages, setPremiumImages] = useState<Array<{ imageId: string; assetType: 'image' | 'video'; premiumUrl: string; premiumPosterUrl?: string }>>([]);
-  const [error, setError] = useState<string>('');
+function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfileChanged?: (profile: UserProfile) => void }) {
+  const navigate = useNavigate();
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
+  const [selectedProfileKey, setSelectedProfileKey] = useState<string>('user');
+  const [displayName, setDisplayName] = useState('');
+  const [bio, setBio] = useState('');
+  const [location, setLocation] = useState('');
+  const [website, setWebsite] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
+  const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
+  const [usernameError, setUsernameError] = useState('');
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [profileFavorites, setProfileFavorites] = useState<ManagedFavorite[]>([]);
+  const [profileCollections, setProfileCollections] = useState<ManagedCollection[]>([]);
+  const [favoritesCursor, setFavoritesCursor] = useState<string | undefined>(undefined);
+  const [collectionsCursor, setCollectionsCursor] = useState<string | undefined>(undefined);
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const [collectionsLoading, setCollectionsLoading] = useState(false);
+  const [newCollectionTitle, setNewCollectionTitle] = useState('');
+  const [newCollectionVisibility, setNewCollectionVisibility] = useState<'public' | 'private'>('public');
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>('');
+  const [selectedCollectionImageIds, setSelectedCollectionImageIds] = useState<string[]>([]);
+  const [collectionImageIdInput, setCollectionImageIdInput] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const selectedArtistId = selectedProfileKey.startsWith('artist:') ? selectedProfileKey.slice('artist:'.length) : '';
+  const selectedArtist = managedArtists.find((artist) => artist.artistId === selectedArtistId) || null;
+  const profileUrlPreview = `${window.location.origin.replace(/\/$/, '')}/${selectedArtist ? 'artists' : 'u'}/${(usernameInput || '').trim() || 'your-profile-url'}`;
+  const selectedOwnerContext = selectedArtist
+    ? { ownerProfileType: 'artist' as const, ownerProfileId: selectedArtist.artistId }
+    : { ownerProfileType: 'user' as const };
 
-  const load = async () => {
+  const reloadCuration = async () => {
+    const [favoritesPage, collectionsPage] = await Promise.all([
+      api.myFavoritesPage(selectedOwnerContext, undefined, 24) as Promise<{ items: ManagedFavorite[]; nextCursor?: string }>,
+      api.myCollectionsPage(selectedOwnerContext, undefined, 24) as Promise<{ items: ManagedCollection[]; nextCursor?: string }>
+    ]);
+    setProfileFavorites(favoritesPage.items || []);
+    setProfileCollections(collectionsPage.items || []);
+    setFavoritesCursor(favoritesPage.nextCursor);
+    setCollectionsCursor(collectionsPage.nextCursor);
+  };
+
+  if (!user) return <Navigate to="/auth/signin" replace />;
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const loaded = await api.getMyProfile() as UserProfile;
+        const myArtists = await api.getMyArtists() as ManagedArtist[];
+        setProfile(loaded);
+        setManagedArtists(myArtists);
+        onProfileChanged?.(loaded);
+        setDisplayName(loaded.displayName || '');
+        setBio(loaded.bio || '');
+        setLocation(loaded.location || '');
+        setWebsite(loaded.website || '');
+        setUsernameInput(loaded.username || '');
+      } catch (e) {
+        const msg = (e as Error).message || '';
+        if (msg.toLowerCase().includes('authentication required') || msg.toLowerCase().includes('unauthorized')) {
+          await signOut();
+          navigate('/auth/signin', { replace: true });
+          return;
+        }
+        setError(msg);
+      }
+    };
+    void load();
+  }, [navigate, onProfileChanged]);
+
+  const saveProfile = async () => {
     try {
-      const [galleryData, commentData] = await Promise.all([api.getGallery(slug), api.getGalleryComments(slug)]);
-      setGallery(galleryData);
-      setComments(commentData);
+      setError('');
+      setMessage('');
+      if (selectedArtist) {
+        const updatedArtist = await api.updateArtist(selectedArtist.artistId, {
+          name: displayName || selectedArtist.name
+        }) as ManagedArtist;
+        setManagedArtists((prev) => prev.map((item) => (item.artistId === updatedArtist.artistId ? { ...item, ...updatedArtist } : item)));
+        setMessage('Artist profile updated');
+        return;
+      }
+      const updated = await api.updateMyProfile({
+        displayName: displayName || undefined,
+        bio: bio || undefined,
+        location: location || undefined,
+        website: website || undefined
+      }) as UserProfile;
+      setProfile(updated);
+      onProfileChanged?.(updated);
+      setMessage('Profile updated');
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
   useEffect(() => {
-    void load();
+    if (selectedArtist) {
+      setDisplayName(selectedArtist.name || '');
+      setUsernameInput(selectedArtist.slug || '');
+      setUsernameError('');
+      return;
+    }
+    if (profile) {
+      setDisplayName(profile.displayName || '');
+      setUsernameInput(profile.username || '');
+    }
+  }, [selectedArtistId, profile?.userId]);
+
+  useEffect(() => {
+    const loadProfileCuration = async () => {
+      try {
+        setError('');
+        await reloadCuration();
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    };
+    if (!user) return;
+    void loadProfileCuration();
+  }, [selectedProfileKey, user?.username]);
+
+  const changeUsername = async () => {
+    try {
+      setError('');
+      setMessage('');
+      setUsernameError('');
+      if (selectedArtist) {
+        const updatedArtist = await api.updateArtist(selectedArtist.artistId, {
+          slug: usernameInput
+        }) as ManagedArtist;
+        setManagedArtists((prev) => prev.map((item) => (item.artistId === updatedArtist.artistId ? { ...item, ...updatedArtist } : item)));
+        setUsernameInput(updatedArtist.slug);
+        setUsernameSuggestions([]);
+        setMessage('Artist profile URL updated');
+        return;
+      }
+      const updated = await api.updateMyUsername(usernameInput) as UserProfile;
+      setProfile(updated);
+      onProfileChanged?.(updated);
+      setUsernameInput(updated.username);
+      setUsernameSuggestions([]);
+      setMessage('Username updated');
+    } catch (e) {
+      const err = e as Error;
+      setUsernameError(err.message);
+      if (!selectedArtist) {
+        try {
+          const result = await api.checkUsername(usernameInput) as { suggestions?: string[] };
+          setUsernameSuggestions(result.suggestions || []);
+        } catch {
+          setUsernameSuggestions([]);
+        }
+      }
+    }
+  };
+
+  const submitPasswordChange = async () => {
+    try {
+      setError('');
+      setMessage('');
+      if (newPassword !== confirmPassword) throw new Error('Passwords do not match');
+      await changePassword(currentPassword, newPassword);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordOpen(false);
+      setMessage('Password changed');
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const createCollection = async () => {
+    try {
+      setError('');
+      setMessage('');
+      const title = newCollectionTitle.trim();
+      if (!title) throw new Error('Collection title is required');
+      await api.createCollection({
+        title,
+        visibility: newCollectionVisibility,
+        ...selectedOwnerContext
+      });
+      setNewCollectionTitle('');
+      await reloadCuration();
+      setMessage('Collection created');
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const removeFavorite = async (favorite: ManagedFavorite) => {
+    try {
+      setError('');
+      await api.unfavorite(favorite.targetType, favorite.targetId, selectedOwnerContext);
+      await reloadCuration();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const toggleFavoriteVisibility = async (favorite: ManagedFavorite) => {
+    try {
+      setError('');
+      const nextVisibility: 'public' | 'private' = (favorite.visibility || 'public') === 'public' ? 'private' : 'public';
+      await api.unfavorite(favorite.targetType, favorite.targetId, selectedOwnerContext);
+      await api.favorite(favorite.targetType, favorite.targetId, nextVisibility, selectedOwnerContext);
+      await reloadCuration();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const loadCollectionImages = async (collectionId: string) => {
+    try {
+      if (!collectionId) {
+        setSelectedCollectionImageIds([]);
+        return;
+      }
+      const detail = await api.getCollection(collectionId) as ManagedCollection & { imageIds?: string[] };
+      setSelectedCollectionImageIds(detail.imageIds || []);
+    } catch (e) {
+      setError((e as Error).message);
+      setSelectedCollectionImageIds([]);
+    }
+  };
+
+  const loadMoreFavorites = async () => {
+    try {
+      if (!favoritesCursor) return;
+      setFavoritesLoading(true);
+      const page = await api.myFavoritesPage(selectedOwnerContext, favoritesCursor, 24) as { items: ManagedFavorite[]; nextCursor?: string };
+      setProfileFavorites((prev) => [...prev, ...(page.items || [])]);
+      setFavoritesCursor(page.nextCursor);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setFavoritesLoading(false);
+    }
+  };
+
+  const loadMoreCollections = async () => {
+    try {
+      if (!collectionsCursor) return;
+      setCollectionsLoading(true);
+      const page = await api.myCollectionsPage(selectedOwnerContext, collectionsCursor, 24) as { items: ManagedCollection[]; nextCursor?: string };
+      setProfileCollections((prev) => [...prev, ...(page.items || [])]);
+      setCollectionsCursor(page.nextCursor);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCollectionsLoading(false);
+    }
+  };
+
+  const toggleCollectionVisibility = async (collection: ManagedCollection) => {
+    try {
+      setError('');
+      const nextVisibility: 'public' | 'private' = collection.visibility === 'public' ? 'private' : 'public';
+      await api.updateCollection(collection.collectionId, { visibility: nextVisibility });
+      await reloadCuration();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const deleteCollection = async (collectionId: string) => {
+    try {
+      setError('');
+      await api.deleteCollection(collectionId);
+      if (selectedCollectionId === collectionId) {
+        setSelectedCollectionId('');
+        setSelectedCollectionImageIds([]);
+      }
+      await reloadCuration();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const addImageToSelectedCollection = async () => {
+    try {
+      setError('');
+      const imageId = collectionImageIdInput.trim();
+      if (!selectedCollectionId) throw new Error('Select a collection first');
+      if (!imageId) throw new Error('Image ID is required');
+      await api.addImageToCollection(selectedCollectionId, imageId);
+      setCollectionImageIdInput('');
+      await loadCollectionImages(selectedCollectionId);
+      await reloadCuration();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const removeImageFromSelectedCollection = async (imageId: string) => {
+    try {
+      setError('');
+      if (!selectedCollectionId) return;
+      await api.removeImageFromCollection(selectedCollectionId, imageId);
+      await loadCollectionImages(selectedCollectionId);
+      await reloadCuration();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  return (
+    <div className="layout">
+      <div className="panel max-w-6xl">
+        <h1>Settings</h1>
+        <h2>Profile Context</h2>
+        <div className="grid">
+          <div className="settings-field">
+            <label htmlFor="settings-profile-context" className="settings-field-label">Edit profile as</label>
+            <select
+              id="settings-profile-context"
+              className="settings-select"
+              value={selectedProfileKey}
+              onChange={(e) => setSelectedProfileKey(e.target.value)}
+            >
+              <option value="user">User Profile</option>
+              {managedArtists.map((artist) => (
+                <option key={artist.artistId} value={`artist:${artist.artistId}`}>
+                  Artist: {artist.name} ({artist.memberRole || 'editor'})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <h2>Profile</h2>
+        <div className="grid">
+          <div className="settings-field">
+            <label htmlFor="settings-display-name" className="settings-field-label">Display Name</label>
+            <input
+              id="settings-display-name"
+              placeholder="Ubeeq Girl"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+            />
+            <p className="small">{selectedArtist ? 'The name shown on this artist profile' : 'The name shown on your profile'}</p>
+          </div>
+          <button onClick={saveProfile}>{selectedArtist ? 'Save Artist Name' : 'Save Display Name'}</button>
+          {!selectedArtist && (
+            <>
+              <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
+              <input placeholder="Website" value={website} onChange={(e) => setWebsite(e.target.value)} />
+              <textarea className="rounded-xl border px-3 py-2 text-sm" rows={4} placeholder="Bio" value={bio} onChange={(e) => setBio(e.target.value)} />
+            </>
+          )}
+        </div>
+
+        <h2 className="mt-6">Profile URL</h2>
+        <div className="grid">
+          <div className="settings-field">
+            <label htmlFor="settings-profile-url" className="settings-field-label">Profile URL</label>
+            <input
+              id="settings-profile-url"
+              name="preferred_username"
+              autoComplete="new-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="ubeeq-girl"
+              data-lpignore="true"
+              value={usernameInput}
+              onChange={(e) => setUsernameInput(e.target.value)}
+            />
+            <p className="small">{selectedArtist ? 'This artist profile will be available at:' : 'Your profile will be available at:'}</p>
+            <p className="small settings-profile-url-preview">{profileUrlPreview}</p>
+          </div>
+          <button onClick={changeUsername}>{selectedArtist ? 'Save Artist URL' : 'Save Profile URL'}</button>
+          {!selectedArtist && profile?.lastUsernameChangeAt && (
+            <p className="small">Last changed: {new Date(profile.lastUsernameChangeAt).toLocaleDateString()}</p>
+          )}
+          {usernameError && <p className="error">{usernameError}</p>}
+          {!selectedArtist && usernameSuggestions.length > 0 && (
+            <div className="username-suggestions">
+              {usernameSuggestions.map((candidate) => (
+                <button key={candidate} className="username-suggestion-pill" onClick={() => setUsernameInput(candidate)}>
+                  {candidate}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {!selectedArtist && (
+          <>
+            <h2 className="mt-6">Security</h2>
+            <div className="inline-form">
+              <button onClick={() => setPasswordOpen(true)}>Change Password</button>
+            </div>
+          </>
+        )}
+
+        <h2 className="mt-6">Curation</h2>
+        <div className="grid">
+          <div className="inline-form">
+            <input
+              placeholder={selectedArtist ? `New collection for ${selectedArtist.name}` : 'New collection title'}
+              value={newCollectionTitle}
+              onChange={(e) => setNewCollectionTitle(e.target.value)}
+            />
+            <select
+              className="settings-select"
+              value={newCollectionVisibility}
+              onChange={(e) => setNewCollectionVisibility(e.target.value === 'private' ? 'private' : 'public')}
+            >
+              <option value="public">Public</option>
+              <option value="private">Private</option>
+            </select>
+            <button onClick={createCollection}>Create Collection</button>
+          </div>
+          <div className="panel">
+            <h3 className="m-0 mb-2 text-lg">Collections ({profileCollections.length})</h3>
+            <div className="inline-form mb-3">
+              <label className="small">Selected collection</label>
+              <select
+                className="settings-select"
+                value={selectedCollectionId}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSelectedCollectionId(value);
+                  void loadCollectionImages(value);
+                }}
+              >
+                <option value="">Select collection</option>
+                {profileCollections.map((item) => (
+                  <option key={item.collectionId} value={item.collectionId}>{item.title}</option>
+                ))}
+              </select>
+            </div>
+            {selectedCollectionId && (
+              <div className="inline-form mb-3">
+                <input
+                  placeholder="Image ID to add"
+                  value={collectionImageIdInput}
+                  onChange={(e) => setCollectionImageIdInput(e.target.value)}
+                />
+                <button onClick={addImageToSelectedCollection}>Add Image</button>
+              </div>
+            )}
+            {selectedCollectionId && (
+              <div className="grid">
+                {selectedCollectionImageIds.length === 0 && <p className="small">No images in selected collection yet.</p>}
+                {selectedCollectionImageIds.map((imageId) => (
+                  <article key={imageId} className="inline-form">
+                    <span className="small">{imageId}</span>
+                    <button onClick={() => void removeImageFromSelectedCollection(imageId)}>Remove</button>
+                  </article>
+                ))}
+              </div>
+            )}
+            <div className="grid">
+              {profileCollections.map((item) => (
+                <article key={item.collectionId} className="rounded-xl border p-3">
+                  <strong>{item.title}</strong>
+                  <p className="small">{item.imageCount} images • {item.visibility}</p>
+                  <div className="inline-form">
+                    <button onClick={() => void toggleCollectionVisibility(item)}>
+                      Make {item.visibility === 'public' ? 'Private' : 'Public'}
+                    </button>
+                    <button onClick={() => void deleteCollection(item.collectionId)}>Delete</button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <AutoLoadSentinel enabled={Boolean(collectionsCursor)} loading={collectionsLoading} onLoadMore={() => loadMoreCollections()} />
+          </div>
+          <div className="panel">
+            <h3 className="m-0 mb-2 text-lg">Favorites ({profileFavorites.length})</h3>
+            <div className="grid">
+              {profileFavorites.map((item) => (
+                <article key={`${item.targetType}:${item.targetId}`} className="inline-form">
+                  <span className="small">{item.targetType}: {item.targetId} ({item.visibility || 'public'})</span>
+                  <button onClick={() => void toggleFavoriteVisibility(item)}>
+                    Make {(item.visibility || 'public') === 'public' ? 'Private' : 'Public'}
+                  </button>
+                  <button onClick={() => void removeFavorite(item)}>Remove</button>
+                </article>
+              ))}
+            </div>
+            <AutoLoadSentinel enabled={Boolean(favoritesCursor)} loading={favoritesLoading} onLoadMore={() => loadMoreFavorites()} />
+          </div>
+        </div>
+        {message && <p className="success">{message}</p>}
+        {error && <p className="error">{error}</p>}
+      </div>
+
+      {passwordOpen && (
+        <div className="settings-drawer-overlay" onClick={() => setPasswordOpen(false)}>
+          <aside className="settings-drawer" onClick={(e) => e.stopPropagation()}>
+            <h2>Change Password</h2>
+            <div className="grid">
+              <input type="password" placeholder="Current password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+              <input type="password" placeholder="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+              <input type="password" placeholder="Confirm password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+              <button onClick={submitPasswordChange}>Save Password</button>
+            </div>
+          </aside>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HomePage() {
+  const currentUser = getCurrentUser();
+  const dailySeed = new Date().toISOString().slice(0, 10);
+  type DiscoveryGallery = GallerySummary & { artistName: string; artistSlug: string; stackPreviewUrls?: string[] };
+  const [artists, setArtists] = useState<Artist[]>([]);
+  const [galleries, setGalleries] = useState<DiscoveryGallery[]>([]);
+  const [trendingImages, setTrendingImages] = useState<TrendingImage[]>([]);
+  const [trendingCursor, setTrendingCursor] = useState<string | undefined>(undefined);
+  const [trendingPeriod, setTrendingPeriod] = useState<'hourly' | 'daily'>('daily');
+  const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
+  const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
+  const [favoriteImageIds, setFavoriteImageIds] = useState<Set<string>>(new Set());
+  const [favoriteGalleryIds, setFavoriteGalleryIds] = useState<Set<string>>(new Set());
+  const [loadingMoreTrending, setLoadingMoreTrending] = useState(false);
+  const [loadingTrending, setLoadingTrending] = useState(false);
+  const [loadingLatest, setLoadingLatest] = useState(false);
+  const [loadingCollections, setLoadingCollections] = useState(false);
+  const [deferredSectionsReady, setDeferredSectionsReady] = useState(false);
+  const [collections, setCollections] = useState<CollectionSummary[]>([]);
+  const [followedArtistIds, setFollowedArtistIds] = useState<Set<string>>(new Set());
+  const [error, setError] = useState('');
+  const masonryHeights = [220, 260, 300, 340, 380];
+
+  useEffect(() => {
+    const loadTrending = async () => {
+      try {
+        setLoadingTrending(true);
+        const trendingData = await api.getTrendingImages(trendingPeriod, undefined, 18) as { items: TrendingImage[]; nextCursor?: string };
+        setTrendingImages(trendingData.items || []);
+        setTrendingCursor(trendingData.nextCursor);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setLoadingTrending(false);
+      }
+    };
+    void loadTrending();
+  }, [trendingPeriod]);
+
+  useEffect(() => {
+    if (deferredSectionsReady || loadingTrending) return;
+    const schedule = (cb: () => void): number => {
+      if (typeof window.requestIdleCallback === 'function') {
+        return window.requestIdleCallback(cb, { timeout: 1200 }) as unknown as number;
+      }
+      return window.setTimeout(cb, 0);
+    };
+    const cancel = (id: number) => {
+      if (typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(id as unknown as any);
+      } else {
+        window.clearTimeout(id);
+      }
+    };
+    const id = schedule(() => setDeferredSectionsReady(true));
+    return () => cancel(id);
+  }, [deferredSectionsReady, loadingTrending]);
+
+  useEffect(() => {
+    if (!deferredSectionsReady) return;
+    const loadLatest = async () => {
+      try {
+        setLoadingLatest(true);
+        const [artistList, latestGalleries] = await Promise.all([
+          api.getArtists() as Promise<Artist[]>,
+          api.getLatestGalleries(12) as Promise<DiscoveryGallery[]>
+        ]);
+        setArtists(artistList);
+        setGalleries(latestGalleries || []);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setLoadingLatest(false);
+      }
+    };
+    void loadLatest();
+  }, [deferredSectionsReady]);
+
+  useEffect(() => {
+    if (!deferredSectionsReady) return;
+    const loadCollectionData = async () => {
+      try {
+        setLoadingCollections(true);
+        const collectionData = await api.getCollections(undefined, 9, { order: 'popular', seed: dailySeed }) as { items: CollectionSummary[] };
+        setCollections(collectionData.items || []);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setLoadingCollections(false);
+      }
+    };
+    void loadCollectionData();
+  }, [dailySeed, deferredSectionsReady]);
+
+  useEffect(() => {
+    if (!deferredSectionsReady) return;
+    const loadUserContext = async () => {
+      if (!currentUser) {
+        setFollowedArtistIds(new Set());
+        setManagedArtists([]);
+        return;
+      }
+      try {
+        const [follows, myArtists] = await Promise.all([
+          api.myFollows() as Promise<Array<{ artistId: string }>>,
+          api.getMyArtists() as Promise<ManagedArtist[]>
+        ]);
+        setFollowedArtistIds(new Set((follows || []).map((item) => item.artistId)));
+        setManagedArtists(myArtists || []);
+      } catch {
+        setFollowedArtistIds(new Set());
+        setManagedArtists([]);
+      }
+    };
+    void loadUserContext();
+  }, [currentUser?.username, deferredSectionsReady]);
+
+  const loadMoreTrending = async () => {
+    if (!trendingCursor) return;
+    try {
+      setLoadingMoreTrending(true);
+      const response = await api.getTrendingImages(trendingPeriod, trendingCursor, 18) as { items: TrendingImage[]; nextCursor?: string };
+      setTrendingImages((prev) => [...prev, ...(response.items || [])]);
+      setTrendingCursor(response.nextCursor);
+    } catch {
+      // no-op
+    } finally {
+      setLoadingMoreTrending(false);
+    }
+  };
+
+  const trendingRenderable = trendingImages.filter((item) => Boolean(item.previewUrl));
+  const trending = trendingRenderable.slice(0, 16);
+  const trendingContinuation = trendingRenderable.slice(16);
+  const latest = galleries
+    .filter((gallery) => Boolean((gallery.stackPreviewUrls && gallery.stackPreviewUrls[0]) || gallery.galleryThumbnailUrl))
+    .slice(0, 6);
+  const latestItems: DiscoveryGallery[] = latest;
+  const risingArtists = artists.slice(0, 3);
+  const trendingCollections = collections.slice(0, 3);
+
+  const toggleFollow = async (artistId?: string) => {
+    if (!artistId) return;
+    try {
+      if (followedArtistIds.has(artistId)) {
+        await api.unfollowArtist(artistId);
+        setFollowedArtistIds((prev) => {
+          const next = new Set(prev);
+          next.delete(artistId);
+          return next;
+        });
+      } else {
+        await api.followArtist(artistId);
+        setFollowedArtistIds((prev) => new Set(prev).add(artistId));
+      }
+    } catch {
+      // no-op
+    }
+  };
+
+  const favoriteAsProfile = favoriteIdentity.startsWith('artist:')
+    ? { ownerProfileType: 'artist' as const, ownerProfileId: favoriteIdentity.slice('artist:'.length) }
+    : { ownerProfileType: 'user' as const };
+
+  useEffect(() => {
+    const loadFavorites = async () => {
+      if (!deferredSectionsReady) return;
+      if (!currentUser) {
+        setFavoriteImageIds(new Set());
+        setFavoriteGalleryIds(new Set());
+        return;
+      }
+      try {
+        const favorites = await api.myFavorites(favoriteAsProfile) as ManagedFavorite[];
+        setFavoriteImageIds(new Set(favorites.filter((item) => item.targetType === 'image').map((item) => item.targetId)));
+        setFavoriteGalleryIds(new Set(favorites.filter((item) => item.targetType === 'gallery').map((item) => item.targetId)));
+      } catch {
+        setFavoriteImageIds(new Set());
+        setFavoriteGalleryIds(new Set());
+      }
+    };
+    void loadFavorites();
+  }, [currentUser?.username, favoriteIdentity, deferredSectionsReady]);
+
+  const toggleImageFavorite = async (imageId: string) => {
+    const wasFavorited = favoriteImageIds.has(imageId);
+    setFavoriteImageIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorited) next.delete(imageId);
+      else next.add(imageId);
+      return next;
+    });
+    setTrendingImages((prev) => prev.map((item) => (
+      item.imageId === imageId
+        ? { ...item, favoriteCount: Math.max(0, (item.favoriteCount || 0) + (wasFavorited ? -1 : 1)) }
+        : item
+    )));
+    try {
+      if (wasFavorited) {
+        await api.unfavorite('image', imageId, favoriteAsProfile);
+      } else {
+        await api.favorite('image', imageId, 'public', favoriteAsProfile);
+      }
+    } catch {
+      setFavoriteImageIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorited) next.add(imageId);
+        else next.delete(imageId);
+        return next;
+      });
+      setTrendingImages((prev) => prev.map((item) => (
+        item.imageId === imageId
+          ? { ...item, favoriteCount: Math.max(0, (item.favoriteCount || 0) + (wasFavorited ? 1 : -1)) }
+          : item
+      )));
+    }
+  };
+
+  const toggleGalleryFavorite = async (galleryId: string) => {
+    const wasFavorited = favoriteGalleryIds.has(galleryId);
+    setFavoriteGalleryIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorited) next.delete(galleryId);
+      else next.add(galleryId);
+      return next;
+    });
+    try {
+      if (wasFavorited) {
+        await api.unfavorite('gallery', galleryId, favoriteAsProfile);
+      } else {
+        await api.favorite('gallery', galleryId, 'public', favoriteAsProfile);
+      }
+    } catch {
+      setFavoriteGalleryIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorited) next.add(galleryId);
+        else next.delete(galleryId);
+        return next;
+      });
+    }
+  };
+
+  return (
+    <div className="layout discovery-layout">
+      <section className="panel discovery-hero">
+        <div>
+          <h1>Discover trending artwork</h1>
+          <p>
+            The most favourited and viewed artwork on Ubeeq. Follow artists to unlock higher resolution previews and
+            early-access releases.
+          </p>
+        </div>
+        <div className="discovery-hero-actions">
+          <a href="#rising-artists" className="auth-primary-btn no-underline">Browse Artists</a>
+          <a href="#latest-galleries" className="auth-secondary-btn no-underline">Latest Galleries</a>
+        </div>
+      </section>
+
+      <section id="trending">
+        <div className="discovery-section-header">
+          <h2>Trending</h2>
+          <div className="discovery-trending-filter">
+            <button className={trendingPeriod === 'hourly' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setTrendingPeriod('hourly')}>Hourly</button>
+            <button className={trendingPeriod === 'daily' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setTrendingPeriod('daily')}>Daily</button>
+            <Link className="auth-secondary-btn no-underline" to="/trending">View all</Link>
+          </div>
+          {currentUser && (
+            <div className="inline-form">
+              <label className="small">Favorite as</label>
+              <select
+                className="settings-select"
+                value={favoriteIdentity}
+                onChange={(e) => setFavoriteIdentity(e.target.value)}
+              >
+                <option value="user">User Profile</option>
+                {managedArtists.map((artist) => (
+                  <option key={`home-favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
+                    Artist: {artist.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div className="discovery-masonry">
+          {trending.map((item, i) => (
+            <article key={item.imageId} className="discovery-card">
+              <Link to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="no-underline">
+                <div className="discovery-card-media" style={{ height: masonryHeights[i % masonryHeights.length] }}>
+                  <img
+                    src={item.previewUrl}
+                    alt={item.title || 'Artwork preview'}
+                    loading={i < 2 ? 'eager' : 'lazy'}
+                    fetchPriority={i < 2 ? 'high' : (i < 6 ? 'auto' : 'low')}
+                    decoding="async"
+                  />
+                  {item.galleryVisibility !== 'free' && <span className="discovery-chip">Preview</span>}
+                </div>
+                <div className="discovery-card-body">
+                  <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
+                  <div className="discovery-card-subtitle">by {item.artistName}</div>
+                  <div className="discovery-card-stats">
+                    <span>❤ {item.favoriteCount || 0}</span>
+                    <span>👁 {(2.1 + (i % 7) * 0.2).toFixed(1)}k</span>
+                  </div>
+                </div>
+              </Link>
+              {currentUser && (
+                <div className="p-3 pt-0">
+                  <button
+                    className="auth-secondary-btn"
+                    onClick={() => void toggleImageFavorite(item.imageId)}
+                  >
+                    {favoriteImageIds.has(item.imageId) ? 'Unfavorite image' : 'Favorite image'}
+                  </button>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+        {loadingTrending && trending.length === 0 && <p className="small">Loading trending artwork...</p>}
+        {!loadingTrending && trending.length === 0 && <p className="small">No trending artwork yet.</p>}
+      </section>
+
+      <section id="latest-galleries">
+        <div className="discovery-section-header">
+          <h2>Latest Galleries</h2>
+          <a href="#trending" className="text-sm font-semibold no-underline">Browse all</a>
+        </div>
+
+        <div className="discovery-latest-grid">
+          {latestItems.map((gallery, i) => (
+            <article key={gallery.galleryId} className="discovery-latest-item">
+              <Link to={gallery.slug ? `/gallery/${gallery.slug}` : '/'} className="no-underline">
+              {(() => {
+                const layerSet = gallery.stackPreviewUrls || [];
+                const frontImage = layerSet[0] || gallery.galleryThumbnailUrl;
+                const midImage = layerSet[1] || layerSet[0] || gallery.galleryThumbnailUrl;
+                const backImage = layerSet[2] || layerSet[1] || layerSet[0] || gallery.galleryThumbnailUrl;
+                return (
+              <div className="discovery-stack">
+                <div className="discovery-stack-layer discovery-stack-layer-back">
+                  <img src={backImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                </div>
+                <div className="discovery-stack-layer discovery-stack-layer-mid">
+                  <img src={midImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                </div>
+                <div className="discovery-stack-layer discovery-stack-layer-front">
+                  <img
+                    src={frontImage}
+                    alt={gallery.title || 'Gallery cover'}
+                    loading={i < 2 ? 'eager' : 'lazy'}
+                    fetchPriority={i < 2 ? 'high' : 'low'}
+                    decoding="async"
+                  />
+                </div>
+              </div>
+                );
+              })()}
+              <div className="discovery-latest-meta">
+                <div className="discovery-card-title">{gallery.title || 'Gallery title'}</div>
+                <div className="discovery-card-subtitle">by {gallery.artistName || 'Artist Name'}</div>
+              </div>
+              </Link>
+              {currentUser && gallery.galleryId && (
+                <div className="mt-3">
+                  <button
+                    className="auth-secondary-btn"
+                    onClick={() => void toggleGalleryFavorite(gallery.galleryId)}
+                  >
+                    {favoriteGalleryIds.has(gallery.galleryId) ? 'Unfavorite gallery' : 'Favorite gallery'}
+                  </button>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+        {loadingLatest && latestItems.length === 0 && <p className="small">Loading latest galleries...</p>}
+        {!loadingLatest && latestItems.length === 0 && <p className="small">No galleries yet.</p>}
+      </section>
+
+      <section id="rising-artists">
+        <div className="discovery-section-header">
+          <h2>Rising Artists</h2>
+          <a href="#trending" className="text-sm font-semibold no-underline">View all</a>
+        </div>
+        <div className="discovery-artists-grid">
+          {risingArtists.map((artist, i) => (
+            <article key={artist.artistId || artist.name || `artist-${i}`} className="discovery-artist-card">
+              <div className="discovery-artist-avatar">
+                {artist.artistThumbnailUrl
+                  ? <img src={artist.artistThumbnailUrl} alt={artist.name || 'Artist'} loading="lazy" decoding="async" />
+                  : <span className="discovery-artist-initials">{(artist.name || 'Artist').split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')}</span>}
+              </div>
+              <div className="discovery-artist-meta">
+                <div className="discovery-card-title">
+                  {artist.slug ? <Link to={`/artists/${artist.slug}`} className="no-underline">{artist.name || 'Artist Name'}</Link> : (artist.name || 'Artist Name')}
+                </div>
+                <div className="discovery-card-subtitle">1.2k followers</div>
+              </div>
+              <button className="auth-secondary-btn" onClick={() => void toggleFollow(artist.artistId)}>
+                {artist.artistId && followedArtistIds.has(artist.artistId) ? 'Following' : 'Follow'}
+              </button>
+            </article>
+          ))}
+        </div>
+        {loadingLatest && risingArtists.length === 0 && <p className="small">Loading artists...</p>}
+        {!loadingLatest && risingArtists.length === 0 && <p className="small">No artists yet.</p>}
+      </section>
+
+      {trendingContinuation.length > 0 && (
+        <section id="trending-continuation">
+          <div className="discovery-section-header">
+            <h2>More Trending Images</h2>
+          </div>
+          <div className="discovery-masonry">
+            {trendingContinuation.map((item, i) => (
+            <article key={`more-${item.imageId}-${i}`} className="discovery-card">
+              <Link to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="no-underline">
+                  <div className="discovery-card-media" style={{ height: masonryHeights[i % masonryHeights.length] }}>
+                    <img src={item.previewUrl} alt={item.title || 'Artwork preview'} loading="lazy" decoding="async" />
+                    {item.galleryVisibility !== 'free' && <span className="discovery-chip">Preview</span>}
+                  </div>
+                  <div className="discovery-card-body">
+                    <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
+                    <div className="discovery-card-subtitle">by {item.artistName}</div>
+                    <div className="discovery-card-stats">
+                      <span>❤ {item.favoriteCount || 0}</span>
+                      <span>👁 {(2.1 + (i % 7) * 0.2).toFixed(1)}k</span>
+                    </div>
+                </div>
+              </Link>
+              {currentUser && (
+                <div className="p-3 pt-0">
+                  <button
+                    className="auth-secondary-btn"
+                    onClick={() => void toggleImageFavorite(item.imageId)}
+                  >
+                    {favoriteImageIds.has(item.imageId) ? 'Unfavorite image' : 'Favorite image'}
+                  </button>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+          <AutoLoadSentinel
+            enabled={Boolean(trendingCursor)}
+            loading={loadingMoreTrending}
+            onLoadMore={() => loadMoreTrending()}
+          />
+        </section>
+      )}
+
+      <section id="trending-collections">
+        <div className="discovery-section-header">
+          <h2>Trending Collections</h2>
+          <Link to="/collections" className="text-sm font-semibold no-underline">View all</Link>
+        </div>
+        <div className="discovery-latest-grid">
+          {trendingCollections.map((collection) => (
+            <Link key={collection.collectionId} to={`/collections/${collection.collectionId}`} className="discovery-latest-item no-underline">
+              <div className="panel">
+                <div className="discovery-card-title">{collection.title}</div>
+                <div className="discovery-card-subtitle">{collection.imageCount} images • {collection.favoriteCount} favorites</div>
+              </div>
+            </Link>
+          ))}
+        </div>
+        {loadingCollections && trendingCollections.length === 0 && <p className="small">Loading collections...</p>}
+        {!loadingCollections && trendingCollections.length === 0 && <p className="small">No public collections yet.</p>}
+      </section>
+
+      {error && (
+        <section className="panel">
+          <p className="error">Discovery data error: {error}</p>
+        </section>
+      )}
+    </div>
+  );
+}
+function GalleryPage() {
+  const { slug = '' } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentUser = getCurrentUser();
+  const [gallery, setGallery] = useState<Gallery | null>(null);
+  const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
+  const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
+  const [favoriteGallerySelected, setFavoriteGallerySelected] = useState(false);
+  const [favoriteImageIds, setFavoriteImageIds] = useState<Set<string>>(new Set());
+  const [profileCollections, setProfileCollections] = useState<ManagedCollection[]>([]);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>('');
+  const [commentIdentity, setCommentIdentity] = useState<string>('user');
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentBody, setCommentBody] = useState('');
+  const [password, setPassword] = useState('');
+  const [unlockToken, setUnlockToken] = useState<string>('');
+  const [rememberToken, setRememberToken] = useState<string>(() => getStoredGalleryAccessToken(slug) || '');
+  const [hasPremiumAccess, setHasPremiumAccess] = useState(false);
+  const [teaserLimit, setTeaserLimit] = useState(9);
+  const [premiumImages, setPremiumImages] = useState<Array<{ imageId: string; assetType: 'image' | 'video'; premiumUrl: string; premiumPosterUrl?: string }>>([]);
+  const [error, setError] = useState<string>('');
+
+  const load = async () => {
+    try {
+      const stored = getStoredGalleryAccessToken(slug);
+      if (stored && stored !== rememberToken) {
+        setRememberToken(stored);
+      }
+      const [galleryData, commentData] = await Promise.all([api.getGallery(slug, stored || rememberToken), api.getGalleryComments(slug)]);
+      setGallery(galleryData);
+      setComments(commentData);
+      const serverAccess = galleryData.visibility !== 'premium' ? Boolean(galleryData.hasAccess ?? true) : Boolean(galleryData.hasAccess);
+      setHasPremiumAccess(serverAccess);
+      if (galleryData.visibility === 'premium' && serverAccess) {
+        try {
+          if (stored || rememberToken) {
+            const premium = await api.getPremiumImagesWithRemember(slug, stored || rememberToken);
+            setPremiumImages(premium);
+          } else {
+            const premium = await api.getPremiumImages(slug, unlockToken);
+            setPremiumImages(premium);
+          }
+        } catch {
+          setPremiumImages([]);
+          setHasPremiumAccess(false);
+        }
+      } else {
+        setPremiumImages([]);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  useEffect(() => {
+    setUnlockToken('');
+    setPremiumImages([]);
+    setHasPremiumAccess(false);
+    setRememberToken(getStoredGalleryAccessToken(slug) || '');
   }, [slug]);
+
+  useEffect(() => {
+    const applyLimit = () => {
+      const width = window.innerWidth;
+      if (width >= 1280) setTeaserLimit(9);
+      else if (width >= 768) setTeaserLimit(6);
+      else setTeaserLimit(3);
+    };
+    applyLimit();
+    window.addEventListener('resize', applyLimit);
+    return () => window.removeEventListener('resize', applyLimit);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [slug, rememberToken]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setManagedArtists([]);
+      setCommentIdentity('user');
+      setFavoriteIdentity('user');
+      setFavoriteGallerySelected(false);
+      setFavoriteImageIds(new Set());
+      setProfileCollections([]);
+      return;
+    }
+    const loadArtists = async () => {
+      try {
+        const myArtists = await api.getMyArtists() as ManagedArtist[];
+        setManagedArtists(myArtists);
+      } catch {
+        setManagedArtists([]);
+      }
+    };
+    void loadArtists();
+  }, [currentUser?.username]);
+
+  const favoriteAsProfile = favoriteIdentity.startsWith('artist:')
+    ? { ownerProfileType: 'artist' as const, ownerProfileId: favoriteIdentity.slice('artist:'.length) }
+    : { ownerProfileType: 'user' as const };
+
+  useEffect(() => {
+    const loadFavoritesAndCollections = async () => {
+      if (!currentUser || !gallery) return;
+      try {
+        const [favorites, collections] = await Promise.all([
+          api.myFavorites(favoriteAsProfile) as Promise<ManagedFavorite[]>,
+          api.myCollections(favoriteAsProfile) as Promise<ManagedCollection[]>
+        ]);
+        setFavoriteGallerySelected((favorites || []).some((item) => item.targetType === 'gallery' && item.targetId === gallery.galleryId));
+        setFavoriteImageIds(new Set((favorites || []).filter((item) => item.targetType === 'image').map((item) => item.targetId)));
+        setProfileCollections(collections || []);
+      } catch {
+        setFavoriteGallerySelected(false);
+        setFavoriteImageIds(new Set());
+        setProfileCollections([]);
+      }
+    };
+    void loadFavoritesAndCollections();
+  }, [currentUser?.username, favoriteIdentity, gallery?.galleryId]);
 
   const submitComment = async () => {
     try {
-      await api.postGalleryComment(slug, commentBody);
+      if (commentIdentity.startsWith('artist:')) {
+        await api.postGalleryCommentAsProfile(slug, commentBody, {
+          authorProfileType: 'artist',
+          authorProfileId: commentIdentity.slice('artist:'.length)
+        });
+      } else {
+        await api.postGalleryCommentAsProfile(slug, commentBody, { authorProfileType: 'user' });
+      }
       setCommentBody('');
       await load();
     } catch (e) {
@@ -275,8 +1782,14 @@ function GalleryPage() {
     try {
       const response = await api.unlockGallery(slug, password);
       setUnlockToken(response.unlockToken);
+      if (response.rememberToken) {
+        setRememberToken(response.rememberToken);
+        setStoredGalleryAccessToken(slug, response.rememberToken, response.rememberExpiresInSeconds || 60 * 60 * 24 * 30);
+      }
       const premium = await api.getPremiumImages(slug, response.unlockToken);
       setPremiumImages(premium);
+      setHasPremiumAccess(true);
+      await load();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -284,9 +1797,53 @@ function GalleryPage() {
 
   const favoriteGallery = async () => {
     if (!gallery) return;
+    const wasFavorited = favoriteGallerySelected;
+    setFavoriteGallerySelected(!wasFavorited);
+    setGallery((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? -1 : 1)) } : prev);
     try {
-      await api.favorite('gallery', gallery.galleryId);
-      await load();
+      if (wasFavorited) await api.unfavorite('gallery', gallery.galleryId, favoriteAsProfile);
+      else await api.favorite('gallery', gallery.galleryId, 'public', favoriteAsProfile);
+    } catch (e) {
+      setFavoriteGallerySelected(wasFavorited);
+      setGallery((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? 1 : -1)) } : prev);
+      setError((e as Error).message);
+    }
+  };
+
+  const toggleImageFavorite = async (imageId: string) => {
+    const wasFavorited = favoriteImageIds.has(imageId);
+    setFavoriteImageIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorited) next.delete(imageId);
+      else next.add(imageId);
+      return next;
+    });
+    setGallery((prev) => prev ? ({
+      ...prev,
+      media: prev.media.map((item) => item.imageId === imageId ? { ...item, favoriteCount: Math.max(0, item.favoriteCount + (wasFavorited ? -1 : 1)) } : item)
+    }) : prev);
+    try {
+      if (wasFavorited) await api.unfavorite('image', imageId, favoriteAsProfile);
+      else await api.favorite('image', imageId, 'public', favoriteAsProfile);
+    } catch (e) {
+      setFavoriteImageIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorited) next.add(imageId);
+        else next.delete(imageId);
+        return next;
+      });
+      setGallery((prev) => prev ? ({
+        ...prev,
+        media: prev.media.map((item) => item.imageId === imageId ? { ...item, favoriteCount: Math.max(0, item.favoriteCount + (wasFavorited ? 1 : -1)) } : item)
+      }) : prev);
+      setError((e as Error).message);
+    }
+  };
+
+  const addImageToCollection = async (imageId: string) => {
+    try {
+      if (!selectedCollectionId) throw new Error('Select a collection first');
+      await api.addImageToCollection(selectedCollectionId, imageId);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -294,26 +1851,152 @@ function GalleryPage() {
 
   if (!gallery) return <div className="layout">Loading...</div>;
 
+  const setFocusedImage = (imageId?: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (imageId) next.set('image', imageId);
+    else next.delete('image');
+    setSearchParams(next, { replace: true });
+  };
+  const focusedImageId = searchParams.get('image') || '';
+  const mediaItems = gallery.media || [];
+  const focusedIndex = focusedImageId ? mediaItems.findIndex((item) => item.imageId === focusedImageId) : -1;
+  const resolvedFocusedIndex = focusedIndex >= 0 ? focusedIndex : (mediaItems.length ? 0 : -1);
+  const focusedMedia = resolvedFocusedIndex >= 0 ? mediaItems[resolvedFocusedIndex] : null;
+  const previousMedia = resolvedFocusedIndex > 0 ? mediaItems[resolvedFocusedIndex - 1] : null;
+  const nextMedia = resolvedFocusedIndex >= 0 && resolvedFocusedIndex < mediaItems.length - 1 ? mediaItems[resolvedFocusedIndex + 1] : null;
+
   return (
     <div className="layout">
       <Link to="/">Back</Link>
       <h1>{gallery.title}</h1>
-      <button onClick={favoriteGallery}>Favorite Gallery ({gallery.favoriteCount})</button>
+      {currentUser && (
+        <div className="inline-form">
+          <label className="small">Favorite as</label>
+          <select
+            className="settings-select"
+            value={favoriteIdentity}
+            onChange={(e) => setFavoriteIdentity(e.target.value)}
+          >
+            <option value="user">User Profile</option>
+                {managedArtists.map((artist) => (
+                  <option key={`favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
+                    Artist: {artist.name}
+                  </option>
+                ))}
+              </select>
+              <label className="small">Add to collection</label>
+              <select
+                className="settings-select"
+                value={selectedCollectionId}
+                onChange={(e) => setSelectedCollectionId(e.target.value)}
+              >
+                <option value="">Select collection</option>
+                {profileCollections.map((item) => (
+                  <option key={`gallery-collection-${item.collectionId}`} value={item.collectionId}>
+                    {item.title}
+                  </option>
+                ))}
+              </select>
+        </div>
+      )}
+      {gallery.coverPreviewUrl && (
+        <img
+          src={gallery.coverPreviewUrl}
+          alt={`${gallery.title} cover`}
+          className={gallery.coverBlur ? 'blur-md' : ''}
+          style={{ maxHeight: '320px', width: '100%', objectFit: 'cover', borderRadius: '0.75rem' }}
+        />
+      )}
+      <button onClick={favoriteGallery}>
+        {favoriteGallerySelected ? 'Unfavorite Gallery' : 'Favorite Gallery'} ({gallery.favoriteCount})
+      </button>
+      {focusedMedia && (
+        <section className="panel">
+          <div className="discovery-section-header">
+            <h2>Focused View</h2>
+            <div className="inline-form">
+              <button disabled={!previousMedia} onClick={() => setFocusedImage(previousMedia?.imageId)}>Previous</button>
+              <button disabled={!nextMedia} onClick={() => setFocusedImage(nextMedia?.imageId)}>Next</button>
+            </div>
+          </div>
+          {focusedMedia.assetType === 'video'
+            ? <video controls poster={focusedMedia.previewPosterUrl} style={{ width: '100%', maxHeight: '70vh', borderRadius: '0.75rem', background: '#000' }}><source src={focusedMedia.previewUrl} /></video>
+            : (
+              <img
+                src={focusedMedia.thumbnailUrls?.w1280 || focusedMedia.thumbnailUrls?.w640 || focusedMedia.previewUrl}
+                srcSet={[
+                  focusedMedia.thumbnailUrls?.w320 ? `${focusedMedia.thumbnailUrls.w320} 320w` : '',
+                  focusedMedia.thumbnailUrls?.w640 ? `${focusedMedia.thumbnailUrls.w640} 640w` : '',
+                  focusedMedia.thumbnailUrls?.w1280 ? `${focusedMedia.thumbnailUrls.w1280} 1280w` : '',
+                  focusedMedia.thumbnailUrls?.w1920 ? `${focusedMedia.thumbnailUrls.w1920} 1920w` : ''
+                ].filter(Boolean).join(', ')}
+                sizes="100vw"
+                alt={focusedMedia.imageId}
+                style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: '0.75rem', background: '#111827' }}
+              />
+            )}
+          <p className="small">Item {resolvedFocusedIndex + 1} of {mediaItems.length}</p>
+        </section>
+      )}
       <h2>Preview Media</h2>
       <div className="grid three">
         {gallery.media.map((image) => (
           <article key={image.imageId} className="image-card">
-            {image.assetType === 'video' ? <video controls poster={image.previewPosterUrl}><source src={image.previewUrl} /></video> : <img src={image.previewUrl} alt="Preview" />}
+            {image.assetType === 'video'
+              ? <video controls poster={image.previewPosterUrl}><source src={image.previewUrl} /></video>
+              : (
+                <img
+                  src={image.thumbnailUrls?.w640 || image.thumbnailUrls?.w320 || image.previewUrl}
+                  srcSet={[
+                    image.thumbnailUrls?.w320 ? `${image.thumbnailUrls.w320} 320w` : '',
+                    image.thumbnailUrls?.w640 ? `${image.thumbnailUrls.w640} 640w` : '',
+                    image.thumbnailUrls?.w1280 ? `${image.thumbnailUrls.w1280} 1280w` : ''
+                  ].filter(Boolean).join(', ')}
+                  sizes="(max-width: 768px) 100vw, 33vw"
+                  alt="Preview"
+                  loading="lazy"
+                />
+              )}
+            <button onClick={() => setFocusedImage(image.imageId)}>
+              {focusedImageId === image.imageId ? 'Viewing' : 'View Focus'}
+            </button>
             <small>Likes: {image.favoriteCount}</small>
-            <button onClick={() => api.favorite('image', image.imageId)}>Favorite Image</button>
+            <div className="inline-form">
+              <button onClick={() => void toggleImageFavorite(image.imageId)}>
+                {favoriteImageIds.has(image.imageId) ? 'Unfavorite Image' : 'Favorite Image'}
+              </button>
+              {selectedCollectionId && (
+                <button onClick={() => void addImageToCollection(image.imageId)}>Add to Collection</button>
+              )}
+            </div>
           </article>
         ))}
       </div>
 
+      {gallery.visibility === 'preview' && !gallery.hasAccess && (
+        <section>
+          <h2>Premium Preview</h2>
+          <div className="premium-preview-cta">
+            <a href={gallery.purchaseUrl || '#'} target="_blank" rel="noreferrer" className="inline-block rounded-xl bg-black/80 px-8 py-4 text-white no-underline">
+              Purchase Premium Access
+            </a>
+          </div>
+          <div className="relative">
+            <div className="grid three">
+              {(gallery.premiumTeaserMedia || []).slice(0, teaserLimit).map((item) => (
+                item.assetType === 'video'
+                  ? <video key={item.imageId} controls={false} poster={item.previewPosterUrl} className="blur-sm"><source src={item.previewUrl} /></video>
+                  : <img key={item.imageId} src={item.previewUrl} alt="Premium teaser" className="blur-sm" />
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
       {gallery.visibility === 'premium' && (
         <section>
           <h2>Premium Content</h2>
-          {!unlockToken && (
+          {!hasPremiumAccess && (
             <div className="inline-form">
               <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter gallery password" />
               <button onClick={unlock}>Unlock</button>
@@ -332,6 +2015,20 @@ function GalleryPage() {
       <section>
         <h2>Comments</h2>
         <div className="inline-form">
+          {currentUser && (
+            <select
+              className="settings-select"
+              value={commentIdentity}
+              onChange={(e) => setCommentIdentity(e.target.value)}
+            >
+              <option value="user">Comment as User</option>
+              {managedArtists.map((artist) => (
+                <option key={artist.artistId} value={`artist:${artist.artistId}`}>
+                  Comment as {artist.name}
+                </option>
+              ))}
+            </select>
+          )}
           <input value={commentBody} onChange={(e) => setCommentBody(e.target.value)} placeholder="Add a comment" />
           <button onClick={submitComment}>Post</button>
         </div>
@@ -349,22 +2046,553 @@ function GalleryPage() {
   );
 }
 
+function CollectionsPage() {
+  const [items, setItems] = useState<CollectionSummary[]>([]);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [order, setOrder] = useState<'random' | 'latest' | 'popular'>('random');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const dailySeed = new Date().toISOString().slice(0, 10);
+
+  const loadMore = async (reset = false) => {
+    try {
+      setLoading(true);
+      setError('');
+      const response = await api.getCollections(reset ? undefined : cursor, 24, { order, seed: dailySeed }) as { items: CollectionSummary[]; nextCursor?: string };
+      setItems((prev) => reset ? (response.items || []) : [...prev, ...(response.items || [])]);
+      setCursor(response.nextCursor);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadMore(true);
+  }, [order, dailySeed]);
+
+  return (
+    <div className="layout">
+      <div className="discovery-section-header">
+        <h1>All Collections</h1>
+        <div className="discovery-trending-filter">
+          <button className={order === 'random' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setOrder('random')}>Random</button>
+          <button className={order === 'popular' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setOrder('popular')}>Popular</button>
+          <button className={order === 'latest' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setOrder('latest')}>Latest</button>
+        </div>
+      </div>
+      <div className="discovery-latest-grid">
+        {items.map((item) => (
+          <Link key={item.collectionId} to={`/collections/${item.collectionId}`} className="discovery-latest-item no-underline">
+            <div className="discovery-stack">
+              <div className="discovery-stack-layer discovery-stack-layer-back"><div className="discovery-swatch" /></div>
+              <div className="discovery-stack-layer discovery-stack-layer-mid"><div className="discovery-swatch" /></div>
+              <div className="discovery-stack-layer discovery-stack-layer-front"><div className="discovery-swatch" /></div>
+            </div>
+            <div className="discovery-latest-meta">
+              <div className="discovery-card-title">{item.title}</div>
+              <div className="discovery-card-subtitle">{item.imageCount} images • {item.favoriteCount} favorites</div>
+            </div>
+          </Link>
+        ))}
+      </div>
+      <AutoLoadSentinel enabled={Boolean(cursor)} loading={loading} onLoadMore={() => loadMore(false)} />
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+function CollectionDetailPage() {
+  const { collectionId = '' } = useParams();
+  const currentUser = getCurrentUser();
+  const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
+  const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
+  const [isFavorited, setIsFavorited] = useState(false);
+  const [collection, setCollection] = useState<(CollectionSummary & { imageIds?: string[] }) | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setError('');
+        const result = await api.getCollection(collectionId) as CollectionSummary & { imageIds?: string[] };
+        setCollection(result);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    };
+    void load();
+  }, [collectionId]);
+
+  useEffect(() => {
+    if (!currentUser) {
+      setManagedArtists([]);
+      setFavoriteIdentity('user');
+      return;
+    }
+    const loadArtists = async () => {
+      try {
+        const artists = await api.getMyArtists() as ManagedArtist[];
+        setManagedArtists(artists);
+      } catch {
+        setManagedArtists([]);
+      }
+    };
+    void loadArtists();
+  }, [currentUser?.username]);
+
+  const favoriteAsProfile = favoriteIdentity.startsWith('artist:')
+    ? { ownerProfileType: 'artist' as const, ownerProfileId: favoriteIdentity.slice('artist:'.length) }
+    : { ownerProfileType: 'user' as const };
+
+  useEffect(() => {
+    const loadFavoriteState = async () => {
+      if (!currentUser || !collection) {
+        setIsFavorited(false);
+        return;
+      }
+      try {
+        const favorites = await api.myFavorites(favoriteAsProfile) as ManagedFavorite[];
+        setIsFavorited((favorites || []).some((item) => item.targetType === 'collection' && item.targetId === collection.collectionId));
+      } catch {
+        setIsFavorited(false);
+      }
+    };
+    void loadFavoriteState();
+  }, [currentUser?.username, favoriteIdentity, collection?.collectionId]);
+
+  const toggleCollectionFavorite = async () => {
+    if (!collection) return;
+    const wasFavorited = isFavorited;
+    setIsFavorited(!wasFavorited);
+    setCollection((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? -1 : 1)) } : prev);
+    try {
+      if (wasFavorited) await api.unfavorite('collection', collection.collectionId, favoriteAsProfile);
+      else await api.favorite('collection', collection.collectionId, 'public', favoriteAsProfile);
+    } catch (e) {
+      setIsFavorited(wasFavorited);
+      setCollection((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? 1 : -1)) } : prev);
+      setError((e as Error).message);
+    }
+  };
+
+  if (!collection) return <div className="layout">Loading...</div>;
+
+  return (
+    <div className="layout">
+      <Link to="/collections">Back to collections</Link>
+      <h1>{collection.title}</h1>
+      <p>{collection.description || 'No description yet.'}</p>
+      <p className="small">{collection.imageCount} images • {collection.favoriteCount} favorites</p>
+      {currentUser && (
+        <div className="inline-form">
+          <label className="small">Favorite as</label>
+          <select
+            className="settings-select"
+            value={favoriteIdentity}
+            onChange={(e) => setFavoriteIdentity(e.target.value)}
+          >
+            <option value="user">User Profile</option>
+            {managedArtists.map((artist) => (
+              <option key={`favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
+                Artist: {artist.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      <button
+        onClick={() => void toggleCollectionFavorite()}
+      >
+        {isFavorited ? 'Unfavorite Collection' : 'Favorite Collection'}
+      </button>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+function TrendingPage() {
+  const currentUser = getCurrentUser();
+  const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
+  const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
+  const [favoriteImageIds, setFavoriteImageIds] = useState<Set<string>>(new Set());
+  const [period, setPeriod] = useState<'hourly' | 'daily'>('daily');
+  const [items, setItems] = useState<TrendingImage[]>([]);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
+  const masonryHeights = [220, 260, 300, 340, 380];
+
+  const loadTrending = async (append = false) => {
+    try {
+      setLoading(true);
+      setError('');
+      const response = await api.getTrendingImages(period, append ? cursor : undefined, 36) as { items: TrendingImage[]; nextCursor?: string };
+      setItems((prev) => append ? [...prev, ...(response.items || [])] : (response.items || []));
+      setCursor(response.nextCursor);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTrending(false);
+  }, [period]);
+
+  useEffect(() => {
+    const loadArtists = async () => {
+      if (!currentUser) {
+        setManagedArtists([]);
+        return;
+      }
+      try {
+        const myArtists = await api.getMyArtists() as ManagedArtist[];
+        setManagedArtists(myArtists || []);
+      } catch {
+        setManagedArtists([]);
+      }
+    };
+    void loadArtists();
+  }, [currentUser?.username]);
+
+  const favoriteAsProfile = favoriteIdentity.startsWith('artist:')
+    ? { ownerProfileType: 'artist' as const, ownerProfileId: favoriteIdentity.slice('artist:'.length) }
+    : { ownerProfileType: 'user' as const };
+
+  useEffect(() => {
+    const loadFavorites = async () => {
+      if (!currentUser) {
+        setFavoriteImageIds(new Set());
+        return;
+      }
+      try {
+        const favorites = await api.myFavorites(favoriteAsProfile) as ManagedFavorite[];
+        setFavoriteImageIds(new Set(favorites.filter((item) => item.targetType === 'image').map((item) => item.targetId)));
+      } catch {
+        setFavoriteImageIds(new Set());
+      }
+    };
+    void loadFavorites();
+  }, [currentUser?.username, favoriteIdentity]);
+
+  const toggleImageFavorite = async (imageId: string) => {
+    const wasFavorited = favoriteImageIds.has(imageId);
+    setFavoriteImageIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorited) next.delete(imageId);
+      else next.add(imageId);
+      return next;
+    });
+    setItems((prev) => prev.map((item) => (
+      item.imageId === imageId
+        ? { ...item, favoriteCount: Math.max(0, (item.favoriteCount || 0) + (wasFavorited ? -1 : 1)) }
+        : item
+    )));
+    try {
+      if (wasFavorited) {
+        await api.unfavorite('image', imageId, favoriteAsProfile);
+      } else {
+        await api.favorite('image', imageId, 'public', favoriteAsProfile);
+      }
+    } catch {
+      setFavoriteImageIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorited) next.add(imageId);
+        else next.delete(imageId);
+        return next;
+      });
+      setItems((prev) => prev.map((item) => (
+        item.imageId === imageId
+          ? { ...item, favoriteCount: Math.max(0, (item.favoriteCount || 0) + (wasFavorited ? 1 : -1)) }
+          : item
+      )));
+    }
+  };
+
+  return (
+    <div className="layout discovery-layout">
+      <section className="discovery-section-header">
+        <h1>Trending Images</h1>
+        <div className="discovery-trending-filter">
+          <button className={period === 'hourly' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setPeriod('hourly')}>Hourly</button>
+          <button className={period === 'daily' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setPeriod('daily')}>Daily</button>
+        </div>
+        {currentUser && (
+          <div className="inline-form">
+            <label className="small">Favorite as</label>
+            <select
+              className="settings-select"
+              value={favoriteIdentity}
+              onChange={(e) => setFavoriteIdentity(e.target.value)}
+            >
+              <option value="user">User Profile</option>
+              {managedArtists.map((artist) => (
+                <option key={`trending-favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
+                  Artist: {artist.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </section>
+      <div className="discovery-masonry">
+        {items.map((item, i) => (
+          <article key={item.imageId} className="discovery-card">
+            <Link to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="no-underline">
+              <div className="discovery-card-media" style={{ height: masonryHeights[i % masonryHeights.length] }}>
+                {item.previewUrl
+                  ? <img src={item.previewUrl} alt={item.title || 'Artwork preview'} loading="lazy" />
+                  : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length] }} />}
+                {item.galleryVisibility !== 'free' && <span className="discovery-chip">Preview</span>}
+              </div>
+              <div className="discovery-card-body">
+                <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
+                <div className="discovery-card-subtitle">by {item.artistName}</div>
+                <div className="discovery-card-stats">
+                  <span>❤ {item.favoriteCount || 0}</span>
+                  <span>👁 {(2.1 + (i % 7) * 0.2).toFixed(1)}k</span>
+                </div>
+              </div>
+            </Link>
+            {currentUser && (
+              <div className="p-3 pt-0">
+                <button
+                  className="auth-secondary-btn"
+                  onClick={() => void toggleImageFavorite(item.imageId)}
+                >
+                  {favoriteImageIds.has(item.imageId) ? 'Unfavorite image' : 'Favorite image'}
+                </button>
+              </div>
+            )}
+          </article>
+        ))}
+      </div>
+      <AutoLoadSentinel enabled={Boolean(cursor)} loading={loading} onLoadMore={() => loadTrending(true)} />
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+function ArtistProfilePage() {
+  const { slug = '' } = useParams();
+  const [profile, setProfile] = useState<ArtistProfilePayload | null>(null);
+  const [period, setPeriod] = useState<'hourly' | 'daily'>('daily');
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [trending, setTrending] = useState<TrendingImage[]>([]);
+  const [trendingLoading, setTrendingLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
+
+  const loadProfile = async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const response = await api.getArtistProfile(slug) as ArtistProfilePayload;
+      setProfile(response);
+      setTrending(response.trendingImages || []);
+      setCursor(undefined);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadTrending = async (append = false) => {
+    try {
+      setTrendingLoading(true);
+      setError('');
+      const response = await api.getArtistTrendingImages(slug, period, append ? cursor : undefined, 18) as { items: TrendingImage[]; nextCursor?: string };
+      setTrending((prev) => append ? [...prev, ...(response.items || [])] : (response.items || []));
+      setCursor(response.nextCursor);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setTrendingLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadProfile();
+  }, [slug]);
+
+  useEffect(() => {
+    if (!profile) return;
+    void loadTrending(false);
+  }, [period, slug, profile?.artistId]);
+
+  if (loading && !profile) return <div className="layout">Loading...</div>;
+  if (!profile) return <div className="layout">{error || 'Artist not found'}</div>;
+
+  return (
+    <div className="layout discovery-layout">
+      <section className="panel discovery-hero">
+        <div>
+          <h1>{profile.name}</h1>
+          <p>{profile.followerCount} followers • {profile.galleryCount} galleries • {profile.imageCount} images</p>
+        </div>
+        <div className="discovery-hero-actions">
+          <button className="auth-primary-btn">Follow artist</button>
+          <Link className="auth-secondary-btn no-underline" to="/">Back to discovery</Link>
+        </div>
+      </section>
+
+      <section>
+        <div className="discovery-section-header">
+          <h2>Trending from {profile.name}</h2>
+          <div className="discovery-trending-filter">
+            <button className={period === 'hourly' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setPeriod('hourly')}>Hourly</button>
+            <button className={period === 'daily' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setPeriod('daily')}>Daily</button>
+          </div>
+        </div>
+        <div className="discovery-three-rows-grid">
+          {(trending || []).slice(0, 18).map((item, i) => (
+            <Link key={item.imageId} to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="discovery-small-card no-underline">
+              {item.previewUrl
+                ? <img src={item.previewUrl} alt={item.title || 'Artwork preview'} loading="lazy" />
+                : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length], height: 160 }} />}
+              <div className="discovery-small-card-body">
+                <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
+              </div>
+            </Link>
+          ))}
+        </div>
+        <AutoLoadSentinel enabled={Boolean(cursor)} loading={trendingLoading} onLoadMore={() => loadTrending(true)} />
+      </section>
+
+      <section>
+        <div className="discovery-section-header">
+          <h2>Latest Galleries</h2>
+        </div>
+        <div className="discovery-scroll-row">
+          {(profile.galleries || []).map((gallery, i) => (
+            <Link key={gallery.galleryId} to={`/gallery/${gallery.slug}`} className="discovery-row-card no-underline">
+              {gallery.galleryThumbnailUrl
+                ? <img src={gallery.galleryThumbnailUrl} alt={gallery.title} loading="lazy" />
+                : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length], height: 160 }} />}
+              <div className="discovery-small-card-body">
+                <div className="discovery-card-title">{gallery.title}</div>
+                <div className="discovery-card-subtitle">{gallery.imageCount} images • ❤ {gallery.favoriteCount}</div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <div className="discovery-section-header">
+          <h2>Public Favorites</h2>
+        </div>
+        <div className="panel artist-public-grid">
+          <article>
+            <h3>Images</h3>
+            <ul>
+              {profile.publicFavoritesByType.images.length
+                ? profile.publicFavoritesByType.images.slice(0, 6).map((item) => (
+                  <li key={`fav-img-${item.targetId}`}>
+                    {item.previewUrl && <img src={item.previewUrl} alt={item.title || item.targetId} className="artist-favorite-thumb" />}
+                    <span>{item.title || item.targetId}</span>
+                  </li>
+                ))
+                : <li className="small">No public image favorites yet.</li>}
+            </ul>
+          </article>
+          <article>
+            <h3>Galleries</h3>
+            <ul>
+              {profile.publicFavoritesByType.galleries.length
+                ? profile.publicFavoritesByType.galleries.slice(0, 6).map((item) => (
+                  <li key={`fav-gal-${item.targetId}`}>
+                    {item.galleryThumbnailUrl && <img src={item.galleryThumbnailUrl} alt={item.title || item.targetId} className="artist-favorite-thumb" />}
+                    {item.slug
+                      ? <Link to={`/gallery/${item.slug}`} className="no-underline">{item.title || item.targetId}</Link>
+                      : <span>{item.title || item.targetId}</span>}
+                  </li>
+                ))
+                : <li className="small">No public gallery favorites yet.</li>}
+            </ul>
+          </article>
+          <article>
+            <h3>Collections</h3>
+            <ul>
+              {profile.publicFavoritesByType.collections.length
+                ? profile.publicFavoritesByType.collections.slice(0, 6).map((item) => <li key={`fav-col-${item.targetId}`}>{item.title || item.targetId}</li>)
+                : <li className="small">No public collection favorites yet.</li>}
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <div className="discovery-section-header">
+          <h2>Public Collections</h2>
+        </div>
+        <div className="discovery-latest-grid">
+          {profile.publicCollections.length ? profile.publicCollections.map((collection) => (
+            <article key={collection.collectionId} className="discovery-latest-item">
+              <div className="panel">
+                <div className="discovery-card-title">{collection.title}</div>
+                <div className="discovery-card-subtitle">{collection.imageCount} images • ❤ {collection.favoriteCount}</div>
+                {collection.description && <p className="small">{collection.description}</p>}
+              </div>
+            </article>
+          )) : (
+            <div className="panel"><p className="small">No public collections yet.</p></div>
+          )}
+        </div>
+      </section>
+
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState<CurrentUser>(() => getCurrentUser());
+  const [myProfile, setMyProfile] = useState<UserProfile | null>(null);
+  const [settings, setSettings] = useState<SiteSettings>({ siteName: 'Ubeeq', theme: 'ubeeq' });
 
   const handleSignOut = async () => {
     await signOut();
     setUser(null);
+    setMyProfile(null);
   };
 
+  useEffect(() => {
+    api.getSiteSettings().then((data) => setSettings(data)).catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user) return;
+    api.getMyProfile()
+      .then((profile) => {
+        if (!cancelled) setMyProfile(profile as UserProfile);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.username]);
+
   return (
-    <>
-      <HeaderAuth user={user} onSignOut={handleSignOut} />
+    <div className="app-shell" data-theme={settings.theme || 'ubeeq'}>
+      <HeaderAuth user={user} onSignOut={handleSignOut} settings={settings} profile={myProfile} />
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/trending" element={<TrendingPage />} />
+        <Route path="/artists/:slug" element={<ArtistProfilePage />} />
         <Route path="/gallery/:slug" element={<GalleryPage />} />
+        <Route path="/collections" element={<CollectionsPage />} />
+        <Route path="/collections/:collectionId" element={<CollectionDetailPage />} />
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
+        <Route path="/settings" element={<SettingsPage user={user} onProfileChanged={setMyProfile} />} />
       </Routes>
-    </>
+    </div>
   );
 }

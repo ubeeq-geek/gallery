@@ -10,11 +10,34 @@ import {
   type CurrentUser
 } from './cognitoAuth';
 
-type View = 'artists' | 'galleries' | 'media' | 'moderation' | 'users';
+type View = 'artists' | 'galleries' | 'media' | 'settings' | 'moderation' | 'users';
 
 type Artist = { artistId: string; name: string; slug: string; status: 'active' | 'inactive'; sortOrder: number };
-type Gallery = { galleryId: string; artistId: string; artistSlug?: string; title: string; slug: string; visibility: 'free' | 'premium'; status: 'draft' | 'published' };
-type Media = { imageId: string; galleryId: string; sortOrder: number; assetType?: 'image' | 'video'; previewKey: string; premiumKey?: string };
+type Gallery = {
+  galleryId: string;
+  artistId: string;
+  artistSlug?: string;
+  title: string;
+  slug: string;
+  coverImageId?: string;
+  pairedPremiumGalleryId?: string;
+  purchaseUrl?: string;
+  visibility: 'free' | 'preview' | 'premium';
+  status: 'draft' | 'published'
+};
+type Media = {
+  imageId: string;
+  galleryId: string;
+  sortOrder: number;
+  assetType?: 'image' | 'video';
+  title?: string;
+  slug?: string;
+  originalFilename?: string;
+  squareCrop?: { x: number; y: number; size: number };
+  previewKey: string;
+  premiumKey?: string;
+};
+type SiteSettings = { siteName: string; theme: 'ubeeq' | 'sand' | 'forest' | 'slate'; logoKey?: string; logoUrl?: string };
 
 type AuthMode = 'signin' | 'forgot' | 'reset' | 'initial' | 'change';
 
@@ -42,6 +65,7 @@ const views: Array<{ id: View; label: string }> = [
   { id: 'artists', label: 'Artists' },
   { id: 'galleries', label: 'Galleries' },
   { id: 'media', label: 'Media' },
+  { id: 'settings', label: 'Site Settings' },
   { id: 'moderation', label: 'Moderation' },
   { id: 'users', label: 'Users' }
 ];
@@ -53,10 +77,12 @@ export function AdminApp() {
   const [media, setMedia] = useState<Media[]>([]);
 
   const [artistForm, setArtistForm] = useState({ name: '', slug: '', sortOrder: 1 });
-  const [galleryForm, setGalleryForm] = useState({ artistId: '', artistSlug: '', title: '', slug: '', visibility: 'free', premiumPassword: '' });
+  const [galleryForm, setGalleryForm] = useState({ artistId: '', artistSlug: '', title: '', slug: '', coverImageId: '', pairedPremiumGalleryId: '', purchaseUrl: '', visibility: 'free', premiumPassword: '' });
   const [mediaForm, setMediaForm] = useState({
     galleryId: '',
     assetType: 'image',
+    title: '',
+    originalFilename: '',
     previewKey: '',
     premiumKey: '',
     previewPosterKey: '',
@@ -64,7 +90,10 @@ export function AdminApp() {
     width: 1600,
     height: 1067,
     durationSeconds: 0,
-    sortOrder: 1
+    sortOrder: 1,
+    cropX: 0,
+    cropY: 0,
+    cropSize: 512
   });
   const [editingArtistId, setEditingArtistId] = useState<string | null>(null);
   const [editingGalleryId, setEditingGalleryId] = useState<string | null>(null);
@@ -75,6 +104,9 @@ export function AdminApp() {
     artistSlug: '',
     title: '',
     slug: '',
+    coverImageId: '',
+    pairedPremiumGalleryId: '',
+    purchaseUrl: '',
     visibility: 'free',
     status: 'published',
     premiumPassword: ''
@@ -83,6 +115,8 @@ export function AdminApp() {
     galleryId: '',
     imageId: '',
     assetType: 'image',
+    title: '',
+    originalFilename: '',
     previewKey: '',
     premiumKey: '',
     previewPosterKey: '',
@@ -90,7 +124,10 @@ export function AdminApp() {
     width: 0,
     height: 0,
     durationSeconds: 0,
-    sortOrder: 0
+    sortOrder: 0,
+    cropX: 0,
+    cropY: 0,
+    cropSize: 512
   });
 
   const [mediaGalleryId, setMediaGalleryId] = useState('');
@@ -98,6 +135,8 @@ export function AdminApp() {
   const [blockUserId, setBlockUserId] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>({ siteName: 'Ubeeq', theme: 'ubeeq' });
 
   const [authMode, setAuthMode] = useState<AuthMode>('signin');
   const [user, setUser] = useState<CurrentUser>(() => getCurrentUser());
@@ -114,6 +153,7 @@ export function AdminApp() {
   const canManageContent = Boolean(isAdmin || isArtist);
   const visibleViews = useMemo(
     () => views.filter((item) => {
+      if (item.id === 'settings') return Boolean(isAdmin);
       if (item.id === 'galleries' || item.id === 'media') return canManageContent;
       return Boolean(isAdmin);
     }),
@@ -122,6 +162,7 @@ export function AdminApp() {
 
   const loadArtists = async () => setArtists(await request('/admin/artists'));
   const loadGalleries = async () => setGalleries(await request('/admin/galleries'));
+  const loadSiteSettings = async () => setSiteSettings(await request('/site-settings'));
   const loadMedia = async (galleryId: string) => {
     if (!galleryId) return;
     setMedia(await request(`/admin/galleries/${galleryId}/images`));
@@ -132,7 +173,7 @@ export function AdminApp() {
     try {
       setError('');
       if (isAdmin) {
-        await Promise.all([loadArtists(), loadGalleries()]);
+        await Promise.all([loadArtists(), loadGalleries(), loadSiteSettings()]);
       } else if (canManageContent) {
         await loadGalleries();
       }
@@ -236,7 +277,7 @@ export function AdminApp() {
 
   const createGallery = () => withFeedback(async () => {
     await request('/admin/galleries', 'POST', { ...galleryForm, status: 'published' });
-    setGalleryForm({ artistId: '', artistSlug: '', title: '', slug: '', visibility: 'free', premiumPassword: '' });
+    setGalleryForm({ artistId: '', artistSlug: '', title: '', slug: '', coverImageId: '', pairedPremiumGalleryId: '', purchaseUrl: '', visibility: 'free', premiumPassword: '' });
     await loadGalleries();
   }, 'Gallery created');
 
@@ -252,6 +293,9 @@ export function AdminApp() {
       artistSlug: gallery.artistSlug || '',
       title: gallery.title,
       slug: gallery.slug,
+      coverImageId: gallery.coverImageId || '',
+      pairedPremiumGalleryId: gallery.pairedPremiumGalleryId || '',
+      purchaseUrl: gallery.purchaseUrl || '',
       visibility: gallery.visibility,
       status: gallery.status,
       premiumPassword: ''
@@ -264,8 +308,18 @@ export function AdminApp() {
     await loadGalleries();
   }, 'Gallery updated');
 
+  const setGalleryCover = (galleryId: string, imageId: string) => withFeedback(async () => {
+    await request(`/admin/galleries/${galleryId}`, 'PATCH', { coverImageId: imageId });
+    await loadGalleries();
+  }, 'Gallery cover updated');
+
   const createMedia = () => withFeedback(async () => {
-    await request('/admin/images', 'POST', mediaForm);
+    await request('/admin/images', 'POST', {
+      ...mediaForm,
+      squareCrop: mediaForm.assetType === 'image'
+        ? { x: mediaForm.cropX, y: mediaForm.cropY, size: mediaForm.cropSize }
+        : undefined
+    });
     if (mediaGalleryId === mediaForm.galleryId) {
       await loadMedia(mediaForm.galleryId);
     }
@@ -282,6 +336,8 @@ export function AdminApp() {
       galleryId: item.galleryId,
       imageId: item.imageId,
       assetType: item.assetType || 'image',
+      title: item.title || '',
+      originalFilename: item.originalFilename || '',
       previewKey: item.previewKey,
       premiumKey: item.premiumKey || '',
       previewPosterKey: '',
@@ -289,15 +345,31 @@ export function AdminApp() {
       width: 0,
       height: 0,
       durationSeconds: 0,
-      sortOrder: item.sortOrder
+      sortOrder: item.sortOrder,
+      cropX: item.squareCrop?.x || 0,
+      cropY: item.squareCrop?.y || 0,
+      cropSize: item.squareCrop?.size || 512
     });
   };
 
   const saveEditMedia = () => withFeedback(async () => {
-    await request(`/admin/images/${mediaEditForm.galleryId}/${mediaEditForm.imageId}`, 'PATCH', mediaEditForm);
+    await request(`/admin/images/${mediaEditForm.galleryId}/${mediaEditForm.imageId}`, 'PATCH', {
+      ...mediaEditForm,
+      squareCrop: mediaEditForm.assetType === 'image'
+        ? { x: mediaEditForm.cropX, y: mediaEditForm.cropY, size: mediaEditForm.cropSize }
+        : undefined,
+      generateRenditions: true
+    });
     setEditingMediaId(null);
     if (mediaGalleryId) await loadMedia(mediaGalleryId);
   }, 'Media updated');
+
+  const generateRenditions = (item: Media) => withFeedback(async () => {
+    await request(`/admin/images/${item.galleryId}/${item.imageId}/renditions`, 'POST', {
+      squareCrop: item.squareCrop
+    });
+    if (mediaGalleryId) await loadMedia(mediaGalleryId);
+  }, 'Renditions generated');
 
   const hideComment = () => withFeedback(async () => {
     await request(`/admin/comments/${commentId}`, 'PATCH', { hidden: true });
@@ -314,6 +386,35 @@ export function AdminApp() {
   const unblockUser = () => withFeedback(async () => {
     await request(`/admin/users/${blockUserId}/block`, 'DELETE');
   }, `Unblocked user ${blockUserId}`);
+
+  const saveSiteSettings = () => withFeedback(async () => {
+    setSavingSettings(true);
+    try {
+      await request('/admin/site-settings', 'PATCH', {
+        siteName: siteSettings.siteName,
+        theme: siteSettings.theme,
+        logoKey: siteSettings.logoKey
+      });
+      await loadSiteSettings();
+    } finally {
+      setSavingSettings(false);
+    }
+  }, 'Site settings saved');
+
+  const uploadLogo = (file: File | null) => withFeedback(async () => {
+    if (!file) return;
+    const upload = await request('/admin/site-settings/logo-upload-url', 'POST', { contentType: file.type || 'image/png' });
+    const putResponse = await fetch(upload.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': upload.contentType || file.type || 'image/png' },
+      body: file
+    });
+    if (!putResponse.ok) {
+      throw new Error('Logo upload failed');
+    }
+    setSiteSettings((prev) => ({ ...prev, logoKey: upload.key }));
+    setMessage('Logo uploaded. Save settings to publish.');
+  });
 
   return (
     <main className="admin-shell">
@@ -433,8 +534,12 @@ export function AdminApp() {
                 <input placeholder="Artist Slug" value={galleryEditForm.artistSlug} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, artistSlug: e.target.value })} />
                 <input placeholder="Title" value={galleryEditForm.title} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, title: e.target.value })} />
                 <input placeholder="Slug" value={galleryEditForm.slug} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, slug: e.target.value })} />
+                <input placeholder="Cover Image ID (optional)" value={galleryEditForm.coverImageId} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, coverImageId: e.target.value })} />
+                <input placeholder="Paired Premium Gallery ID (preview only)" value={galleryEditForm.pairedPremiumGalleryId} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, pairedPremiumGalleryId: e.target.value })} />
+                <input placeholder="Purchase URL (preview only)" value={galleryEditForm.purchaseUrl} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, purchaseUrl: e.target.value })} />
                 <select value={galleryEditForm.visibility} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, visibility: e.target.value })}>
                   <option value="free">free</option>
+                  <option value="preview">preview</option>
                   <option value="premium">premium</option>
                 </select>
                 <select value={galleryEditForm.status} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, status: e.target.value })}>
@@ -451,8 +556,12 @@ export function AdminApp() {
             <input placeholder="Artist Slug" value={galleryForm.artistSlug} onChange={(e) => setGalleryForm({ ...galleryForm, artistSlug: e.target.value })} />
             <input placeholder="Title" value={galleryForm.title} onChange={(e) => setGalleryForm({ ...galleryForm, title: e.target.value })} />
             <input placeholder="Slug" value={galleryForm.slug} onChange={(e) => setGalleryForm({ ...galleryForm, slug: e.target.value })} />
+            <input placeholder="Cover Image ID (optional)" value={galleryForm.coverImageId} onChange={(e) => setGalleryForm({ ...galleryForm, coverImageId: e.target.value })} />
+            <input placeholder="Paired Premium Gallery ID (preview only)" value={galleryForm.pairedPremiumGalleryId} onChange={(e) => setGalleryForm({ ...galleryForm, pairedPremiumGalleryId: e.target.value })} />
+            <input placeholder="Purchase URL (preview only)" value={galleryForm.purchaseUrl} onChange={(e) => setGalleryForm({ ...galleryForm, purchaseUrl: e.target.value })} />
             <select value={galleryForm.visibility} onChange={(e) => setGalleryForm({ ...galleryForm, visibility: e.target.value })}>
               <option value="free">free</option>
+              <option value="preview">preview</option>
               <option value="premium">premium</option>
             </select>
             <input placeholder="Premium password" value={galleryForm.premiumPassword} onChange={(e) => setGalleryForm({ ...galleryForm, premiumPassword: e.target.value })} />
@@ -473,9 +582,13 @@ export function AdminApp() {
               {media.map((item) => (
                 <div className="list-row" key={item.imageId}>
                   <span>{item.assetType || 'image'}: {item.imageId} ({item.previewKey})</span>
+                  {canManageContent && (
+                    <button onClick={() => setGalleryCover(item.galleryId, item.imageId)}>Set As Cover</button>
+                  )}
                   {isAdmin && (
                     <div className="row-actions">
                       <button onClick={() => startEditMedia(item)}>Edit</button>
+                      {item.assetType !== 'video' && <button onClick={() => generateRenditions(item)}>Generate Renditions</button>}
                       <button onClick={() => deleteMedia(item)}>Delete</button>
                     </div>
                   )}
@@ -491,6 +604,8 @@ export function AdminApp() {
                   <option value="image">image</option>
                   <option value="video">video</option>
                 </select>
+                <input placeholder="Title" value={mediaEditForm.title} onChange={(e) => setMediaEditForm({ ...mediaEditForm, title: e.target.value })} />
+                <input placeholder="Original filename" value={mediaEditForm.originalFilename} onChange={(e) => setMediaEditForm({ ...mediaEditForm, originalFilename: e.target.value })} />
                 <input placeholder="Preview key" value={mediaEditForm.previewKey} onChange={(e) => setMediaEditForm({ ...mediaEditForm, previewKey: e.target.value })} />
                 <input placeholder="Premium key" value={mediaEditForm.premiumKey} onChange={(e) => setMediaEditForm({ ...mediaEditForm, premiumKey: e.target.value })} />
                 <input placeholder="Preview poster key" value={mediaEditForm.previewPosterKey} onChange={(e) => setMediaEditForm({ ...mediaEditForm, previewPosterKey: e.target.value })} />
@@ -499,6 +614,13 @@ export function AdminApp() {
                 <input type="number" placeholder="Height" value={mediaEditForm.height} onChange={(e) => setMediaEditForm({ ...mediaEditForm, height: Number(e.target.value || 0) })} />
                 <input type="number" placeholder="Duration seconds" value={mediaEditForm.durationSeconds} onChange={(e) => setMediaEditForm({ ...mediaEditForm, durationSeconds: Number(e.target.value || 0) })} />
                 <input type="number" placeholder="Sort order" value={mediaEditForm.sortOrder} onChange={(e) => setMediaEditForm({ ...mediaEditForm, sortOrder: Number(e.target.value || 0) })} />
+                {mediaEditForm.assetType === 'image' && (
+                  <>
+                    <input type="number" placeholder="Square crop X" value={mediaEditForm.cropX} onChange={(e) => setMediaEditForm({ ...mediaEditForm, cropX: Number(e.target.value || 0) })} />
+                    <input type="number" placeholder="Square crop Y" value={mediaEditForm.cropY} onChange={(e) => setMediaEditForm({ ...mediaEditForm, cropY: Number(e.target.value || 0) })} />
+                    <input type="number" placeholder="Square crop size" value={mediaEditForm.cropSize} onChange={(e) => setMediaEditForm({ ...mediaEditForm, cropSize: Number(e.target.value || 1) })} />
+                  </>
+                )}
                 <button onClick={saveEditMedia}>Save Media</button>
                 <button onClick={() => setEditingMediaId(null)}>Cancel</button>
               </>
@@ -509,6 +631,8 @@ export function AdminApp() {
               <option value="image">image</option>
               <option value="video">video</option>
             </select>
+            <input placeholder="Title (optional)" value={mediaForm.title} onChange={(e) => setMediaForm({ ...mediaForm, title: e.target.value })} />
+            <input placeholder="Original filename (optional)" value={mediaForm.originalFilename} onChange={(e) => setMediaForm({ ...mediaForm, originalFilename: e.target.value })} />
             <input placeholder="Preview key" value={mediaForm.previewKey} onChange={(e) => setMediaForm({ ...mediaForm, previewKey: e.target.value })} />
             <input placeholder="Premium key" value={mediaForm.premiumKey} onChange={(e) => setMediaForm({ ...mediaForm, premiumKey: e.target.value })} />
             <input placeholder="Preview poster key" value={mediaForm.previewPosterKey} onChange={(e) => setMediaForm({ ...mediaForm, previewPosterKey: e.target.value })} />
@@ -517,6 +641,13 @@ export function AdminApp() {
             <input type="number" placeholder="Height" value={mediaForm.height} onChange={(e) => setMediaForm({ ...mediaForm, height: Number(e.target.value || 0) })} />
             <input type="number" placeholder="Duration seconds" value={mediaForm.durationSeconds} onChange={(e) => setMediaForm({ ...mediaForm, durationSeconds: Number(e.target.value || 0) })} />
             <input type="number" placeholder="Sort order" value={mediaForm.sortOrder} onChange={(e) => setMediaForm({ ...mediaForm, sortOrder: Number(e.target.value || 0) })} />
+            {mediaForm.assetType === 'image' && (
+              <>
+                <input type="number" placeholder="Square crop X" value={mediaForm.cropX} onChange={(e) => setMediaForm({ ...mediaForm, cropX: Number(e.target.value || 0) })} />
+                <input type="number" placeholder="Square crop Y" value={mediaForm.cropY} onChange={(e) => setMediaForm({ ...mediaForm, cropY: Number(e.target.value || 0) })} />
+                <input type="number" placeholder="Square crop size" value={mediaForm.cropSize} onChange={(e) => setMediaForm({ ...mediaForm, cropSize: Number(e.target.value || 1) })} />
+              </>
+            )}
             <button onClick={createMedia}>Create Media</button>
           </>
         )}
@@ -537,6 +668,35 @@ export function AdminApp() {
             <button onClick={blockUser}>Block User</button>
             <button onClick={unblockUser}>Unblock User</button>
           </>
+        )}
+
+        {user && isAdmin && view === 'settings' && (
+          <div className="content-card">
+            <h2>Site Settings</h2>
+            <input
+              placeholder="Site Name"
+              value={siteSettings.siteName}
+              onChange={(e) => setSiteSettings({ ...siteSettings, siteName: e.target.value })}
+            />
+            <select
+              value={siteSettings.theme}
+              onChange={(e) => setSiteSettings({ ...siteSettings, theme: e.target.value as SiteSettings['theme'] })}
+            >
+              <option value="ubeeq">Ubeeq</option>
+              <option value="sand">Sand</option>
+              <option value="forest">Forest</option>
+              <option value="slate">Slate</option>
+            </select>
+            <input
+              placeholder="Logo S3 Key (optional)"
+              value={siteSettings.logoKey || ''}
+              onChange={(e) => setSiteSettings({ ...siteSettings, logoKey: e.target.value || undefined })}
+            />
+            <label className="muted">Upload Logo</label>
+            <input type="file" accept="image/*" onChange={(e) => void uploadLogo(e.target.files?.[0] || null)} />
+            {siteSettings.logoUrl && <img src={siteSettings.logoUrl} alt="Current logo" className="brand-image" />}
+            <button onClick={saveSiteSettings} disabled={savingSettings}>{savingSettings ? 'Saving...' : 'Save Settings'}</button>
+          </div>
         )}
 
         {message && <p className="success">{message}</p>}

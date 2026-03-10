@@ -86,7 +86,7 @@ const main = async () => {
   const coreCounts = {
     artists: countBy(coreItems, (item) => item.entityType === 'ARTIST'),
     galleries: countBy(coreItems, (item) => item.entityType === 'GALLERY'),
-    media: countBy(coreItems, (item) => item.entityType === 'MEDIA')
+    media: countBy(coreItems, (item) => item.entityType === 'GALLERY_MEDIA')
   };
 
   const mismatches: string[] = [];

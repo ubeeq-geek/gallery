@@ -2,7 +2,7 @@ import { DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { loadConfig } from '../config';
 import { GalleryCoreRepository } from '../galleryCoreRepository';
-import type { Artist, Gallery, Image } from '../domain';
+import type { Artist, Gallery, Media } from '../domain';
 
 const asString = (value: unknown, fallback = ''): string => (typeof value === 'string' ? value : fallback);
 const asNumber = (value: unknown, fallback = 0): number => (typeof value === 'number' ? value : fallback);
@@ -115,25 +115,35 @@ const migrate = async () => {
       };
     });
 
-  const media: Image[] = rawImages
-    .filter((item) => typeof item.imageId === 'string' && typeof item.galleryId === 'string' && typeof item.previewKey === 'string')
-    .map((item) => ({
-      imageId: asString(item.imageId),
-      galleryId: asString(item.galleryId),
-      assetType: item.assetType === 'video' ? 'video' : 'image',
-      previewKey: asString(item.previewKey),
-      premiumKey: asOptionalString(item.premiumKey),
-      previewPosterKey: asOptionalString(item.previewPosterKey),
-      premiumPosterKey: asOptionalString(item.premiumPosterKey),
-      width: asNumber(item.width),
-      height: asNumber(item.height),
-      durationSeconds: asOptionalNumber(item.durationSeconds),
-      sortOrder: asNumber(item.sortOrder),
-      altText: asOptionalString(item.altText),
-      createdAt: asString(item.createdAt, new Date().toISOString())
-    }));
+  const galleryById = new Map<string, Gallery>(galleries.map((item) => [item.galleryId, item]));
 
-  console.log(`[migrate:core] artists=${artists.length} galleries=${galleries.length} media=${media.length} dryRun=${dryRun}`);
+  const mediaRows = rawImages
+    .filter((item) => typeof item.imageId === 'string' && typeof item.galleryId === 'string' && typeof item.previewKey === 'string')
+    .map((item) => {
+      const galleryId = asString(item.galleryId);
+      const gallery = galleryById.get(galleryId);
+      const media: Media = {
+        mediaId: asString(item.imageId),
+        artistId: gallery?.artistId || '',
+        assetType: item.assetType === 'video' ? 'video' : 'image',
+        previewKey: asString(item.previewKey),
+        premiumKey: asOptionalString(item.premiumKey),
+        previewPosterKey: asOptionalString(item.previewPosterKey),
+        premiumPosterKey: asOptionalString(item.premiumPosterKey),
+        width: asNumber(item.width),
+        height: asNumber(item.height),
+        durationSeconds: asOptionalNumber(item.durationSeconds),
+        altText: asOptionalString(item.altText),
+        createdAt: asString(item.createdAt, new Date().toISOString())
+      };
+      return {
+        media,
+        galleryId,
+        position: asNumber(item.sortOrder)
+      };
+    });
+
+  console.log(`[migrate:core] artists=${artists.length} galleries=${galleries.length} media=${mediaRows.length} dryRun=${dryRun}`);
 
   if (dryRun) {
     return;
@@ -145,8 +155,8 @@ const migrate = async () => {
   for (const gallery of galleries) {
     await repo.createGallery(gallery);
   }
-  for (const item of media) {
-    await repo.createImage(item);
+  for (const row of mediaRows) {
+    await repo.createMedia(row.media, row.galleryId, row.position);
   }
 
   console.log('[migrate:core] migration complete');
