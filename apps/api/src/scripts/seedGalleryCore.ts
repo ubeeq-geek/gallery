@@ -382,8 +382,13 @@ const main = async () => {
 
     const posterFiles = artistFiles.filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && isPoster(file.filename));
 
-    const imageSplit = splitByAccess(imageFiles);
-    const videoSplit = splitByAccess(videoFiles);
+    const hasPremiumTier = Boolean(previewGallery || premiumGallery);
+    const imageSplit = hasPremiumTier
+      ? splitByAccess(imageFiles)
+      : { free: imageFiles, premium: [] as AssetFile[] };
+    const videoSplit = hasPremiumTier
+      ? splitByAccess(videoFiles)
+      : { free: videoFiles, premium: [] as AssetFile[] };
     const freeImages = freeGallery ? imageSplit.free : [];
     const previewImages = previewGallery ? (freeGallery ? imageSplit.premium : imageSplit.free) : [];
     const premiumImages = premiumGallery ? imageSplit.premium : [];
