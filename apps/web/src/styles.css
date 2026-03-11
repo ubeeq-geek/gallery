@@ -932,6 +932,22 @@
     @apply px-3 py-2 text-xs;
   }
 
+  .discovery-trending-flow-section {
+    margin-top: 1.25rem;
+  }
+
+  .discovery-editorial-section {
+    margin-block: 3rem;
+    padding-block: 0.75rem;
+  }
+
+  @media (min-width: 900px) {
+    .discovery-editorial-section {
+      margin-block: 4rem;
+      padding-block: 1.25rem;
+    }
+  }
+
   .discovery-latest-row {
     @apply flex gap-6 overflow-x-auto pb-2;
     scroll-snap-type: x proximity;

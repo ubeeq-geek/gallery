@@ -1484,6 +1484,27 @@ function HomePage() {
   const allTrendingRows = buildPairRows(trendingRenderable);
   const topRows = allTrendingRows.slice(0, densityTopRows[feedDensity]);
   const continuationRows = allTrendingRows.slice(densityTopRows[feedDensity]);
+  const continuationBlockRowsByDensity: Record<FeedDensity, number> = {
+    small: 3,
+    medium: 2,
+    large: 1
+  };
+  const continuationSmallBlockSize = continuationBlockRowsByDensity.small * 4;
+  const continuationRowsBlockSize = continuationBlockRowsByDensity[feedDensity];
+
+  const smallContinuationBlockOne = smallContinuationItems.slice(0, continuationSmallBlockSize);
+  const smallContinuationBlockTwo = smallContinuationItems.slice(continuationSmallBlockSize, continuationSmallBlockSize * 2);
+  const smallContinuationBlockThree = smallContinuationItems.slice(continuationSmallBlockSize * 2);
+
+  const continuationBlockOneRows = continuationRows.slice(0, continuationRowsBlockSize);
+  const continuationBlockTwoRows = continuationRows.slice(continuationRowsBlockSize, continuationRowsBlockSize * 2);
+  const continuationBlockThreeRows = continuationRows.slice(continuationRowsBlockSize * 2);
+
+  const continuationBlockOneHasItems = feedDensity === 'small' ? smallContinuationBlockOne.length > 0 : continuationBlockOneRows.length > 0;
+  const continuationBlockTwoHasItems = feedDensity === 'small' ? smallContinuationBlockTwo.length > 0 : continuationBlockTwoRows.length > 0;
+  const continuationBlockThreeHasItems = feedDensity === 'small'
+    ? (smallContinuationBlockThree.length > 0 || Boolean(trendingCursor))
+    : (continuationBlockThreeRows.length > 0 || Boolean(trendingCursor));
   const densityTransitionClass = densityFadeState === 'idle' ? '' : ` ${densityFadeState}`;
   const isDensityTransitioning = densityFadeState !== 'idle';
 
@@ -1493,6 +1514,8 @@ function HomePage() {
   const latestItems: DiscoveryGallery[] = latest;
   const risingArtists = artists.slice(0, 4);
   const trendingCollections = collections.slice(0, 3);
+  const showRisingArtistsSection = risingArtists.length >= 2;
+  const showTrendingCollectionsSection = trendingCollections.length >= 2;
 
   const toggleFollow = async (artistId?: string) => {
     if (!artistId) return;
@@ -1650,6 +1673,37 @@ function HomePage() {
     );
   };
 
+  const renderTrendingBlockContent = (
+    smallItems: TrendingImage[],
+    smallStartIndex: number,
+    rows: TrendingPairRow[]
+  ) => {
+    if (feedDensity === 'small') {
+      return (
+        <div className="discovery-small-grid">
+          {smallItems.map((item, index) => renderTrendingCard(item, smallStartIndex + index))}
+        </div>
+      );
+    }
+    return (
+      <div className={`discovery-pair-feed density-${feedDensity}`}>
+        {rows.map((row) => (
+          <div
+            key={`row-${row.left.imageId}-${row.right?.imageId || 'single'}`}
+            className={`discovery-pair-row density-${feedDensity}${row.right ? '' : ' single'}`}
+            style={{
+              '--pair-cols-mobile': feedDensity === 'large' ? '1fr' : '1fr 1fr',
+              '--pair-cols': pairTemplateColumns(row, feedDensity)
+            } as any}
+          >
+            {renderTrendingCard(row.left, row.startIndex)}
+            {row.right && renderTrendingCard(row.right, row.startIndex + 1)}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="layout discovery-layout">
       <section className="panel discovery-hero">
@@ -1746,33 +1800,13 @@ function HomePage() {
           </div>
         )}
         <div className={`discovery-density-transition${densityTransitionClass}`}>
-          {feedDensity === 'small' ? (
-            <div className="discovery-small-grid">
-              {smallTopItems.map((item, index) => renderTrendingCard(item, index))}
-            </div>
-          ) : (
-            <div className={`discovery-pair-feed density-${feedDensity}`}>
-              {topRows.map((row) => (
-                <div
-                  key={`top-row-${row.left.imageId}-${row.right?.imageId || 'single'}`}
-                  className={`discovery-pair-row density-${feedDensity}${row.right ? '' : ' single'}`}
-                  style={{
-                    '--pair-cols-mobile': feedDensity === 'large' ? '1fr' : '1fr 1fr',
-                    '--pair-cols': pairTemplateColumns(row, feedDensity)
-                  } as any}
-                >
-                  {renderTrendingCard(row.left, row.startIndex)}
-                  {row.right && renderTrendingCard(row.right, row.startIndex + 1)}
-                </div>
-              ))}
-            </div>
-          )}
+          {renderTrendingBlockContent(smallTopItems, 0, topRows)}
         </div>
         {loadingTrending && !densitySwitchLoading && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">Loading trending artwork...</p>}
         {!loadingTrending && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">No trending artwork yet.</p>}
       </section>
 
-      <section id="latest-galleries">
+      <section id="latest-galleries" className="discovery-editorial-section">
         <div className="discovery-section-header">
           <h2>Latest Galleries</h2>
           <a href="#latest-galleries" className="text-sm font-semibold no-underline">Browse all</a>
@@ -1829,87 +1863,90 @@ function HomePage() {
         {!loadingLatest && latestItems.length === 0 && <p className="small">No galleries yet.</p>}
       </section>
 
-      <section id="rising-artists">
-        <div className="discovery-section-header">
-          <h2>Rising Artists</h2>
-          <a href="#rising-artists" className="text-sm font-semibold no-underline">View all</a>
-        </div>
-        <div className="discovery-artists-grid discovery-artists-grid-wide">
-          {risingArtists.map((artist, i) => (
-            <article key={artist.artistId || artist.name || `artist-${i}`} className="discovery-artist-card">
-              <div className="discovery-artist-avatar">
-                {artist.artistThumbnailUrl
-                  ? <img src={artist.artistThumbnailUrl} alt={artist.name || 'Artist'} loading="lazy" decoding="async" />
-                  : <span className="discovery-artist-initials">{(artist.name || 'Artist').split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')}</span>}
-              </div>
-              <div className="discovery-artist-meta">
-                <div className="discovery-card-title">
-                  {artist.slug ? <Link to={`/artists/${artist.slug}`} className="no-underline">{artist.name || 'Artist Name'}</Link> : (artist.name || 'Artist Name')}
-                </div>
-                <div className="discovery-card-subtitle">1.2k followers</div>
-              </div>
-              <button className="auth-secondary-btn discovery-inline-btn" onClick={() => void toggleFollow(artist.artistId)}>
-                {artist.artistId && followedArtistIds.has(artist.artistId) ? 'Following' : 'Follow'}
-              </button>
-            </article>
-          ))}
-        </div>
-        {loadingLatest && risingArtists.length === 0 && <p className="small">Loading artists...</p>}
-        {!loadingLatest && risingArtists.length === 0 && <p className="small">No artists yet.</p>}
-      </section>
-
-      <section id="trending-collections">
-        <div className="discovery-section-header">
-          <h2>Trending Collections</h2>
-          <Link to="/collections" className="text-sm font-semibold no-underline">View all</Link>
-        </div>
-        <div className="discovery-collection-grid">
-          {trendingCollections.map((collection, index) => (
-            <Link key={collection.collectionId} to={`/collections/${collection.collectionId}`} className="discovery-collection-card no-underline">
-              <div className="discovery-collection-squares">
-                {(collectionPalettes[index % collectionPalettes.length] || collectionPalettes[0]).map((color, swatchIndex) => (
-                  <div key={`${collection.collectionId}-sw-${swatchIndex}`} style={{ backgroundColor: color }} />
-                ))}
-              </div>
-              <div className="discovery-collection-meta">
-                <div className="discovery-card-title">{collection.title}</div>
-                <div className="discovery-card-subtitle">{collection.imageCount} images • {collection.favoriteCount} favorites</div>
-              </div>
-            </Link>
-          ))}
-        </div>
-        {loadingCollections && trendingCollections.length === 0 && <p className="small">Loading collections...</p>}
-        {!loadingCollections && trendingCollections.length === 0 && <p className="small">No public collections yet.</p>}
-      </section>
-
-      {(feedDensity === 'small'
-        ? (smallContinuationItems.length > 0 || Boolean(trendingCursor))
-        : (continuationRows.length > 0 || Boolean(trendingCursor))) && (
-        <section id="trending-continuation">
-          <div className="discovery-section-header">
-            <h2>More Trending</h2>
-          </div>
+      {continuationBlockOneHasItems && (
+        <section id="trending-block-three" className="discovery-trending-flow-section">
           <div className={`discovery-density-transition${densityTransitionClass}`}>
-            {feedDensity === 'small' ? (
-              <div className="discovery-small-grid">
-                {smallContinuationItems.map((item, index) => renderTrendingCard(item, smallTopItemCount + index))}
-              </div>
-            ) : (
-              <div className={`discovery-pair-feed density-${feedDensity}`}>
-                {continuationRows.map((row) => (
-                  <div
-                    key={`more-row-${row.left.imageId}-${row.right?.imageId || 'single'}`}
-                    className={`discovery-pair-row density-${feedDensity}${row.right ? '' : ' single'}`}
-                    style={{
-                      '--pair-cols-mobile': feedDensity === 'large' ? '1fr' : '1fr 1fr',
-                      '--pair-cols': pairTemplateColumns(row, feedDensity)
-                    } as any}
-                  >
-                    {renderTrendingCard(row.left, row.startIndex)}
-                    {row.right && renderTrendingCard(row.right, row.startIndex + 1)}
+            {renderTrendingBlockContent(
+              smallContinuationBlockOne,
+              smallTopItemCount,
+              continuationBlockOneRows
+            )}
+          </div>
+        </section>
+      )}
+
+      {continuationBlockTwoHasItems && (
+        <section id="trending-block-four" className="discovery-trending-flow-section">
+          <div className={`discovery-density-transition${densityTransitionClass}`}>
+            {renderTrendingBlockContent(
+              smallContinuationBlockTwo,
+              smallTopItemCount + smallContinuationBlockOne.length,
+              continuationBlockTwoRows
+            )}
+          </div>
+        </section>
+      )}
+
+      {showRisingArtistsSection && (
+        <section id="rising-artists" className="discovery-editorial-section">
+          <div className="discovery-section-header">
+            <h2>Rising Artists</h2>
+            <a href="#rising-artists" className="text-sm font-semibold no-underline">View all</a>
+          </div>
+          <div className="discovery-artists-grid discovery-artists-grid-wide">
+            {risingArtists.map((artist, i) => (
+              <article key={artist.artistId || artist.name || `artist-${i}`} className="discovery-artist-card">
+                <div className="discovery-artist-avatar">
+                  {artist.artistThumbnailUrl
+                    ? <img src={artist.artistThumbnailUrl} alt={artist.name || 'Artist'} loading="lazy" decoding="async" />
+                    : <span className="discovery-artist-initials">{(artist.name || 'Artist').split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')}</span>}
+                </div>
+                <div className="discovery-artist-meta">
+                  <div className="discovery-card-title">
+                    {artist.slug ? <Link to={`/artists/${artist.slug}`} className="no-underline">{artist.name || 'Artist Name'}</Link> : (artist.name || 'Artist Name')}
                   </div>
-                ))}
-              </div>
+                  <div className="discovery-card-subtitle">1.2k followers</div>
+                </div>
+                <button className="auth-secondary-btn discovery-inline-btn" onClick={() => void toggleFollow(artist.artistId)}>
+                  {artist.artistId && followedArtistIds.has(artist.artistId) ? 'Following' : 'Follow'}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {showTrendingCollectionsSection && (
+        <section id="trending-collections" className="discovery-editorial-section">
+          <div className="discovery-section-header">
+            <h2>Trending Collections</h2>
+            <Link to="/collections" className="text-sm font-semibold no-underline">View all</Link>
+          </div>
+          <div className="discovery-collection-grid">
+            {trendingCollections.map((collection, index) => (
+              <Link key={collection.collectionId} to={`/collections/${collection.collectionId}`} className="discovery-collection-card no-underline">
+                <div className="discovery-collection-squares">
+                  {(collectionPalettes[index % collectionPalettes.length] || collectionPalettes[0]).map((color, swatchIndex) => (
+                    <div key={`${collection.collectionId}-sw-${swatchIndex}`} style={{ backgroundColor: color }} />
+                  ))}
+                </div>
+                <div className="discovery-collection-meta">
+                  <div className="discovery-card-title">{collection.title}</div>
+                  <div className="discovery-card-subtitle">{collection.imageCount} images • {collection.favoriteCount} favorites</div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {continuationBlockThreeHasItems && (
+        <section id="trending-continuation" className="discovery-trending-flow-section">
+          <div className={`discovery-density-transition${densityTransitionClass}`}>
+            {renderTrendingBlockContent(
+              smallContinuationBlockThree,
+              smallTopItemCount + smallContinuationBlockOne.length + smallContinuationBlockTwo.length,
+              continuationBlockThreeRows
             )}
           </div>
           <AutoLoadSentinel
