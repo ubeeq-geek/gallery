@@ -749,6 +749,7 @@
   .discovery-small-grid {
     @apply grid gap-3;
     grid-template-columns: 1fr;
+    align-items: start;
   }
 
   .discovery-small-grid .discovery-feature-card.is-landscape {
@@ -768,6 +769,7 @@
   @media (min-width: 1040px) {
     .discovery-small-grid {
       grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-auto-flow: row dense;
     }
 
     .discovery-small-grid .discovery-feature-card.is-landscape {
@@ -789,6 +791,7 @@
     display: grid;
     gap: 1.25rem;
     grid-template-columns: 1fr;
+    align-items: start;
   }
 
   .discovery-pair-row.single {
@@ -839,17 +842,22 @@
 
   .discovery-feature-card {
     @apply overflow-hidden rounded-[14px];
+    display: flex;
+    flex-direction: column;
     border: 1px solid color-mix(in srgb, var(--line) 82%, white);
     background: var(--surface);
     box-shadow: 0 8px 22px rgb(15 23 42 / 0.1);
   }
 
   .discovery-feature-link {
-    @apply flex justify-center px-2 pt-2;
+    @apply flex items-center justify-center px-2 pt-2;
+    flex: 0 0 auto;
   }
 
   .discovery-feature-media {
     @apply relative overflow-hidden;
+    display: grid;
+    place-items: center;
     background: color-mix(in srgb, var(--surface) 90%, #e2e8f0 10%);
     border-radius: 9px;
     width: 100%;
@@ -858,7 +866,8 @@
   }
 
   .discovery-feature-media img {
-    @apply absolute inset-0 h-full w-full object-contain;
+    @apply h-full w-full object-contain;
+    position: relative;
     background: transparent;
     object-position: center center;
   }
@@ -881,6 +890,7 @@
 
   .discovery-feature-footer {
     @apply flex flex-col gap-2 px-4 py-3;
+    margin-top: auto;
   }
 
   .discovery-feature-text {
@@ -889,7 +899,7 @@
 
   @media (min-width: 640px) {
     .discovery-feature-footer {
-      @apply flex-row items-center justify-between;
+      @apply flex-row items-end justify-between;
     }
   }
 
@@ -901,6 +911,12 @@
 
   .discovery-feature-actions {
     @apply flex items-center gap-2;
+  }
+
+  @media (min-width: 640px) {
+    .discovery-feature-actions {
+      align-items: flex-end;
+    }
   }
 
   .discovery-quick-view-link {
