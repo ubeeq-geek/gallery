@@ -1688,11 +1688,15 @@ function HomePage() {
     const shouldSquareCrop = feedDensity === 'small' && allowDiscoverSquareCrop;
     const frameRatio = shouldSquareCrop ? 1 : ratio;
     const isSmallLandscape = feedDensity === 'small' && !shouldSquareCrop && ratio >= 1.25;
-
+    const largeCardClass = feedDensity === 'large' ? ' density-large-card' : '';
     const largeCropClass = feedDensity === 'large' ? ' large-crop' : '';
 
     return (
-      <article key={item.imageId} className={`discovery-feature-card${isSmallLandscape ? ' is-landscape' : ''}`}>
+      <article
+        key={item.imageId}
+        className={`discovery-feature-card${isSmallLandscape ? ' is-landscape' : ''}${largeCardClass}`}
+        style={{ '--media-aspect': frameRatio.toFixed(4) } as any}
+      >
         <Link to={href} className="discovery-feature-link no-underline">
           <div
             className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}`}
