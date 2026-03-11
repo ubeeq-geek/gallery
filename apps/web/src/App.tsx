@@ -34,6 +34,7 @@ type TrendingImage = {
   galleryId: string;
   gallerySlug: string;
   galleryVisibility?: 'free' | 'preview' | 'premium';
+  discoverSquareCropEnabled?: boolean;
   title: string;
   previewUrl: string;
   favoriteCount: number;
@@ -1625,15 +1626,18 @@ function HomePage() {
     const isPreview = item.galleryVisibility === 'preview';
     const isFavorite = favoriteImageIds.has(item.imageId);
     const ratio = displayAspectRatio(item, cardIndex);
-    const isSmallLandscape = feedDensity === 'small' && ratio >= 1.25;
+    const allowDiscoverSquareCrop = item.discoverSquareCropEnabled !== false;
+    const shouldSquareCrop = feedDensity === 'small' && allowDiscoverSquareCrop;
+    const frameRatio = shouldSquareCrop ? 1 : ratio;
+    const isSmallLandscape = feedDensity === 'small' && !shouldSquareCrop && ratio >= 1.25;
 
     return (
       <article key={item.imageId} className={`discovery-feature-card${isSmallLandscape ? ' is-landscape' : ''}`}>
         <Link to={href} className="discovery-feature-link no-underline">
           <div
-            className="discovery-feature-media"
-              style={{
-              aspectRatio: `${ratio.toFixed(3)} / 1`
+            className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}`}
+            style={{
+              aspectRatio: `${frameRatio.toFixed(3)} / 1`
             }}
           >
             <img
@@ -1642,6 +1646,7 @@ function HomePage() {
               loading={cardIndex < 2 ? 'eager' : 'lazy'}
               fetchPriority={cardIndex < 2 ? 'high' : (cardIndex < 8 ? 'auto' : 'low')}
               decoding="async"
+              style={{ objectPosition: 'center center' }}
               onLoad={(event) => captureImageRatio(item.imageId, event)}
             />
             {isPreview && <span className="discovery-chip">Preview</span>}

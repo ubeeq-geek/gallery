@@ -753,6 +753,7 @@ export class DynamoStore implements DataStore {
         galleryId: String(row.galleryId || ''),
         gallerySlug: String(row.gallerySlug || ''),
         galleryVisibility: row.galleryVisibility === 'preview' ? 'preview' : 'free',
+        discoverSquareCropEnabled: row.discoverSquareCropEnabled !== false,
         title: String(row.title || ''),
         previewKey: String(row.previewKey || ''),
         favoriteCount: Math.max(0, Number(row.favoriteCount || 0)),

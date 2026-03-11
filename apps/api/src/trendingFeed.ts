@@ -36,6 +36,7 @@ interface CandidateItem {
   galleryId: string;
   gallerySlug: string;
   galleryVisibility: 'free' | 'preview';
+  discoverSquareCropEnabled: boolean;
   title: string;
   previewKey: string;
   createdAt: string;
@@ -77,6 +78,10 @@ const buildCandidates = async (
       const previewKey = item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewPosterKey || item.previewKey;
       if (!previewKey) continue;
       const createdAtMs = asTime(item.createdAt) || nowMs;
+      const discoverSquareCropEnabled =
+        (artistById.get(item.artistId)?.discoverSquareCropEnabled ?? true) &&
+        (gallery.discoverSquareCropEnabled ?? true) &&
+        (item.discoverSquareCropEnabled ?? true);
       candidates.push({
         imageId: item.mediaId,
         artistId: item.artistId,
@@ -84,6 +89,7 @@ const buildCandidates = async (
         galleryId: gallery.galleryId,
         gallerySlug: gallery.slug,
         galleryVisibility: gallery.visibility === 'preview' ? 'preview' : 'free',
+        discoverSquareCropEnabled,
         title: item.title || gallery.title || 'Artwork',
         previewKey,
         createdAt: item.createdAt,
@@ -113,7 +119,8 @@ export const buildTrendingFeedForPeriod = async (
   const favoriteCounts = await store.getImageFavoriteCounts(sampled.map((item) => item.imageId));
   const scored = sampled.map((item) => {
     const favoriteCount = Math.max(0, Number(favoriteCounts[item.imageId] || 0));
-    const score = favoriteCount * 2 + item.recencyBoost * 10;
+    const discoverSquareCropBonus = item.discoverSquareCropEnabled ? 1.25 : 0;
+    const score = favoriteCount * 2 + item.recencyBoost * 10 + discoverSquareCropBonus;
     return {
       ...item,
       favoriteCount,
@@ -144,6 +151,7 @@ export const buildTrendingFeedForPeriod = async (
     galleryId: item.galleryId,
     gallerySlug: item.gallerySlug,
     galleryVisibility: item.galleryVisibility,
+    discoverSquareCropEnabled: item.discoverSquareCropEnabled,
     title: item.title,
     previewKey: item.previewKey,
     favoriteCount: item.favoriteCount,

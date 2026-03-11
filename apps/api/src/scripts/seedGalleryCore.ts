@@ -62,6 +62,7 @@ type ArtistSeed = {
   name: string;
   slug: string;
   filePrefix: string;
+  discoverSquareCropEnabled?: boolean;
   galleries: Array<'free' | 'preview' | 'premium'>;
   freeGalleryTitle?: string;
   freeGallerySlug?: string;
@@ -86,6 +87,7 @@ const artistSeeds: ArtistSeed[] = [
     name: 'Ubeeq Girl',
     slug: 'ubeeq-girl',
     filePrefix: 'ubeeq-girl-',
+    discoverSquareCropEnabled: false,
     galleries: ['preview', 'premium'],
     purchaseUrl: 'https://store.example.com/ubeeq-girl-premium'
   },
@@ -93,9 +95,16 @@ const artistSeeds: ArtistSeed[] = [
     name: 'Bureau of Occupational Records',
     slug: 'bureau-of-occupational-records',
     filePrefix: 'alp-',
+    discoverSquareCropEnabled: false,
     galleries: ['free'],
     freeGalleryTitle: 'Atlas of Lost Occupations',
     freeGallerySlug: 'atlas-of-lost-occupations'
+  },
+  {
+    name: 'Daily Cosmos',
+    slug: 'daily-cosmos',
+    filePrefix: 'dc-',
+    galleries: ['free']
   }
 ];
 
@@ -310,11 +319,13 @@ const main = async () => {
     const seed = artistSeeds[idx];
     const createdAt = nowIso();
     const artistId = randomUUID();
+    const discoverSquareCropEnabled = seed.discoverSquareCropEnabled ?? true;
 
     const artist: Artist = {
       artistId,
       name: seed.name,
       slug: seed.slug,
+      discoverSquareCropEnabled,
       status: 'active',
       sortOrder: idx + 1,
       createdAt
@@ -329,6 +340,7 @@ const main = async () => {
           title: seed.freeGalleryTitle || `${seed.name} Free Gallery`,
           slug: seed.freeGallerySlug || `${seed.slug}-free`,
           slugHistory: [seed.freeGallerySlug || `${seed.slug}-free`],
+          discoverSquareCropEnabled,
           visibility: 'free' as const,
           status: 'published' as const,
           createdAt
@@ -343,6 +355,7 @@ const main = async () => {
           title: `${seed.name} Premium Gallery`,
           slug: `${seed.slug}-premium`,
           slugHistory: [`${seed.slug}-premium`],
+          discoverSquareCropEnabled,
           visibility: 'premium' as const,
           status: 'published' as const,
           premiumPasswordHash,
@@ -358,6 +371,7 @@ const main = async () => {
           title: `${seed.name} Premium Gallery (Preview)`,
           slug: `${seed.slug}-premium-preview`,
           slugHistory: [`${seed.slug}-premium-preview`],
+          discoverSquareCropEnabled,
           visibility: 'preview' as const,
           pairedPremiumGalleryId: premiumGallery?.galleryId,
           purchaseUrl: seed.purchaseUrl,
@@ -418,6 +432,7 @@ const main = async () => {
         mediaId,
         artistId,
         assetType: 'image',
+        discoverSquareCropEnabled,
         title,
         slug,
         slugHistory: [slug],
@@ -443,6 +458,7 @@ const main = async () => {
           mediaId,
           artistId,
           assetType: 'image',
+          discoverSquareCropEnabled,
           title,
           slug,
           slugHistory: [slug],
@@ -468,6 +484,7 @@ const main = async () => {
         mediaId,
         artistId,
         assetType: 'image',
+        discoverSquareCropEnabled,
         title,
         slug,
         slugHistory: [slug],
@@ -507,6 +524,7 @@ const main = async () => {
         mediaId,
         artistId,
         assetType: 'video',
+        discoverSquareCropEnabled,
         title,
         slug,
         slugHistory: [slug],
@@ -538,6 +556,7 @@ const main = async () => {
           mediaId,
           artistId,
           assetType: 'video',
+          discoverSquareCropEnabled,
           title,
           slug,
           slugHistory: [slug],
@@ -573,6 +592,7 @@ const main = async () => {
         mediaId,
         artistId,
         assetType: 'video',
+        discoverSquareCropEnabled,
         title,
         slug,
         slugHistory: [slug],

@@ -591,6 +591,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     galleryId: string;
     gallerySlug: string;
     galleryVisibility: 'free' | 'preview';
+    discoverSquareCropEnabled: boolean;
     title: string;
     previewUrl: string;
     favoriteCount: number;
@@ -652,6 +653,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       galleryId: string;
       gallerySlug: string;
       galleryVisibility: 'free' | 'preview';
+      discoverSquareCropEnabled: boolean;
       title: string;
       createdAt: string;
       createdAtMs: number;
@@ -666,12 +668,17 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           continue;
         }
         const createdAtMs = asTime(item.createdAt) || nowMs;
+        const discoverSquareCropEnabled =
+          (artistById.get(item.artistId)?.discoverSquareCropEnabled ?? true) &&
+          (gallery.discoverSquareCropEnabled ?? true) &&
+          (item.discoverSquareCropEnabled ?? true);
         candidates.push({
           imageId: item.mediaId,
           artistId: item.artistId,
           galleryId: gallery.galleryId,
           gallerySlug: gallery.slug,
           galleryVisibility: gallery.visibility === 'preview' ? 'preview' : 'free',
+          discoverSquareCropEnabled,
           title: item.title || gallery.title || 'Artwork',
           createdAt: item.createdAt,
           createdAtMs,
@@ -685,7 +692,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const favoriteCounts = await store.getImageFavoriteCounts(sampled.map((item) => item.imageId));
     const flat = await Promise.all(sampled.map(async (item) => {
       const favoriteCount = Math.max(0, Number(favoriteCounts[item.imageId] || 0));
-      const score = favoriteCount * 2 + item.recencyBoost * 10;
+      const discoverSquareCropBonus = item.discoverSquareCropEnabled ? 1.25 : 0;
+      const score = favoriteCount * 2 + item.recencyBoost * 10 + discoverSquareCropBonus;
       return {
         imageId: item.imageId,
         artistId: item.artistId,
@@ -693,6 +701,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         galleryId: item.galleryId,
         gallerySlug: item.gallerySlug,
         galleryVisibility: item.galleryVisibility,
+        discoverSquareCropEnabled: item.discoverSquareCropEnabled,
         title: item.title,
         previewUrl: await publicMediaUrl(item.previewKey) || '',
         favoriteCount,
@@ -897,6 +906,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           galleryId: item.galleryId,
           gallerySlug: item.gallerySlug,
           galleryVisibility: item.galleryVisibility,
+          discoverSquareCropEnabled: item.discoverSquareCropEnabled !== false,
           title: item.title,
           previewUrl: await publicMediaUrl(item.previewKey) || '',
           favoriteCount: item.favoriteCount,
@@ -2096,6 +2106,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       name,
       slug,
       slugHistory: uniqueSlugs([slug]),
+      discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
+        ? req.body.discoverSquareCropEnabled
+        : true,
       status: req.body?.status === 'inactive' ? 'inactive' : 'active',
       sortOrder: Number(req.body?.sortOrder || 0),
       createdAt: new Date().toISOString()
@@ -2163,6 +2176,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       name: req.body?.name ? String(req.body.name) : existing.name,
       slug: req.body?.slug ? slugify(String(req.body.slug)) : existing.slug,
       slugHistory: uniqueSlugs([...(existing.slugHistory || [existing.slug]), req.body?.slug ? slugify(String(req.body.slug)) : existing.slug]),
+      discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
+        ? req.body.discoverSquareCropEnabled
+        : (existing.discoverSquareCropEnabled ?? true),
       status: req.body?.status === 'inactive' ? 'inactive' : (req.body?.status === 'active' ? 'active' : existing.status),
       sortOrder: req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : existing.sortOrder
     };
@@ -2249,6 +2265,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       title,
       slug,
       slugHistory: uniqueSlugs([slug]),
+      discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
+        ? req.body.discoverSquareCropEnabled
+        : true,
       coverImageId: req.body?.coverImageId ? String(req.body.coverImageId) : undefined,
       visibility,
       pairedPremiumGalleryId: req.body?.pairedPremiumGalleryId ? String(req.body.pairedPremiumGalleryId) : undefined,
@@ -2292,6 +2311,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       title: nextTitle,
       slug: nextSlug,
       slugHistory: uniqueSlugs([...(existing.slugHistory || [existing.slug]), nextSlug]),
+      discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
+        ? req.body.discoverSquareCropEnabled
+        : (existing.discoverSquareCropEnabled ?? true),
       coverImageId: req.body?.coverImageId !== undefined ? (req.body.coverImageId ? String(req.body.coverImageId) : undefined) : existing.coverImageId,
       visibility,
       pairedPremiumGalleryId: req.body?.pairedPremiumGalleryId !== undefined
@@ -2356,6 +2378,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       mediaId: randomUUID(),
       artistId: gallery.artistId,
       assetType: req.body?.assetType === 'video' ? 'video' : 'image',
+      discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
+        ? req.body.discoverSquareCropEnabled
+        : true,
       title,
       slug,
       slugHistory: slug ? uniqueSlugs([slug]) : undefined,
@@ -2413,6 +2438,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       ...existing,
       mediaId: req.params.imageId,
       assetType: req.body?.assetType === 'video' ? 'video' : (req.body?.assetType === 'image' ? 'image' : existing.assetType),
+      discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
+        ? req.body.discoverSquareCropEnabled
+        : (existing.discoverSquareCropEnabled ?? true),
       title: nextTitle || undefined,
       slug: nextSlug,
       slugHistory: nextSlug ? uniqueSlugs([...(existing.slugHistory || (existing.slug ? [existing.slug] : [])), nextSlug]) : existing.slugHistory,
@@ -2440,7 +2468,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         bucket: config.mediaBucket,
         sourceKey: updated.previewKey,
         targetPrefix,
-        squareCrop: parseSquareCrop(req.body?.squareCrop) || updated.squareCrop
+        squareCrop: parseSquareCrop(req.body?.squareCrop)
       });
       updated.thumbnailKeys = generated.keys;
       updated.squareCrop = generated.squareCrop;
@@ -2477,7 +2505,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       bucket: config.mediaBucket,
       sourceKey: existing.previewKey,
       targetPrefix,
-      squareCrop: parseSquareCrop(req.body?.squareCrop) || existing.squareCrop
+      squareCrop: parseSquareCrop(req.body?.squareCrop)
     });
 
     const updated: Media = {

@@ -12,7 +12,14 @@ import {
 
 type View = 'artists' | 'galleries' | 'media' | 'settings' | 'moderation' | 'users';
 
-type Artist = { artistId: string; name: string; slug: string; status: 'active' | 'inactive'; sortOrder: number };
+type Artist = {
+  artistId: string;
+  name: string;
+  slug: string;
+  status: 'active' | 'inactive';
+  sortOrder: number;
+  discoverSquareCropEnabled?: boolean;
+};
 type Gallery = {
   galleryId: string;
   artistId: string;
@@ -23,7 +30,8 @@ type Gallery = {
   pairedPremiumGalleryId?: string;
   purchaseUrl?: string;
   visibility: 'free' | 'preview' | 'premium';
-  status: 'draft' | 'published'
+  status: 'draft' | 'published';
+  discoverSquareCropEnabled?: boolean;
 };
 type Media = {
   imageId: string;
@@ -34,6 +42,7 @@ type Media = {
   slug?: string;
   originalFilename?: string;
   squareCrop?: { x: number; y: number; size: number };
+  discoverSquareCropEnabled?: boolean;
   previewKey: string;
   premiumKey?: string;
 };
@@ -76,8 +85,19 @@ export function AdminApp() {
   const [galleries, setGalleries] = useState<Gallery[]>([]);
   const [media, setMedia] = useState<Media[]>([]);
 
-  const [artistForm, setArtistForm] = useState({ name: '', slug: '', sortOrder: 1 });
-  const [galleryForm, setGalleryForm] = useState({ artistId: '', artistSlug: '', title: '', slug: '', coverImageId: '', pairedPremiumGalleryId: '', purchaseUrl: '', visibility: 'free', premiumPassword: '' });
+  const [artistForm, setArtistForm] = useState({ name: '', slug: '', sortOrder: 1, discoverSquareCropEnabled: true });
+  const [galleryForm, setGalleryForm] = useState({
+    artistId: '',
+    artistSlug: '',
+    title: '',
+    slug: '',
+    coverImageId: '',
+    pairedPremiumGalleryId: '',
+    purchaseUrl: '',
+    visibility: 'free',
+    premiumPassword: '',
+    discoverSquareCropEnabled: true
+  });
   const [mediaForm, setMediaForm] = useState({
     galleryId: '',
     assetType: 'image',
@@ -93,12 +113,19 @@ export function AdminApp() {
     sortOrder: 1,
     cropX: 0,
     cropY: 0,
-    cropSize: 512
+    cropSize: 512,
+    discoverSquareCropEnabled: true
   });
   const [editingArtistId, setEditingArtistId] = useState<string | null>(null);
   const [editingGalleryId, setEditingGalleryId] = useState<string | null>(null);
   const [editingMediaId, setEditingMediaId] = useState<string | null>(null);
-  const [artistEditForm, setArtistEditForm] = useState({ name: '', slug: '', status: 'active', sortOrder: 1 });
+  const [artistEditForm, setArtistEditForm] = useState({
+    name: '',
+    slug: '',
+    status: 'active',
+    sortOrder: 1,
+    discoverSquareCropEnabled: true
+  });
   const [galleryEditForm, setGalleryEditForm] = useState({
     artistId: '',
     artistSlug: '',
@@ -109,7 +136,8 @@ export function AdminApp() {
     purchaseUrl: '',
     visibility: 'free',
     status: 'published',
-    premiumPassword: ''
+    premiumPassword: '',
+    discoverSquareCropEnabled: true
   });
   const [mediaEditForm, setMediaEditForm] = useState({
     galleryId: '',
@@ -127,7 +155,8 @@ export function AdminApp() {
     sortOrder: 0,
     cropX: 0,
     cropY: 0,
-    cropSize: 512
+    cropSize: 512,
+    discoverSquareCropEnabled: true
   });
 
   const [mediaGalleryId, setMediaGalleryId] = useState('');
@@ -250,7 +279,7 @@ export function AdminApp() {
 
   const createArtist = () => withFeedback(async () => {
     await request('/admin/artists', 'POST', { ...artistForm, status: 'active' });
-    setArtistForm({ name: '', slug: '', sortOrder: 1 });
+    setArtistForm({ name: '', slug: '', sortOrder: 1, discoverSquareCropEnabled: true });
     await loadArtists();
   }, 'Artist created');
 
@@ -265,7 +294,8 @@ export function AdminApp() {
       name: artist.name,
       slug: artist.slug,
       status: artist.status,
-      sortOrder: artist.sortOrder
+      sortOrder: artist.sortOrder,
+      discoverSquareCropEnabled: artist.discoverSquareCropEnabled !== false
     });
   };
 
@@ -277,7 +307,18 @@ export function AdminApp() {
 
   const createGallery = () => withFeedback(async () => {
     await request('/admin/galleries', 'POST', { ...galleryForm, status: 'published' });
-    setGalleryForm({ artistId: '', artistSlug: '', title: '', slug: '', coverImageId: '', pairedPremiumGalleryId: '', purchaseUrl: '', visibility: 'free', premiumPassword: '' });
+    setGalleryForm({
+      artistId: '',
+      artistSlug: '',
+      title: '',
+      slug: '',
+      coverImageId: '',
+      pairedPremiumGalleryId: '',
+      purchaseUrl: '',
+      visibility: 'free',
+      premiumPassword: '',
+      discoverSquareCropEnabled: true
+    });
     await loadGalleries();
   }, 'Gallery created');
 
@@ -298,7 +339,8 @@ export function AdminApp() {
       purchaseUrl: gallery.purchaseUrl || '',
       visibility: gallery.visibility,
       status: gallery.status,
-      premiumPassword: ''
+      premiumPassword: '',
+      discoverSquareCropEnabled: gallery.discoverSquareCropEnabled !== false
     });
   };
 
@@ -314,9 +356,12 @@ export function AdminApp() {
   }, 'Gallery cover updated');
 
   const createMedia = () => withFeedback(async () => {
+    const includeSquareCrop =
+      mediaForm.assetType === 'image' &&
+      (mediaForm.cropX !== 0 || mediaForm.cropY !== 0 || mediaForm.cropSize !== 512);
     await request('/admin/images', 'POST', {
       ...mediaForm,
-      squareCrop: mediaForm.assetType === 'image'
+      squareCrop: includeSquareCrop
         ? { x: mediaForm.cropX, y: mediaForm.cropY, size: mediaForm.cropSize }
         : undefined
     });
@@ -348,14 +393,18 @@ export function AdminApp() {
       sortOrder: item.sortOrder,
       cropX: item.squareCrop?.x || 0,
       cropY: item.squareCrop?.y || 0,
-      cropSize: item.squareCrop?.size || 512
+      cropSize: item.squareCrop?.size || 512,
+      discoverSquareCropEnabled: item.discoverSquareCropEnabled !== false
     });
   };
 
   const saveEditMedia = () => withFeedback(async () => {
+    const includeSquareCrop =
+      mediaEditForm.assetType === 'image' &&
+      (mediaEditForm.cropX !== 0 || mediaEditForm.cropY !== 0 || mediaEditForm.cropSize !== 512);
     await request(`/admin/images/${mediaEditForm.galleryId}/${mediaEditForm.imageId}`, 'PATCH', {
       ...mediaEditForm,
-      squareCrop: mediaEditForm.assetType === 'image'
+      squareCrop: includeSquareCrop
         ? { x: mediaEditForm.cropX, y: mediaEditForm.cropY, size: mediaEditForm.cropSize }
         : undefined,
       generateRenditions: true
@@ -499,6 +548,14 @@ export function AdminApp() {
                   <option value="inactive">inactive</option>
                 </select>
                 <input type="number" placeholder="Sort order" value={artistEditForm.sortOrder} onChange={(e) => setArtistEditForm({ ...artistEditForm, sortOrder: Number(e.target.value || 0) })} />
+                <label className="inline-form">
+                  <input
+                    type="checkbox"
+                    checked={artistEditForm.discoverSquareCropEnabled}
+                    onChange={(e) => setArtistEditForm({ ...artistEditForm, discoverSquareCropEnabled: e.target.checked })}
+                  />
+                  <span>Allow square crop in discovery</span>
+                </label>
                 <button onClick={() => saveEditArtist(editingArtistId)}>Save Artist</button>
                 <button onClick={() => setEditingArtistId(null)}>Cancel</button>
               </>
@@ -507,6 +564,14 @@ export function AdminApp() {
             <input placeholder="Name" value={artistForm.name} onChange={(e) => setArtistForm({ ...artistForm, name: e.target.value })} />
             <input placeholder="Slug" value={artistForm.slug} onChange={(e) => setArtistForm({ ...artistForm, slug: e.target.value })} />
             <input type="number" placeholder="Sort order" value={artistForm.sortOrder} onChange={(e) => setArtistForm({ ...artistForm, sortOrder: Number(e.target.value || 1) })} />
+            <label className="inline-form">
+              <input
+                type="checkbox"
+                checked={artistForm.discoverSquareCropEnabled}
+                onChange={(e) => setArtistForm({ ...artistForm, discoverSquareCropEnabled: e.target.checked })}
+              />
+              <span>Allow square crop in discovery</span>
+            </label>
             <button onClick={createArtist}>Create Artist</button>
           </>
         )}
@@ -546,6 +611,14 @@ export function AdminApp() {
                   <option value="published">published</option>
                   <option value="draft">draft</option>
                 </select>
+                <label className="inline-form">
+                  <input
+                    type="checkbox"
+                    checked={galleryEditForm.discoverSquareCropEnabled}
+                    onChange={(e) => setGalleryEditForm({ ...galleryEditForm, discoverSquareCropEnabled: e.target.checked })}
+                  />
+                  <span>Allow square crop in discovery</span>
+                </label>
                 <input placeholder="Set new premium password (optional)" value={galleryEditForm.premiumPassword} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, premiumPassword: e.target.value })} />
                 <button onClick={() => saveEditGallery(editingGalleryId)}>Save Gallery</button>
                 <button onClick={() => setEditingGalleryId(null)}>Cancel</button>
@@ -564,6 +637,14 @@ export function AdminApp() {
               <option value="preview">preview</option>
               <option value="premium">premium</option>
             </select>
+            <label className="inline-form">
+              <input
+                type="checkbox"
+                checked={galleryForm.discoverSquareCropEnabled}
+                onChange={(e) => setGalleryForm({ ...galleryForm, discoverSquareCropEnabled: e.target.checked })}
+              />
+              <span>Allow square crop in discovery</span>
+            </label>
             <input placeholder="Premium password" value={galleryForm.premiumPassword} onChange={(e) => setGalleryForm({ ...galleryForm, premiumPassword: e.target.value })} />
             <button onClick={createGallery}>Create Gallery</button>
           </>
@@ -614,6 +695,14 @@ export function AdminApp() {
                 <input type="number" placeholder="Height" value={mediaEditForm.height} onChange={(e) => setMediaEditForm({ ...mediaEditForm, height: Number(e.target.value || 0) })} />
                 <input type="number" placeholder="Duration seconds" value={mediaEditForm.durationSeconds} onChange={(e) => setMediaEditForm({ ...mediaEditForm, durationSeconds: Number(e.target.value || 0) })} />
                 <input type="number" placeholder="Sort order" value={mediaEditForm.sortOrder} onChange={(e) => setMediaEditForm({ ...mediaEditForm, sortOrder: Number(e.target.value || 0) })} />
+                <label className="inline-form">
+                  <input
+                    type="checkbox"
+                    checked={mediaEditForm.discoverSquareCropEnabled}
+                    onChange={(e) => setMediaEditForm({ ...mediaEditForm, discoverSquareCropEnabled: e.target.checked })}
+                  />
+                  <span>Allow square crop in discovery</span>
+                </label>
                 {mediaEditForm.assetType === 'image' && (
                   <>
                     <input type="number" placeholder="Square crop X" value={mediaEditForm.cropX} onChange={(e) => setMediaEditForm({ ...mediaEditForm, cropX: Number(e.target.value || 0) })} />
@@ -641,6 +730,14 @@ export function AdminApp() {
             <input type="number" placeholder="Height" value={mediaForm.height} onChange={(e) => setMediaForm({ ...mediaForm, height: Number(e.target.value || 0) })} />
             <input type="number" placeholder="Duration seconds" value={mediaForm.durationSeconds} onChange={(e) => setMediaForm({ ...mediaForm, durationSeconds: Number(e.target.value || 0) })} />
             <input type="number" placeholder="Sort order" value={mediaForm.sortOrder} onChange={(e) => setMediaForm({ ...mediaForm, sortOrder: Number(e.target.value || 0) })} />
+            <label className="inline-form">
+              <input
+                type="checkbox"
+                checked={mediaForm.discoverSquareCropEnabled}
+                onChange={(e) => setMediaForm({ ...mediaForm, discoverSquareCropEnabled: e.target.checked })}
+              />
+              <span>Allow square crop in discovery</span>
+            </label>
             {mediaForm.assetType === 'image' && (
               <>
                 <input type="number" placeholder="Square crop X" value={mediaForm.cropX} onChange={(e) => setMediaForm({ ...mediaForm, cropX: Number(e.target.value || 0) })} />

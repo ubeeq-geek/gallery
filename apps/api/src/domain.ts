@@ -5,6 +5,7 @@ export interface Artist {
   name: string;
   slug: string;
   slugHistory?: string[];
+  discoverSquareCropEnabled?: boolean;
   status: 'active' | 'inactive';
   sortOrder: number;
   followerCount?: number;
@@ -20,6 +21,7 @@ export interface Gallery {
   title: string;
   slug: string;
   slugHistory?: string[];
+  discoverSquareCropEnabled?: boolean;
   visibility: Visibility;
   releaseVisibility?: 'public' | 'hidden' | 'removed';
   pairedPremiumGalleryId?: string;
@@ -35,6 +37,7 @@ export interface Gallery {
 export interface Media {
   mediaId: string;
   artistId: string;
+  discoverSquareCropEnabled?: boolean;
   assetType?: 'image' | 'video';
   status?: 'draft' | 'scheduled' | 'published' | 'archived';
   releaseVisibility?: 'public' | 'hidden' | 'removed';
@@ -214,6 +217,7 @@ export interface TrendingFeedItem {
   galleryId: string;
   gallerySlug: string;
   galleryVisibility: 'free' | 'preview';
+  discoverSquareCropEnabled: boolean;
   title: string;
   previewKey: string;
   favoriteCount: number;
