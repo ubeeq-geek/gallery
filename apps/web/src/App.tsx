@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from './api';
 import {
@@ -235,6 +235,7 @@ function HeaderAuth({
   profile?: UserProfile | null;
 }) {
   const location = useLocation();
+  const headerRef = useRef<HTMLElement | null>(null);
   const closeUserMenus = () => {
     document.querySelectorAll('details.user-menu[open]').forEach((item) => item.removeAttribute('open'));
   };
@@ -260,9 +261,30 @@ function HeaderAuth({
     .map((part) => part[0]?.toUpperCase() || '')
     .join('') || 'U';
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const header = headerRef.current;
+    if (!header) return;
+    const updateTopbarHeight = () => {
+      const height = Math.max(0, Math.round(header.getBoundingClientRect().height));
+      document.documentElement.style.setProperty('--topbar-height', `${height}px`);
+    };
+    updateTopbarHeight();
+    let resizeObserver: ResizeObserver | null = null;
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(() => updateTopbarHeight());
+      resizeObserver.observe(header);
+    }
+    window.addEventListener('resize', updateTopbarHeight);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateTopbarHeight);
+    };
+  }, []);
+
   return (
     <>
-      <header className="topbar">
+      <header className="topbar" ref={headerRef}>
         <div className="topbar-inner">
           <div className="brand">
             <Link to="/" className="no-underline" aria-label="Go to home">
@@ -396,6 +418,12 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
       setCode('');
       setNewPassword('');
       setConfirmPassword('');
+    }
+  }, [authMode]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
     }
   }, [authMode]);
 
@@ -568,9 +596,12 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
             </label>
           )}
 
-          {authMode === 'signin'
-            ? <button className="auth-primary-btn auth-submit-btn w-full" onClick={doSignIn}>Sign in</button>
-            : <button className="auth-primary-btn auth-submit-btn w-full" onClick={doRegister}>Create account</button>}
+          <div className="auth-main-actions">
+            {authMode === 'signin'
+              ? <button className="auth-primary-btn w-full" onClick={doSignIn}>Sign in</button>
+              : <button className="auth-primary-btn w-full" onClick={doRegister}>Create account</button>}
+            <button className="auth-secondary-btn w-full" onClick={() => navigate('/')}>Cancel</button>
+          </div>
 
           <div className="auth-divider"><span>or</span></div>
           <div className="auth-social-grid">
@@ -1161,12 +1192,32 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
 function HomePage() {
   const currentUser = getCurrentUser();
   const dailySeed = new Date().toISOString().slice(0, 10);
+  const trendingBaseLimit = 18;
+  type FeedDensity = 'small' | 'medium' | 'large';
+  type DensityViewport = 'mobile' | 'tablet' | 'desktop';
+  type TrendingPairRow = {
+    left: TrendingImage;
+    right?: TrendingImage;
+    startIndex: number;
+  };
   type DiscoveryGallery = GallerySummary & { artistName: string; artistSlug: string; stackPreviewUrls?: string[] };
+
   const [artists, setArtists] = useState<Artist[]>([]);
   const [galleries, setGalleries] = useState<DiscoveryGallery[]>([]);
   const [trendingImages, setTrendingImages] = useState<TrendingImage[]>([]);
   const [trendingCursor, setTrendingCursor] = useState<string | undefined>(undefined);
+  const [trendingReloadNonce, setTrendingReloadNonce] = useState(0);
   const [trendingPeriod, setTrendingPeriod] = useState<'hourly' | 'daily'>('daily');
+  const [feedDensity, setFeedDensity] = useState<FeedDensity>('medium');
+  const [densityViewport, setDensityViewport] = useState<DensityViewport>(() => {
+    if (typeof window === 'undefined') return 'desktop';
+    if (window.innerWidth >= 1100) return 'desktop';
+    if (window.innerWidth >= 700) return 'tablet';
+    return 'mobile';
+  });
+  const [densityFadeState, setDensityFadeState] = useState<'idle' | 'fading-out' | 'fading-in'>('idle');
+  const [densitySwitchLoading, setDensitySwitchLoading] = useState(false);
+  const [imageAspectRatios, setImageAspectRatios] = useState<Record<string, number>>({});
   const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
   const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
   const [favoriteImageIds, setFavoriteImageIds] = useState<Set<string>>(new Set());
@@ -1179,23 +1230,79 @@ function HomePage() {
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [followedArtistIds, setFollowedArtistIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
-  const masonryHeights = [220, 260, 300, 340, 380];
+  const densityTransitionTimersRef = useRef<number[]>([]);
+  const densitySwitchRequestRef = useRef<number | null>(null);
+
+  const fallbackAspectRatios = [1.6, 0.8, 1.5, 0.56, 1.78, 1.25, 1.33, 0.75];
+  const collectionPalettes = [
+    ['#d9edff', '#ead27e', '#88c1b2', '#6d97c8'],
+    ['#f3dfbe', '#b7d0ff', '#d2d7de', '#a97d62'],
+    ['#d6f1e4', '#ffd7b8', '#bdb37b', '#86b091']
+  ];
+  const densityTopRows: Record<FeedDensity, number> = {
+    small: 3,
+    medium: 4,
+    large: 2
+  };
+  const densityLabel: Record<FeedDensity, string> = {
+    small: 'Small',
+    medium: 'Medium',
+    large: 'Large'
+  };
+  const densityFadeOutMs = 130;
+  const densityFadeInMs = 570;
+  const densityOptions: FeedDensity[] = densityViewport === 'desktop' ? ['small', 'medium', 'large'] : ['small', 'large'];
+
+  const clearDensityTransitionTimers = () => {
+    if (typeof window === 'undefined') return;
+    densityTransitionTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    densityTransitionTimersRef.current = [];
+  };
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const getViewport = (width: number): DensityViewport => {
+      if (width >= 1100) return 'desktop';
+      if (width >= 700) return 'tablet';
+      return 'mobile';
+    };
+    const onResize = () => {
+      const next = getViewport(window.innerWidth);
+      setDensityViewport((prev) => (prev === next ? prev : next));
+    };
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    if (densityViewport !== 'desktop' && feedDensity === 'medium') {
+      setFeedDensity('large');
+    }
+  }, [densityViewport, feedDensity]);
+
+  useEffect(() => {
+    const requestNonce = trendingReloadNonce;
     const loadTrending = async () => {
       try {
         setLoadingTrending(true);
-        const trendingData = await api.getTrendingImages(trendingPeriod, undefined, 18) as { items: TrendingImage[]; nextCursor?: string };
+        const trendingData = await api.getTrendingImages(trendingPeriod, undefined, trendingBaseLimit) as { items: TrendingImage[]; nextCursor?: string };
         setTrendingImages(trendingData.items || []);
         setTrendingCursor(trendingData.nextCursor);
       } catch (e) {
         setError((e as Error).message);
       } finally {
         setLoadingTrending(false);
+        if (densitySwitchRequestRef.current === requestNonce) {
+          densitySwitchRequestRef.current = null;
+          setDensitySwitchLoading(false);
+        }
       }
     };
     void loadTrending();
-  }, [trendingPeriod]);
+  }, [trendingPeriod, trendingReloadNonce]);
+
+  useEffect(() => () => clearDensityTransitionTimers(), []);
 
   useEffect(() => {
     if (deferredSectionsReady || loadingTrending) return;
@@ -1279,7 +1386,7 @@ function HomePage() {
     if (!trendingCursor) return;
     try {
       setLoadingMoreTrending(true);
-      const response = await api.getTrendingImages(trendingPeriod, trendingCursor, 18) as { items: TrendingImage[]; nextCursor?: string };
+      const response = await api.getTrendingImages(trendingPeriod, trendingCursor, trendingBaseLimit) as { items: TrendingImage[]; nextCursor?: string };
       setTrendingImages((prev) => [...prev, ...(response.items || [])]);
       setTrendingCursor(response.nextCursor);
     } catch {
@@ -1289,14 +1396,102 @@ function HomePage() {
     }
   };
 
+  const getTrendingRatio = (item: TrendingImage, index: number): number => {
+    const fromLoaded = imageAspectRatios[item.imageId];
+    if (fromLoaded && Number.isFinite(fromLoaded) && fromLoaded > 0) return fromLoaded;
+    return fallbackAspectRatios[index % fallbackAspectRatios.length];
+  };
+
+  const captureImageRatio = (imageId: string, event: SyntheticEvent<HTMLImageElement>) => {
+    const { naturalWidth, naturalHeight } = event.currentTarget;
+    if (!naturalWidth || !naturalHeight) return;
+    const ratio = naturalWidth / naturalHeight;
+    if (!Number.isFinite(ratio) || ratio <= 0) return;
+    setImageAspectRatios((prev) => {
+      if (prev[imageId] === ratio) return prev;
+      return { ...prev, [imageId]: ratio };
+    });
+  };
+
+  const buildPairRows = (items: TrendingImage[]): TrendingPairRow[] => {
+    const rows: TrendingPairRow[] = [];
+    for (let i = 0; i < items.length; i += 2) {
+      rows.push({ left: items[i], right: items[i + 1], startIndex: i });
+    }
+    return rows;
+  };
+
+  const pairTemplateColumns = (row: TrendingPairRow, density: FeedDensity): string => {
+    if (!row.right) return '1fr';
+    if (density === 'small') return '1fr 1fr';
+    if (density === 'large') return '1fr';
+    const leftRatio = getTrendingRatio(row.left, row.startIndex);
+    const rightRatio = getTrendingRatio(row.right, row.startIndex + 1);
+    const total = leftRatio + rightRatio;
+    if (!total) return '1fr 1fr';
+    const leftShare = Math.max(0.34, Math.min(0.66, leftRatio / total));
+    const rightShare = 1 - leftShare;
+    return `${(leftShare * 100).toFixed(2)}fr ${(rightShare * 100).toFixed(2)}fr`;
+  };
+
+  const displayAspectRatio = (item: TrendingImage, index: number): number => {
+    const base = getTrendingRatio(item, index);
+    return Math.max(0.52, Math.min(2.8, base));
+  };
+
+  const trendingViewCount = (index: number): string => `${(1.8 + ((index % 9) * 0.17)).toFixed(1)}k`;
+
+  const applyDensityChange = (nextDensity: FeedDensity, markDensityRequest = false) => {
+    setFeedDensity(nextDensity);
+    setTrendingImages([]);
+    setTrendingCursor(undefined);
+    setImageAspectRatios({});
+    setLoadingMoreTrending(false);
+    setTrendingReloadNonce((value) => {
+      const next = value + 1;
+      if (markDensityRequest) {
+        densitySwitchRequestRef.current = next;
+      }
+      return next;
+    });
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        document.getElementById('trending')?.scrollIntoView({ behavior: 'auto', block: 'start' });
+      });
+    }
+  };
+
+  const resetTrendingViewForDensity = (nextDensity: FeedDensity) => {
+    if (nextDensity === feedDensity || typeof window === 'undefined') return;
+    clearDensityTransitionTimers();
+    setDensitySwitchLoading(true);
+    setDensityFadeState('fading-out');
+    const fadeOutTimer = window.setTimeout(() => {
+      applyDensityChange(nextDensity, true);
+      setDensityFadeState('fading-in');
+      const fadeInTimer = window.setTimeout(() => {
+        setDensityFadeState('idle');
+      }, densityFadeInMs);
+      densityTransitionTimersRef.current.push(fadeInTimer);
+    }, densityFadeOutMs);
+    densityTransitionTimersRef.current.push(fadeOutTimer);
+  };
+
   const trendingRenderable = trendingImages.filter((item) => Boolean(item.previewUrl));
-  const trending = trendingRenderable.slice(0, 16);
-  const trendingContinuation = trendingRenderable.slice(16);
+  const smallTopItemCount = densityTopRows.small * 4;
+  const smallTopItems = trendingRenderable.slice(0, smallTopItemCount);
+  const smallContinuationItems = trendingRenderable.slice(smallTopItemCount);
+  const allTrendingRows = buildPairRows(trendingRenderable);
+  const topRows = allTrendingRows.slice(0, densityTopRows[feedDensity]);
+  const continuationRows = allTrendingRows.slice(densityTopRows[feedDensity]);
+  const densityTransitionClass = densityFadeState === 'idle' ? '' : ` ${densityFadeState}`;
+  const isDensityTransitioning = densityFadeState !== 'idle';
+
   const latest = galleries
     .filter((gallery) => Boolean((gallery.stackPreviewUrls && gallery.stackPreviewUrls[0]) || gallery.galleryThumbnailUrl))
-    .slice(0, 6);
+    .slice(0, 8);
   const latestItems: DiscoveryGallery[] = latest;
-  const risingArtists = artists.slice(0, 3);
+  const risingArtists = artists.slice(0, 4);
   const trendingCollections = collections.slice(0, 3);
 
   const toggleFollow = async (artistId?: string) => {
@@ -1400,14 +1595,68 @@ function HomePage() {
     }
   };
 
+  const renderTrendingCard = (item: TrendingImage, cardIndex: number) => {
+    const href = item.gallerySlug
+      ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}`
+      : '/';
+    const isPreview = item.galleryVisibility === 'preview';
+    const isFavorite = favoriteImageIds.has(item.imageId);
+    const ratio = displayAspectRatio(item, cardIndex);
+    const isSmallLandscape = feedDensity === 'small' && ratio >= 1.25;
+
+    return (
+      <article key={item.imageId} className={`discovery-feature-card${isSmallLandscape ? ' is-landscape' : ''}`}>
+        <Link to={href} className="discovery-feature-link no-underline">
+          <div
+            className="discovery-feature-media"
+              style={{
+              aspectRatio: `${ratio.toFixed(3)} / 1`
+            }}
+          >
+            <img
+              src={item.previewUrl}
+              alt={item.title || 'Artwork preview'}
+              loading={cardIndex < 2 ? 'eager' : 'lazy'}
+              fetchPriority={cardIndex < 2 ? 'high' : (cardIndex < 8 ? 'auto' : 'low')}
+              decoding="async"
+              onLoad={(event) => captureImageRatio(item.imageId, event)}
+            />
+            {isPreview && <span className="discovery-chip">Preview</span>}
+          </div>
+        </Link>
+        <div className="discovery-feature-footer">
+          <div className="discovery-feature-text">
+            <h3 className="discovery-feature-title">{item.title || 'Artwork title'}</h3>
+            <p className="discovery-feature-subtitle">by {item.artistName || 'Artist Name'}</p>
+          </div>
+          <div className="discovery-feature-stats">
+            <span>❤ {item.favoriteCount || 0}</span>
+            <span>👁 {trendingViewCount(cardIndex)}</span>
+            <span>{isPreview ? 'Follower preview' : 'Public'}</span>
+          </div>
+          <div className="discovery-feature-actions">
+            <Link to={href} className="discovery-quick-view-link no-underline">Quick view</Link>
+            {currentUser && (
+              <button
+                className="auth-secondary-btn discovery-inline-btn"
+                onClick={() => void toggleImageFavorite(item.imageId)}
+              >
+                {isFavorite ? 'Unfavorite' : 'Favorite'}
+              </button>
+            )}
+          </div>
+        </div>
+      </article>
+    );
+  };
+
   return (
     <div className="layout discovery-layout">
       <section className="panel discovery-hero">
         <div>
           <h1>Discover trending artwork</h1>
           <p>
-            The most favourited and viewed artwork on Ubeeq. Follow artists to unlock higher resolution previews and
-            early-access releases.
+            A hybrid discovery layout: large featured images first for enjoyment, then denser browsing for exploration.
           </p>
         </div>
         <div className="discovery-hero-actions">
@@ -1416,13 +1665,56 @@ function HomePage() {
         </div>
       </section>
 
-      <section id="trending">
+      <section id="trending" aria-busy={densitySwitchLoading}>
         <div className="discovery-section-header">
-          <h2>Trending</h2>
-          <div className="discovery-trending-filter">
-            <button className={trendingPeriod === 'hourly' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setTrendingPeriod('hourly')}>Hourly</button>
-            <button className={trendingPeriod === 'daily' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setTrendingPeriod('daily')}>Daily</button>
-            <Link className="auth-secondary-btn no-underline" to="/trending">View all</Link>
+          <div>
+            <h2>Trending</h2>
+            <p className="small m-0 mt-1">
+              Variable-width rows based on image aspect ratio keep landscape and portrait media visually balanced.
+            </p>
+          </div>
+          <div className="discovery-home-controls">
+            <div className="discovery-trending-filter">
+              <button className={trendingPeriod === 'hourly' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setTrendingPeriod('hourly')}>Hourly</button>
+              <button className={trendingPeriod === 'daily' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setTrendingPeriod('daily')}>Daily</button>
+              <Link className="auth-secondary-btn no-underline" to="/trending">View all</Link>
+            </div>
+            <div className="discovery-density-card">
+              <div className="discovery-density-head">
+                <span>Feed density</span>
+                <strong>{densityLabel[feedDensity]}</strong>
+              </div>
+              {densityViewport === 'desktop' && (
+                <input
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={1}
+                  value={feedDensity === 'small' ? 0 : (feedDensity === 'medium' ? 1 : 2)}
+                  disabled={isDensityTransitioning}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    resetTrendingViewForDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
+                  }}
+                />
+              )}
+              <div className={`discovery-density-options${densityOptions.length === 2 ? ' is-two' : ''}`}>
+                {densityOptions.map((option) => (
+                  <button
+                    key={`density-option-${option}`}
+                    type="button"
+                    disabled={isDensityTransitioning}
+                    className={feedDensity === option ? 'is-active' : ''}
+                    onClick={() => resetTrendingViewForDensity(option)}
+                  >
+                    {densityLabel[option]}
+                  </button>
+                ))}
+              </div>
+              <p className="small m-0">
+                Small shows more rows before editorial sections. Large emphasizes image size.
+              </p>
+            </div>
           </div>
           {currentUser && (
             <div className="inline-form">
@@ -1443,90 +1735,87 @@ function HomePage() {
           )}
         </div>
 
-        <div className="discovery-masonry">
-          {trending.map((item, i) => (
-            <article key={item.imageId} className="discovery-card">
-              <Link to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="no-underline">
-                <div className="discovery-card-media" style={{ height: masonryHeights[i % masonryHeights.length] }}>
-                  <img
-                    src={item.previewUrl}
-                    alt={item.title || 'Artwork preview'}
-                    loading={i < 2 ? 'eager' : 'lazy'}
-                    fetchPriority={i < 2 ? 'high' : (i < 6 ? 'auto' : 'low')}
-                    decoding="async"
-                  />
-                  {item.galleryVisibility !== 'free' && <span className="discovery-chip">Preview</span>}
+        {densitySwitchLoading && densityViewport !== 'mobile' && (
+          <div className="discovery-density-fold-loader" role="status" aria-live="polite">
+            <div className="discovery-density-fold-loader-label">Updating feed layout…</div>
+            <div className="discovery-density-fold-loader-grid">
+              <div />
+              <div />
+              <div />
+            </div>
+          </div>
+        )}
+        <div className={`discovery-density-transition${densityTransitionClass}`}>
+          {feedDensity === 'small' ? (
+            <div className="discovery-small-grid">
+              {smallTopItems.map((item, index) => renderTrendingCard(item, index))}
+            </div>
+          ) : (
+            <div className={`discovery-pair-feed density-${feedDensity}`}>
+              {topRows.map((row) => (
+                <div
+                  key={`top-row-${row.left.imageId}-${row.right?.imageId || 'single'}`}
+                  className={`discovery-pair-row density-${feedDensity}${row.right ? '' : ' single'}`}
+                  style={{
+                    '--pair-cols-mobile': feedDensity === 'large' ? '1fr' : '1fr 1fr',
+                    '--pair-cols': pairTemplateColumns(row, feedDensity)
+                  } as any}
+                >
+                  {renderTrendingCard(row.left, row.startIndex)}
+                  {row.right && renderTrendingCard(row.right, row.startIndex + 1)}
                 </div>
-                <div className="discovery-card-body">
-                  <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
-                  <div className="discovery-card-subtitle">by {item.artistName}</div>
-                  <div className="discovery-card-stats">
-                    <span>❤ {item.favoriteCount || 0}</span>
-                    <span>👁 {(2.1 + (i % 7) * 0.2).toFixed(1)}k</span>
-                  </div>
-                </div>
-              </Link>
-              {currentUser && (
-                <div className="p-3 pt-0">
-                  <button
-                    className="auth-secondary-btn"
-                    onClick={() => void toggleImageFavorite(item.imageId)}
-                  >
-                    {favoriteImageIds.has(item.imageId) ? 'Unfavorite image' : 'Favorite image'}
-                  </button>
-                </div>
-              )}
-            </article>
-          ))}
+              ))}
+            </div>
+          )}
         </div>
-        {loadingTrending && trending.length === 0 && <p className="small">Loading trending artwork...</p>}
-        {!loadingTrending && trending.length === 0 && <p className="small">No trending artwork yet.</p>}
+        {loadingTrending && !densitySwitchLoading && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">Loading trending artwork...</p>}
+        {!loadingTrending && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">No trending artwork yet.</p>}
       </section>
 
       <section id="latest-galleries">
         <div className="discovery-section-header">
           <h2>Latest Galleries</h2>
-          <a href="#trending" className="text-sm font-semibold no-underline">Browse all</a>
+          <a href="#latest-galleries" className="text-sm font-semibold no-underline">Browse all</a>
         </div>
 
-        <div className="discovery-latest-grid">
+        <div className="discovery-latest-row">
           {latestItems.map((gallery, i) => (
-            <article key={gallery.galleryId} className="discovery-latest-item">
+            <article key={gallery.galleryId} className="discovery-gallery-stack-card">
               <Link to={gallery.slug ? `/gallery/${gallery.slug}` : '/'} className="no-underline">
-              {(() => {
-                const layerSet = gallery.stackPreviewUrls || [];
-                const frontImage = layerSet[0] || gallery.galleryThumbnailUrl;
-                const midImage = layerSet[1] || layerSet[0] || gallery.galleryThumbnailUrl;
-                const backImage = layerSet[2] || layerSet[1] || layerSet[0] || gallery.galleryThumbnailUrl;
-                return (
-              <div className="discovery-stack">
-                <div className="discovery-stack-layer discovery-stack-layer-back">
-                  <img src={backImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                {(() => {
+                  const layerSet = gallery.stackPreviewUrls || [];
+                  const frontImage = layerSet[0] || gallery.galleryThumbnailUrl;
+                  const midImage = layerSet[1] || layerSet[0] || gallery.galleryThumbnailUrl;
+                  const backImage = layerSet[2] || layerSet[1] || layerSet[0] || gallery.galleryThumbnailUrl;
+                  return (
+                    <div className="discovery-stack discovery-stack-tall">
+                      <div className="discovery-stack-layer discovery-stack-layer-back">
+                        <img src={backImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                      </div>
+                      <div className="discovery-stack-layer discovery-stack-layer-mid">
+                        <img src={midImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                      </div>
+                      <div className="discovery-stack-layer discovery-stack-layer-front">
+                        <img
+                          src={frontImage}
+                          alt={gallery.title || 'Gallery cover'}
+                          loading={i < 2 ? 'eager' : 'lazy'}
+                          fetchPriority={i < 2 ? 'high' : 'low'}
+                          decoding="async"
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+                <div className="discovery-gallery-stack-meta">
+                  <div className="discovery-card-title">{gallery.title || 'Gallery title'}</div>
+                  <div className="discovery-card-subtitle">by {gallery.artistName || 'Artist Name'}</div>
                 </div>
-                <div className="discovery-stack-layer discovery-stack-layer-mid">
-                  <img src={midImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
-                </div>
-                <div className="discovery-stack-layer discovery-stack-layer-front">
-                  <img
-                    src={frontImage}
-                    alt={gallery.title || 'Gallery cover'}
-                    loading={i < 2 ? 'eager' : 'lazy'}
-                    fetchPriority={i < 2 ? 'high' : 'low'}
-                    decoding="async"
-                  />
-                </div>
-              </div>
-                );
-              })()}
-              <div className="discovery-latest-meta">
-                <div className="discovery-card-title">{gallery.title || 'Gallery title'}</div>
-                <div className="discovery-card-subtitle">by {gallery.artistName || 'Artist Name'}</div>
-              </div>
               </Link>
               {currentUser && gallery.galleryId && (
                 <div className="mt-3">
                   <button
-                    className="auth-secondary-btn"
+                    className="auth-secondary-btn discovery-inline-btn"
                     onClick={() => void toggleGalleryFavorite(gallery.galleryId)}
                   >
                     {favoriteGalleryIds.has(gallery.galleryId) ? 'Unfavorite gallery' : 'Favorite gallery'}
@@ -1543,9 +1832,9 @@ function HomePage() {
       <section id="rising-artists">
         <div className="discovery-section-header">
           <h2>Rising Artists</h2>
-          <a href="#trending" className="text-sm font-semibold no-underline">View all</a>
+          <a href="#rising-artists" className="text-sm font-semibold no-underline">View all</a>
         </div>
-        <div className="discovery-artists-grid">
+        <div className="discovery-artists-grid discovery-artists-grid-wide">
           {risingArtists.map((artist, i) => (
             <article key={artist.artistId || artist.name || `artist-${i}`} className="discovery-artist-card">
               <div className="discovery-artist-avatar">
@@ -1559,7 +1848,7 @@ function HomePage() {
                 </div>
                 <div className="discovery-card-subtitle">1.2k followers</div>
               </div>
-              <button className="auth-secondary-btn" onClick={() => void toggleFollow(artist.artistId)}>
+              <button className="auth-secondary-btn discovery-inline-btn" onClick={() => void toggleFollow(artist.artistId)}>
                 {artist.artistId && followedArtistIds.has(artist.artistId) ? 'Following' : 'Follow'}
               </button>
             </article>
@@ -1569,58 +1858,20 @@ function HomePage() {
         {!loadingLatest && risingArtists.length === 0 && <p className="small">No artists yet.</p>}
       </section>
 
-      {trendingContinuation.length > 0 && (
-        <section id="trending-continuation">
-          <div className="discovery-section-header">
-            <h2>More Trending Images</h2>
-          </div>
-          <div className="discovery-masonry">
-            {trendingContinuation.map((item, i) => (
-            <article key={`more-${item.imageId}-${i}`} className="discovery-card">
-              <Link to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="no-underline">
-                  <div className="discovery-card-media" style={{ height: masonryHeights[i % masonryHeights.length] }}>
-                    <img src={item.previewUrl} alt={item.title || 'Artwork preview'} loading="lazy" decoding="async" />
-                    {item.galleryVisibility !== 'free' && <span className="discovery-chip">Preview</span>}
-                  </div>
-                  <div className="discovery-card-body">
-                    <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
-                    <div className="discovery-card-subtitle">by {item.artistName}</div>
-                    <div className="discovery-card-stats">
-                      <span>❤ {item.favoriteCount || 0}</span>
-                      <span>👁 {(2.1 + (i % 7) * 0.2).toFixed(1)}k</span>
-                    </div>
-                </div>
-              </Link>
-              {currentUser && (
-                <div className="p-3 pt-0">
-                  <button
-                    className="auth-secondary-btn"
-                    onClick={() => void toggleImageFavorite(item.imageId)}
-                  >
-                    {favoriteImageIds.has(item.imageId) ? 'Unfavorite image' : 'Favorite image'}
-                  </button>
-                </div>
-              )}
-            </article>
-          ))}
-        </div>
-          <AutoLoadSentinel
-            enabled={Boolean(trendingCursor)}
-            loading={loadingMoreTrending}
-            onLoadMore={() => loadMoreTrending()}
-          />
-        </section>
-      )}
-
       <section id="trending-collections">
         <div className="discovery-section-header">
           <h2>Trending Collections</h2>
           <Link to="/collections" className="text-sm font-semibold no-underline">View all</Link>
         </div>
-        <div className="discovery-latest-grid">
-          {trendingCollections.map((collection) => (
-            <Link key={collection.collectionId} to={`/collections/${collection.collectionId}`} className="discovery-latest-item no-underline">
-              <div className="panel">
+        <div className="discovery-collection-grid">
+          {trendingCollections.map((collection, index) => (
+            <Link key={collection.collectionId} to={`/collections/${collection.collectionId}`} className="discovery-collection-card no-underline">
+              <div className="discovery-collection-squares">
+                {(collectionPalettes[index % collectionPalettes.length] || collectionPalettes[0]).map((color, swatchIndex) => (
+                  <div key={`${collection.collectionId}-sw-${swatchIndex}`} style={{ backgroundColor: color }} />
+                ))}
+              </div>
+              <div className="discovery-collection-meta">
                 <div className="discovery-card-title">{collection.title}</div>
                 <div className="discovery-card-subtitle">{collection.imageCount} images • {collection.favoriteCount} favorites</div>
               </div>
@@ -1630,6 +1881,44 @@ function HomePage() {
         {loadingCollections && trendingCollections.length === 0 && <p className="small">Loading collections...</p>}
         {!loadingCollections && trendingCollections.length === 0 && <p className="small">No public collections yet.</p>}
       </section>
+
+      {(feedDensity === 'small'
+        ? (smallContinuationItems.length > 0 || Boolean(trendingCursor))
+        : (continuationRows.length > 0 || Boolean(trendingCursor))) && (
+        <section id="trending-continuation">
+          <div className="discovery-section-header">
+            <h2>More Trending</h2>
+          </div>
+          <div className={`discovery-density-transition${densityTransitionClass}`}>
+            {feedDensity === 'small' ? (
+              <div className="discovery-small-grid">
+                {smallContinuationItems.map((item, index) => renderTrendingCard(item, smallTopItemCount + index))}
+              </div>
+            ) : (
+              <div className={`discovery-pair-feed density-${feedDensity}`}>
+                {continuationRows.map((row) => (
+                  <div
+                    key={`more-row-${row.left.imageId}-${row.right?.imageId || 'single'}`}
+                    className={`discovery-pair-row density-${feedDensity}${row.right ? '' : ' single'}`}
+                    style={{
+                      '--pair-cols-mobile': feedDensity === 'large' ? '1fr' : '1fr 1fr',
+                      '--pair-cols': pairTemplateColumns(row, feedDensity)
+                    } as any}
+                  >
+                    {renderTrendingCard(row.left, row.startIndex)}
+                    {row.right && renderTrendingCard(row.right, row.startIndex + 1)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <AutoLoadSentinel
+            enabled={Boolean(trendingCursor)}
+            loading={loadingMoreTrending}
+            onLoadMore={() => loadMoreTrending()}
+          />
+        </section>
+      )}
 
       {error && (
         <section className="panel">
