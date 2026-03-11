@@ -1,6 +1,7 @@
 import type { AppConfig } from './config';
 import type { Artist, Gallery, GalleryMediaView, TrendingFeedItem, TrendingPeriod } from './domain';
 import type { DataStore } from './store';
+import { getEffectiveContentRating } from './contentRating';
 
 const asTime = (value?: string): number | null => {
   if (!value) return null;
@@ -37,6 +38,7 @@ interface CandidateItem {
   gallerySlug: string;
   galleryVisibility: 'free' | 'preview';
   discoverSquareCropEnabled: boolean;
+  effectiveContentRating: TrendingFeedItem['effectiveContentRating'];
   title: string;
   previewKey: string;
   createdAt: string;
@@ -90,6 +92,7 @@ const buildCandidates = async (
         gallerySlug: gallery.slug,
         galleryVisibility: gallery.visibility === 'preview' ? 'preview' : 'free',
         discoverSquareCropEnabled,
+        effectiveContentRating: getEffectiveContentRating(item),
         title: item.title || gallery.title || 'Artwork',
         previewKey,
         createdAt: item.createdAt,
@@ -152,6 +155,7 @@ export const buildTrendingFeedForPeriod = async (
     gallerySlug: item.gallerySlug,
     galleryVisibility: item.galleryVisibility,
     discoverSquareCropEnabled: item.discoverSquareCropEnabled,
+    effectiveContentRating: item.effectiveContentRating,
     title: item.title,
     previewKey: item.previewKey,
     favoriteCount: item.favoriteCount,

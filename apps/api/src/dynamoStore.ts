@@ -31,6 +31,7 @@ import type {
   TrendingPeriod
 } from './domain';
 import { GalleryCoreRepository } from './galleryCoreRepository';
+import { normalizeContentRating } from './contentRating';
 
 export class DynamoStore implements DataStore {
   private readonly client: DynamoDBDocumentClient;
@@ -754,6 +755,7 @@ export class DynamoStore implements DataStore {
         gallerySlug: String(row.gallerySlug || ''),
         galleryVisibility: row.galleryVisibility === 'preview' ? 'preview' : 'free',
         discoverSquareCropEnabled: row.discoverSquareCropEnabled !== false,
+        effectiveContentRating: normalizeContentRating(row.effectiveContentRating),
         title: String(row.title || ''),
         previewKey: String(row.previewKey || ''),
         favoriteCount: Math.max(0, Number(row.favoriteCount || 0)),

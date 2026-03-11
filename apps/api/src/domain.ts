@@ -1,4 +1,5 @@
 export type Visibility = 'free' | 'preview' | 'premium';
+export type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
 
 export interface Artist {
   artistId: string;
@@ -38,6 +39,8 @@ export interface Media {
   mediaId: string;
   artistId: string;
   discoverSquareCropEnabled?: boolean;
+  contentRating?: ContentRating;
+  moderatorContentRating?: ContentRating;
   assetType?: 'image' | 'video';
   status?: 'draft' | 'scheduled' | 'published' | 'archived';
   releaseVisibility?: 'public' | 'hidden' | 'removed';
@@ -168,6 +171,8 @@ export interface UserProfile {
   bio?: string;
   location?: string;
   website?: string;
+  matureContentEnabled?: boolean;
+  maxAllowedContentRating?: ContentRating;
   createdAt: string;
   updatedAt: string;
   lastUsernameChangeAt?: string;
@@ -218,6 +223,7 @@ export interface TrendingFeedItem {
   gallerySlug: string;
   galleryVisibility: 'free' | 'preview';
   discoverSquareCropEnabled: boolean;
+  effectiveContentRating: ContentRating;
   title: string;
   previewKey: string;
   favoriteCount: number;

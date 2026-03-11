@@ -11,9 +11,18 @@ import { issueRememberAccessToken, issueUnlockToken, verifyPassword, verifyUnloc
 import type { AppConfig } from './config';
 import type { DataStore } from './store';
 import { hashPassword } from './unlock';
-import type { Artist, ArtistMember, Comment, Gallery, Media, SiteSettings, UserProfile } from './domain';
+import type { Artist, ArtistMember, Comment, ContentRating, Gallery, Media, SiteSettings, UserProfile } from './domain';
 import { generateImageRenditions, type SquareCropInput } from './renditions';
 import { refreshTrendingFeeds } from './trendingFeed';
+import {
+  getDisplayedRating,
+  getEffectiveContentRating,
+  getPublicFacingRating,
+  isRatingAllowed,
+  normalizeContentRating,
+  shouldBlurContent,
+  type ViewerContentPolicy
+} from './contentRating';
 
 interface CreateAppOptions {
   config: AppConfig;
@@ -66,6 +75,12 @@ const sanitizeOptional = (value: unknown, maxLen: number): string | undefined =>
   const trimmed = value.trim();
   if (!trimmed) return undefined;
   return trimmed.slice(0, maxLen);
+};
+
+const parseOptionalContentRating = (value: unknown): ContentRating | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string' && !value.trim()) return undefined;
+  return normalizeContentRating(value);
 };
 
 const validateUsername = (value: string): { normalized: string; reasons: string[] } => {
@@ -376,6 +391,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       username,
       usernameHistory: [username],
       displayName: authDisplayName,
+      matureContentEnabled: false,
+      maxAllowedContentRating: 'graphic',
       createdAt: now,
       updatedAt: now
     };
@@ -401,6 +418,34 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     await store.upsertUserProfile(created);
     return created;
   };
+
+  const resolveViewerContentPolicy = async (req: express.Request): Promise<ViewerContentPolicy & { maxAllowedContentRating: ContentRating }> => {
+    const queryMax = typeof req.query.maxAllowedRating === 'string'
+      ? normalizeContentRating(req.query.maxAllowedRating)
+      : undefined;
+    if (!req.authUser?.userId) {
+      return {
+        loggedIn: false,
+        matureEnabled: false,
+        maxAllowedContentRating: queryMax || 'graphic'
+      };
+    }
+    const profile = await store.getUserProfile(req.authUser.userId);
+    const profileMax = profile?.maxAllowedContentRating
+      ? normalizeContentRating(profile.maxAllowedContentRating)
+      : undefined;
+    return {
+      loggedIn: true,
+      matureEnabled: Boolean(profile?.matureContentEnabled),
+      maxAllowedContentRating: queryMax || profileMax || 'graphic'
+    };
+  };
+
+  const projectContentRating = (effectiveContentRating: ContentRating, viewer: ViewerContentPolicy) => ({
+    effectiveContentRating: getPublicFacingRating(effectiveContentRating, viewer),
+    displayedContentRating: getDisplayedRating(effectiveContentRating, viewer),
+    blurred: shouldBlurContent(effectiveContentRating, viewer)
+  });
 
   const isAdminRequest = (req: express.Request): boolean => {
     if (!req.authUser) return false;
@@ -592,6 +637,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     gallerySlug: string;
     galleryVisibility: 'free' | 'preview';
     discoverSquareCropEnabled: boolean;
+    effectiveContentRating: ContentRating;
+    displayedContentRating: string;
+    blurred: boolean;
     title: string;
     previewUrl: string;
     favoriteCount: number;
@@ -623,6 +671,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const offset = parseOffsetCursor(opts?.cursor);
     const nowMs = Date.now();
     const periodMs = period === 'hourly' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const viewerPolicy = await resolveViewerContentPolicy(_req);
 
     let allArtists: Artist[] = [];
     try {
@@ -654,6 +703,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       gallerySlug: string;
       galleryVisibility: 'free' | 'preview';
       discoverSquareCropEnabled: boolean;
+      effectiveContentRating: ContentRating;
       title: string;
       createdAt: string;
       createdAtMs: number;
@@ -672,6 +722,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           (artistById.get(item.artistId)?.discoverSquareCropEnabled ?? true) &&
           (gallery.discoverSquareCropEnabled ?? true) &&
           (item.discoverSquareCropEnabled ?? true);
+        const effectiveContentRating = getEffectiveContentRating(item);
+        if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) {
+          continue;
+        }
         candidates.push({
           imageId: item.mediaId,
           artistId: item.artistId,
@@ -679,6 +733,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           gallerySlug: gallery.slug,
           galleryVisibility: gallery.visibility === 'preview' ? 'preview' : 'free',
           discoverSquareCropEnabled,
+          effectiveContentRating,
           title: item.title || gallery.title || 'Artwork',
           createdAt: item.createdAt,
           createdAtMs,
@@ -694,6 +749,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       const favoriteCount = Math.max(0, Number(favoriteCounts[item.imageId] || 0));
       const discoverSquareCropBonus = item.discoverSquareCropEnabled ? 1.25 : 0;
       const score = favoriteCount * 2 + item.recencyBoost * 10 + discoverSquareCropBonus;
+      const contentProjection = projectContentRating(item.effectiveContentRating, viewerPolicy);
       return {
         imageId: item.imageId,
         artistId: item.artistId,
@@ -702,6 +758,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         gallerySlug: item.gallerySlug,
         galleryVisibility: item.galleryVisibility,
         discoverSquareCropEnabled: item.discoverSquareCropEnabled,
+        effectiveContentRating: contentProjection.effectiveContentRating,
+        displayedContentRating: contentProjection.displayedContentRating,
+        blurred: contentProjection.blurred,
         title: item.title,
         previewUrl: await publicMediaUrl(item.previewKey) || '',
         favoriteCount,
@@ -874,7 +933,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const limit = Math.max(1, Math.min(60, Number(req.query.limit || 24)));
     const cursorToken = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const decodedCursor = parsePassthroughCursor(cursorToken);
-    const cacheKey = `period=${period}|limit=${limit}|cursor=${decodedCursor || ''}`;
+    const viewerPolicy = await resolveViewerContentPolicy(req);
+    const cacheKey = `viewer=${viewerPolicy.loggedIn ? 'auth' : 'anon'}:${viewerPolicy.matureEnabled ? 'm1' : 'm0'}:${viewerPolicy.maxAllowedContentRating}|period=${period}|limit=${limit}|cursor=${decodedCursor || ''}`;
     const cached = readTrendingResponseCache<{
       body: { period: 'hourly' | 'daily'; items: Omit<TrendingImageItem, 'score'>[]; nextCursor?: string };
       source: 'materialized' | 'fallback';
@@ -899,19 +959,30 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         feedPage = await store.listTrendingFeed(period, limit, decodedCursor);
       }
       if (feedPage.items.length > 0) {
-        const items = await Promise.all(feedPage.items.map(async (item) => ({
-          imageId: item.imageId,
-          artistId: item.artistId,
-          artistName: item.artistName,
-          galleryId: item.galleryId,
-          gallerySlug: item.gallerySlug,
-          galleryVisibility: item.galleryVisibility,
-          discoverSquareCropEnabled: item.discoverSquareCropEnabled !== false,
-          title: item.title,
-          previewUrl: await publicMediaUrl(item.previewKey) || '',
-          favoriteCount: item.favoriteCount,
-          createdAt: item.createdAt
-        })));
+        const filtered = feedPage.items.filter((item) => {
+          const effective = normalizeContentRating(item.effectiveContentRating);
+          return isRatingAllowed(effective, viewerPolicy.maxAllowedContentRating);
+        });
+        const items = await Promise.all(filtered.map(async (item) => {
+          const effective = normalizeContentRating(item.effectiveContentRating);
+          const contentProjection = projectContentRating(effective, viewerPolicy);
+          return {
+            imageId: item.imageId,
+            artistId: item.artistId,
+            artistName: item.artistName,
+            galleryId: item.galleryId,
+            gallerySlug: item.gallerySlug,
+            galleryVisibility: item.galleryVisibility,
+            discoverSquareCropEnabled: item.discoverSquareCropEnabled !== false,
+            effectiveContentRating: contentProjection.effectiveContentRating,
+            displayedContentRating: contentProjection.displayedContentRating,
+            blurred: contentProjection.blurred,
+            title: item.title,
+            previewUrl: await publicMediaUrl(item.previewKey) || '',
+            favoriteCount: item.favoriteCount,
+            createdAt: item.createdAt
+          };
+        }));
         const body = {
           period,
           items,
@@ -1324,6 +1395,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
     const isFollower = req.authUser?.userId ? await store.isFollowingArtist(req.authUser.userId, gallery.artistId) : false;
     const isFollowerOrAdmin = isAdminRequest(req) || isFollower;
+    const viewerPolicy = await resolveViewerContentPolicy(req);
     if (!canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, Date.now(), isFollowerOrAdmin)) {
       return res.status(404).json({ message: 'Gallery not found' });
     }
@@ -1343,6 +1415,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const mediaItems = (await store.getMediaByGallery(resolvedGallery.galleryId)).filter((item) => {
       if (isHiddenByVisibility(item.releaseVisibility)) return false;
       if (item.status && item.status !== 'published' && item.status !== 'scheduled') return false;
+      const effectiveContentRating = getEffectiveContentRating(item);
+      if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) return false;
       return canViewBySchedule(item.publishAt || resolvedGallery.publishAt, item.publicReleaseAt || resolvedGallery.publicReleaseAt, Date.now(), isFollowerOrAdmin);
     });
     const coverMedia = mediaItems.find((item) => item.mediaId === gallery.coverImageId) || mediaItems[0];
@@ -1350,7 +1424,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       ? await publicMediaUrl(coverMedia.previewPosterKey || coverMedia.previewKey)
       : undefined;
     let coverBlur = (gallery.visibility === 'premium' || gallery.visibility === 'preview') && !galleryHasAccess;
-    // For premium galleries without an explicit cover, prefer paired preview cover and keep it unblurred.
+    if (coverMedia) {
+      const effectiveCoverRating = getEffectiveContentRating(coverMedia);
+      coverBlur = coverBlur || shouldBlurContent(effectiveCoverRating, viewerPolicy);
+    }
+    // For premium galleries without an explicit cover, prefer paired preview cover.
     if (gallery.visibility === 'premium' && !gallery.coverImageId) {
       const previewGallery = (await store.listAllGalleries()).find((item) =>
         item.status === 'published' &&
@@ -1362,38 +1440,49 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         const previewCover = previewMedia.find((item) => item.mediaId === previewGallery.coverImageId) || previewMedia[0];
         if (previewCover) {
           coverPreviewUrl = await publicMediaUrl(previewCover.previewPosterKey || previewCover.previewKey);
-          coverBlur = false;
+          coverBlur = shouldBlurContent(getEffectiveContentRating(previewCover), viewerPolicy);
         }
       }
     }
-    const mediaPayload = await Promise.all(mediaItems.map(async (item) => ({
-      ...item,
-      imageId: item.mediaId,
-      sortOrder: item.position,
-      assetType: item.assetType || 'image',
-      premiumKey: undefined,
-      previewUrl: await publicMediaUrl(item.previewKey),
-      previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
-      thumbnailUrls: item.thumbnailKeys
-        ? Object.fromEntries(
-            await Promise.all(
-              Object.entries(item.thumbnailKeys).map(async ([name, key]) => {
-                if (!key) return [name, undefined];
-                const url = await publicMediaUrl(key);
-                return [name, url];
-              })
+    const mediaPayload = await Promise.all(mediaItems.map(async (item) => {
+      const effectiveContentRating = getEffectiveContentRating(item);
+      const contentProjection = projectContentRating(effectiveContentRating, viewerPolicy);
+      return {
+        ...item,
+        imageId: item.mediaId,
+        sortOrder: item.position,
+        assetType: item.assetType || 'image',
+        contentRating: contentProjection.effectiveContentRating,
+        moderatorContentRating: undefined,
+        premiumKey: undefined,
+        effectiveContentRating: contentProjection.effectiveContentRating,
+        displayedContentRating: contentProjection.displayedContentRating,
+        blurred: contentProjection.blurred,
+        previewUrl: await publicMediaUrl(item.previewKey),
+        previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
+        thumbnailUrls: item.thumbnailKeys
+          ? Object.fromEntries(
+              await Promise.all(
+                Object.entries(item.thumbnailKeys).map(async ([name, key]) => {
+                  if (!key) return [name, undefined];
+                  const url = await publicMediaUrl(key);
+                  return [name, url];
+                })
+              )
             )
-          )
-        : undefined,
-      favoriteCount: await store.countFavorites('image', item.mediaId)
-    })));
+          : undefined,
+        favoriteCount: await store.countFavorites('image', item.mediaId)
+      };
+    }));
 
     let premiumTeaserMedia: Array<{ imageId: string; assetType: 'image' | 'video'; previewUrl: string; previewPosterUrl?: string }> = [];
     if (gallery.visibility === 'preview' && gallery.pairedPremiumGalleryId && !galleryHasAccess) {
-      const premiumMedia = await store.getMediaByGallery(gallery.pairedPremiumGalleryId);
+      const premiumMedia = (await store.getMediaByGallery(gallery.pairedPremiumGalleryId))
+        .filter((item) => isRatingAllowed(getEffectiveContentRating(item), viewerPolicy.maxAllowedContentRating));
       premiumTeaserMedia = await Promise.all(premiumMedia.map(async (item) => ({
         imageId: item.mediaId,
         assetType: (item.assetType || 'image') as 'image' | 'video',
+        ...projectContentRating(getEffectiveContentRating(item), viewerPolicy),
         previewUrl: (await publicMediaUrl(item.previewKey)) || '',
         previewPosterUrl: await publicMediaUrl(item.previewPosterKey)
       })));
@@ -1484,15 +1573,30 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       }
     }
 
+    const viewerPolicy = await resolveViewerContentPolicy(req);
     const mediaItems = await store.getMediaByGallery(gallery.galleryId);
     const premiumMedia = await Promise.all(mediaItems
       .filter((item) => Boolean(item.premiumKey))
-      .map(async (item) => ({
-        imageId: item.mediaId,
-        assetType: item.assetType || 'image',
-        premiumUrl: (await privateMediaUrl(item.premiumKey!)) || '',
-        premiumPosterUrl: await privateMediaUrl(item.premiumPosterKey)
-      })));
+      .map(async (item) => {
+        const effectiveRating = getEffectiveContentRating(item);
+        const contentProjection = projectContentRating(effectiveRating, viewerPolicy);
+        if (contentProjection.blurred) {
+          return {
+            imageId: item.mediaId,
+            assetType: item.assetType || 'image',
+            ...contentProjection,
+            premiumUrl: (await publicMediaUrl(item.previewKey)) || '',
+            premiumPosterUrl: await publicMediaUrl(item.previewPosterKey)
+          };
+        }
+        return {
+          imageId: item.mediaId,
+          assetType: item.assetType || 'image',
+          ...contentProjection,
+          premiumUrl: (await privateMediaUrl(item.premiumKey!)) || '',
+          premiumPosterUrl: await privateMediaUrl(item.premiumPosterKey)
+        };
+      }));
 
     return res.json(premiumMedia);
   });
@@ -1661,7 +1765,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
   app.get('/me/profile', requireAuth, async (req, res) => {
     const profile = await ensureUserProfile(req);
-    return res.json(profile);
+    return res.json({
+      ...profile,
+      matureContentEnabled: Boolean(profile.matureContentEnabled),
+      maxAllowedContentRating: normalizeContentRating(profile.maxAllowedContentRating || 'graphic')
+    });
   });
 
   app.get('/me/artists', requireAuth, async (req, res) => {
@@ -1688,12 +1796,20 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
   app.put('/me/profile', requireAuth, async (req, res) => {
     const existing = await ensureUserProfile(req);
+    const matureContentEnabled = typeof req.body?.matureContentEnabled === 'boolean'
+      ? req.body.matureContentEnabled
+      : Boolean(existing.matureContentEnabled);
+    const maxAllowedContentRating = req.body?.maxAllowedContentRating !== undefined
+      ? normalizeContentRating(req.body.maxAllowedContentRating)
+      : normalizeContentRating(existing.maxAllowedContentRating || 'graphic');
     const updated: UserProfile = {
       ...existing,
       displayName: sanitizeOptional(req.body?.displayName, 80),
       bio: sanitizeOptional(req.body?.bio, 600),
       location: sanitizeOptional(req.body?.location, 120),
       website: sanitizeOptional(req.body?.website, 220),
+      matureContentEnabled,
+      maxAllowedContentRating,
       updatedAt: new Date().toISOString()
     };
     await store.upsertUserProfile(updated);
@@ -2381,6 +2497,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
         : true,
+      contentRating: normalizeContentRating(req.body?.contentRating),
+      moderatorContentRating: parseOptionalContentRating(req.body?.moderatorContentRating),
       title,
       slug,
       slugHistory: slug ? uniqueSlugs([slug]) : undefined,
@@ -2441,6 +2559,12 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
         : (existing.discoverSquareCropEnabled ?? true),
+      contentRating: req.body?.contentRating !== undefined
+        ? normalizeContentRating(req.body.contentRating)
+        : normalizeContentRating(existing.contentRating),
+      moderatorContentRating: req.body?.moderatorContentRating !== undefined
+        ? parseOptionalContentRating(req.body.moderatorContentRating)
+        : existing.moderatorContentRating,
       title: nextTitle || undefined,
       slug: nextSlug,
       slugHistory: nextSlug ? uniqueSlugs([...(existing.slugHistory || (existing.slug ? [existing.slug] : [])), nextSlug]) : existing.slugHistory,

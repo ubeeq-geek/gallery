@@ -7,7 +7,7 @@ import path from 'path';
 import { hashPassword } from '../unlock';
 import { loadConfig } from '../config';
 import { GalleryCoreRepository } from '../galleryCoreRepository';
-import type { Artist, Gallery, Media, SiteSettings } from '../domain';
+import type { Artist, ContentRating, Gallery, Media, SiteSettings } from '../domain';
 import { generateImageRenditions } from '../renditions';
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -62,6 +62,7 @@ type ArtistSeed = {
   name: string;
   slug: string;
   filePrefix: string;
+  contentRating?: ContentRating;
   discoverSquareCropEnabled?: boolean;
   galleries: Array<'free' | 'preview' | 'premium'>;
   freeGalleryTitle?: string;
@@ -87,6 +88,7 @@ const artistSeeds: ArtistSeed[] = [
     name: 'Ubeeq Girl',
     slug: 'ubeeq-girl',
     filePrefix: 'ubeeq-girl-',
+    contentRating: 'fetish',
     discoverSquareCropEnabled: false,
     galleries: ['preview', 'premium'],
     purchaseUrl: 'https://store.example.com/ubeeq-girl-premium'
@@ -319,6 +321,7 @@ const main = async () => {
     const seed = artistSeeds[idx];
     const createdAt = nowIso();
     const artistId = randomUUID();
+    const contentRating: ContentRating = seed.contentRating || 'general';
     const discoverSquareCropEnabled = seed.discoverSquareCropEnabled ?? true;
 
     const artist: Artist = {
@@ -433,6 +436,7 @@ const main = async () => {
         artistId,
         assetType: 'image',
         discoverSquareCropEnabled,
+        contentRating,
         title,
         slug,
         slugHistory: [slug],
@@ -459,6 +463,7 @@ const main = async () => {
           artistId,
           assetType: 'image',
           discoverSquareCropEnabled,
+          contentRating,
           title,
           slug,
           slugHistory: [slug],
@@ -485,6 +490,7 @@ const main = async () => {
         artistId,
         assetType: 'image',
         discoverSquareCropEnabled,
+        contentRating,
         title,
         slug,
         slugHistory: [slug],
@@ -525,6 +531,7 @@ const main = async () => {
         artistId,
         assetType: 'video',
         discoverSquareCropEnabled,
+        contentRating,
         title,
         slug,
         slugHistory: [slug],
@@ -557,6 +564,7 @@ const main = async () => {
           artistId,
           assetType: 'video',
           discoverSquareCropEnabled,
+          contentRating,
           title,
           slug,
           slugHistory: [slug],
@@ -593,6 +601,7 @@ const main = async () => {
         artistId,
         assetType: 'video',
         discoverSquareCropEnabled,
+        contentRating,
         title,
         slug,
         slugHistory: [slug],

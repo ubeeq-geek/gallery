@@ -328,7 +328,14 @@ export const api = {
     }
     return myProfileInFlight;
   },
-  async updateMyProfile(payload: { displayName?: string; bio?: string; location?: string; website?: string }) {
+  async updateMyProfile(payload: {
+    displayName?: string;
+    bio?: string;
+    location?: string;
+    website?: string;
+    matureContentEnabled?: boolean;
+    maxAllowedContentRating?: 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+  }) {
     const response = await fetch(`${API_BASE}/me/profile`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },

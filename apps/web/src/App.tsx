@@ -15,6 +15,15 @@ import {
 
 type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string };
 type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
+type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+const contentRatingOptions: Array<{ value: ContentRating; label: string }> = [
+  { value: 'general', label: 'General' },
+  { value: 'suggestive', label: 'Suggestive' },
+  { value: 'mature', label: 'Mature' },
+  { value: 'sexual', label: 'Sexual' },
+  { value: 'fetish', label: 'Fetish' },
+  { value: 'graphic', label: 'Graphic' }
+];
 type CollectionSummary = {
   collectionId: string;
   ownerUserId: string;
@@ -35,6 +44,9 @@ type TrendingImage = {
   gallerySlug: string;
   galleryVisibility?: 'free' | 'preview' | 'premium';
   discoverSquareCropEnabled?: boolean;
+  effectiveContentRating?: ContentRating;
+  displayedContentRating?: string;
+  blurred?: boolean;
   title: string;
   previewUrl: string;
   favoriteCount: number;
@@ -88,6 +100,9 @@ type GallerySummary = {
 type GalleryAsset = {
   imageId: string;
   assetType: 'image' | 'video';
+  effectiveContentRating?: ContentRating;
+  displayedContentRating?: string;
+  blurred?: boolean;
   previewUrl: string;
   previewPosterUrl?: string;
   thumbnailUrls?: {
@@ -110,7 +125,15 @@ type Gallery = {
   coverMediaId?: string;
   coverPreviewUrl?: string;
   coverBlur?: boolean;
-  premiumTeaserMedia?: Array<{ imageId: string; assetType: 'image' | 'video'; previewUrl: string; previewPosterUrl?: string }>;
+  premiumTeaserMedia?: Array<{
+    imageId: string;
+    assetType: 'image' | 'video';
+    effectiveContentRating?: ContentRating;
+    displayedContentRating?: string;
+    blurred?: boolean;
+    previewUrl: string;
+    previewPosterUrl?: string;
+  }>;
   favoriteCount: number;
   media: GalleryAsset[];
 };
@@ -130,6 +153,8 @@ type UserProfile = {
   bio?: string;
   location?: string;
   website?: string;
+  matureContentEnabled?: boolean;
+  maxAllowedContentRating?: ContentRating;
   createdAt: string;
   updatedAt: string;
   lastUsernameChangeAt?: string;
@@ -686,6 +711,8 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
   const [bio, setBio] = useState('');
   const [location, setLocation] = useState('');
   const [website, setWebsite] = useState('');
+  const [matureContentEnabled, setMatureContentEnabled] = useState(false);
+  const [maxAllowedContentRating, setMaxAllowedContentRating] = useState<ContentRating>('graphic');
   const [usernameInput, setUsernameInput] = useState('');
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
   const [usernameError, setUsernameError] = useState('');
@@ -738,6 +765,8 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
         setBio(loaded.bio || '');
         setLocation(loaded.location || '');
         setWebsite(loaded.website || '');
+        setMatureContentEnabled(Boolean(loaded.matureContentEnabled));
+        setMaxAllowedContentRating(loaded.maxAllowedContentRating || 'graphic');
         setUsernameInput(loaded.username || '');
       } catch (e) {
         const msg = (e as Error).message || '';
@@ -768,7 +797,9 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
         displayName: displayName || undefined,
         bio: bio || undefined,
         location: location || undefined,
-        website: website || undefined
+        website: website || undefined,
+        matureContentEnabled,
+        maxAllowedContentRating
       }) as UserProfile;
       setProfile(updated);
       onProfileChanged?.(updated);
@@ -788,6 +819,8 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
     if (profile) {
       setDisplayName(profile.displayName || '');
       setUsernameInput(profile.username || '');
+      setMatureContentEnabled(Boolean(profile.matureContentEnabled));
+      setMaxAllowedContentRating(profile.maxAllowedContentRating || 'graphic');
     }
   }, [selectedArtistId, profile?.userId]);
 
@@ -1031,6 +1064,29 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
               <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
               <input placeholder="Website" value={website} onChange={(e) => setWebsite(e.target.value)} />
               <textarea className="rounded-xl border px-3 py-2 text-sm" rows={4} placeholder="Bio" value={bio} onChange={(e) => setBio(e.target.value)} />
+              <label className="inline-form">
+                <input
+                  type="checkbox"
+                  checked={matureContentEnabled}
+                  onChange={(e) => setMatureContentEnabled(e.target.checked)}
+                />
+                <span>Enable mature content viewing</span>
+              </label>
+              <div className="settings-field">
+                <label htmlFor="settings-max-content-rating" className="settings-field-label">Maximum feed rating</label>
+                <select
+                  id="settings-max-content-rating"
+                  className="settings-select"
+                  value={maxAllowedContentRating}
+                  onChange={(e) => setMaxAllowedContentRating(e.target.value as ContentRating)}
+                >
+                  {contentRatingOptions.map((option) => (
+                    <option key={`max-rating-${option.value}`} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </>
           )}
         </div>
@@ -1625,17 +1681,21 @@ function HomePage() {
       : '/';
     const isPreview = item.galleryVisibility === 'preview';
     const isFavorite = favoriteImageIds.has(item.imageId);
+    const displayedRating = item.displayedContentRating || 'General';
+    const isBlurredByRating = item.blurred === true;
     const ratio = displayAspectRatio(item, cardIndex);
     const allowDiscoverSquareCrop = item.discoverSquareCropEnabled !== false;
     const shouldSquareCrop = feedDensity === 'small' && allowDiscoverSquareCrop;
     const frameRatio = shouldSquareCrop ? 1 : ratio;
     const isSmallLandscape = feedDensity === 'small' && !shouldSquareCrop && ratio >= 1.25;
 
+    const largeCropClass = feedDensity === 'large' ? ' large-crop' : '';
+
     return (
       <article key={item.imageId} className={`discovery-feature-card${isSmallLandscape ? ' is-landscape' : ''}`}>
         <Link to={href} className="discovery-feature-link no-underline">
           <div
-            className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}`}
+            className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}`}
             style={{
               aspectRatio: `${frameRatio.toFixed(3)} / 1`
             }}
@@ -1646,10 +1706,14 @@ function HomePage() {
               loading={cardIndex < 2 ? 'eager' : 'lazy'}
               fetchPriority={cardIndex < 2 ? 'high' : (cardIndex < 8 ? 'auto' : 'low')}
               decoding="async"
-              style={{ objectPosition: 'center center' }}
+              style={{
+                objectPosition: 'center center',
+                filter: isBlurredByRating ? 'blur(28px)' : undefined
+              }}
               onLoad={(event) => captureImageRatio(item.imageId, event)}
             />
             {isPreview && <span className="discovery-chip">Preview</span>}
+            {isBlurredByRating && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
           </div>
         </Link>
         <div className="discovery-feature-footer">
@@ -1661,6 +1725,7 @@ function HomePage() {
             <span>❤ {item.favoriteCount || 0}</span>
             <span>👁 {trendingViewCount(cardIndex)}</span>
             <span>{isPreview ? 'Follower preview' : 'Public'}</span>
+            <span>{displayedRating}</span>
           </div>
           <div className="discovery-feature-actions">
             <Link to={href} className="discovery-quick-view-link no-underline">Quick view</Link>
@@ -1989,7 +2054,15 @@ function GalleryPage() {
   const [rememberToken, setRememberToken] = useState<string>(() => getStoredGalleryAccessToken(slug) || '');
   const [hasPremiumAccess, setHasPremiumAccess] = useState(false);
   const [teaserLimit, setTeaserLimit] = useState(9);
-  const [premiumImages, setPremiumImages] = useState<Array<{ imageId: string; assetType: 'image' | 'video'; premiumUrl: string; premiumPosterUrl?: string }>>([]);
+  const [premiumImages, setPremiumImages] = useState<Array<{
+    imageId: string;
+    assetType: 'image' | 'video';
+    effectiveContentRating?: ContentRating;
+    displayedContentRating?: string;
+    blurred?: boolean;
+    premiumUrl: string;
+    premiumPosterUrl?: string;
+  }>>([]);
   const [error, setError] = useState<string>('');
 
   const load = async () => {
@@ -2251,7 +2324,7 @@ function GalleryPage() {
             </div>
           </div>
           {focusedMedia.assetType === 'video'
-            ? <video controls poster={focusedMedia.previewPosterUrl} style={{ width: '100%', maxHeight: '70vh', borderRadius: '0.75rem', background: '#000' }}><source src={focusedMedia.previewUrl} /></video>
+            ? <video controls poster={focusedMedia.previewPosterUrl} style={{ width: '100%', maxHeight: '70vh', borderRadius: '0.75rem', background: '#000', filter: focusedMedia.blurred ? 'blur(28px)' : undefined }}><source src={focusedMedia.previewUrl} /></video>
             : (
               <img
                 src={focusedMedia.thumbnailUrls?.w1280 || focusedMedia.thumbnailUrls?.w640 || focusedMedia.previewUrl}
@@ -2263,9 +2336,18 @@ function GalleryPage() {
                 ].filter(Boolean).join(', ')}
                 sizes="100vw"
                 alt={focusedMedia.imageId}
-                style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: '0.75rem', background: '#111827' }}
+                style={{
+                  width: '100%',
+                  maxHeight: '70vh',
+                  objectFit: 'contain',
+                  borderRadius: '0.75rem',
+                  background: '#111827',
+                  filter: focusedMedia.blurred ? 'blur(28px)' : undefined
+                }}
               />
             )}
+          {focusedMedia.blurred && <p className="small">Mature Content</p>}
+          {!focusedMedia.blurred && focusedMedia.displayedContentRating && <p className="small">{focusedMedia.displayedContentRating}</p>}
           <p className="small">Item {resolvedFocusedIndex + 1} of {mediaItems.length}</p>
         </section>
       )}
@@ -2274,7 +2356,7 @@ function GalleryPage() {
         {gallery.media.map((image) => (
           <article key={image.imageId} className="image-card">
             {image.assetType === 'video'
-              ? <video controls poster={image.previewPosterUrl}><source src={image.previewUrl} /></video>
+              ? <video controls poster={image.previewPosterUrl} style={{ filter: image.blurred ? 'blur(24px)' : undefined }}><source src={image.previewUrl} /></video>
               : (
                 <img
                   src={image.thumbnailUrls?.w640 || image.thumbnailUrls?.w320 || image.previewUrl}
@@ -2286,11 +2368,13 @@ function GalleryPage() {
                   sizes="(max-width: 768px) 100vw, 33vw"
                   alt="Preview"
                   loading="lazy"
+                  style={{ filter: image.blurred ? 'blur(24px)' : undefined }}
                 />
               )}
             <button onClick={() => setFocusedImage(image.imageId)}>
               {focusedImageId === image.imageId ? 'Viewing' : 'View Focus'}
             </button>
+            <small>{image.displayedContentRating || 'General'}</small>
             <small>Likes: {image.favoriteCount}</small>
             <div className="inline-form">
               <button onClick={() => void toggleImageFavorite(image.imageId)}>
@@ -2316,8 +2400,8 @@ function GalleryPage() {
             <div className="grid three">
               {(gallery.premiumTeaserMedia || []).slice(0, teaserLimit).map((item) => (
                 item.assetType === 'video'
-                  ? <video key={item.imageId} controls={false} poster={item.previewPosterUrl} className="blur-sm"><source src={item.previewUrl} /></video>
-                  : <img key={item.imageId} src={item.previewUrl} alt="Premium teaser" className="blur-sm" />
+                  ? <video key={item.imageId} controls={false} poster={item.previewPosterUrl} style={{ filter: item.blurred ? 'blur(24px)' : undefined }}><source src={item.previewUrl} /></video>
+                  : <img key={item.imageId} src={item.previewUrl} alt="Premium teaser" style={{ filter: item.blurred ? 'blur(24px)' : undefined }} />
               ))}
             </div>
           </div>
@@ -2336,10 +2420,11 @@ function GalleryPage() {
           <div className="grid three">
             {premiumImages.map((image) => (
               image.assetType === 'video'
-                ? <video key={image.imageId} controls poster={image.premiumPosterUrl}><source src={image.premiumUrl} /></video>
-                : <img key={image.imageId} src={image.premiumUrl} alt="Premium" />
+                ? <video key={image.imageId} controls poster={image.premiumPosterUrl} style={{ filter: image.blurred ? 'blur(24px)' : undefined }}><source src={image.premiumUrl} /></video>
+                : <img key={image.imageId} src={image.premiumUrl} alt="Premium" style={{ filter: image.blurred ? 'blur(24px)' : undefined }} />
             ))}
           </div>
+          {premiumImages.some((item) => item.blurred) && <p className="small">Some items are blurred due to content rating settings.</p>}
         </section>
       )}
 
@@ -2676,9 +2761,10 @@ function TrendingPage() {
             <Link to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="no-underline">
               <div className="discovery-card-media" style={{ height: masonryHeights[i % masonryHeights.length] }}>
                 {item.previewUrl
-                  ? <img src={item.previewUrl} alt={item.title || 'Artwork preview'} loading="lazy" />
+                  ? <img src={item.previewUrl} alt={item.title || 'Artwork preview'} loading="lazy" style={{ filter: item.blurred ? 'blur(24px)' : undefined }} />
                   : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length] }} />}
                 {item.galleryVisibility !== 'free' && <span className="discovery-chip">Preview</span>}
+                {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '0.75rem' }}>Mature Content</span>}
               </div>
               <div className="discovery-card-body">
                 <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
@@ -2686,6 +2772,7 @@ function TrendingPage() {
                 <div className="discovery-card-stats">
                   <span>❤ {item.favoriteCount || 0}</span>
                   <span>👁 {(2.1 + (i % 7) * 0.2).toFixed(1)}k</span>
+                  <span>{item.displayedContentRating || 'General'}</span>
                 </div>
               </div>
             </Link>
@@ -2785,10 +2872,11 @@ function ArtistProfilePage() {
           {(trending || []).slice(0, 18).map((item, i) => (
             <Link key={item.imageId} to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="discovery-small-card no-underline">
               {item.previewUrl
-                ? <img src={item.previewUrl} alt={item.title || 'Artwork preview'} loading="lazy" />
+                ? <img src={item.previewUrl} alt={item.title || 'Artwork preview'} loading="lazy" style={{ filter: item.blurred ? 'blur(24px)' : undefined }} />
                 : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length], height: 160 }} />}
               <div className="discovery-small-card-body">
                 <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
+                <div className="discovery-card-subtitle">{item.displayedContentRating || 'General'}</div>
               </div>
             </Link>
           ))}

@@ -11,6 +11,8 @@ import {
 } from './cognitoAuth';
 
 type View = 'artists' | 'galleries' | 'media' | 'settings' | 'moderation' | 'users';
+type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+const contentRatingOptions: ContentRating[] = ['general', 'suggestive', 'mature', 'sexual', 'fetish', 'graphic'];
 
 type Artist = {
   artistId: string;
@@ -38,6 +40,8 @@ type Media = {
   galleryId: string;
   sortOrder: number;
   assetType?: 'image' | 'video';
+  contentRating?: ContentRating;
+  moderatorContentRating?: ContentRating;
   title?: string;
   slug?: string;
   originalFilename?: string;
@@ -111,6 +115,8 @@ export function AdminApp() {
     height: 1067,
     durationSeconds: 0,
     sortOrder: 1,
+    contentRating: 'general' as ContentRating,
+    moderatorContentRating: '',
     cropX: 0,
     cropY: 0,
     cropSize: 512,
@@ -153,6 +159,8 @@ export function AdminApp() {
     height: 0,
     durationSeconds: 0,
     sortOrder: 0,
+    contentRating: 'general' as ContentRating,
+    moderatorContentRating: '',
     cropX: 0,
     cropY: 0,
     cropSize: 512,
@@ -391,6 +399,8 @@ export function AdminApp() {
       height: 0,
       durationSeconds: 0,
       sortOrder: item.sortOrder,
+      contentRating: (item.contentRating || 'general') as ContentRating,
+      moderatorContentRating: item.moderatorContentRating || '',
       cropX: item.squareCrop?.x || 0,
       cropY: item.squareCrop?.y || 0,
       cropSize: item.squareCrop?.size || 512,
@@ -662,7 +672,7 @@ export function AdminApp() {
             <div className="list">
               {media.map((item) => (
                 <div className="list-row" key={item.imageId}>
-                  <span>{item.assetType || 'image'}: {item.imageId} ({item.previewKey})</span>
+                  <span>{item.assetType || 'image'}: {item.imageId} ({item.previewKey}) [{item.contentRating || 'general'}]</span>
                   {canManageContent && (
                     <button onClick={() => setGalleryCover(item.galleryId, item.imageId)}>Set As Cover</button>
                   )}
@@ -695,6 +705,13 @@ export function AdminApp() {
                 <input type="number" placeholder="Height" value={mediaEditForm.height} onChange={(e) => setMediaEditForm({ ...mediaEditForm, height: Number(e.target.value || 0) })} />
                 <input type="number" placeholder="Duration seconds" value={mediaEditForm.durationSeconds} onChange={(e) => setMediaEditForm({ ...mediaEditForm, durationSeconds: Number(e.target.value || 0) })} />
                 <input type="number" placeholder="Sort order" value={mediaEditForm.sortOrder} onChange={(e) => setMediaEditForm({ ...mediaEditForm, sortOrder: Number(e.target.value || 0) })} />
+                <select value={mediaEditForm.contentRating} onChange={(e) => setMediaEditForm({ ...mediaEditForm, contentRating: e.target.value as ContentRating })}>
+                  {contentRatingOptions.map((option) => <option key={`edit-rating-${option}`} value={option}>{option}</option>)}
+                </select>
+                <select value={mediaEditForm.moderatorContentRating} onChange={(e) => setMediaEditForm({ ...mediaEditForm, moderatorContentRating: e.target.value })}>
+                  <option value="">Moderator override (none)</option>
+                  {contentRatingOptions.map((option) => <option key={`edit-mod-rating-${option}`} value={option}>{option}</option>)}
+                </select>
                 <label className="inline-form">
                   <input
                     type="checkbox"
@@ -730,6 +747,13 @@ export function AdminApp() {
             <input type="number" placeholder="Height" value={mediaForm.height} onChange={(e) => setMediaForm({ ...mediaForm, height: Number(e.target.value || 0) })} />
             <input type="number" placeholder="Duration seconds" value={mediaForm.durationSeconds} onChange={(e) => setMediaForm({ ...mediaForm, durationSeconds: Number(e.target.value || 0) })} />
             <input type="number" placeholder="Sort order" value={mediaForm.sortOrder} onChange={(e) => setMediaForm({ ...mediaForm, sortOrder: Number(e.target.value || 0) })} />
+            <select value={mediaForm.contentRating} onChange={(e) => setMediaForm({ ...mediaForm, contentRating: e.target.value as ContentRating })}>
+              {contentRatingOptions.map((option) => <option key={`create-rating-${option}`} value={option}>{option}</option>)}
+            </select>
+            <select value={mediaForm.moderatorContentRating} onChange={(e) => setMediaForm({ ...mediaForm, moderatorContentRating: e.target.value })}>
+              <option value="">Moderator override (none)</option>
+              {contentRatingOptions.map((option) => <option key={`create-mod-rating-${option}`} value={option}>{option}</option>)}
+            </select>
             <label className="inline-form">
               <input
                 type="checkbox"
