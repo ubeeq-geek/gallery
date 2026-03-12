@@ -134,6 +134,28 @@ export const api = {
     const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-images?${qs.toString()}`));
     return handleJson(response);
   },
+  async getTrendingImagesFiltered(
+    period: 'hourly' | 'daily' = 'daily',
+    cursor?: string,
+    limit = 24,
+    filters?: {
+      aiFilter?: 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
+      hideHeavyTopics?: boolean;
+      hidePoliticsPublicAffairs?: boolean;
+      hideCrimeDisastersTragedy?: boolean;
+    }
+  ) {
+    const qs = new URLSearchParams();
+    qs.set('period', period);
+    qs.set('limit', String(limit));
+    if (cursor) qs.set('cursor', cursor);
+    if (filters?.aiFilter) qs.set('aiFilter', filters.aiFilter);
+    if (filters?.hideHeavyTopics !== undefined) qs.set('hideHeavyTopics', String(Boolean(filters.hideHeavyTopics)));
+    if (filters?.hidePoliticsPublicAffairs !== undefined) qs.set('hidePoliticsPublicAffairs', String(Boolean(filters.hidePoliticsPublicAffairs)));
+    if (filters?.hideCrimeDisastersTragedy !== undefined) qs.set('hideCrimeDisastersTragedy', String(Boolean(filters.hideCrimeDisastersTragedy)));
+    const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-images?${qs.toString()}`));
+    return handleJson(response);
+  },
   async getArtistProfile(slug: string) {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/profile`);
     return handleJson(response);
@@ -335,6 +357,10 @@ export const api = {
     website?: string;
     matureContentEnabled?: boolean;
     maxAllowedContentRating?: 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+    aiFilter?: 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
+    hideHeavyTopics?: boolean;
+    hidePoliticsPublicAffairs?: boolean;
+    hideCrimeDisastersTragedy?: boolean;
   }) {
     const response = await fetch(`${API_BASE}/me/profile`, {
       method: 'PUT',

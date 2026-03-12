@@ -32,6 +32,7 @@ import type {
 } from './domain';
 import { GalleryCoreRepository } from './galleryCoreRepository';
 import { normalizeContentRating } from './contentRating';
+import { normalizeAiDisclosure, normalizeHeavyTopics } from './disclosures';
 
 export class DynamoStore implements DataStore {
   private readonly client: DynamoDBDocumentClient;
@@ -655,16 +656,26 @@ export class DynamoStore implements DataStore {
   }
 
   async countFavorites(targetType: 'gallery' | 'image' | 'collection', targetId: string): Promise<number> {
-    const response = await this.client.send(
-      new QueryCommand({
-        TableName: this.config.favoritesTable,
-        IndexName: 'targetKeyIndex',
-        KeyConditionExpression: 'targetKey = :targetKey',
-        ExpressionAttributeValues: { ':targetKey': `${targetType}#${targetId}` },
-        Select: 'COUNT'
-      })
-    );
-    return response.Count || 0;
+    try {
+      const response = await this.client.send(
+        new QueryCommand({
+          TableName: this.config.favoritesTable,
+          IndexName: 'targetKeyIndex',
+          KeyConditionExpression: 'targetKey = :targetKey',
+          ExpressionAttributeValues: { ':targetKey': `${targetType}#${targetId}` },
+          Select: 'COUNT'
+        })
+      );
+      return response.Count || 0;
+    } catch (error) {
+      const code = (error as { name?: string; __type?: string }).name
+        || (error as { __type?: string }).__type
+        || '';
+      if (code.includes('ResourceNotFound')) {
+        return 0;
+      }
+      throw error;
+    }
   }
 
   async getImageFavoriteCounts(imageIds: string[]): Promise<Record<string, number>> {
@@ -756,6 +767,8 @@ export class DynamoStore implements DataStore {
         galleryVisibility: row.galleryVisibility === 'preview' ? 'preview' : 'free',
         discoverSquareCropEnabled: row.discoverSquareCropEnabled !== false,
         effectiveContentRating: normalizeContentRating(row.effectiveContentRating),
+        effectiveAiDisclosure: normalizeAiDisclosure(row.effectiveAiDisclosure),
+        effectiveHeavyTopics: normalizeHeavyTopics(row.effectiveHeavyTopics),
         title: String(row.title || ''),
         previewKey: String(row.previewKey || ''),
         favoriteCount: Math.max(0, Number(row.favoriteCount || 0)),

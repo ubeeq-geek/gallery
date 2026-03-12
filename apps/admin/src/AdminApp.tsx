@@ -12,7 +12,14 @@ import {
 
 type View = 'artists' | 'galleries' | 'media' | 'settings' | 'moderation' | 'users';
 type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+type AiDisclosure = 'none' | 'ai-assisted' | 'ai-generated';
+type HeavyTopic = 'politics-public-affairs' | 'crime-disasters-tragedy';
 const contentRatingOptions: ContentRating[] = ['general', 'suggestive', 'mature', 'sexual', 'fetish', 'graphic'];
+const aiDisclosureOptions: AiDisclosure[] = ['none', 'ai-assisted', 'ai-generated'];
+const heavyTopicOptions: Array<{ value: HeavyTopic; label: string }> = [
+  { value: 'politics-public-affairs', label: 'Politics & Public Affairs' },
+  { value: 'crime-disasters-tragedy', label: 'Crime, Disasters & Tragedy' }
+];
 
 type Artist = {
   artistId: string;
@@ -21,6 +28,8 @@ type Artist = {
   status: 'active' | 'inactive';
   sortOrder: number;
   discoverSquareCropEnabled?: boolean;
+  defaultAiDisclosure?: AiDisclosure;
+  defaultHeavyTopics?: HeavyTopic[];
 };
 type Gallery = {
   galleryId: string;
@@ -34,6 +43,8 @@ type Gallery = {
   visibility: 'free' | 'preview' | 'premium';
   status: 'draft' | 'published';
   discoverSquareCropEnabled?: boolean;
+  defaultAiDisclosure?: AiDisclosure;
+  defaultHeavyTopics?: HeavyTopic[];
 };
 type Media = {
   imageId: string;
@@ -42,6 +53,10 @@ type Media = {
   assetType?: 'image' | 'video';
   contentRating?: ContentRating;
   moderatorContentRating?: ContentRating;
+  aiDisclosure?: AiDisclosure;
+  moderatorAiDisclosure?: AiDisclosure;
+  heavyTopics?: HeavyTopic[];
+  moderatorHeavyTopics?: HeavyTopic[];
   title?: string;
   slug?: string;
   originalFilename?: string;
@@ -89,7 +104,14 @@ export function AdminApp() {
   const [galleries, setGalleries] = useState<Gallery[]>([]);
   const [media, setMedia] = useState<Media[]>([]);
 
-  const [artistForm, setArtistForm] = useState({ name: '', slug: '', sortOrder: 1, discoverSquareCropEnabled: true });
+  const [artistForm, setArtistForm] = useState({
+    name: '',
+    slug: '',
+    sortOrder: 1,
+    discoverSquareCropEnabled: true,
+    defaultAiDisclosure: 'none' as AiDisclosure,
+    defaultHeavyTopics: [] as HeavyTopic[]
+  });
   const [galleryForm, setGalleryForm] = useState({
     artistId: '',
     artistSlug: '',
@@ -100,7 +122,9 @@ export function AdminApp() {
     purchaseUrl: '',
     visibility: 'free',
     premiumPassword: '',
-    discoverSquareCropEnabled: true
+    discoverSquareCropEnabled: true,
+    defaultAiDisclosure: 'none' as AiDisclosure,
+    defaultHeavyTopics: [] as HeavyTopic[]
   });
   const [mediaForm, setMediaForm] = useState({
     galleryId: '',
@@ -117,6 +141,10 @@ export function AdminApp() {
     sortOrder: 1,
     contentRating: 'general' as ContentRating,
     moderatorContentRating: '',
+    aiDisclosure: 'none' as AiDisclosure,
+    moderatorAiDisclosure: '',
+    heavyTopics: [] as HeavyTopic[],
+    moderatorHeavyTopics: [] as HeavyTopic[],
     cropX: 0,
     cropY: 0,
     cropSize: 512,
@@ -130,7 +158,9 @@ export function AdminApp() {
     slug: '',
     status: 'active',
     sortOrder: 1,
-    discoverSquareCropEnabled: true
+    discoverSquareCropEnabled: true,
+    defaultAiDisclosure: 'none' as AiDisclosure,
+    defaultHeavyTopics: [] as HeavyTopic[]
   });
   const [galleryEditForm, setGalleryEditForm] = useState({
     artistId: '',
@@ -143,7 +173,9 @@ export function AdminApp() {
     visibility: 'free',
     status: 'published',
     premiumPassword: '',
-    discoverSquareCropEnabled: true
+    discoverSquareCropEnabled: true,
+    defaultAiDisclosure: 'none' as AiDisclosure,
+    defaultHeavyTopics: [] as HeavyTopic[]
   });
   const [mediaEditForm, setMediaEditForm] = useState({
     galleryId: '',
@@ -161,6 +193,10 @@ export function AdminApp() {
     sortOrder: 0,
     contentRating: 'general' as ContentRating,
     moderatorContentRating: '',
+    aiDisclosure: 'none' as AiDisclosure,
+    moderatorAiDisclosure: '',
+    heavyTopics: [] as HeavyTopic[],
+    moderatorHeavyTopics: [] as HeavyTopic[],
     cropX: 0,
     cropY: 0,
     cropSize: 512,
@@ -287,7 +323,14 @@ export function AdminApp() {
 
   const createArtist = () => withFeedback(async () => {
     await request('/admin/artists', 'POST', { ...artistForm, status: 'active' });
-    setArtistForm({ name: '', slug: '', sortOrder: 1, discoverSquareCropEnabled: true });
+    setArtistForm({
+      name: '',
+      slug: '',
+      sortOrder: 1,
+      discoverSquareCropEnabled: true,
+      defaultAiDisclosure: 'none',
+      defaultHeavyTopics: []
+    });
     await loadArtists();
   }, 'Artist created');
 
@@ -303,7 +346,9 @@ export function AdminApp() {
       slug: artist.slug,
       status: artist.status,
       sortOrder: artist.sortOrder,
-      discoverSquareCropEnabled: artist.discoverSquareCropEnabled !== false
+      discoverSquareCropEnabled: artist.discoverSquareCropEnabled !== false,
+      defaultAiDisclosure: artist.defaultAiDisclosure || 'none',
+      defaultHeavyTopics: artist.defaultHeavyTopics || []
     });
   };
 
@@ -325,7 +370,9 @@ export function AdminApp() {
       purchaseUrl: '',
       visibility: 'free',
       premiumPassword: '',
-      discoverSquareCropEnabled: true
+      discoverSquareCropEnabled: true,
+      defaultAiDisclosure: 'none',
+      defaultHeavyTopics: []
     });
     await loadGalleries();
   }, 'Gallery created');
@@ -348,7 +395,9 @@ export function AdminApp() {
       visibility: gallery.visibility,
       status: gallery.status,
       premiumPassword: '',
-      discoverSquareCropEnabled: gallery.discoverSquareCropEnabled !== false
+      discoverSquareCropEnabled: gallery.discoverSquareCropEnabled !== false,
+      defaultAiDisclosure: gallery.defaultAiDisclosure || 'none',
+      defaultHeavyTopics: gallery.defaultHeavyTopics || []
     });
   };
 
@@ -401,6 +450,10 @@ export function AdminApp() {
       sortOrder: item.sortOrder,
       contentRating: (item.contentRating || 'general') as ContentRating,
       moderatorContentRating: item.moderatorContentRating || '',
+      aiDisclosure: item.aiDisclosure || 'none',
+      moderatorAiDisclosure: item.moderatorAiDisclosure || '',
+      heavyTopics: item.heavyTopics || [],
+      moderatorHeavyTopics: item.moderatorHeavyTopics || [],
       cropX: item.squareCrop?.x || 0,
       cropY: item.squareCrop?.y || 0,
       cropSize: item.squareCrop?.size || 512,
@@ -566,6 +619,27 @@ export function AdminApp() {
                   />
                   <span>Allow square crop in discovery</span>
                 </label>
+                <label className="inline-form">
+                  <span>Default AI disclosure</span>
+                  <select value={artistEditForm.defaultAiDisclosure} onChange={(e) => setArtistEditForm({ ...artistEditForm, defaultAiDisclosure: e.target.value as AiDisclosure })}>
+                    {aiDisclosureOptions.map((option) => <option key={`artist-edit-ai-${option}`} value={option}>{option}</option>)}
+                  </select>
+                </label>
+                {heavyTopicOptions.map((topic) => (
+                  <label key={`artist-edit-topic-${topic.value}`} className="inline-form">
+                    <input
+                      type="checkbox"
+                      checked={artistEditForm.defaultHeavyTopics.includes(topic.value)}
+                      onChange={(e) => setArtistEditForm({
+                        ...artistEditForm,
+                        defaultHeavyTopics: e.target.checked
+                          ? Array.from(new Set([...artistEditForm.defaultHeavyTopics, topic.value]))
+                          : artistEditForm.defaultHeavyTopics.filter((value) => value !== topic.value)
+                      })}
+                    />
+                    <span>{topic.label}</span>
+                  </label>
+                ))}
                 <button onClick={() => saveEditArtist(editingArtistId)}>Save Artist</button>
                 <button onClick={() => setEditingArtistId(null)}>Cancel</button>
               </>
@@ -582,6 +656,27 @@ export function AdminApp() {
               />
               <span>Allow square crop in discovery</span>
             </label>
+            <label className="inline-form">
+              <span>Default AI disclosure</span>
+              <select value={artistForm.defaultAiDisclosure} onChange={(e) => setArtistForm({ ...artistForm, defaultAiDisclosure: e.target.value as AiDisclosure })}>
+                {aiDisclosureOptions.map((option) => <option key={`artist-create-ai-${option}`} value={option}>{option}</option>)}
+              </select>
+            </label>
+            {heavyTopicOptions.map((topic) => (
+              <label key={`artist-create-topic-${topic.value}`} className="inline-form">
+                <input
+                  type="checkbox"
+                  checked={artistForm.defaultHeavyTopics.includes(topic.value)}
+                  onChange={(e) => setArtistForm({
+                    ...artistForm,
+                    defaultHeavyTopics: e.target.checked
+                      ? Array.from(new Set([...artistForm.defaultHeavyTopics, topic.value]))
+                      : artistForm.defaultHeavyTopics.filter((value) => value !== topic.value)
+                  })}
+                />
+                <span>{topic.label}</span>
+              </label>
+            ))}
             <button onClick={createArtist}>Create Artist</button>
           </>
         )}
@@ -629,6 +724,27 @@ export function AdminApp() {
                   />
                   <span>Allow square crop in discovery</span>
                 </label>
+                <label className="inline-form">
+                  <span>Default AI disclosure</span>
+                  <select value={galleryEditForm.defaultAiDisclosure} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, defaultAiDisclosure: e.target.value as AiDisclosure })}>
+                    {aiDisclosureOptions.map((option) => <option key={`gallery-edit-ai-${option}`} value={option}>{option}</option>)}
+                  </select>
+                </label>
+                {heavyTopicOptions.map((topic) => (
+                  <label key={`gallery-edit-topic-${topic.value}`} className="inline-form">
+                    <input
+                      type="checkbox"
+                      checked={galleryEditForm.defaultHeavyTopics.includes(topic.value)}
+                      onChange={(e) => setGalleryEditForm({
+                        ...galleryEditForm,
+                        defaultHeavyTopics: e.target.checked
+                          ? Array.from(new Set([...galleryEditForm.defaultHeavyTopics, topic.value]))
+                          : galleryEditForm.defaultHeavyTopics.filter((value) => value !== topic.value)
+                      })}
+                    />
+                    <span>{topic.label}</span>
+                  </label>
+                ))}
                 <input placeholder="Set new premium password (optional)" value={galleryEditForm.premiumPassword} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, premiumPassword: e.target.value })} />
                 <button onClick={() => saveEditGallery(editingGalleryId)}>Save Gallery</button>
                 <button onClick={() => setEditingGalleryId(null)}>Cancel</button>
@@ -655,6 +771,27 @@ export function AdminApp() {
               />
               <span>Allow square crop in discovery</span>
             </label>
+            <label className="inline-form">
+              <span>Default AI disclosure</span>
+              <select value={galleryForm.defaultAiDisclosure} onChange={(e) => setGalleryForm({ ...galleryForm, defaultAiDisclosure: e.target.value as AiDisclosure })}>
+                {aiDisclosureOptions.map((option) => <option key={`gallery-create-ai-${option}`} value={option}>{option}</option>)}
+              </select>
+            </label>
+            {heavyTopicOptions.map((topic) => (
+              <label key={`gallery-create-topic-${topic.value}`} className="inline-form">
+                <input
+                  type="checkbox"
+                  checked={galleryForm.defaultHeavyTopics.includes(topic.value)}
+                  onChange={(e) => setGalleryForm({
+                    ...galleryForm,
+                    defaultHeavyTopics: e.target.checked
+                      ? Array.from(new Set([...galleryForm.defaultHeavyTopics, topic.value]))
+                      : galleryForm.defaultHeavyTopics.filter((value) => value !== topic.value)
+                  })}
+                />
+                <span>{topic.label}</span>
+              </label>
+            ))}
             <input placeholder="Premium password" value={galleryForm.premiumPassword} onChange={(e) => setGalleryForm({ ...galleryForm, premiumPassword: e.target.value })} />
             <button onClick={createGallery}>Create Gallery</button>
           </>
@@ -672,7 +809,11 @@ export function AdminApp() {
             <div className="list">
               {media.map((item) => (
                 <div className="list-row" key={item.imageId}>
-                  <span>{item.assetType || 'image'}: {item.imageId} ({item.previewKey}) [{item.contentRating || 'general'}]</span>
+                  <span>
+                    {item.assetType || 'image'}: {item.imageId} ({item.previewKey}) [{item.contentRating || 'general'}]
+                    {' · '}AI: {item.aiDisclosure || 'none'}
+                    {' · '}Topics: {(item.heavyTopics || []).join(', ') || 'none'}
+                  </span>
                   {canManageContent && (
                     <button onClick={() => setGalleryCover(item.galleryId, item.imageId)}>Set As Cover</button>
                   )}
@@ -712,6 +853,43 @@ export function AdminApp() {
                   <option value="">Moderator override (none)</option>
                   {contentRatingOptions.map((option) => <option key={`edit-mod-rating-${option}`} value={option}>{option}</option>)}
                 </select>
+                <select value={mediaEditForm.aiDisclosure} onChange={(e) => setMediaEditForm({ ...mediaEditForm, aiDisclosure: e.target.value as AiDisclosure })}>
+                  {aiDisclosureOptions.map((option) => <option key={`edit-ai-${option}`} value={option}>{option}</option>)}
+                </select>
+                <select value={mediaEditForm.moderatorAiDisclosure} onChange={(e) => setMediaEditForm({ ...mediaEditForm, moderatorAiDisclosure: e.target.value })}>
+                  <option value="">Moderator AI override (none)</option>
+                  {aiDisclosureOptions.map((option) => <option key={`edit-mod-ai-${option}`} value={option}>{option}</option>)}
+                </select>
+                {heavyTopicOptions.map((topic) => (
+                  <label key={`media-edit-topic-${topic.value}`} className="inline-form">
+                    <input
+                      type="checkbox"
+                      checked={mediaEditForm.heavyTopics.includes(topic.value)}
+                      onChange={(e) => setMediaEditForm({
+                        ...mediaEditForm,
+                        heavyTopics: e.target.checked
+                          ? Array.from(new Set([...mediaEditForm.heavyTopics, topic.value]))
+                          : mediaEditForm.heavyTopics.filter((value) => value !== topic.value)
+                      })}
+                    />
+                    <span>Creator topic: {topic.label}</span>
+                  </label>
+                ))}
+                {heavyTopicOptions.map((topic) => (
+                  <label key={`media-edit-mod-topic-${topic.value}`} className="inline-form">
+                    <input
+                      type="checkbox"
+                      checked={mediaEditForm.moderatorHeavyTopics.includes(topic.value)}
+                      onChange={(e) => setMediaEditForm({
+                        ...mediaEditForm,
+                        moderatorHeavyTopics: e.target.checked
+                          ? Array.from(new Set([...mediaEditForm.moderatorHeavyTopics, topic.value]))
+                          : mediaEditForm.moderatorHeavyTopics.filter((value) => value !== topic.value)
+                      })}
+                    />
+                    <span>Moderator topic: {topic.label}</span>
+                  </label>
+                ))}
                 <label className="inline-form">
                   <input
                     type="checkbox"
@@ -754,6 +932,43 @@ export function AdminApp() {
               <option value="">Moderator override (none)</option>
               {contentRatingOptions.map((option) => <option key={`create-mod-rating-${option}`} value={option}>{option}</option>)}
             </select>
+            <select value={mediaForm.aiDisclosure} onChange={(e) => setMediaForm({ ...mediaForm, aiDisclosure: e.target.value as AiDisclosure })}>
+              {aiDisclosureOptions.map((option) => <option key={`create-ai-${option}`} value={option}>{option}</option>)}
+            </select>
+            <select value={mediaForm.moderatorAiDisclosure} onChange={(e) => setMediaForm({ ...mediaForm, moderatorAiDisclosure: e.target.value })}>
+              <option value="">Moderator AI override (none)</option>
+              {aiDisclosureOptions.map((option) => <option key={`create-mod-ai-${option}`} value={option}>{option}</option>)}
+            </select>
+            {heavyTopicOptions.map((topic) => (
+              <label key={`media-create-topic-${topic.value}`} className="inline-form">
+                <input
+                  type="checkbox"
+                  checked={mediaForm.heavyTopics.includes(topic.value)}
+                  onChange={(e) => setMediaForm({
+                    ...mediaForm,
+                    heavyTopics: e.target.checked
+                      ? Array.from(new Set([...mediaForm.heavyTopics, topic.value]))
+                      : mediaForm.heavyTopics.filter((value) => value !== topic.value)
+                  })}
+                />
+                <span>Creator topic: {topic.label}</span>
+              </label>
+            ))}
+            {heavyTopicOptions.map((topic) => (
+              <label key={`media-create-mod-topic-${topic.value}`} className="inline-form">
+                <input
+                  type="checkbox"
+                  checked={mediaForm.moderatorHeavyTopics.includes(topic.value)}
+                  onChange={(e) => setMediaForm({
+                    ...mediaForm,
+                    moderatorHeavyTopics: e.target.checked
+                      ? Array.from(new Set([...mediaForm.moderatorHeavyTopics, topic.value]))
+                      : mediaForm.moderatorHeavyTopics.filter((value) => value !== topic.value)
+                  })}
+                />
+                <span>Moderator topic: {topic.label}</span>
+              </label>
+            ))}
             <label className="inline-form">
               <input
                 type="checkbox"

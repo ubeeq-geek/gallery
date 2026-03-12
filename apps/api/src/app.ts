@@ -11,7 +11,7 @@ import { issueRememberAccessToken, issueUnlockToken, verifyPassword, verifyUnloc
 import type { AppConfig } from './config';
 import type { DataStore } from './store';
 import { hashPassword } from './unlock';
-import type { Artist, ArtistMember, Comment, ContentRating, Gallery, Media, SiteSettings, UserProfile } from './domain';
+import type { AiDisclosure, Artist, ArtistMember, Comment, ContentRating, Gallery, HeavyTopic, Media, SiteSettings, UserProfile } from './domain';
 import { generateImageRenditions, type SquareCropInput } from './renditions';
 import { refreshTrendingFeeds } from './trendingFeed';
 import {
@@ -23,6 +23,21 @@ import {
   shouldBlurContent,
   type ViewerContentPolicy
 } from './contentRating';
+import {
+  AI_DISCLOSURE_LABEL,
+  HEAVY_TOPIC_LABEL,
+  getEffectiveAiDisclosure,
+  getEffectiveHeavyTopics,
+  normalizeAiDisclosure,
+  normalizeAiFilterPreference,
+  normalizeHeavyTopics,
+  normalizeViewerDisclosurePolicy,
+  parseOptionalAiDisclosure,
+  parseOptionalHeavyTopics,
+  passesDisclosureFilter,
+  profileDisclosurePolicy,
+  type ViewerDisclosurePolicy
+} from './disclosures';
 
 interface CreateAppOptions {
   config: AppConfig;
@@ -81,6 +96,17 @@ const parseOptionalContentRating = (value: unknown): ContentRating | undefined =
   if (value === undefined || value === null) return undefined;
   if (typeof value === 'string' && !value.trim()) return undefined;
   return normalizeContentRating(value);
+};
+
+const parseOptionalBoolean = (value: unknown): boolean | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+  }
+  return undefined;
 };
 
 const validateUsername = (value: string): { normalized: string; reasons: string[] } => {
@@ -393,6 +419,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       displayName: authDisplayName,
       matureContentEnabled: false,
       maxAllowedContentRating: 'graphic',
+      aiFilter: 'show-all',
+      hideHeavyTopics: false,
+      hidePoliticsPublicAffairs: false,
+      hideCrimeDisastersTragedy: false,
       createdAt: now,
       updatedAt: now
     };
@@ -419,25 +449,47 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return created;
   };
 
-  const resolveViewerContentPolicy = async (req: express.Request): Promise<ViewerContentPolicy & { maxAllowedContentRating: ContentRating }> => {
+  const resolveViewerContentPolicy = async (
+    req: express.Request
+  ): Promise<ViewerContentPolicy & { maxAllowedContentRating: ContentRating; disclosurePolicy: ViewerDisclosurePolicy }> => {
     const queryMax = typeof req.query.maxAllowedRating === 'string'
       ? normalizeContentRating(req.query.maxAllowedRating)
       : undefined;
+    const queryAiFilter = req.query.aiFilter !== undefined
+      ? normalizeAiFilterPreference(req.query.aiFilter)
+      : undefined;
+    const queryHideHeavyTopics = parseOptionalBoolean(req.query.hideHeavyTopics);
+    const queryHidePolitics = parseOptionalBoolean(req.query.hidePoliticsPublicAffairs);
+    const queryHideCrime = parseOptionalBoolean(req.query.hideCrimeDisastersTragedy);
     if (!req.authUser?.userId) {
       return {
         loggedIn: false,
         matureEnabled: false,
-        maxAllowedContentRating: queryMax || 'graphic'
+        maxAllowedContentRating: queryMax || 'graphic',
+        disclosurePolicy: normalizeViewerDisclosurePolicy({
+          aiFilter: queryAiFilter || 'show-all',
+          hideHeavyTopics: queryHideHeavyTopics ?? false,
+          hidePoliticsPublicAffairs: queryHidePolitics ?? false,
+          hideCrimeDisastersTragedy: queryHideCrime ?? false
+        })
       };
     }
     const profile = await store.getUserProfile(req.authUser.userId);
     const profileMax = profile?.maxAllowedContentRating
       ? normalizeContentRating(profile.maxAllowedContentRating)
       : undefined;
+    const baseDisclosurePolicy = profileDisclosurePolicy(profile);
+    const disclosurePolicy = normalizeViewerDisclosurePolicy({
+      aiFilter: queryAiFilter ?? baseDisclosurePolicy.aiFilter,
+      hideHeavyTopics: queryHideHeavyTopics ?? baseDisclosurePolicy.hideHeavyTopics,
+      hidePoliticsPublicAffairs: queryHidePolitics ?? baseDisclosurePolicy.hidePoliticsPublicAffairs,
+      hideCrimeDisastersTragedy: queryHideCrime ?? baseDisclosurePolicy.hideCrimeDisastersTragedy
+    });
     return {
       loggedIn: true,
       matureEnabled: Boolean(profile?.matureContentEnabled),
-      maxAllowedContentRating: queryMax || profileMax || 'graphic'
+      maxAllowedContentRating: queryMax || profileMax || 'graphic',
+      disclosurePolicy
     };
   };
 
@@ -445,6 +497,16 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     effectiveContentRating: getPublicFacingRating(effectiveContentRating, viewer),
     displayedContentRating: getDisplayedRating(effectiveContentRating, viewer),
     blurred: shouldBlurContent(effectiveContentRating, viewer)
+  });
+
+  const projectDisclosures = (
+    effectiveAiDisclosure: AiDisclosure,
+    effectiveHeavyTopics: HeavyTopic[]
+  ) => ({
+    effectiveAiDisclosure,
+    displayedAiDisclosure: effectiveAiDisclosure === 'none' ? undefined : AI_DISCLOSURE_LABEL[effectiveAiDisclosure],
+    effectiveHeavyTopics,
+    displayedHeavyTopics: effectiveHeavyTopics.map((topic) => HEAVY_TOPIC_LABEL[topic]).filter((label): label is string => Boolean(label))
   });
 
   const isAdminRequest = (req: express.Request): boolean => {
@@ -640,6 +702,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     effectiveContentRating: ContentRating;
     displayedContentRating: string;
     blurred: boolean;
+    effectiveAiDisclosure: AiDisclosure;
+    displayedAiDisclosure?: string;
+    effectiveHeavyTopics: HeavyTopic[];
+    displayedHeavyTopics: string[];
     title: string;
     previewUrl: string;
     favoriteCount: number;
@@ -704,6 +770,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       galleryVisibility: 'free' | 'preview';
       discoverSquareCropEnabled: boolean;
       effectiveContentRating: ContentRating;
+      effectiveAiDisclosure: AiDisclosure;
+      effectiveHeavyTopics: HeavyTopic[];
       title: string;
       createdAt: string;
       createdAtMs: number;
@@ -722,8 +790,14 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           (artistById.get(item.artistId)?.discoverSquareCropEnabled ?? true) &&
           (gallery.discoverSquareCropEnabled ?? true) &&
           (item.discoverSquareCropEnabled ?? true);
+        const artist = artistById.get(item.artistId);
         const effectiveContentRating = getEffectiveContentRating(item);
+        const effectiveAiDisclosure = getEffectiveAiDisclosure(item, gallery, artist);
+        const effectiveHeavyTopics = getEffectiveHeavyTopics(item, gallery, artist);
         if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) {
+          continue;
+        }
+        if (!passesDisclosureFilter(effectiveAiDisclosure, effectiveHeavyTopics, viewerPolicy.disclosurePolicy)) {
           continue;
         }
         candidates.push({
@@ -734,6 +808,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           galleryVisibility: gallery.visibility === 'preview' ? 'preview' : 'free',
           discoverSquareCropEnabled,
           effectiveContentRating,
+          effectiveAiDisclosure,
+          effectiveHeavyTopics,
           title: item.title || gallery.title || 'Artwork',
           createdAt: item.createdAt,
           createdAtMs,
@@ -750,6 +826,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       const discoverSquareCropBonus = item.discoverSquareCropEnabled ? 1.25 : 0;
       const score = favoriteCount * 2 + item.recencyBoost * 10 + discoverSquareCropBonus;
       const contentProjection = projectContentRating(item.effectiveContentRating, viewerPolicy);
+      const disclosureProjection = projectDisclosures(item.effectiveAiDisclosure, item.effectiveHeavyTopics);
       return {
         imageId: item.imageId,
         artistId: item.artistId,
@@ -761,6 +838,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         effectiveContentRating: contentProjection.effectiveContentRating,
         displayedContentRating: contentProjection.displayedContentRating,
         blurred: contentProjection.blurred,
+        effectiveAiDisclosure: disclosureProjection.effectiveAiDisclosure,
+        displayedAiDisclosure: disclosureProjection.displayedAiDisclosure,
+        effectiveHeavyTopics: disclosureProjection.effectiveHeavyTopics,
+        displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
         title: item.title,
         previewUrl: await publicMediaUrl(item.previewKey) || '',
         favoriteCount,
@@ -934,7 +1015,13 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const cursorToken = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const decodedCursor = parsePassthroughCursor(cursorToken);
     const viewerPolicy = await resolveViewerContentPolicy(req);
-    const cacheKey = `viewer=${viewerPolicy.loggedIn ? 'auth' : 'anon'}:${viewerPolicy.matureEnabled ? 'm1' : 'm0'}:${viewerPolicy.maxAllowedContentRating}|period=${period}|limit=${limit}|cursor=${decodedCursor || ''}`;
+    const disclosureKey = [
+      `ai:${viewerPolicy.disclosurePolicy.aiFilter}`,
+      `h:${viewerPolicy.disclosurePolicy.hideHeavyTopics ? 1 : 0}`,
+      `p:${viewerPolicy.disclosurePolicy.hidePoliticsPublicAffairs ? 1 : 0}`,
+      `c:${viewerPolicy.disclosurePolicy.hideCrimeDisastersTragedy ? 1 : 0}`
+    ].join(',');
+    const cacheKey = `viewer=${viewerPolicy.loggedIn ? 'auth' : 'anon'}:${viewerPolicy.matureEnabled ? 'm1' : 'm0'}:${viewerPolicy.maxAllowedContentRating}|${disclosureKey}|period=${period}|limit=${limit}|cursor=${decodedCursor || ''}`;
     const cached = readTrendingResponseCache<{
       body: { period: 'hourly' | 'daily'; items: Omit<TrendingImageItem, 'score'>[]; nextCursor?: string };
       source: 'materialized' | 'fallback';
@@ -961,11 +1048,17 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       if (feedPage.items.length > 0) {
         const filtered = feedPage.items.filter((item) => {
           const effective = normalizeContentRating(item.effectiveContentRating);
-          return isRatingAllowed(effective, viewerPolicy.maxAllowedContentRating);
+          const effectiveAi = normalizeAiDisclosure(item.effectiveAiDisclosure);
+          const effectiveHeavyTopics = normalizeHeavyTopics(item.effectiveHeavyTopics);
+          return isRatingAllowed(effective, viewerPolicy.maxAllowedContentRating)
+            && passesDisclosureFilter(effectiveAi, effectiveHeavyTopics, viewerPolicy.disclosurePolicy);
         });
         const items = await Promise.all(filtered.map(async (item) => {
           const effective = normalizeContentRating(item.effectiveContentRating);
           const contentProjection = projectContentRating(effective, viewerPolicy);
+          const effectiveAi = normalizeAiDisclosure(item.effectiveAiDisclosure);
+          const effectiveHeavyTopics = normalizeHeavyTopics(item.effectiveHeavyTopics);
+          const disclosureProjection = projectDisclosures(effectiveAi, effectiveHeavyTopics);
           return {
             imageId: item.imageId,
             artistId: item.artistId,
@@ -977,6 +1070,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             effectiveContentRating: contentProjection.effectiveContentRating,
             displayedContentRating: contentProjection.displayedContentRating,
             blurred: contentProjection.blurred,
+            effectiveAiDisclosure: disclosureProjection.effectiveAiDisclosure,
+            displayedAiDisclosure: disclosureProjection.displayedAiDisclosure,
+            effectiveHeavyTopics: disclosureProjection.effectiveHeavyTopics,
+            displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
             title: item.title,
             previewUrl: await publicMediaUrl(item.previewKey) || '',
             favoriteCount: item.favoriteCount,
@@ -1446,7 +1543,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
     const mediaPayload = await Promise.all(mediaItems.map(async (item) => {
       const effectiveContentRating = getEffectiveContentRating(item);
+      const effectiveAiDisclosure = getEffectiveAiDisclosure(item, resolvedGallery);
+      const effectiveHeavyTopics = getEffectiveHeavyTopics(item, resolvedGallery);
       const contentProjection = projectContentRating(effectiveContentRating, viewerPolicy);
+      const disclosureProjection = projectDisclosures(effectiveAiDisclosure, effectiveHeavyTopics);
       return {
         ...item,
         imageId: item.mediaId,
@@ -1458,6 +1558,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         effectiveContentRating: contentProjection.effectiveContentRating,
         displayedContentRating: contentProjection.displayedContentRating,
         blurred: contentProjection.blurred,
+        effectiveAiDisclosure: disclosureProjection.effectiveAiDisclosure,
+        displayedAiDisclosure: disclosureProjection.displayedAiDisclosure,
+        effectiveHeavyTopics: disclosureProjection.effectiveHeavyTopics,
+        displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
         previewUrl: await publicMediaUrl(item.previewKey),
         previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
         thumbnailUrls: item.thumbnailKeys
@@ -1475,11 +1579,24 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       };
     }));
 
-    let premiumTeaserMedia: Array<{ imageId: string; assetType: 'image' | 'video'; previewUrl: string; previewPosterUrl?: string }> = [];
+    let premiumTeaserMedia: Array<{
+      imageId: string;
+      assetType: 'image' | 'video';
+      effectiveContentRating: ContentRating;
+      displayedContentRating: string;
+      blurred: boolean;
+      effectiveAiDisclosure: AiDisclosure;
+      displayedAiDisclosure?: string;
+      effectiveHeavyTopics: HeavyTopic[];
+      displayedHeavyTopics: string[];
+      previewUrl: string;
+      previewPosterUrl?: string;
+    }> = [];
     if (gallery.visibility === 'preview' && gallery.pairedPremiumGalleryId && !galleryHasAccess) {
       const premiumMedia = (await store.getMediaByGallery(gallery.pairedPremiumGalleryId))
         .filter((item) => isRatingAllowed(getEffectiveContentRating(item), viewerPolicy.maxAllowedContentRating));
       premiumTeaserMedia = await Promise.all(premiumMedia.map(async (item) => ({
+        ...(projectDisclosures(getEffectiveAiDisclosure(item), getEffectiveHeavyTopics(item))),
         imageId: item.mediaId,
         assetType: (item.assetType || 'image') as 'image' | 'video',
         ...projectContentRating(getEffectiveContentRating(item), viewerPolicy),
@@ -1579,12 +1696,16 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       .filter((item) => Boolean(item.premiumKey))
       .map(async (item) => {
         const effectiveRating = getEffectiveContentRating(item);
+        const effectiveAiDisclosure = getEffectiveAiDisclosure(item, gallery);
+        const effectiveHeavyTopics = getEffectiveHeavyTopics(item, gallery);
         const contentProjection = projectContentRating(effectiveRating, viewerPolicy);
+        const disclosureProjection = projectDisclosures(effectiveAiDisclosure, effectiveHeavyTopics);
         if (contentProjection.blurred) {
           return {
             imageId: item.mediaId,
             assetType: item.assetType || 'image',
             ...contentProjection,
+            ...disclosureProjection,
             premiumUrl: (await publicMediaUrl(item.previewKey)) || '',
             premiumPosterUrl: await publicMediaUrl(item.previewPosterKey)
           };
@@ -1593,6 +1714,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           imageId: item.mediaId,
           assetType: item.assetType || 'image',
           ...contentProjection,
+          ...disclosureProjection,
           premiumUrl: (await privateMediaUrl(item.premiumKey!)) || '',
           premiumPosterUrl: await privateMediaUrl(item.premiumPosterKey)
         };
@@ -1765,10 +1887,15 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
   app.get('/me/profile', requireAuth, async (req, res) => {
     const profile = await ensureUserProfile(req);
+    const normalizedDisclosurePolicy = profileDisclosurePolicy(profile);
     return res.json({
       ...profile,
       matureContentEnabled: Boolean(profile.matureContentEnabled),
-      maxAllowedContentRating: normalizeContentRating(profile.maxAllowedContentRating || 'graphic')
+      maxAllowedContentRating: normalizeContentRating(profile.maxAllowedContentRating || 'graphic'),
+      aiFilter: normalizedDisclosurePolicy.aiFilter,
+      hideHeavyTopics: normalizedDisclosurePolicy.hideHeavyTopics,
+      hidePoliticsPublicAffairs: normalizedDisclosurePolicy.hidePoliticsPublicAffairs,
+      hideCrimeDisastersTragedy: normalizedDisclosurePolicy.hideCrimeDisastersTragedy
     });
   });
 
@@ -1802,6 +1929,21 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const maxAllowedContentRating = req.body?.maxAllowedContentRating !== undefined
       ? normalizeContentRating(req.body.maxAllowedContentRating)
       : normalizeContentRating(existing.maxAllowedContentRating || 'graphic');
+    const existingDisclosurePolicy = profileDisclosurePolicy(existing);
+    const disclosurePolicy = normalizeViewerDisclosurePolicy({
+      aiFilter: req.body?.aiFilter !== undefined
+        ? normalizeAiFilterPreference(req.body.aiFilter)
+        : existingDisclosurePolicy.aiFilter,
+      hideHeavyTopics: req.body?.hideHeavyTopics !== undefined
+        ? Boolean(req.body.hideHeavyTopics)
+        : existingDisclosurePolicy.hideHeavyTopics,
+      hidePoliticsPublicAffairs: req.body?.hidePoliticsPublicAffairs !== undefined
+        ? Boolean(req.body.hidePoliticsPublicAffairs)
+        : existingDisclosurePolicy.hidePoliticsPublicAffairs,
+      hideCrimeDisastersTragedy: req.body?.hideCrimeDisastersTragedy !== undefined
+        ? Boolean(req.body.hideCrimeDisastersTragedy)
+        : existingDisclosurePolicy.hideCrimeDisastersTragedy
+    });
     const updated: UserProfile = {
       ...existing,
       displayName: sanitizeOptional(req.body?.displayName, 80),
@@ -1810,6 +1952,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       website: sanitizeOptional(req.body?.website, 220),
       matureContentEnabled,
       maxAllowedContentRating,
+      aiFilter: disclosurePolicy.aiFilter,
+      hideHeavyTopics: disclosurePolicy.hideHeavyTopics,
+      hidePoliticsPublicAffairs: disclosurePolicy.hidePoliticsPublicAffairs,
+      hideCrimeDisastersTragedy: disclosurePolicy.hideCrimeDisastersTragedy,
       updatedAt: new Date().toISOString()
     };
     await store.upsertUserProfile(updated);
@@ -2225,6 +2371,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
         : true,
+      defaultAiDisclosure: parseOptionalAiDisclosure(req.body?.defaultAiDisclosure) || 'none',
+      defaultHeavyTopics: parseOptionalHeavyTopics(req.body?.defaultHeavyTopics) || [],
       status: req.body?.status === 'inactive' ? 'inactive' : 'active',
       sortOrder: Number(req.body?.sortOrder || 0),
       createdAt: new Date().toISOString()
@@ -2295,6 +2443,12 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
         : (existing.discoverSquareCropEnabled ?? true),
+      defaultAiDisclosure: req.body?.defaultAiDisclosure !== undefined
+        ? (parseOptionalAiDisclosure(req.body.defaultAiDisclosure) || 'none')
+        : normalizeAiDisclosure(existing.defaultAiDisclosure),
+      defaultHeavyTopics: req.body?.defaultHeavyTopics !== undefined
+        ? (parseOptionalHeavyTopics(req.body.defaultHeavyTopics) || [])
+        : normalizeHeavyTopics(existing.defaultHeavyTopics),
       status: req.body?.status === 'inactive' ? 'inactive' : (req.body?.status === 'active' ? 'active' : existing.status),
       sortOrder: req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : existing.sortOrder
     };
@@ -2384,6 +2538,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
         : true,
+      defaultAiDisclosure: parseOptionalAiDisclosure(req.body?.defaultAiDisclosure) || 'none',
+      defaultHeavyTopics: parseOptionalHeavyTopics(req.body?.defaultHeavyTopics) || [],
       coverImageId: req.body?.coverImageId ? String(req.body.coverImageId) : undefined,
       visibility,
       pairedPremiumGalleryId: req.body?.pairedPremiumGalleryId ? String(req.body.pairedPremiumGalleryId) : undefined,
@@ -2430,6 +2586,12 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
         : (existing.discoverSquareCropEnabled ?? true),
+      defaultAiDisclosure: req.body?.defaultAiDisclosure !== undefined
+        ? (parseOptionalAiDisclosure(req.body.defaultAiDisclosure) || 'none')
+        : normalizeAiDisclosure(existing.defaultAiDisclosure),
+      defaultHeavyTopics: req.body?.defaultHeavyTopics !== undefined
+        ? (parseOptionalHeavyTopics(req.body.defaultHeavyTopics) || [])
+        : normalizeHeavyTopics(existing.defaultHeavyTopics),
       coverImageId: req.body?.coverImageId !== undefined ? (req.body.coverImageId ? String(req.body.coverImageId) : undefined) : existing.coverImageId,
       visibility,
       pairedPremiumGalleryId: req.body?.pairedPremiumGalleryId !== undefined
@@ -2499,6 +2661,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         : true,
       contentRating: normalizeContentRating(req.body?.contentRating),
       moderatorContentRating: parseOptionalContentRating(req.body?.moderatorContentRating),
+      aiDisclosure: normalizeAiDisclosure(req.body?.aiDisclosure),
+      moderatorAiDisclosure: parseOptionalAiDisclosure(req.body?.moderatorAiDisclosure),
+      heavyTopics: normalizeHeavyTopics(req.body?.heavyTopics),
+      moderatorHeavyTopics: parseOptionalHeavyTopics(req.body?.moderatorHeavyTopics),
       title,
       slug,
       slugHistory: slug ? uniqueSlugs([slug]) : undefined,
@@ -2565,6 +2731,18 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       moderatorContentRating: req.body?.moderatorContentRating !== undefined
         ? parseOptionalContentRating(req.body.moderatorContentRating)
         : existing.moderatorContentRating,
+      aiDisclosure: req.body?.aiDisclosure !== undefined
+        ? normalizeAiDisclosure(req.body.aiDisclosure)
+        : normalizeAiDisclosure(existing.aiDisclosure),
+      moderatorAiDisclosure: req.body?.moderatorAiDisclosure !== undefined
+        ? parseOptionalAiDisclosure(req.body.moderatorAiDisclosure)
+        : parseOptionalAiDisclosure(existing.moderatorAiDisclosure),
+      heavyTopics: req.body?.heavyTopics !== undefined
+        ? normalizeHeavyTopics(req.body.heavyTopics)
+        : normalizeHeavyTopics(existing.heavyTopics),
+      moderatorHeavyTopics: req.body?.moderatorHeavyTopics !== undefined
+        ? parseOptionalHeavyTopics(req.body.moderatorHeavyTopics)
+        : parseOptionalHeavyTopics(existing.moderatorHeavyTopics),
       title: nextTitle || undefined,
       slug: nextSlug,
       slugHistory: nextSlug ? uniqueSlugs([...(existing.slugHistory || (existing.slug ? [existing.slug] : [])), nextSlug]) : existing.slugHistory,

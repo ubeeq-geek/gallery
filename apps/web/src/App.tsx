@@ -16,6 +16,9 @@ import {
 type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string };
 type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
 type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+type AiDisclosure = 'none' | 'ai-assisted' | 'ai-generated';
+type AiFilterPreference = 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
+type HeavyTopic = 'politics-public-affairs' | 'crime-disasters-tragedy';
 const contentRatingOptions: Array<{ value: ContentRating; label: string }> = [
   { value: 'general', label: 'General' },
   { value: 'suggestive', label: 'Suggestive' },
@@ -24,6 +27,28 @@ const contentRatingOptions: Array<{ value: ContentRating; label: string }> = [
   { value: 'fetish', label: 'Fetish' },
   { value: 'graphic', label: 'Graphic' }
 ];
+const aiFilterOptions: Array<{ value: AiFilterPreference; label: string }> = [
+  { value: 'show-all', label: 'Show all content' },
+  { value: 'hide-ai-generated', label: 'Hide AI-generated content' },
+  { value: 'hide-all-ai', label: 'Hide AI-generated and AI-assisted content' }
+];
+const heavyTopicLabels: Record<HeavyTopic, string> = {
+  'politics-public-affairs': 'Politics & Public Affairs',
+  'crime-disasters-tragedy': 'Crime, Disasters & Tragedy'
+};
+const formatDisclosureLine = (item: {
+  displayedAiDisclosure?: string;
+  displayedHeavyTopics?: string[];
+}) => {
+  const parts: string[] = [];
+  if (item.displayedAiDisclosure && item.displayedAiDisclosure !== 'No AI') {
+    parts.push(item.displayedAiDisclosure);
+  }
+  for (const topic of item.displayedHeavyTopics || []) {
+    if (topic) parts.push(topic);
+  }
+  return parts.join(' • ');
+};
 type CollectionSummary = {
   collectionId: string;
   ownerUserId: string;
@@ -47,6 +72,10 @@ type TrendingImage = {
   effectiveContentRating?: ContentRating;
   displayedContentRating?: string;
   blurred?: boolean;
+  effectiveAiDisclosure?: AiDisclosure;
+  displayedAiDisclosure?: string;
+  effectiveHeavyTopics?: HeavyTopic[];
+  displayedHeavyTopics?: string[];
   title: string;
   previewUrl: string;
   favoriteCount: number;
@@ -103,6 +132,10 @@ type GalleryAsset = {
   effectiveContentRating?: ContentRating;
   displayedContentRating?: string;
   blurred?: boolean;
+  effectiveAiDisclosure?: AiDisclosure;
+  displayedAiDisclosure?: string;
+  effectiveHeavyTopics?: HeavyTopic[];
+  displayedHeavyTopics?: string[];
   previewUrl: string;
   previewPosterUrl?: string;
   thumbnailUrls?: {
@@ -131,6 +164,10 @@ type Gallery = {
     effectiveContentRating?: ContentRating;
     displayedContentRating?: string;
     blurred?: boolean;
+    effectiveAiDisclosure?: AiDisclosure;
+    displayedAiDisclosure?: string;
+    effectiveHeavyTopics?: HeavyTopic[];
+    displayedHeavyTopics?: string[];
     previewUrl: string;
     previewPosterUrl?: string;
   }>;
@@ -155,6 +192,10 @@ type UserProfile = {
   website?: string;
   matureContentEnabled?: boolean;
   maxAllowedContentRating?: ContentRating;
+  aiFilter?: AiFilterPreference;
+  hideHeavyTopics?: boolean;
+  hidePoliticsPublicAffairs?: boolean;
+  hideCrimeDisastersTragedy?: boolean;
   createdAt: string;
   updatedAt: string;
   lastUsernameChangeAt?: string;
@@ -713,6 +754,10 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
   const [website, setWebsite] = useState('');
   const [matureContentEnabled, setMatureContentEnabled] = useState(false);
   const [maxAllowedContentRating, setMaxAllowedContentRating] = useState<ContentRating>('graphic');
+  const [aiFilter, setAiFilter] = useState<AiFilterPreference>('show-all');
+  const [hideHeavyTopics, setHideHeavyTopics] = useState(false);
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState(false);
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState(false);
   const [usernameInput, setUsernameInput] = useState('');
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
   const [usernameError, setUsernameError] = useState('');
@@ -767,6 +812,10 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
         setWebsite(loaded.website || '');
         setMatureContentEnabled(Boolean(loaded.matureContentEnabled));
         setMaxAllowedContentRating(loaded.maxAllowedContentRating || 'graphic');
+        setAiFilter(loaded.aiFilter || 'show-all');
+        setHideHeavyTopics(Boolean(loaded.hideHeavyTopics));
+        setHidePoliticsPublicAffairs(Boolean(loaded.hidePoliticsPublicAffairs));
+        setHideCrimeDisastersTragedy(Boolean(loaded.hideCrimeDisastersTragedy));
         setUsernameInput(loaded.username || '');
       } catch (e) {
         const msg = (e as Error).message || '';
@@ -799,7 +848,11 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
         location: location || undefined,
         website: website || undefined,
         matureContentEnabled,
-        maxAllowedContentRating
+        maxAllowedContentRating,
+        aiFilter,
+        hideHeavyTopics,
+        hidePoliticsPublicAffairs,
+        hideCrimeDisastersTragedy
       }) as UserProfile;
       setProfile(updated);
       onProfileChanged?.(updated);
@@ -821,6 +874,10 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
       setUsernameInput(profile.username || '');
       setMatureContentEnabled(Boolean(profile.matureContentEnabled));
       setMaxAllowedContentRating(profile.maxAllowedContentRating || 'graphic');
+      setAiFilter(profile.aiFilter || 'show-all');
+      setHideHeavyTopics(Boolean(profile.hideHeavyTopics));
+      setHidePoliticsPublicAffairs(Boolean(profile.hidePoliticsPublicAffairs));
+      setHideCrimeDisastersTragedy(Boolean(profile.hideCrimeDisastersTragedy));
     }
   }, [selectedArtistId, profile?.userId]);
 
@@ -1087,6 +1144,63 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
                   ))}
                 </select>
               </div>
+              <div className="settings-field">
+                <label htmlFor="settings-ai-filter" className="settings-field-label">AI Content</label>
+                <select
+                  id="settings-ai-filter"
+                  className="settings-select"
+                  value={aiFilter}
+                  onChange={(e) => setAiFilter(e.target.value as AiFilterPreference)}
+                >
+                  {aiFilterOptions.map((option) => (
+                    <option key={`ai-filter-${option.value}`} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="settings-field">
+                <label className="settings-field-label">Heavy Topics</label>
+                <label className="inline-form">
+                  <input
+                    type="checkbox"
+                    checked={hideHeavyTopics}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setHideHeavyTopics(checked);
+                      if (checked) {
+                        setHidePoliticsPublicAffairs(true);
+                        setHideCrimeDisastersTragedy(true);
+                      }
+                    }}
+                  />
+                  <span>Hide Heavy Topics</span>
+                </label>
+                <label className="inline-form">
+                  <input
+                    type="checkbox"
+                    checked={hidePoliticsPublicAffairs}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setHidePoliticsPublicAffairs(checked);
+                      if (!checked) setHideHeavyTopics(false);
+                    }}
+                  />
+                  <span>{heavyTopicLabels['politics-public-affairs']}</span>
+                </label>
+                <label className="inline-form">
+                  <input
+                    type="checkbox"
+                    checked={hideCrimeDisastersTragedy}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setHideCrimeDisastersTragedy(checked);
+                      if (!checked) setHideHeavyTopics(false);
+                    }}
+                  />
+                  <span>{heavyTopicLabels['crime-disasters-tragedy']}</span>
+                </label>
+              </div>
             </>
           )}
         </div>
@@ -1246,16 +1360,27 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
   );
 }
 
-function HomePage() {
+function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   const currentUser = getCurrentUser();
   const dailySeed = new Date().toISOString().slice(0, 10);
   const trendingBaseLimit = 18;
   type FeedDensity = 'small' | 'medium' | 'large';
   type DensityViewport = 'mobile' | 'tablet' | 'desktop';
+  type TrendingCardEntry = {
+    item: TrendingImage;
+    index: number;
+  };
   type TrendingPairRow = {
     left: TrendingImage;
     right?: TrendingImage;
     startIndex: number;
+  };
+  type TrendingMediumBlock =
+    | { kind: 'pair'; row: TrendingPairRow }
+    | { kind: 'pair-with-insets'; row: TrendingPairRow; insets: TrendingCardEntry[]; insetOn: 'left' | 'right' };
+  type MediumBlockBuildResult = {
+    blocks: TrendingMediumBlock[];
+    consumedBorrowedImageIds: Set<string>;
   };
   type DiscoveryGallery = GallerySummary & { artistName: string; artistSlug: string; stackPreviewUrls?: string[] };
 
@@ -1284,6 +1409,10 @@ function HomePage() {
   const [loadingLatest, setLoadingLatest] = useState(false);
   const [loadingCollections, setLoadingCollections] = useState(false);
   const [deferredSectionsReady, setDeferredSectionsReady] = useState(false);
+  const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [followedArtistIds, setFollowedArtistIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
@@ -1309,6 +1438,12 @@ function HomePage() {
   const densityFadeOutMs = 130;
   const densityFadeInMs = 570;
   const densityOptions: FeedDensity[] = densityViewport === 'desktop' ? ['small', 'medium', 'large'] : ['small', 'large'];
+  const disclosureFilters = {
+    aiFilter: disclosureAiFilter,
+    hideHeavyTopics,
+    hidePoliticsPublicAffairs: hideHeavyTopics ? true : hidePoliticsPublicAffairs,
+    hideCrimeDisastersTragedy: hideHeavyTopics ? true : hideCrimeDisastersTragedy
+  };
 
   const clearDensityTransitionTimers = () => {
     if (typeof window === 'undefined') return;
@@ -1333,6 +1468,18 @@ function HomePage() {
   }, []);
 
   useEffect(() => {
+    setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
+    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  }, [
+    viewerProfile?.aiFilter,
+    viewerProfile?.hideHeavyTopics,
+    viewerProfile?.hidePoliticsPublicAffairs,
+    viewerProfile?.hideCrimeDisastersTragedy
+  ]);
+
+  useEffect(() => {
     if (densityViewport !== 'desktop' && feedDensity === 'medium') {
       setFeedDensity('large');
     }
@@ -1343,7 +1490,12 @@ function HomePage() {
     const loadTrending = async () => {
       try {
         setLoadingTrending(true);
-        const trendingData = await api.getTrendingImages(trendingPeriod, undefined, trendingBaseLimit) as { items: TrendingImage[]; nextCursor?: string };
+        const trendingData = await api.getTrendingImagesFiltered(
+          trendingPeriod,
+          undefined,
+          trendingBaseLimit,
+          disclosureFilters
+        ) as { items: TrendingImage[]; nextCursor?: string };
         setTrendingImages(trendingData.items || []);
         setTrendingCursor(trendingData.nextCursor);
       } catch (e) {
@@ -1357,7 +1509,7 @@ function HomePage() {
       }
     };
     void loadTrending();
-  }, [trendingPeriod, trendingReloadNonce]);
+  }, [trendingPeriod, trendingReloadNonce, disclosureFilters.aiFilter, disclosureFilters.hideHeavyTopics, disclosureFilters.hidePoliticsPublicAffairs, disclosureFilters.hideCrimeDisastersTragedy]);
 
   useEffect(() => () => clearDensityTransitionTimers(), []);
 
@@ -1443,7 +1595,12 @@ function HomePage() {
     if (!trendingCursor) return;
     try {
       setLoadingMoreTrending(true);
-      const response = await api.getTrendingImages(trendingPeriod, trendingCursor, trendingBaseLimit) as { items: TrendingImage[]; nextCursor?: string };
+      const response = await api.getTrendingImagesFiltered(
+        trendingPeriod,
+        trendingCursor,
+        trendingBaseLimit,
+        disclosureFilters
+      ) as { items: TrendingImage[]; nextCursor?: string };
       setTrendingImages((prev) => [...prev, ...(response.items || [])]);
       setTrendingCursor(response.nextCursor);
     } catch {
@@ -1489,6 +1646,108 @@ function HomePage() {
     const leftShare = Math.max(0.34, Math.min(0.66, leftRatio / total));
     const rightShare = 1 - leftShare;
     return `${(leftShare * 100).toFixed(2)}fr ${(rightShare * 100).toFixed(2)}fr`;
+  };
+
+  const rowsToEntries = (rows: TrendingPairRow[]): TrendingCardEntry[] => {
+    const entries: TrendingCardEntry[] = [];
+    rows.forEach((row) => {
+      entries.push({ item: row.left, index: row.startIndex });
+      if (row.right) entries.push({ item: row.right, index: row.startIndex + 1 });
+    });
+    return entries;
+  };
+
+  const buildMediumMixedBlocks = (
+    rows: TrendingPairRow[],
+    options?: { borrowedEntries?: TrendingCardEntry[] }
+  ): MediumBlockBuildResult => {
+    const primaryEntries = rowsToEntries(rows);
+    const queue: Array<{ entry: TrendingCardEntry; borrowed: boolean }> = [
+      ...primaryEntries.map((entry) => ({ entry, borrowed: false })),
+      ...((options?.borrowedEntries || []).map((entry) => ({ entry, borrowed: true })))
+    ];
+    const blocks: TrendingMediumBlock[] = [];
+    const consumedBorrowedImageIds = new Set<string>();
+    let remainingPrimaryEntries = primaryEntries.length;
+    const maxLayoutPromotionOffset = 100;
+    const isSquareEligible = (entry: TrendingCardEntry): boolean => (
+      entry.item.discoverSquareCropEnabled !== false && getTrendingRatio(entry.item, entry.index) <= 0.95
+    );
+    const canPromoteWithinWindow = (entry: TrendingCardEntry, baseIndex: number): boolean => (
+      entry.index - baseIndex <= maxLayoutPromotionOffset
+    );
+    const consumeAt = (index: number): TrendingCardEntry | null => {
+      const [removed] = queue.splice(index, 1);
+      if (!removed) return null;
+      if (removed.borrowed) {
+        consumedBorrowedImageIds.add(removed.entry.item.imageId);
+      } else {
+        remainingPrimaryEntries = Math.max(0, remainingPrimaryEntries - 1);
+      }
+      return removed.entry;
+    };
+
+    while (remainingPrimaryEntries > 0 && queue.length > 0) {
+      if (queue.length >= 3) {
+        const left = queue[0]?.entry;
+        const right = queue[1]?.entry;
+        if (!left || !right) break;
+        const leftRatio = getTrendingRatio(left.item, left.index);
+        const rightRatio = getTrendingRatio(right.item, right.index);
+        const oneVeryTallPortrait = (leftRatio <= 0.62 && rightRatio >= 1.05) || (rightRatio <= 0.62 && leftRatio >= 1.05);
+        const ratioGapLarge = Math.abs(leftRatio - rightRatio) >= 0.85;
+
+        if (oneVeryTallPortrait && ratioGapLarge) {
+          const insetIndices: number[] = [];
+          for (let i = 2; i < queue.length; i += 1) {
+            const entry = queue[i]?.entry;
+            if (!entry) continue;
+            if (!isSquareEligible(entry)) continue;
+            if (!canPromoteWithinWindow(entry, left.index)) continue;
+            insetIndices.push(i);
+            if (insetIndices.length === 2) break;
+          }
+          if (insetIndices.length >= 2) {
+            const insets = insetIndices
+              .slice(0, 2)
+              .map((idx) => queue[idx]?.entry)
+              .filter((entry): entry is TrendingCardEntry => Boolean(entry))
+              .sort((a, b) => a.index - b.index);
+            [...insetIndices].sort((a, b) => b - a).forEach((idx) => void consumeAt(idx));
+            consumeAt(1);
+            consumeAt(0);
+            blocks.push({
+              kind: 'pair-with-insets',
+              row: {
+                left: left.item,
+                right: right.item,
+                startIndex: left.index
+              },
+              insets,
+              insetOn: leftRatio <= rightRatio ? 'right' : 'left'
+            });
+            continue;
+          }
+        }
+      }
+
+      const left = consumeAt(0);
+      if (!left) break;
+      const right = remainingPrimaryEntries > 0 ? consumeAt(0) : null;
+      blocks.push({
+        kind: 'pair',
+        row: {
+          left: left.item,
+          right: right?.item,
+          startIndex: left.index
+        }
+      });
+    }
+
+    return {
+      blocks,
+      consumedBorrowedImageIds
+    };
   };
 
   const displayAspectRatio = (item: TrendingImage, index: number): number => {
@@ -1540,7 +1799,41 @@ function HomePage() {
   const smallContinuationItems = trendingRenderable.slice(smallTopItemCount);
   const allTrendingRows = buildPairRows(trendingRenderable);
   const topRows = allTrendingRows.slice(0, densityTopRows[feedDensity]);
-  const continuationRows = allTrendingRows.slice(densityTopRows[feedDensity]);
+  const continuationRowsSeed = allTrendingRows.slice(densityTopRows[feedDensity]);
+  const continuationEntriesSeed = rowsToEntries(continuationRowsSeed);
+  const mediumTopBuild = feedDensity === 'medium'
+    ? buildMediumMixedBlocks(topRows, { borrowedEntries: continuationEntriesSeed })
+    : null;
+  const borrowedTopImageIds = mediumTopBuild?.consumedBorrowedImageIds || new Set<string>();
+  const filterRowsByExcludedImageIds = (rows: TrendingPairRow[], excluded: Set<string>): TrendingPairRow[] => {
+    if (excluded.size === 0) return rows;
+    const filtered: TrendingPairRow[] = [];
+    rows.forEach((row) => {
+      const keptEntries = [
+        { item: row.left, index: row.startIndex },
+        ...(row.right ? [{ item: row.right, index: row.startIndex + 1 }] : [])
+      ].filter((entry) => !excluded.has(entry.item.imageId));
+      if (keptEntries.length === 0) return;
+      if (keptEntries.length === 1) {
+        filtered.push({
+          left: keptEntries[0].item,
+          right: undefined,
+          startIndex: keptEntries[0].index
+        });
+        return;
+      }
+      const sorted = [...keptEntries].sort((a, b) => a.index - b.index);
+      filtered.push({
+        left: sorted[0].item,
+        right: sorted[1].item,
+        startIndex: sorted[0].index
+      });
+    });
+    return filtered;
+  };
+  const continuationRows = feedDensity === 'medium'
+    ? filterRowsByExcludedImageIds(continuationRowsSeed, borrowedTopImageIds)
+    : continuationRowsSeed;
   const continuationBlockRowsByDensity: Record<FeedDensity, number> = {
     small: 3,
     medium: 2,
@@ -1675,26 +1968,34 @@ function HomePage() {
     }
   };
 
-  const renderTrendingCard = (item: TrendingImage, cardIndex: number) => {
+  const renderTrendingCard = (
+    item: TrendingImage,
+    cardIndex: number,
+    options?: { forceSquareFrame?: boolean; compactCard?: boolean }
+  ) => {
     const href = item.gallerySlug
       ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}`
       : '/';
     const isPreview = item.galleryVisibility === 'preview';
     const isFavorite = favoriteImageIds.has(item.imageId);
     const displayedRating = item.displayedContentRating || 'General';
+    const disclosureLine = formatDisclosureLine(item);
     const isBlurredByRating = item.blurred === true;
     const ratio = displayAspectRatio(item, cardIndex);
     const allowDiscoverSquareCrop = item.discoverSquareCropEnabled !== false;
-    const shouldSquareCrop = feedDensity === 'small' && allowDiscoverSquareCrop;
-    const frameRatio = shouldSquareCrop ? 1 : ratio;
+    const forceSquareFrame = Boolean(options?.forceSquareFrame);
+    const compactCard = Boolean(options?.compactCard);
+    const shouldSquareCrop = (feedDensity === 'small' || forceSquareFrame) && allowDiscoverSquareCrop;
+    const frameRatio = forceSquareFrame ? 1 : (shouldSquareCrop ? 1 : ratio);
     const isSmallLandscape = feedDensity === 'small' && !shouldSquareCrop && ratio >= 1.25;
     const largeCardClass = feedDensity === 'large' ? ' density-large-card' : '';
+    const compactCardClass = compactCard ? ' is-compact' : '';
     const largeCropClass = feedDensity === 'large' ? ' large-crop' : '';
 
     return (
       <article
         key={item.imageId}
-        className={`discovery-feature-card${isSmallLandscape ? ' is-landscape' : ''}${largeCardClass}`}
+        className={`discovery-feature-card${isSmallLandscape ? ' is-landscape' : ''}${largeCardClass}${compactCardClass}`}
         style={{ '--media-aspect': frameRatio.toFixed(4) } as any}
       >
         <Link to={href} className="discovery-feature-link no-underline">
@@ -1724,16 +2025,19 @@ function HomePage() {
           <div className="discovery-feature-text">
             <h3 className="discovery-feature-title">{item.title || 'Artwork title'}</h3>
             <p className="discovery-feature-subtitle">by {item.artistName || 'Artist Name'}</p>
+            {disclosureLine && !compactCard && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
           </div>
-          <div className="discovery-feature-stats">
-            <span>❤ {item.favoriteCount || 0}</span>
-            <span>👁 {trendingViewCount(cardIndex)}</span>
-            <span>{isPreview ? 'Follower preview' : 'Public'}</span>
-            <span>{displayedRating}</span>
-          </div>
+          {!compactCard && (
+            <div className="discovery-feature-stats">
+              <span>❤ {item.favoriteCount || 0}</span>
+              <span>👁 {trendingViewCount(cardIndex)}</span>
+              <span>{isPreview ? 'Follower preview' : 'Public'}</span>
+              <span>{displayedRating}</span>
+            </div>
+          )}
           <div className="discovery-feature-actions">
             <Link to={href} className="discovery-quick-view-link no-underline">Quick view</Link>
-            {currentUser && (
+            {currentUser && !compactCard && (
               <button
                 className="auth-secondary-btn discovery-inline-btn"
                 onClick={() => void toggleImageFavorite(item.imageId)}
@@ -1750,12 +2054,62 @@ function HomePage() {
   const renderTrendingBlockContent = (
     smallItems: TrendingImage[],
     smallStartIndex: number,
-    rows: TrendingPairRow[]
+    rows: TrendingPairRow[],
+    preparedMediumBlocks?: TrendingMediumBlock[]
   ) => {
     if (feedDensity === 'small') {
       return (
         <div className="discovery-small-grid">
           {smallItems.map((item, index) => renderTrendingCard(item, smallStartIndex + index))}
+        </div>
+      );
+    }
+    if (feedDensity === 'medium') {
+      const mediumBlocks = preparedMediumBlocks || buildMediumMixedBlocks(rows).blocks;
+      return (
+        <div className="discovery-pair-feed density-medium-mixed">
+          {mediumBlocks.map((block, blockIndex) => (
+            block.kind === 'pair' ? (
+              <div
+                key={`medium-pair-${block.row.left.imageId}-${block.row.right?.imageId || 'single'}`}
+                className={`discovery-pair-row density-medium${block.row.right ? '' : ' single'}`}
+                style={{
+                  '--pair-cols-mobile': '1fr 1fr',
+                  '--pair-cols': pairTemplateColumns(block.row, 'medium')
+                } as any}
+              >
+                {renderTrendingCard(block.row.left, block.row.startIndex)}
+                {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1)}
+              </div>
+            ) : (
+              <div
+                key={`medium-pair-inset-${block.row.left.imageId}-${block.row.right?.imageId || 'single'}-${block.insets.map((entry) => entry.item.imageId).join('-')}`}
+                className="discovery-pair-row density-medium discovery-pair-row-with-inset"
+                style={{
+                  '--pair-cols-mobile': '1fr 1fr',
+                  '--pair-cols': pairTemplateColumns(block.row, 'medium')
+                } as any}
+              >
+                {block.insetOn === 'left' ? (
+                  <>
+                    <div className="discovery-pair-column-with-inset">
+                      {renderTrendingCard(block.row.left, block.row.startIndex)}
+                      {block.insets.map((entry) => renderTrendingCard(entry.item, entry.index, { forceSquareFrame: true, compactCard: true }))}
+                    </div>
+                    {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1)}
+                  </>
+                ) : (
+                  <>
+                    {renderTrendingCard(block.row.left, block.row.startIndex)}
+                    <div className="discovery-pair-column-with-inset">
+                      {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1)}
+                      {block.insets.map((entry) => renderTrendingCard(entry.item, entry.index, { forceSquareFrame: true, compactCard: true }))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )
+          ))}
         </div>
       );
     }
@@ -1806,6 +2160,48 @@ function HomePage() {
               <button className={trendingPeriod === 'hourly' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setTrendingPeriod('hourly')}>Hourly</button>
               <button className={trendingPeriod === 'daily' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setTrendingPeriod('daily')}>Daily</button>
               <Link className="auth-secondary-btn no-underline" to="/trending">View all</Link>
+            </div>
+            <div className="inline-form">
+              <label className="small">Heavy Topics</label>
+              <label className="inline-form">
+                <input
+                  type="checkbox"
+                  checked={hideHeavyTopics}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setHideHeavyTopics(enabled);
+                    if (enabled) {
+                      setHidePoliticsPublicAffairs(true);
+                      setHideCrimeDisastersTragedy(true);
+                    }
+                  }}
+                />
+                <span>Hide all heavy topics</span>
+              </label>
+              <label className="inline-form">
+                <input
+                  type="checkbox"
+                  checked={hidePoliticsPublicAffairs}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setHidePoliticsPublicAffairs(enabled);
+                    if (!enabled) setHideHeavyTopics(false);
+                  }}
+                />
+                <span>{heavyTopicLabels['politics-public-affairs']}</span>
+              </label>
+              <label className="inline-form">
+                <input
+                  type="checkbox"
+                  checked={hideCrimeDisastersTragedy}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setHideCrimeDisastersTragedy(enabled);
+                    if (!enabled) setHideHeavyTopics(false);
+                  }}
+                />
+                <span>{heavyTopicLabels['crime-disasters-tragedy']}</span>
+              </label>
             </div>
             <div className="discovery-density-card">
               <div className="discovery-density-head">
@@ -1874,7 +2270,7 @@ function HomePage() {
           </div>
         )}
         <div className={`discovery-density-transition${densityTransitionClass}`}>
-          {renderTrendingBlockContent(smallTopItems, 0, topRows)}
+          {renderTrendingBlockContent(smallTopItems, 0, topRows, mediumTopBuild?.blocks)}
         </div>
         {loadingTrending && !densitySwitchLoading && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">Loading trending artwork...</p>}
         {!loadingTrending && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">No trending artwork yet.</p>}
@@ -2064,6 +2460,10 @@ function GalleryPage() {
     effectiveContentRating?: ContentRating;
     displayedContentRating?: string;
     blurred?: boolean;
+    effectiveAiDisclosure?: AiDisclosure;
+    displayedAiDisclosure?: string;
+    effectiveHeavyTopics?: HeavyTopic[];
+    displayedHeavyTopics?: string[];
     premiumUrl: string;
     premiumPosterUrl?: string;
   }>>([]);
@@ -2352,6 +2752,7 @@ function GalleryPage() {
             )}
           {focusedMedia.blurred && <p className="small">Mature Content</p>}
           {!focusedMedia.blurred && focusedMedia.displayedContentRating && <p className="small">{focusedMedia.displayedContentRating}</p>}
+          {formatDisclosureLine(focusedMedia) && <p className="small">{formatDisclosureLine(focusedMedia)}</p>}
           <p className="small">Item {resolvedFocusedIndex + 1} of {mediaItems.length}</p>
         </section>
       )}
@@ -2379,6 +2780,7 @@ function GalleryPage() {
               {focusedImageId === image.imageId ? 'Viewing' : 'View Focus'}
             </button>
             <small>{image.displayedContentRating || 'General'}</small>
+            {formatDisclosureLine(image) && <small>{formatDisclosureLine(image)}</small>}
             <small>Likes: {image.favoriteCount}</small>
             <div className="inline-form">
               <button onClick={() => void toggleImageFavorite(image.imageId)}>
@@ -2632,7 +3034,7 @@ function CollectionDetailPage() {
   );
 }
 
-function TrendingPage() {
+function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   const currentUser = getCurrentUser();
   const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
   const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
@@ -2642,14 +3044,41 @@ function TrendingPage() {
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [aiFilter, setAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
   const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
   const masonryHeights = [220, 260, 300, 340, 380];
+  const disclosureFilters = {
+    aiFilter,
+    hideHeavyTopics,
+    hidePoliticsPublicAffairs: hideHeavyTopics ? true : hidePoliticsPublicAffairs,
+    hideCrimeDisastersTragedy: hideHeavyTopics ? true : hideCrimeDisastersTragedy
+  };
+
+  useEffect(() => {
+    setAiFilter(viewerProfile?.aiFilter || 'show-all');
+    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  }, [
+    viewerProfile?.aiFilter,
+    viewerProfile?.hideHeavyTopics,
+    viewerProfile?.hidePoliticsPublicAffairs,
+    viewerProfile?.hideCrimeDisastersTragedy
+  ]);
 
   const loadTrending = async (append = false) => {
     try {
       setLoading(true);
       setError('');
-      const response = await api.getTrendingImages(period, append ? cursor : undefined, 36) as { items: TrendingImage[]; nextCursor?: string };
+      const response = await api.getTrendingImagesFiltered(
+        period,
+        append ? cursor : undefined,
+        36,
+        disclosureFilters
+      ) as { items: TrendingImage[]; nextCursor?: string };
       setItems((prev) => append ? [...prev, ...(response.items || [])] : (response.items || []));
       setCursor(response.nextCursor);
     } catch (e) {
@@ -2661,7 +3090,7 @@ function TrendingPage() {
 
   useEffect(() => {
     void loadTrending(false);
-  }, [period]);
+  }, [period, disclosureFilters.aiFilter, disclosureFilters.hideHeavyTopics, disclosureFilters.hidePoliticsPublicAffairs, disclosureFilters.hideCrimeDisastersTragedy]);
 
   useEffect(() => {
     const loadArtists = async () => {
@@ -2773,6 +3202,7 @@ function TrendingPage() {
               <div className="discovery-card-body">
                 <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
                 <div className="discovery-card-subtitle">by {item.artistName}</div>
+                {formatDisclosureLine(item) && <div className="discovery-card-subtitle">{formatDisclosureLine(item)}</div>}
                 <div className="discovery-card-stats">
                   <span>❤ {item.favoriteCount || 0}</span>
                   <span>👁 {(2.1 + (i % 7) * 0.2).toFixed(1)}k</span>
@@ -2881,6 +3311,7 @@ function ArtistProfilePage() {
               <div className="discovery-small-card-body">
                 <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
                 <div className="discovery-card-subtitle">{item.displayedContentRating || 'General'}</div>
+                {formatDisclosureLine(item) && <div className="discovery-card-subtitle">{formatDisclosureLine(item)}</div>}
               </div>
             </Link>
           ))}
@@ -3007,8 +3438,8 @@ export default function App() {
     <div className="app-shell" data-theme={settings.theme || 'ubeeq'}>
       <HeaderAuth user={user} onSignOut={handleSignOut} settings={settings} profile={myProfile} />
       <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/trending" element={<TrendingPage />} />
+        <Route path="/" element={<HomePage viewerProfile={myProfile} />} />
+        <Route path="/trending" element={<TrendingPage viewerProfile={myProfile} />} />
         <Route path="/artists/:slug" element={<ArtistProfilePage />} />
         <Route path="/gallery/:slug" element={<GalleryPage />} />
         <Route path="/collections" element={<CollectionsPage />} />

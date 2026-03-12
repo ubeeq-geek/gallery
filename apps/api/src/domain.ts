@@ -1,5 +1,8 @@
 export type Visibility = 'free' | 'preview' | 'premium';
 export type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+export type AiDisclosure = 'none' | 'ai-assisted' | 'ai-generated';
+export type HeavyTopic = 'politics-public-affairs' | 'crime-disasters-tragedy';
+export type AiFilterPreference = 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
 
 export interface Artist {
   artistId: string;
@@ -7,6 +10,8 @@ export interface Artist {
   slug: string;
   slugHistory?: string[];
   discoverSquareCropEnabled?: boolean;
+  defaultAiDisclosure?: AiDisclosure;
+  defaultHeavyTopics?: HeavyTopic[];
   status: 'active' | 'inactive';
   sortOrder: number;
   followerCount?: number;
@@ -23,6 +28,8 @@ export interface Gallery {
   slug: string;
   slugHistory?: string[];
   discoverSquareCropEnabled?: boolean;
+  defaultAiDisclosure?: AiDisclosure;
+  defaultHeavyTopics?: HeavyTopic[];
   visibility: Visibility;
   releaseVisibility?: 'public' | 'hidden' | 'removed';
   pairedPremiumGalleryId?: string;
@@ -41,6 +48,10 @@ export interface Media {
   discoverSquareCropEnabled?: boolean;
   contentRating?: ContentRating;
   moderatorContentRating?: ContentRating;
+  aiDisclosure?: AiDisclosure;
+  moderatorAiDisclosure?: AiDisclosure;
+  heavyTopics?: HeavyTopic[];
+  moderatorHeavyTopics?: HeavyTopic[];
   assetType?: 'image' | 'video';
   status?: 'draft' | 'scheduled' | 'published' | 'archived';
   releaseVisibility?: 'public' | 'hidden' | 'removed';
@@ -173,6 +184,10 @@ export interface UserProfile {
   website?: string;
   matureContentEnabled?: boolean;
   maxAllowedContentRating?: ContentRating;
+  aiFilter?: AiFilterPreference;
+  hideHeavyTopics?: boolean;
+  hidePoliticsPublicAffairs?: boolean;
+  hideCrimeDisastersTragedy?: boolean;
   createdAt: string;
   updatedAt: string;
   lastUsernameChangeAt?: string;
@@ -224,6 +239,8 @@ export interface TrendingFeedItem {
   galleryVisibility: 'free' | 'preview';
   discoverSquareCropEnabled: boolean;
   effectiveContentRating: ContentRating;
+  effectiveAiDisclosure: AiDisclosure;
+  effectiveHeavyTopics: HeavyTopic[];
   title: string;
   previewKey: string;
   favoriteCount: number;

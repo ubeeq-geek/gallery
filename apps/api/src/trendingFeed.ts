@@ -1,7 +1,8 @@
 import type { AppConfig } from './config';
-import type { Artist, Gallery, GalleryMediaView, TrendingFeedItem, TrendingPeriod } from './domain';
+import type { AiDisclosure, Artist, Gallery, GalleryMediaView, HeavyTopic, TrendingFeedItem, TrendingPeriod } from './domain';
 import type { DataStore } from './store';
 import { getEffectiveContentRating } from './contentRating';
+import { getEffectiveAiDisclosure, getEffectiveHeavyTopics } from './disclosures';
 
 const asTime = (value?: string): number | null => {
   if (!value) return null;
@@ -39,6 +40,8 @@ interface CandidateItem {
   galleryVisibility: 'free' | 'preview';
   discoverSquareCropEnabled: boolean;
   effectiveContentRating: TrendingFeedItem['effectiveContentRating'];
+  effectiveAiDisclosure: AiDisclosure;
+  effectiveHeavyTopics: HeavyTopic[];
   title: string;
   previewKey: string;
   createdAt: string;
@@ -84,6 +87,7 @@ const buildCandidates = async (
         (artistById.get(item.artistId)?.discoverSquareCropEnabled ?? true) &&
         (gallery.discoverSquareCropEnabled ?? true) &&
         (item.discoverSquareCropEnabled ?? true);
+      const artist = artistById.get(item.artistId);
       candidates.push({
         imageId: item.mediaId,
         artistId: item.artistId,
@@ -93,6 +97,8 @@ const buildCandidates = async (
         galleryVisibility: gallery.visibility === 'preview' ? 'preview' : 'free',
         discoverSquareCropEnabled,
         effectiveContentRating: getEffectiveContentRating(item),
+        effectiveAiDisclosure: getEffectiveAiDisclosure(item, gallery, artist),
+        effectiveHeavyTopics: getEffectiveHeavyTopics(item, gallery, artist),
         title: item.title || gallery.title || 'Artwork',
         previewKey,
         createdAt: item.createdAt,
@@ -156,6 +162,8 @@ export const buildTrendingFeedForPeriod = async (
     galleryVisibility: item.galleryVisibility,
     discoverSquareCropEnabled: item.discoverSquareCropEnabled,
     effectiveContentRating: item.effectiveContentRating,
+    effectiveAiDisclosure: item.effectiveAiDisclosure,
+    effectiveHeavyTopics: item.effectiveHeavyTopics,
     title: item.title,
     previewKey: item.previewKey,
     favoriteCount: item.favoriteCount,

@@ -7,7 +7,7 @@ import path from 'path';
 import { hashPassword } from '../unlock';
 import { loadConfig } from '../config';
 import { GalleryCoreRepository } from '../galleryCoreRepository';
-import type { Artist, ContentRating, Gallery, Media, SiteSettings } from '../domain';
+import type { AiDisclosure, Artist, ContentRating, Gallery, HeavyTopic, Media, SiteSettings } from '../domain';
 import { generateImageRenditions } from '../renditions';
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -63,6 +63,8 @@ type ArtistSeed = {
   slug: string;
   filePrefix: string;
   contentRating?: ContentRating;
+  aiDisclosure?: AiDisclosure;
+  heavyTopics?: HeavyTopic[];
   discoverSquareCropEnabled?: boolean;
   galleries: Array<'free' | 'preview' | 'premium'>;
   freeGalleryTitle?: string;
@@ -107,6 +109,22 @@ const artistSeeds: ArtistSeed[] = [
     slug: 'daily-cosmos',
     filePrefix: 'dc-',
     galleries: ['free']
+  },
+  {
+    name: 'Nearly Natural Vistas',
+    slug: 'nearly-natural-vistas',
+    filePrefix: 'vista-',
+    galleries: ['free'],
+    freeGalleryTitle: 'Nearly Natural Vistas Free Gallery',
+    freeGallerySlug: 'nearly-natural-vistas-free-gallery'
+  },
+  {
+    name: 'Roadside America',
+    slug: 'roadside-america',
+    filePrefix: 'road-000',
+    galleries: ['free'],
+    freeGalleryTitle: 'Roadside America Free Gallery',
+    freeGallerySlug: 'roadside-america-free-gallery'
   }
 ];
 
@@ -322,6 +340,8 @@ const main = async () => {
     const createdAt = nowIso();
     const artistId = randomUUID();
     const contentRating: ContentRating = seed.contentRating || 'general';
+    const aiDisclosure: AiDisclosure = seed.aiDisclosure || 'none';
+    const heavyTopics: HeavyTopic[] = seed.heavyTopics || [];
     const discoverSquareCropEnabled = seed.discoverSquareCropEnabled ?? true;
 
     const artist: Artist = {
@@ -329,6 +349,8 @@ const main = async () => {
       name: seed.name,
       slug: seed.slug,
       discoverSquareCropEnabled,
+      defaultAiDisclosure: aiDisclosure,
+      defaultHeavyTopics: heavyTopics,
       status: 'active',
       sortOrder: idx + 1,
       createdAt
@@ -344,6 +366,8 @@ const main = async () => {
           slug: seed.freeGallerySlug || `${seed.slug}-free`,
           slugHistory: [seed.freeGallerySlug || `${seed.slug}-free`],
           discoverSquareCropEnabled,
+          defaultAiDisclosure: aiDisclosure,
+          defaultHeavyTopics: heavyTopics,
           visibility: 'free' as const,
           status: 'published' as const,
           createdAt
@@ -359,6 +383,8 @@ const main = async () => {
           slug: `${seed.slug}-premium`,
           slugHistory: [`${seed.slug}-premium`],
           discoverSquareCropEnabled,
+          defaultAiDisclosure: aiDisclosure,
+          defaultHeavyTopics: heavyTopics,
           visibility: 'premium' as const,
           status: 'published' as const,
           premiumPasswordHash,
@@ -375,6 +401,8 @@ const main = async () => {
           slug: `${seed.slug}-premium-preview`,
           slugHistory: [`${seed.slug}-premium-preview`],
           discoverSquareCropEnabled,
+          defaultAiDisclosure: aiDisclosure,
+          defaultHeavyTopics: heavyTopics,
           visibility: 'preview' as const,
           pairedPremiumGalleryId: premiumGallery?.galleryId,
           purchaseUrl: seed.purchaseUrl,
@@ -437,6 +465,8 @@ const main = async () => {
         assetType: 'image',
         discoverSquareCropEnabled,
         contentRating,
+        aiDisclosure,
+        heavyTopics,
         title,
         slug,
         slugHistory: [slug],
@@ -464,6 +494,8 @@ const main = async () => {
           assetType: 'image',
           discoverSquareCropEnabled,
           contentRating,
+          aiDisclosure,
+          heavyTopics,
           title,
           slug,
           slugHistory: [slug],
@@ -491,6 +523,8 @@ const main = async () => {
         assetType: 'image',
         discoverSquareCropEnabled,
         contentRating,
+        aiDisclosure,
+        heavyTopics,
         title,
         slug,
         slugHistory: [slug],
@@ -532,6 +566,8 @@ const main = async () => {
         assetType: 'video',
         discoverSquareCropEnabled,
         contentRating,
+        aiDisclosure,
+        heavyTopics,
         title,
         slug,
         slugHistory: [slug],
@@ -565,6 +601,8 @@ const main = async () => {
           assetType: 'video',
           discoverSquareCropEnabled,
           contentRating,
+          aiDisclosure,
+          heavyTopics,
           title,
           slug,
           slugHistory: [slug],
@@ -602,6 +640,8 @@ const main = async () => {
         assetType: 'video',
         discoverSquareCropEnabled,
         contentRating,
+        aiDisclosure,
+        heavyTopics,
         title,
         slug,
         slugHistory: [slug],
