@@ -4,6 +4,7 @@ import { BatchWriteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand } fr
 import { randomUUID } from 'crypto';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import path from 'path';
+import { Jimp } from 'jimp';
 import { hashPassword } from '../unlock';
 import { loadConfig } from '../config';
 import { GalleryCoreRepository } from '../galleryCoreRepository';
@@ -140,6 +141,22 @@ const splitByAccess = (files: AssetFile[]): { free: AssetFile[]; premium: AssetF
   const premium = [...explicitPremium, ...unlabeled.slice(freeUnlabeledCount)];
 
   return { free, premium };
+};
+
+const imageDimensionCache = new Map<string, { width: number; height: number }>();
+
+const getImageDimensions = async (file: AssetFile): Promise<{ width: number; height: number }> => {
+  const cached = imageDimensionCache.get(file.absolutePath);
+  if (cached) return cached;
+  const image = await Jimp.read(file.absolutePath);
+  const width = Number(image.bitmap.width || 0);
+  const height = Number(image.bitmap.height || 0);
+  if (width <= 0 || height <= 0) {
+    throw new Error(`Could not determine image dimensions for ${file.absolutePath}`);
+  }
+  const value = { width, height };
+  imageDimensionCache.set(file.absolutePath, value);
+  return value;
 };
 
 const tableExists = async (client: DynamoDBClient, tableName: string): Promise<boolean> => {
@@ -454,6 +471,7 @@ const main = async () => {
     };
 
     for (const file of freeImages) {
+      const dimensions = await getImageDimensions(file);
       const mediaId = randomUUID();
       const title = titleFromFilename(file.filename);
       const slug = slugify(title);
@@ -472,8 +490,8 @@ const main = async () => {
         slugHistory: [slug],
         originalFilename: file.filename,
         previewKey,
-        width: 1600,
-        height: 1067,
+        width: dimensions.width,
+        height: dimensions.height,
         altText: `${seed.name} free image ${freeOrder}`,
         createdAt
       });
@@ -483,6 +501,7 @@ const main = async () => {
     }
 
     for (const file of previewImages) {
+      const dimensions = await getImageDimensions(file);
       const mediaId = randomUUID();
       const title = titleFromFilename(file.filename);
       const slug = slugify(title);
@@ -501,8 +520,8 @@ const main = async () => {
           slugHistory: [slug],
           originalFilename: file.filename,
           previewKey,
-          width: 1600,
-          height: 1067,
+          width: dimensions.width,
+          height: dimensions.height,
           altText: `${seed.name} preview image ${previewOrder}`,
           createdAt
         });
@@ -512,6 +531,7 @@ const main = async () => {
     }
 
     for (const file of premiumImages) {
+      const dimensions = await getImageDimensions(file);
       const mediaId = randomUUID();
       const title = titleFromFilename(file.filename);
       const slug = slugify(title);
@@ -531,8 +551,8 @@ const main = async () => {
         originalFilename: file.filename,
         previewKey: objectKey,
         premiumKey: objectKey,
-        width: 2200,
-        height: 1467,
+        width: dimensions.width,
+        height: dimensions.height,
         altText: `${seed.name} premium image ${premiumOrder}`,
         createdAt
       });
@@ -720,6 +740,8 @@ const main = async () => {
       });
       item.media.thumbnailKeys = generated.keys;
       item.media.squareCrop = generated.squareCrop;
+      item.media.width = generated.sourceWidth;
+      item.media.height = generated.sourceHeight;
     }
     console.log('[seed:core] generated image renditions');
   }

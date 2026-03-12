@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from './api';
 import {
@@ -78,6 +78,9 @@ type TrendingImage = {
   displayedHeavyTopics?: string[];
   title: string;
   previewUrl: string;
+  width?: number;
+  height?: number;
+  aspectRatio?: number;
   favoriteCount: number;
   createdAt: string;
 };
@@ -263,11 +266,13 @@ const authLinks: Array<{ mode: AuthMode; label: string }> = [
 function AutoLoadSentinel({
   enabled,
   loading,
-  onLoadMore
+  onLoadMore,
+  rootMargin = '240px 0px'
 }: {
   enabled: boolean;
   loading: boolean;
   onLoadMore: () => Promise<void> | void;
+  rootMargin?: string;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -277,10 +282,10 @@ function AutoLoadSentinel({
       if (entries.some((entry) => entry.isIntersecting)) {
         void onLoadMore();
       }
-    }, { rootMargin: '240px 0px' });
+    }, { rootMargin });
     observer.observe(ref.current);
     return () => observer.disconnect();
-  }, [enabled, loading, onLoadMore]);
+  }, [enabled, loading, onLoadMore, rootMargin]);
 
   if (!enabled) return null;
   return (
@@ -1399,7 +1404,6 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   });
   const [densityFadeState, setDensityFadeState] = useState<'idle' | 'fading-out' | 'fading-in'>('idle');
   const [densitySwitchLoading, setDensitySwitchLoading] = useState(false);
-  const [imageAspectRatios, setImageAspectRatios] = useState<Record<string, number>>({});
   const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
   const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
   const [favoriteImageIds, setFavoriteImageIds] = useState<Set<string>>(new Set());
@@ -1418,6 +1422,9 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   const [error, setError] = useState('');
   const densityTransitionTimersRef = useRef<number[]>([]);
   const densitySwitchRequestRef = useRef<number | null>(null);
+  const mediumBlockLayoutCacheRef = useRef<Map<string, MediumBlockBuildResult>>(new Map());
+  const mediumTopBorrowRowsRef = useRef<TrendingPairRow[] | null>(null);
+  const continuationFrozenRowsRef = useRef<number>(0);
 
   const fallbackAspectRatios = [1.6, 0.8, 1.5, 0.56, 1.78, 1.25, 1.33, 0.75];
   const collectionPalettes = [
@@ -1512,6 +1519,20 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   }, [trendingPeriod, trendingReloadNonce, disclosureFilters.aiFilter, disclosureFilters.hideHeavyTopics, disclosureFilters.hidePoliticsPublicAffairs, disclosureFilters.hideCrimeDisastersTragedy]);
 
   useEffect(() => () => clearDensityTransitionTimers(), []);
+
+  useEffect(() => {
+    mediumBlockLayoutCacheRef.current.clear();
+    mediumTopBorrowRowsRef.current = null;
+    continuationFrozenRowsRef.current = 0;
+  }, [
+    trendingReloadNonce,
+    trendingPeriod,
+    disclosureFilters.aiFilter,
+    disclosureFilters.hideHeavyTopics,
+    disclosureFilters.hidePoliticsPublicAffairs,
+    disclosureFilters.hideCrimeDisastersTragedy,
+    feedDensity
+  ]);
 
   useEffect(() => {
     if (deferredSectionsReady || loadingTrending) return;
@@ -1610,21 +1631,28 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     }
   };
 
-  const getTrendingRatio = (item: TrendingImage, index: number): number => {
-    const fromLoaded = imageAspectRatios[item.imageId];
-    if (fromLoaded && Number.isFinite(fromLoaded) && fromLoaded > 0) return fromLoaded;
-    return fallbackAspectRatios[index % fallbackAspectRatios.length];
+  const ratioFromImageId = (id: string): number => {
+    let hash = 2166136261;
+    for (let i = 0; i < id.length; i += 1) {
+      hash ^= id.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    const unit = (hash >>> 0) / 4294967296;
+    return 0.58 + unit * 1.52;
   };
 
-  const captureImageRatio = (imageId: string, event: SyntheticEvent<HTMLImageElement>) => {
-    const { naturalWidth, naturalHeight } = event.currentTarget;
-    if (!naturalWidth || !naturalHeight) return;
-    const ratio = naturalWidth / naturalHeight;
-    if (!Number.isFinite(ratio) || ratio <= 0) return;
-    setImageAspectRatios((prev) => {
-      if (prev[imageId] === ratio) return prev;
-      return { ...prev, [imageId]: ratio };
-    });
+  const getTrendingRatio = (item: TrendingImage, index: number): number => {
+    const width = Number(item.width || 0);
+    const height = Number(item.height || 0);
+    const aspectRatio = Number(item.aspectRatio || 0);
+    if (Number.isFinite(aspectRatio) && aspectRatio > 0) {
+      return aspectRatio;
+    }
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      return width / height;
+    }
+    if (item.imageId) return ratioFromImageId(item.imageId);
+    return fallbackAspectRatios[index % fallbackAspectRatios.length];
   };
 
   const buildPairRows = (items: TrendingImage[]): TrendingPairRow[] => {
@@ -1750,6 +1778,25 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     };
   };
 
+  const stableMediumBlockBuild = (
+    rows: TrendingPairRow[],
+    options?: { borrowedEntries?: TrendingCardEntry[] }
+  ): MediumBlockBuildResult => {
+    const serializeRows = (inputRows: TrendingPairRow[]): string => inputRows
+      .map((row) => `${row.left.imageId}:${row.startIndex}:${row.right?.imageId || '-'}`)
+      .join('|');
+    const serializeBorrowed = (entries?: TrendingCardEntry[]): string => (entries || [])
+      .slice(0, 60)
+      .map((entry) => `${entry.item.imageId}:${entry.index}`)
+      .join('|');
+    const cacheKey = `${feedDensity}::${serializeRows(rows)}::${serializeBorrowed(options?.borrowedEntries)}`;
+    const cached = mediumBlockLayoutCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+    const built = buildMediumMixedBlocks(rows, options);
+    mediumBlockLayoutCacheRef.current.set(cacheKey, built);
+    return built;
+  };
+
   const displayAspectRatio = (item: TrendingImage, index: number): number => {
     const base = getTrendingRatio(item, index);
     return Math.max(0.52, Math.min(2.8, base));
@@ -1761,7 +1808,6 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     setFeedDensity(nextDensity);
     setTrendingImages([]);
     setTrendingCursor(undefined);
-    setImageAspectRatios({});
     setLoadingMoreTrending(false);
     setTrendingReloadNonce((value) => {
       const next = value + 1;
@@ -1800,9 +1846,16 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   const allTrendingRows = buildPairRows(trendingRenderable);
   const topRows = allTrendingRows.slice(0, densityTopRows[feedDensity]);
   const continuationRowsSeed = allTrendingRows.slice(densityTopRows[feedDensity]);
-  const continuationEntriesSeed = rowsToEntries(continuationRowsSeed);
+  const dynamicTopBorrowRows = continuationRowsSeed.slice(0, 5);
+  if (feedDensity === 'medium' && !mediumTopBorrowRowsRef.current && dynamicTopBorrowRows.length > 0) {
+    mediumTopBorrowRowsRef.current = dynamicTopBorrowRows;
+  }
+  const topBorrowRows = feedDensity === 'medium'
+    ? (mediumTopBorrowRowsRef.current || dynamicTopBorrowRows)
+    : dynamicTopBorrowRows;
+  const continuationEntriesSeed = rowsToEntries(topBorrowRows);
   const mediumTopBuild = feedDensity === 'medium'
-    ? buildMediumMixedBlocks(topRows, { borrowedEntries: continuationEntriesSeed })
+    ? stableMediumBlockBuild(topRows, { borrowedEntries: continuationEntriesSeed })
     : null;
   const borrowedTopImageIds = mediumTopBuild?.consumedBorrowedImageIds || new Set<string>();
   const filterRowsByExcludedImageIds = (rows: TrendingPairRow[], excluded: Set<string>): TrendingPairRow[] => {
@@ -1849,6 +1902,31 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   const continuationBlockOneRows = continuationRows.slice(0, continuationRowsBlockSize);
   const continuationBlockTwoRows = continuationRows.slice(continuationRowsBlockSize, continuationRowsBlockSize * 2);
   const continuationBlockThreeRows = continuationRows.slice(continuationRowsBlockSize * 2);
+  const continuationChunkSize = Math.max(1, continuationRowsBlockSize);
+  let continuationFrozenRowsCount = 0;
+  if (feedDensity !== 'small') {
+    const fullChunkRows = Math.floor(continuationBlockThreeRows.length / continuationChunkSize) * continuationChunkSize;
+    if (fullChunkRows > continuationFrozenRowsRef.current) {
+      continuationFrozenRowsRef.current = fullChunkRows;
+    }
+    if (!trendingCursor && continuationBlockThreeRows.length > continuationFrozenRowsRef.current) {
+      continuationFrozenRowsRef.current = continuationBlockThreeRows.length;
+    }
+    continuationFrozenRowsCount = Math.min(continuationFrozenRowsRef.current, continuationBlockThreeRows.length);
+  }
+  const continuationFrozenRows = feedDensity === 'small'
+    ? []
+    : continuationBlockThreeRows.slice(0, continuationFrozenRowsCount);
+  const continuationTailRows = feedDensity === 'small'
+    ? []
+    : continuationBlockThreeRows.slice(continuationFrozenRowsCount);
+  const continuationFrozenChunks: TrendingPairRow[][] = [];
+  if (feedDensity !== 'small') {
+    for (let i = 0; i < continuationFrozenRows.length; i += continuationChunkSize) {
+      const chunk = continuationFrozenRows.slice(i, i + continuationChunkSize);
+      if (chunk.length > 0) continuationFrozenChunks.push(chunk);
+    }
+  }
 
   const continuationBlockOneHasItems = feedDensity === 'small' ? smallContinuationBlockOne.length > 0 : continuationBlockOneRows.length > 0;
   const continuationBlockTwoHasItems = feedDensity === 'small' ? smallContinuationBlockTwo.length > 0 : continuationBlockTwoRows.length > 0;
@@ -1971,7 +2049,7 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   const renderTrendingCard = (
     item: TrendingImage,
     cardIndex: number,
-    options?: { forceSquareFrame?: boolean; compactCard?: boolean }
+    options?: { forceSquareFrame?: boolean; compactCard?: boolean; preload?: boolean }
   ) => {
     const href = item.gallerySlug
       ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}`
@@ -1985,12 +2063,15 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     const allowDiscoverSquareCrop = item.discoverSquareCropEnabled !== false;
     const forceSquareFrame = Boolean(options?.forceSquareFrame);
     const compactCard = Boolean(options?.compactCard);
+    const preload = Boolean(options?.preload);
     const shouldSquareCrop = (feedDensity === 'small' || forceSquareFrame) && allowDiscoverSquareCrop;
-    const frameRatio = forceSquareFrame ? 1 : (shouldSquareCrop ? 1 : ratio);
+    const shouldLargeCrop = feedDensity === 'large' && allowDiscoverSquareCrop;
+    const frameRatio = shouldSquareCrop ? 1 : ratio;
     const isSmallLandscape = feedDensity === 'small' && !shouldSquareCrop && ratio >= 1.25;
     const largeCardClass = feedDensity === 'large' ? ' density-large-card' : '';
     const compactCardClass = compactCard ? ' is-compact' : '';
-    const largeCropClass = feedDensity === 'large' ? ' large-crop' : '';
+    const largeCropClass = shouldLargeCrop ? ' large-crop' : '';
+    const nonCropClass = !shouldSquareCrop && !shouldLargeCrop ? ' no-crop' : '';
 
     return (
       <article
@@ -2000,7 +2081,7 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
       >
         <Link to={href} className="discovery-feature-link no-underline">
           <div
-            className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}`}
+            className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}${nonCropClass}`}
             style={{
               aspectRatio: `${frameRatio.toFixed(3)} / 1`
             }}
@@ -2008,14 +2089,13 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
             <img
               src={item.previewUrl}
               alt={item.title || 'Artwork preview'}
-              loading={cardIndex < 2 ? 'eager' : 'lazy'}
-              fetchPriority={cardIndex < 2 ? 'high' : (cardIndex < 8 ? 'auto' : 'low')}
+              loading={preload || cardIndex < 2 ? 'eager' : 'lazy'}
+              fetchPriority={preload || cardIndex < 2 ? 'high' : (cardIndex < 8 ? 'auto' : 'low')}
               decoding="async"
               style={{
                 objectPosition: 'center center',
                 filter: isBlurredByRating ? 'blur(28px)' : undefined
               }}
-              onLoad={(event) => captureImageRatio(item.imageId, event)}
             />
             {isPreview && <span className="discovery-chip">Preview</span>}
             {isBlurredByRating && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
@@ -2055,17 +2135,19 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     smallItems: TrendingImage[],
     smallStartIndex: number,
     rows: TrendingPairRow[],
-    preparedMediumBlocks?: TrendingMediumBlock[]
+    preparedMediumBlocks?: TrendingMediumBlock[],
+    options?: { preloadAll?: boolean }
   ) => {
+    const preloadAll = Boolean(options?.preloadAll);
     if (feedDensity === 'small') {
       return (
         <div className="discovery-small-grid">
-          {smallItems.map((item, index) => renderTrendingCard(item, smallStartIndex + index))}
+          {smallItems.map((item, index) => renderTrendingCard(item, smallStartIndex + index, { preload: preloadAll }))}
         </div>
       );
     }
     if (feedDensity === 'medium') {
-      const mediumBlocks = preparedMediumBlocks || buildMediumMixedBlocks(rows).blocks;
+      const mediumBlocks = preparedMediumBlocks || stableMediumBlockBuild(rows).blocks;
       return (
         <div className="discovery-pair-feed density-medium-mixed">
           {mediumBlocks.map((block, blockIndex) => (
@@ -2078,8 +2160,8 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
                   '--pair-cols': pairTemplateColumns(block.row, 'medium')
                 } as any}
               >
-                {renderTrendingCard(block.row.left, block.row.startIndex)}
-                {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1)}
+                {renderTrendingCard(block.row.left, block.row.startIndex, { preload: preloadAll })}
+                {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1, { preload: preloadAll })}
               </div>
             ) : (
               <div
@@ -2093,17 +2175,17 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
                 {block.insetOn === 'left' ? (
                   <>
                     <div className="discovery-pair-column-with-inset">
-                      {renderTrendingCard(block.row.left, block.row.startIndex)}
-                      {block.insets.map((entry) => renderTrendingCard(entry.item, entry.index, { forceSquareFrame: true, compactCard: true }))}
+                      {renderTrendingCard(block.row.left, block.row.startIndex, { preload: preloadAll })}
+                      {block.insets.map((entry) => renderTrendingCard(entry.item, entry.index, { forceSquareFrame: true, compactCard: true, preload: preloadAll }))}
                     </div>
-                    {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1)}
+                    {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1, { preload: preloadAll })}
                   </>
                 ) : (
                   <>
-                    {renderTrendingCard(block.row.left, block.row.startIndex)}
+                    {renderTrendingCard(block.row.left, block.row.startIndex, { preload: preloadAll })}
                     <div className="discovery-pair-column-with-inset">
-                      {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1)}
-                      {block.insets.map((entry) => renderTrendingCard(entry.item, entry.index, { forceSquareFrame: true, compactCard: true }))}
+                      {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1, { preload: preloadAll })}
+                      {block.insets.map((entry) => renderTrendingCard(entry.item, entry.index, { forceSquareFrame: true, compactCard: true, preload: preloadAll }))}
                     </div>
                   </>
                 )}
@@ -2124,8 +2206,33 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
               '--pair-cols': pairTemplateColumns(row, feedDensity)
             } as any}
           >
-            {renderTrendingCard(row.left, row.startIndex)}
-            {row.right && renderTrendingCard(row.right, row.startIndex + 1)}
+            {renderTrendingCard(row.left, row.startIndex, { preload: preloadAll })}
+            {row.right && renderTrendingCard(row.right, row.startIndex + 1, { preload: preloadAll })}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderTrendingSimpleRows = (
+    rows: TrendingPairRow[],
+    options?: { preloadAll?: boolean }
+  ) => {
+    const preloadAll = Boolean(options?.preloadAll);
+    if (rows.length === 0) return null;
+    return (
+      <div className={`discovery-pair-feed density-${feedDensity}`}>
+        {rows.map((row) => (
+          <div
+            key={`simple-row-${row.left.imageId}-${row.right?.imageId || 'single'}`}
+            className={`discovery-pair-row density-${feedDensity}${row.right ? '' : ' single'}`}
+            style={{
+              '--pair-cols-mobile': feedDensity === 'large' ? '1fr' : '1fr 1fr',
+              '--pair-cols': pairTemplateColumns(row, feedDensity)
+            } as any}
+          >
+            {renderTrendingCard(row.left, row.startIndex, { preload: preloadAll })}
+            {row.right && renderTrendingCard(row.right, row.startIndex + 1, { preload: preloadAll })}
           </div>
         ))}
       </div>
@@ -2270,7 +2377,7 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
           </div>
         )}
         <div className={`discovery-density-transition${densityTransitionClass}`}>
-          {renderTrendingBlockContent(smallTopItems, 0, topRows, mediumTopBuild?.blocks)}
+          {renderTrendingBlockContent(smallTopItems, 0, topRows, mediumTopBuild?.blocks, { preloadAll: true })}
         </div>
         {loadingTrending && !densitySwitchLoading && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">Loading trending artwork...</p>}
         {!loadingTrending && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">No trending artwork yet.</p>}
@@ -2339,7 +2446,9 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
             {renderTrendingBlockContent(
               smallContinuationBlockOne,
               smallTopItemCount,
-              continuationBlockOneRows
+              continuationBlockOneRows,
+              undefined,
+              { preloadAll: true }
             )}
           </div>
         </section>
@@ -2351,7 +2460,9 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
             {renderTrendingBlockContent(
               smallContinuationBlockTwo,
               smallTopItemCount + smallContinuationBlockOne.length,
-              continuationBlockTwoRows
+              continuationBlockTwoRows,
+              undefined,
+              { preloadAll: true }
             )}
           </div>
         </section>
@@ -2412,16 +2523,34 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
 
       {continuationBlockThreeHasItems && (
         <section id="trending-continuation" className="discovery-trending-flow-section">
-          <div className={`discovery-density-transition${densityTransitionClass}`}>
-            {renderTrendingBlockContent(
-              smallContinuationBlockThree,
-              smallTopItemCount + smallContinuationBlockOne.length + smallContinuationBlockTwo.length,
-              continuationBlockThreeRows
-            )}
-          </div>
+          {feedDensity === 'small' ? (
+            <div className={`discovery-density-transition${densityTransitionClass}`}>
+              {renderTrendingBlockContent(
+                smallContinuationBlockThree,
+                smallTopItemCount + smallContinuationBlockOne.length + smallContinuationBlockTwo.length,
+                continuationBlockThreeRows
+              )}
+            </div>
+          ) : (
+            <>
+              {continuationFrozenChunks.map((chunkRows, chunkIndex) => (
+                <div key={`continuation-frozen-${feedDensity}-${chunkIndex}`} className={`discovery-density-transition${densityTransitionClass}`}>
+                  {feedDensity === 'medium'
+                    ? renderTrendingBlockContent([], 0, chunkRows, stableMediumBlockBuild(chunkRows).blocks)
+                    : renderTrendingSimpleRows(chunkRows)}
+                </div>
+              ))}
+              {continuationTailRows.length > 0 && (
+                <div className={`discovery-density-transition${densityTransitionClass}`}>
+                  {renderTrendingSimpleRows(continuationTailRows)}
+                </div>
+              )}
+            </>
+          )}
           <AutoLoadSentinel
             enabled={Boolean(trendingCursor)}
             loading={loadingMoreTrending}
+            rootMargin="1200px 0px"
             onLoadMore={() => loadMoreTrending()}
           />
         </section>

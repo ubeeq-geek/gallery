@@ -947,10 +947,11 @@
     @apply h-full w-full object-contain;
     position: relative;
     background: transparent;
-    object-position: center center;
+    object-position: 50% 50%;
   }
 
-  .discovery-feature-media.large-crop img {
+  .discovery-feature-media.large-crop img,
+  .discovery-feature-media.can-square-crop img {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -965,17 +966,17 @@
     object-position: 50% 50%;
   }
 
-  .discovery-feature-media.can-square-crop img {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: auto;
-    height: auto;
-    min-width: 100%;
-    min-height: 100%;
-    max-width: none;
-    max-height: none;
-    transform: translate(-50%, -50%);
+  .discovery-feature-media.no-crop img {
+    @apply h-full w-full object-contain;
+    position: relative;
+    top: auto;
+    left: auto;
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    max-height: 100%;
+    transform: none;
+    object-position: 50% 50%;
   }
 
   @media (min-width: 700px) {

@@ -708,6 +708,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     displayedHeavyTopics: string[];
     title: string;
     previewUrl: string;
+    width?: number;
+    height?: number;
+    aspectRatio?: number;
     favoriteCount: number;
     createdAt: string;
     score: number;
@@ -777,6 +780,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       createdAtMs: number;
       recencyBoost: number;
       previewKey?: string;
+      width: number;
+      height: number;
+      aspectRatio: number;
     }> = [];
     for (const { gallery, media } of mediaByGallery) {
       for (const item of media) {
@@ -814,7 +820,15 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           createdAt: item.createdAt,
           createdAtMs,
           recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
-          previewKey: item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewPosterKey || item.previewKey
+          previewKey: item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewPosterKey || item.previewKey,
+          width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
+          height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
+          aspectRatio: (
+            Number.isFinite(item.width) && item.width > 0
+            && Number.isFinite(item.height) && item.height > 0
+          )
+            ? Number((item.width / item.height).toFixed(5))
+            : 1
         });
       }
     }
@@ -844,6 +858,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
         title: item.title,
         previewUrl: await publicMediaUrl(item.previewKey) || '',
+        width: item.width,
+        height: item.height,
+        aspectRatio: item.aspectRatio,
         favoriteCount,
         createdAt: item.createdAt,
         score
@@ -1076,6 +1093,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
             title: item.title,
             previewUrl: await publicMediaUrl(item.previewKey) || '',
+            width: item.width,
+            height: item.height,
+            aspectRatio: item.aspectRatio,
             favoriteCount: item.favoriteCount,
             createdAt: item.createdAt
           };
@@ -2691,6 +2711,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       });
       media.thumbnailKeys = generated.keys;
       media.squareCrop = generated.squareCrop;
+      media.width = generated.sourceWidth;
+      media.height = generated.sourceHeight;
     }
 
     await store.createMedia(media, galleryId, position);
@@ -2753,15 +2775,26 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       premiumKey: req.body?.premiumKey !== undefined ? (req.body.premiumKey ? String(req.body.premiumKey) : undefined) : existing.premiumKey,
       previewPosterKey: req.body?.previewPosterKey !== undefined ? (req.body.previewPosterKey ? String(req.body.previewPosterKey) : undefined) : existing.previewPosterKey,
       premiumPosterKey: req.body?.premiumPosterKey !== undefined ? (req.body.premiumPosterKey ? String(req.body.premiumPosterKey) : undefined) : existing.premiumPosterKey,
-      width: req.body?.width !== undefined ? Number(req.body.width) : existing.width,
-      height: req.body?.height !== undefined ? Number(req.body.height) : existing.height,
+      width: (req.body?.assetType === 'video' || existing.assetType === 'video')
+        ? (req.body?.width !== undefined ? Number(req.body.width) : existing.width)
+        : existing.width,
+      height: (req.body?.assetType === 'video' || existing.assetType === 'video')
+        ? (req.body?.height !== undefined ? Number(req.body.height) : existing.height)
+        : existing.height,
       durationSeconds: req.body?.durationSeconds !== undefined ? (req.body.durationSeconds ? Number(req.body.durationSeconds) : undefined) : existing.durationSeconds,
       altText: req.body?.altText !== undefined ? (req.body.altText ? String(req.body.altText) : undefined) : existing.altText
     };
 
     const shouldGenerateRenditions =
       (updated.assetType || 'image') === 'image' &&
-      (Boolean(req.body?.generateRenditions) || Boolean(req.body?.squareCrop) || req.body?.previewKey !== undefined);
+      (
+        Boolean(req.body?.generateRenditions)
+        || Boolean(req.body?.squareCrop)
+        || req.body?.previewKey !== undefined
+        || (existing.assetType || 'image') !== 'image'
+        || !existing.thumbnailKeys?.w640
+        || !((existing.width || 0) > 0 && (existing.height || 0) > 0)
+      );
 
     if (shouldGenerateRenditions) {
       const targetPrefix = `${gallery.artistId || existing.artistId}/${updated.mediaId}`;
@@ -2774,6 +2807,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       });
       updated.thumbnailKeys = generated.keys;
       updated.squareCrop = generated.squareCrop;
+      updated.width = generated.sourceWidth;
+      updated.height = generated.sourceHeight;
     }
 
     await store.updateMedia(updated);
@@ -2814,7 +2849,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       ...existing,
       mediaId: existing.mediaId,
       thumbnailKeys: generated.keys,
-      squareCrop: generated.squareCrop
+      squareCrop: generated.squareCrop,
+      width: generated.sourceWidth,
+      height: generated.sourceHeight
     };
     await store.updateMedia(updated);
     return res.json({ ...updated, imageId: updated.mediaId, galleryId: req.params.galleryId, sortOrder: existing.position });

@@ -243,6 +243,9 @@ export interface TrendingFeedItem {
   effectiveHeavyTopics: HeavyTopic[];
   title: string;
   previewKey: string;
+  width?: number;
+  height?: number;
+  aspectRatio?: number;
   favoriteCount: number;
   createdAt: string;
   score: number;

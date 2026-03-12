@@ -18,6 +18,9 @@ export interface GeneratedRenditions {
     square1024: string;
   };
   squareCrop: SquareCropInput;
+  sourceWidth: number;
+  sourceHeight: number;
+  aspectRatio: number;
 }
 
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
@@ -110,5 +113,11 @@ export const generateImageRenditions = async (params: {
     await writeS3Object(s3, bucket, keys[name], output);
   }
 
-  return { keys, squareCrop: crop };
+  return {
+    keys,
+    squareCrop: crop,
+    sourceWidth: width,
+    sourceHeight: height,
+    aspectRatio: Number((width / height).toFixed(5))
+  };
 };
