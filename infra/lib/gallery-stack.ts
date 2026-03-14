@@ -4,13 +4,16 @@ import { Duration, RemovalPolicy, Stack, StackProps, CfnOutput } from 'aws-cdk-l
 import { Construct } from 'constructs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as apigw from 'aws-cdk-lib/aws-apigateway';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 
@@ -123,6 +126,21 @@ export class GalleryStack extends Stack {
         }
       ]
     });
+    const videoPosterIngestDlq = new sqs.Queue(this, 'VideoPosterIngestDlq', {
+      retentionPeriod: Duration.days(14)
+    });
+    const videoPosterIngestQueue = new sqs.Queue(this, 'VideoPosterIngestQueue', {
+      visibilityTimeout: Duration.minutes(5),
+      receiveMessageWaitTime: Duration.seconds(20),
+      deadLetterQueue: {
+        maxReceiveCount: 5,
+        queue: videoPosterIngestDlq
+      }
+    });
+    mediaBucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.SqsDestination(videoPosterIngestQueue)
+    );
 
     const mediaOrigin = origins.S3BucketOrigin.withOriginAccessControl(mediaBucket);
     const publicKeyFile = process.env.CLOUDFRONT_PUBLIC_KEY_FILE;
@@ -277,6 +295,36 @@ export class GalleryStack extends Stack {
         TRENDING_CANDIDATE_LIMIT: '1500'
       }
     });
+    const ffmpegLayerArn = process.env.FFMPEG_LAYER_ARN;
+    const videoPosterIngestFn = new lambdaNodejs.NodejsFunction(this, 'VideoPosterIngestFunction', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      entry: path.join(__dirname, '../../apps/api/src/videoPosterIngest.ts'),
+      handler: 'handler',
+      timeout: Duration.minutes(2),
+      memorySize: 1536,
+      depsLockFilePath: path.join(__dirname, '../../package-lock.json'),
+      bundling: {
+        target: 'node22',
+        externalModules: ['@aws-sdk/*']
+      },
+      layers: ffmpegLayerArn
+        ? [lambda.LayerVersion.fromLayerVersionArn(this, 'VideoPosterFfmpegLayer', ffmpegLayerArn)]
+        : undefined,
+      environment: {
+        GALLERY_CORE_TABLE: galleryCoreTable.tableName,
+        MEDIA_BUCKET: mediaBucket.bucketName,
+        VIDEO_POSTER_OUTPUT_PREFIX: 'posters',
+        VIDEO_POSTER_FFMPEG_PATH: '/opt/bin/ffmpeg',
+        VIDEO_POSTER_CAPTURE_AT_SECONDS: '1'
+      }
+    });
+    videoPosterIngestFn.addEventSource(
+      new lambdaEventSources.SqsEventSource(videoPosterIngestQueue, {
+        batchSize: 5,
+        maxBatchingWindow: Duration.seconds(2),
+        reportBatchItemFailures: true
+      })
+    );
     apiFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['cognito-idp:AdminUpdateUserAttributes'],
@@ -302,6 +350,9 @@ export class GalleryStack extends Stack {
     imageStatsTable.grantReadWriteData(trendingRankerFn);
     trendingFeedTable.grantReadWriteData(trendingRankerFn);
     galleryCoreTable.grantReadData(trendingRankerFn);
+    galleryCoreTable.grantReadWriteData(videoPosterIngestFn);
+    mediaBucket.grantReadWrite(videoPosterIngestFn);
+    videoPosterIngestQueue.grantConsumeMessages(videoPosterIngestFn);
 
     new events.Rule(this, 'TrendingRankerSchedule', {
       schedule: events.Schedule.rate(Duration.minutes(5)),
@@ -315,6 +366,9 @@ export class GalleryStack extends Stack {
 
     new CfnOutput(this, 'ApiUrl', { value: api.url });
     new CfnOutput(this, 'MediaBucketName', { value: mediaBucket.bucketName });
+    new CfnOutput(this, 'VideoPosterIngestQueueUrl', { value: videoPosterIngestQueue.queueUrl });
+    new CfnOutput(this, 'VideoPosterIngestQueueArn', { value: videoPosterIngestQueue.queueArn });
+    new CfnOutput(this, 'VideoPosterIngestDlqUrl', { value: videoPosterIngestDlq.queueUrl });
     new CfnOutput(this, 'MediaCdnDomainName', { value: mediaDistribution.distributionDomainName });
     if (premiumMediaDistribution) {
       new CfnOutput(this, 'PremiumMediaCdnDomainName', { value: premiumMediaDistribution.distributionDomainName });

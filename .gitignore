@@ -5,3 +5,4 @@ coverage
 .env.*
 cdk.out
 .DS_Store
+*.mp4
