@@ -65,6 +65,13 @@ const uniqueSlugs = (slugs: Array<string | undefined>): string[] => {
   return result;
 };
 
+const artistHasSlug = (artist: Artist, slug: string): boolean => {
+  const normalized = slugify(slug);
+  if (!normalized) return false;
+  if (artist.slug === normalized) return true;
+  return (artist.slugHistory || []).some((item) => slugify(item) === normalized);
+};
+
 const parseSquareCrop = (input: unknown): SquareCropInput | undefined => {
   if (!input || typeof input !== 'object') return undefined;
   const obj = input as Record<string, unknown>;
@@ -665,6 +672,24 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return visibility === 'hidden' || visibility === 'removed';
   };
 
+  const resolveTrendingPreviewKeys = (
+    item: Pick<Media, 'assetType' | 'thumbnailKeys' | 'previewPosterKey' | 'previewKey'>
+  ): { previewKey?: string; previewPosterKey?: string } => {
+    const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
+    if (assetType === 'video') {
+      return {
+        // Keep previewKey as media bytes for modal playback.
+        previewKey: item.previewKey,
+        // Prefer explicit poster, then generated image renditions when available.
+        previewPosterKey: item.previewPosterKey || item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320
+      };
+    }
+    return {
+      previewKey: item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewKey,
+      previewPosterKey: undefined
+    };
+  };
+
   const resolveGalleryThumbnail = async (gallery: Gallery): Promise<{ galleryThumbnailUrl?: string; galleryThumbnailMediaId?: string }> => {
     const mediaItems = await store.getMediaByGallery(gallery.galleryId);
     const cover = mediaItems.find((item) => item.mediaId === gallery.coverImageId) || mediaItems[0];
@@ -693,6 +718,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
   type TrendingImageItem = {
     imageId: string;
+    assetType: 'image' | 'video';
     artistId: string;
     artistName: string;
     galleryId: string;
@@ -708,6 +734,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     displayedHeavyTopics: string[];
     title: string;
     previewUrl: string;
+    previewPosterUrl?: string;
     width?: number;
     height?: number;
     aspectRatio?: number;
@@ -767,6 +794,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     );
     const candidates: Array<{
       imageId: string;
+      assetType: 'image' | 'video';
       artistId: string;
       galleryId: string;
       gallerySlug: string;
@@ -780,13 +808,14 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       createdAtMs: number;
       recencyBoost: number;
       previewKey?: string;
+      previewPosterKey?: string;
       width: number;
       height: number;
       aspectRatio: number;
     }> = [];
     for (const { gallery, media } of mediaByGallery) {
       for (const item of media) {
-        if ((item.assetType || 'image') !== 'image') continue;
+        const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
         if (isHiddenByVisibility(item.releaseVisibility)) continue;
         if (!canViewBySchedule(item.publishAt || gallery.publishAt, item.publicReleaseAt || gallery.publicReleaseAt, nowMs, false)) {
           continue;
@@ -808,6 +837,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         }
         candidates.push({
           imageId: item.mediaId,
+          assetType,
           artistId: item.artistId,
           galleryId: gallery.galleryId,
           gallerySlug: gallery.slug,
@@ -820,7 +850,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           createdAt: item.createdAt,
           createdAtMs,
           recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
-          previewKey: item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewPosterKey || item.previewKey,
+          ...resolveTrendingPreviewKeys(item),
           width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
           height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
           aspectRatio: (
@@ -843,6 +873,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       const disclosureProjection = projectDisclosures(item.effectiveAiDisclosure, item.effectiveHeavyTopics);
       return {
         imageId: item.imageId,
+        assetType: item.assetType,
         artistId: item.artistId,
         artistName: artistById.get(item.artistId)?.name || 'Artist',
         galleryId: item.galleryId,
@@ -858,6 +889,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
         title: item.title,
         previewUrl: await publicMediaUrl(item.previewKey) || '',
+        previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
         width: item.width,
         height: item.height,
         aspectRatio: item.aspectRatio,
@@ -1078,6 +1110,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           const disclosureProjection = projectDisclosures(effectiveAi, effectiveHeavyTopics);
           return {
             imageId: item.imageId,
+            assetType: item.assetType === 'video' ? 'video' : 'image',
             artistId: item.artistId,
             artistName: item.artistName,
             galleryId: item.galleryId,
@@ -1093,6 +1126,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
             title: item.title,
             previewUrl: await publicMediaUrl(item.previewKey) || '',
+            previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
             width: item.width,
             height: item.height,
             aspectRatio: item.aspectRatio,
@@ -2383,6 +2417,12 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   app.post('/admin/artists', requireAuth, async (req, res) => {
     const name = String(req.body?.name || '').trim();
     const slug = slugify(String(req.body?.slug || name || randomUUID().slice(0, 8)));
+    const artists = await store.listArtists();
+    const conflict = artists.find((item) => artistHasSlug(item, slug));
+    if (conflict) {
+      return res.status(409).json({ message: 'Artist slug is already taken.', slug });
+    }
+
     const artist: Artist = {
       artistId: randomUUID(),
       name,
@@ -2450,16 +2490,26 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     if (!(await ensureArtistAccountAccess(req, res, req.params.artistId))) {
       return;
     }
-    const existing = (await store.listArtists()).find((artist) => artist.artistId === req.params.artistId);
+    const artists = await store.listArtists();
+    const existing = artists.find((artist) => artist.artistId === req.params.artistId);
     if (!existing) {
       return res.status(404).json({ message: 'Artist not found' });
+    }
+
+    const nextSlug = req.body?.slug ? slugify(String(req.body.slug)) : existing.slug;
+    const nextSlugHistory = uniqueSlugs([...(existing.slugHistory || [existing.slug]), nextSlug]);
+    const conflictSlug = nextSlugHistory.find((slug) =>
+      artists.some((item) => item.artistId !== existing.artistId && artistHasSlug(item, slug))
+    );
+    if (conflictSlug) {
+      return res.status(409).json({ message: 'Artist slug is already taken.', slug: conflictSlug });
     }
 
     const updated: Artist = {
       ...existing,
       name: req.body?.name ? String(req.body.name) : existing.name,
-      slug: req.body?.slug ? slugify(String(req.body.slug)) : existing.slug,
-      slugHistory: uniqueSlugs([...(existing.slugHistory || [existing.slug]), req.body?.slug ? slugify(String(req.body.slug)) : existing.slug]),
+      slug: nextSlug,
+      slugHistory: nextSlugHistory,
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
         : (existing.discoverSquareCropEnabled ?? true),

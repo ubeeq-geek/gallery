@@ -232,6 +232,7 @@ export interface TrendingFeedItem {
   period: TrendingPeriod;
   rank: number;
   imageId: string;
+  assetType: 'image' | 'video';
   artistId: string;
   artistName: string;
   galleryId: string;
@@ -243,6 +244,7 @@ export interface TrendingFeedItem {
   effectiveHeavyTopics: HeavyTopic[];
   title: string;
   previewKey: string;
+  previewPosterKey?: string;
   width?: number;
   height?: number;
   aspectRatio?: number;

@@ -1,8 +1,8 @@
 import { DescribeTableCommand, DynamoDBClient, ListTablesCommand } from '@aws-sdk/client-dynamodb';
 import { DeleteObjectsCommand, HeadBucketCommand, ListBucketsCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { BatchWriteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { randomUUID } from 'crypto';
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { createHash } from 'crypto';
+import { createReadStream, existsSync, readFileSync, readdirSync } from 'fs';
 import path from 'path';
 import { Jimp } from 'jimp';
 import { hashPassword } from '../unlock';
@@ -13,6 +13,7 @@ import { generateImageRenditions } from '../renditions';
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm']);
+const SEED_UUID_NAMESPACE = '6ba7b811-9dad-11d1-80b4-00c04fd430c8';
 
 const getArgValue = (flagName: string): string | undefined => {
   const args = process.argv.slice(2);
@@ -56,6 +57,40 @@ const extractSequence = (filename: string): number => {
 const titleFromFilename = (filename: string): string => {
   const base = filename.replace(/\.[^.]+$/, '');
   return base.replace(/^[A-Z]{2,8}-\d+\s*-\s*/i, '').trim();
+};
+
+const parseUuidToBytes = (uuid: string): Uint8Array => {
+  const hex = uuid.replace(/-/g, '').toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(hex)) {
+    throw new Error(`Invalid UUID namespace: ${uuid}`);
+  }
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 16; i += 1) {
+    out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+};
+
+const bytesToUuid = (bytes: Uint8Array): string => {
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+};
+
+const deterministicUuidV5 = (name: string, namespace = SEED_UUID_NAMESPACE): string => {
+  const nsBytes = parseUuidToBytes(namespace);
+  const hash = createHash('sha1');
+  hash.update(Buffer.from(nsBytes));
+  hash.update(Buffer.from(name, 'utf8'));
+  const digest = hash.digest();
+  const bytes = Uint8Array.from(digest.subarray(0, 16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  return bytesToUuid(bytes);
+};
+
+const seedId = (entity: string, ...parts: string[]): string => {
+  const name = ['seed-v1', entity, ...parts.map((value) => value.trim().toLowerCase())].join('|');
+  return deterministicUuidV5(name);
 };
 
 type AssetFile = { filename: string; absolutePath: string };
@@ -126,6 +161,14 @@ const artistSeeds: ArtistSeed[] = [
     galleries: ['free'],
     freeGalleryTitle: 'Roadside America Free Gallery',
     freeGallerySlug: 'roadside-america-free-gallery'
+  },
+  {
+    name: 'Livestreams From the Past',
+    slug: 'livestreams-from-the-past',
+    filePrefix: 'past-',
+    galleries: ['free'],
+    freeGalleryTitle: 'Livestreams From the Past Free Gallery',
+    freeGallerySlug: 'livestreams-from-the-past-free-gallery'
   }
 ];
 
@@ -141,6 +184,17 @@ const splitByAccess = (files: AssetFile[]): { free: AssetFile[]; premium: AssetF
   const premium = [...explicitPremium, ...unlabeled.slice(freeUnlabeledCount)];
 
   return { free, premium };
+};
+
+const assertUniqueArtistSeedSlugs = (): void => {
+  const seen = new Set<string>();
+  for (const seed of artistSeeds) {
+    const normalized = slugify(seed.slug);
+    if (seen.has(normalized)) {
+      throw new Error(`Duplicate artist slug in seed data: ${normalized}`);
+    }
+    seen.add(normalized);
+  }
 };
 
 const imageDimensionCache = new Map<string, { width: number; height: number }>();
@@ -302,6 +356,7 @@ const main = async () => {
   const config = loadConfig();
   const dryRun = process.argv.includes('--dry-run');
   const reset = process.argv.includes('--reset');
+  const preserveMedia = process.argv.includes('--preserve-media');
   const galleryCoreTableRequested = resolveTableName(config.galleryCoreTable, '--gallery-core-table');
   const siteSettingsTableRequested = resolveTableName(config.siteSettingsTable, '--site-settings-table');
   const premiumPassword = getArgValue('--premium-password') || 'replace-me';
@@ -313,13 +368,15 @@ const main = async () => {
   const siteName = getArgValue('--site-name') || 'Ubeeq';
   const logoKey = getArgValue('--logo-key') || 'branding/ubeeq-logo.svg';
 
-  const shouldUploadLogo = !process.argv.includes('--skip-logo-upload');
-  const shouldUploadMedia = !process.argv.includes('--skip-media-upload');
-  const shouldGenerateRenditions = !process.argv.includes('--skip-renditions');
+  const shouldUploadLogo = !preserveMedia && !process.argv.includes('--skip-logo-upload');
+  const shouldUploadMedia = !preserveMedia && !process.argv.includes('--skip-media-upload');
+  const shouldGenerateRenditions = !preserveMedia && !process.argv.includes('--skip-renditions');
 
   const workspaceRoot = path.resolve(__dirname, '../../../..');
   const mediaDir = getArgValue('--media-dir') || path.join(workspaceRoot, 'media');
   const logoFile = getArgValue('--logo-file') || path.join(mediaDir, 'ubeeq-logo.svg');
+
+  assertUniqueArtistSeedSlugs();
 
   if (!existsSync(mediaDir)) {
     throw new Error(`Media directory not found: ${mediaDir}`);
@@ -355,7 +412,7 @@ const main = async () => {
   for (let idx = 0; idx < artistSeeds.length; idx += 1) {
     const seed = artistSeeds[idx];
     const createdAt = nowIso();
-    const artistId = randomUUID();
+    const artistId = seedId('artist', seed.slug);
     const contentRating: ContentRating = seed.contentRating || 'general';
     const aiDisclosure: AiDisclosure = seed.aiDisclosure || 'none';
     const heavyTopics: HeavyTopic[] = seed.heavyTopics || [];
@@ -376,7 +433,7 @@ const main = async () => {
 
     const freeGallery = seed.galleries.includes('free')
       ? {
-          galleryId: randomUUID(),
+          galleryId: seedId('gallery', seed.slug, 'free'),
           artistId,
           artistSlug: seed.slug,
           title: seed.freeGalleryTitle || `${seed.name} Free Gallery`,
@@ -393,7 +450,7 @@ const main = async () => {
 
     const premiumGallery = seed.galleries.includes('premium')
       ? {
-          galleryId: randomUUID(),
+          galleryId: seedId('gallery', seed.slug, 'premium'),
           artistId,
           artistSlug: seed.slug,
           title: `${seed.name} Premium Gallery`,
@@ -411,7 +468,7 @@ const main = async () => {
 
     const previewGallery = seed.galleries.includes('preview')
       ? {
-          galleryId: randomUUID(),
+          galleryId: seedId('gallery', seed.slug, 'preview'),
           artistId,
           artistSlug: seed.slug,
           title: `${seed.name} Premium Gallery (Preview)`,
@@ -472,7 +529,7 @@ const main = async () => {
 
     for (const file of freeImages) {
       const dimensions = await getImageDimensions(file);
-      const mediaId = randomUUID();
+      const mediaId = seedId('media', seed.slug, 'free', file.filename);
       const title = titleFromFilename(file.filename);
       const slug = slugify(title);
       const previewKey = `${artistId}/${mediaId}`;
@@ -502,7 +559,7 @@ const main = async () => {
 
     for (const file of previewImages) {
       const dimensions = await getImageDimensions(file);
-      const mediaId = randomUUID();
+      const mediaId = seedId('media', seed.slug, 'preview', file.filename);
       const title = titleFromFilename(file.filename);
       const slug = slugify(title);
       const previewKey = `${artistId}/${mediaId}`;
@@ -532,7 +589,7 @@ const main = async () => {
 
     for (const file of premiumImages) {
       const dimensions = await getImageDimensions(file);
-      const mediaId = randomUUID();
+      const mediaId = seedId('media', seed.slug, 'premium', file.filename);
       const title = titleFromFilename(file.filename);
       const slug = slugify(title);
       const objectKey = `${artistId}/${mediaId}`;
@@ -570,13 +627,13 @@ const main = async () => {
     };
 
     for (const file of freeVideos) {
-      const mediaId = randomUUID();
+      const mediaId = seedId('media', seed.slug, 'free', file.filename);
       const title = titleFromFilename(file.filename);
       const slug = slugify(title);
       const previewKey = `${artistId}/${mediaId}`;
       const poster = findPosterForVideo(file);
       const previewPosterKey = poster
-        ? `${artistId}/${randomUUID()}`
+        ? `${artistId}/${seedId('poster', seed.slug, 'free', file.filename)}`
         : undefined;
 
       if (freeGallery) {
@@ -606,13 +663,13 @@ const main = async () => {
     }
 
     for (const file of previewVideos) {
-      const mediaId = randomUUID();
+      const mediaId = seedId('media', seed.slug, 'preview', file.filename);
       const title = titleFromFilename(file.filename);
       const slug = slugify(title);
       const previewKey = `${artistId}/${mediaId}`;
       const poster = findPosterForVideo(file);
       const previewPosterKey = poster
-        ? `${artistId}/${randomUUID()}`
+        ? `${artistId}/${seedId('poster', seed.slug, 'preview', file.filename)}`
         : undefined;
       if (previewGallery) {
         pushMedia(previewGallery.galleryId, previewOrder, {
@@ -641,13 +698,13 @@ const main = async () => {
     }
 
     for (const file of premiumVideos) {
-      const mediaId = randomUUID();
+      const mediaId = seedId('media', seed.slug, 'premium', file.filename);
       const title = titleFromFilename(file.filename);
       const slug = slugify(title);
       const objectKey = `${artistId}/${mediaId}`;
       const poster = findPosterForVideo(file);
       const previewPosterKey = poster
-        ? `${artistId}/${randomUUID()}`
+        ? `${artistId}/${seedId('poster', seed.slug, 'premium', file.filename)}`
         : undefined;
       const premiumPosterKey = poster
         ? previewPosterKey
@@ -692,7 +749,9 @@ const main = async () => {
     updatedAt: nowIso()
   };
 
-  console.log(`[seed:core] table=${galleryCoreTable} siteSettingsTable=${siteSettingsTable} bucket=${mediaBucket} region=${config.awsRegion} dryRun=${dryRun} reset=${reset}`);
+  console.log(
+    `[seed:core] table=${galleryCoreTable} siteSettingsTable=${siteSettingsTable} bucket=${mediaBucket} region=${config.awsRegion} dryRun=${dryRun} reset=${reset} preserveMedia=${preserveMedia}`
+  );
   console.log(`[seed:core] artists=${artists.length} galleries=${galleries.length} media=${media.length}`);
   console.log(`[seed:core] siteName=${siteSettings.siteName} theme=${siteSettings.theme} logoKey=${siteSettings.logoKey || 'none'}`);
   console.log(`[seed:core] uploadJobs=${uploadJobs.size} (mediaUpload=${shouldUploadMedia} logoUpload=${shouldUploadLogo} renditions=${shouldGenerateRenditions})`);
@@ -702,8 +761,11 @@ const main = async () => {
   if (reset) {
     const deletedCore = await wipeTable(client, galleryCoreTable, ['PK', 'SK']);
     const deletedSettings = await wipeTable(client, siteSettingsTable, ['settingId']);
-    const deletedObjects = await wipeBucketPrefixes(s3, mediaBucket, ['']);
+    const deletedObjects = preserveMedia ? 0 : await wipeBucketPrefixes(s3, mediaBucket, ['']);
     console.log(`[seed:core] reset deleted coreItems=${deletedCore} siteSettingsItems=${deletedSettings} s3Objects=${deletedObjects}`);
+    if (preserveMedia) {
+      console.log('[seed:core] reset skipped S3 object deletion due to --preserve-media');
+    }
   }
 
   // Remove legacy placeholder seed records from earlier versions.
@@ -713,7 +775,7 @@ const main = async () => {
 
   if (shouldUploadMedia) {
     for (const [key, job] of uploadJobs.entries()) {
-      const body = readFileSync(job.localPath);
+      const body = createReadStream(job.localPath);
       await s3.send(
         new PutObjectCommand({
           Bucket: mediaBucket,

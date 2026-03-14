@@ -160,6 +160,7 @@ const main = async () => {
 
   const config = loadConfig();
   const dryRun = process.argv.includes('--dry-run');
+  const preserveMedia = process.argv.includes('--preserve-media');
   const galleryCoreTableRequested = resolveTableName(config.galleryCoreTable, '--gallery-core-table');
   const siteSettingsTableRequested = resolveTableName(config.siteSettingsTable, '--site-settings-table');
 
@@ -169,7 +170,9 @@ const main = async () => {
   const siteSettingsTable = await discoverTableName(lowLevel, siteSettingsTableRequested, 'SiteSettingsTable');
   const mediaBucket = await discoverMediaBucket(s3, config.mediaBucket);
 
-  console.log(`[reset:core] galleryCoreTable=${galleryCoreTable} siteSettingsTable=${siteSettingsTable} bucket=${mediaBucket} region=${config.awsRegion} dryRun=${dryRun}`);
+  console.log(
+    `[reset:core] galleryCoreTable=${galleryCoreTable} siteSettingsTable=${siteSettingsTable} bucket=${mediaBucket} region=${config.awsRegion} dryRun=${dryRun} preserveMedia=${preserveMedia}`
+  );
 
   if (dryRun) {
     return;
@@ -178,9 +181,12 @@ const main = async () => {
   const client = DynamoDBDocumentClient.from(lowLevel);
   const deletedCore = await wipeTable(client, galleryCoreTable, ['PK', 'SK']);
   const deletedSettings = await wipeTable(client, siteSettingsTable, ['settingId']);
-  const deletedObjects = await wipeBucketPrefixes(s3, mediaBucket, ['']);
+  const deletedObjects = preserveMedia ? 0 : await wipeBucketPrefixes(s3, mediaBucket, ['']);
 
   console.log(`[reset:core] deleted coreItems=${deletedCore} siteSettingsItems=${deletedSettings} s3Objects=${deletedObjects}`);
+  if (preserveMedia) {
+    console.log('[reset:core] skipped S3 object deletion due to --preserve-media');
+  }
   console.log('[reset:core] complete');
 };
 

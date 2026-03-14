@@ -15,6 +15,18 @@ import {
 
 type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string };
 type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
+type FeedDensity = 'small' | 'medium' | 'large';
+type DensityViewport = 'mobile' | 'tablet' | 'desktop';
+type DiscoveryFilterSection = 'period' | 'density' | 'heavy' | 'search';
+type DiscoveryDockSummary = {
+  active: boolean;
+  viewport: DensityViewport;
+  period: 'hourly' | 'daily';
+  density: FeedDensity;
+  heavyLabel: 'Heavy Shown' | 'Some Heavy' | 'Heavy Hidden';
+  searchActive: boolean;
+};
+const DISCOVERY_FILTER_EVENT_NAME = 'ubeeq:discovery-filters';
 type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
 type AiDisclosure = 'none' | 'ai-assisted' | 'ai-generated';
 type AiFilterPreference = 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
@@ -63,6 +75,7 @@ type CollectionSummary = {
 };
 type TrendingImage = {
   imageId: string;
+  assetType?: 'image' | 'video';
   artistId: string;
   artistName: string;
   galleryId: string;
@@ -78,11 +91,17 @@ type TrendingImage = {
   displayedHeavyTopics?: string[];
   title: string;
   previewUrl: string;
+  previewPosterUrl?: string;
   width?: number;
   height?: number;
   aspectRatio?: number;
   favoriteCount: number;
   createdAt: string;
+};
+
+const isLikelyImageUrl = (url?: string): boolean => {
+  if (!url) return false;
+  return /\.(avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)(\?|#|$)/i.test(url);
 };
 type ArtistProfilePayload = {
   artistId: string;
@@ -299,12 +318,14 @@ function HeaderAuth({
   user,
   onSignOut,
   settings,
-  profile
+  profile,
+  discoveryDock
 }: {
   user: CurrentUser;
   onSignOut: () => Promise<void>;
   settings: SiteSettings;
   profile?: UserProfile | null;
+  discoveryDock?: DiscoveryDockSummary | null;
 }) {
   const location = useLocation();
   const headerRef = useRef<HTMLElement | null>(null);
@@ -332,6 +353,15 @@ function HeaderAuth({
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() || '')
     .join('') || 'U';
+  const showMobileDiscoveryButton = discoveryDock?.viewport === 'mobile';
+  const openDiscoveryFilters = (section: DiscoveryFilterSection = 'period') => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(
+      new CustomEvent(DISCOVERY_FILTER_EVENT_NAME, {
+        detail: { section }
+      })
+    );
+  };
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -375,6 +405,27 @@ function HeaderAuth({
               </div>
             </Link>
           </div>
+          {discoveryDock?.active && discoveryDock.viewport !== 'mobile' && (
+            <div className="topbar-discovery-summary" aria-label="Discovery filter summary">
+              <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive topbar-discovery-open-btn" onClick={() => openDiscoveryFilters('period')}>
+                Filters
+              </button>
+              <div className="topbar-discovery-chip-list">
+                <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('period')}>
+                  {discoveryDock.period === 'daily' ? 'Daily' : 'Hourly'}
+                </button>
+                <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('density')}>
+                  Density: {discoveryDock.density[0].toUpperCase() + discoveryDock.density.slice(1)}
+                </button>
+                <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('heavy')}>
+                  {discoveryDock.heavyLabel}
+                </button>
+                <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('search')}>
+                  {discoveryDock.searchActive ? 'Search active' : 'Search'}
+                </button>
+              </div>
+            </div>
+          )}
           <section className={`auth-panel ${user ? 'auth-panel-user auth-panel-user-desktop' : 'auth-panel-guest'}`}>
             {user ? (
               <div className="auth-line">
@@ -411,7 +462,12 @@ function HeaderAuth({
 
       {user && (
         <div className="mobile-user-dock">
-          <div className="mobile-user-dock-inner">
+          <div className={`mobile-user-dock-inner${showMobileDiscoveryButton ? ' has-discovery' : ''}`}>
+            {showMobileDiscoveryButton && (
+              <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
+                Filters
+              </button>
+            )}
             <details className="user-menu">
               <summary className="user-menu-trigger" aria-label="Open account menu">
                 <span className="mobile-user-email-label">{menuSecondaryLabel || displayName}</span>
@@ -438,7 +494,7 @@ function HeaderAuth({
 
       {!user && (
         <div className="mobile-auth-dock">
-          <div className="mobile-auth-dock-inner">
+          <div className={`mobile-auth-dock-inner${showMobileDiscoveryButton ? ' has-discovery' : ''}`}>
             <Link
               to="/auth/signin"
               className={`auth-nav-btn auth-nav-btn-secondary${location.pathname.startsWith('/auth/signin') ? ' is-active' : ''}`}
@@ -451,6 +507,11 @@ function HeaderAuth({
             >
               Create account
             </Link>
+            {showMobileDiscoveryButton && (
+              <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
+                Filters
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1365,12 +1426,16 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
   );
 }
 
-function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
+function HomePage({
+  viewerProfile,
+  onDiscoveryDockChange
+}: {
+  viewerProfile?: UserProfile | null;
+  onDiscoveryDockChange?: (state: DiscoveryDockSummary | null) => void;
+}) {
   const currentUser = getCurrentUser();
   const dailySeed = new Date().toISOString().slice(0, 10);
   const trendingBaseLimit = 18;
-  type FeedDensity = 'small' | 'medium' | 'large';
-  type DensityViewport = 'mobile' | 'tablet' | 'desktop';
   type TrendingCardEntry = {
     item: TrendingImage;
     index: number;
@@ -1417,14 +1482,31 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
   const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
   const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [heavyTopicsExpanded, setHeavyTopicsExpanded] = useState(true);
+  const [discoverySearch, setDiscoverySearch] = useState('');
+  const [showCompactDiscoveryDock, setShowCompactDiscoveryDock] = useState(false);
+  const [compactFiltersOpen, setCompactFiltersOpen] = useState(false);
+  const [compactFilterSection, setCompactFilterSection] = useState<DiscoveryFilterSection>('period');
+  const [compactHeavyTopicsExpanded, setCompactHeavyTopicsExpanded] = useState(true);
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [followedArtistIds, setFollowedArtistIds] = useState<Set<string>>(new Set());
+  const [focusedDiscoveryOpen, setFocusedDiscoveryOpen] = useState(false);
+  const [focusedDiscoveryGallerySlug, setFocusedDiscoveryGallerySlug] = useState('');
+  const [focusedDiscoveryGalleryTitle, setFocusedDiscoveryGalleryTitle] = useState('');
+  const [focusedDiscoveryItems, setFocusedDiscoveryItems] = useState<GalleryAsset[]>([]);
+  const [focusedDiscoveryIndex, setFocusedDiscoveryIndex] = useState(0);
+  const [focusedDiscoveryLoading, setFocusedDiscoveryLoading] = useState(false);
+  const [focusedDiscoveryError, setFocusedDiscoveryError] = useState('');
   const [error, setError] = useState('');
   const densityTransitionTimersRef = useRef<number[]>([]);
   const densitySwitchRequestRef = useRef<number | null>(null);
   const mediumBlockLayoutCacheRef = useRef<Map<string, MediumBlockBuildResult>>(new Map());
   const mediumTopBorrowRowsRef = useRef<TrendingPairRow[] | null>(null);
   const continuationFrozenRowsRef = useRef<number>(0);
+  const discoveryFilterPanelRef = useRef<HTMLDivElement | null>(null);
+  const discoverySearchInputRef = useRef<HTMLInputElement | null>(null);
+  const compactSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const focusedDiscoveryRequestRef = useRef(0);
 
   const fallbackAspectRatios = [1.6, 0.8, 1.5, 0.56, 1.78, 1.25, 1.33, 0.75];
   const collectionPalettes = [
@@ -1451,12 +1533,125 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     hidePoliticsPublicAffairs: hideHeavyTopics ? true : hidePoliticsPublicAffairs,
     hideCrimeDisastersTragedy: hideHeavyTopics ? true : hideCrimeDisastersTragedy
   };
+  const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
+    (hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy))
+      ? 'Heavy Hidden'
+      : ((hidePoliticsPublicAffairs || hideCrimeDisastersTragedy) ? 'Some Heavy' : 'Heavy Shown')
+  );
 
   const clearDensityTransitionTimers = () => {
     if (typeof window === 'undefined') return;
     densityTransitionTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
     densityTransitionTimersRef.current = [];
   };
+
+  const applyHideAllHeavyTopics = (enabled: boolean) => {
+    setHideHeavyTopics(enabled);
+    setHidePoliticsPublicAffairs(enabled);
+    setHideCrimeDisastersTragedy(enabled);
+  };
+
+  const applyHidePoliticsPublicAffairs = (enabled: boolean) => {
+    setHidePoliticsPublicAffairs(enabled);
+    setHideHeavyTopics(enabled && hideCrimeDisastersTragedy);
+  };
+
+  const applyHideCrimeDisastersTragedy = (enabled: boolean) => {
+    setHideCrimeDisastersTragedy(enabled);
+    setHideHeavyTopics(enabled && hidePoliticsPublicAffairs);
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const evaluate = () => {
+      if (window.innerWidth < 700) {
+        setShowCompactDiscoveryDock(window.scrollY > 260);
+        return;
+      }
+      const panel = discoveryFilterPanelRef.current;
+      if (!panel) {
+        setShowCompactDiscoveryDock(false);
+        return;
+      }
+      const topbarHeight = Number.parseInt(
+        window.getComputedStyle(document.documentElement).getPropertyValue('--topbar-height') || '72',
+        10
+      ) || 72;
+      const rect = panel.getBoundingClientRect();
+      setShowCompactDiscoveryDock(rect.bottom <= topbarHeight + 14);
+    };
+    evaluate();
+    const onScrollOrResize = () => {
+      window.requestAnimationFrame(evaluate);
+    };
+    window.addEventListener('scroll', onScrollOrResize, { passive: true });
+    window.addEventListener('resize', onScrollOrResize);
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize);
+      window.removeEventListener('resize', onScrollOrResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.requestAnimationFrame(() => window.dispatchEvent(new Event('scroll')));
+  }, [heavyTopicsExpanded, densityViewport, feedDensity, trendingPeriod, discoverySearch]);
+
+  useEffect(() => {
+    if (densityViewport !== 'mobile' && !showCompactDiscoveryDock) {
+      setCompactFiltersOpen(false);
+    }
+  }, [showCompactDiscoveryDock, densityViewport]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleCompactFilterIntent = (rawEvent: Event) => {
+      const detail = (rawEvent as CustomEvent<{ section?: DiscoveryFilterSection }>).detail || {};
+      const requestedSection = detail.section || 'period';
+      if (densityViewport === 'mobile') {
+        setCompactFilterSection(requestedSection);
+        if (requestedSection === 'heavy') {
+          setCompactHeavyTopicsExpanded(true);
+        }
+        setCompactFiltersOpen(true);
+        return;
+      }
+      if (!showCompactDiscoveryDock) {
+        discoveryFilterPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (requestedSection === 'search') {
+          window.setTimeout(() => discoverySearchInputRef.current?.focus(), 280);
+        }
+        if (requestedSection === 'heavy') {
+          setHeavyTopicsExpanded(true);
+        }
+        return;
+      }
+      setCompactFilterSection(requestedSection);
+      if (requestedSection === 'heavy') {
+        setCompactHeavyTopicsExpanded(true);
+      }
+      setCompactFiltersOpen(true);
+    };
+    window.addEventListener(DISCOVERY_FILTER_EVENT_NAME, handleCompactFilterIntent as EventListener);
+    return () => window.removeEventListener(DISCOVERY_FILTER_EVENT_NAME, handleCompactFilterIntent as EventListener);
+  }, [showCompactDiscoveryDock, densityViewport]);
+
+  useEffect(() => {
+    if (!compactFiltersOpen || typeof window === 'undefined') return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setCompactFiltersOpen(false);
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [compactFiltersOpen]);
+
+  useEffect(() => {
+    if (!compactFiltersOpen || compactFilterSection !== 'search' || typeof window === 'undefined') return;
+    const timerId = window.setTimeout(() => {
+      compactSearchInputRef.current?.focus();
+    }, densityViewport === 'mobile' ? 240 : 120);
+    return () => window.clearTimeout(timerId);
+  }, [compactFiltersOpen, compactFilterSection, densityViewport]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1485,6 +1680,29 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     viewerProfile?.hidePoliticsPublicAffairs,
     viewerProfile?.hideCrimeDisastersTragedy
   ]);
+
+  useEffect(() => {
+    onDiscoveryDockChange?.({
+      active: showCompactDiscoveryDock,
+      viewport: densityViewport,
+      period: trendingPeriod,
+      density: feedDensity,
+      heavyLabel: heavySummaryLabel,
+      searchActive: discoverySearch.trim().length > 0
+    });
+  }, [
+    onDiscoveryDockChange,
+    showCompactDiscoveryDock,
+    densityViewport,
+    trendingPeriod,
+    feedDensity,
+    heavySummaryLabel,
+    discoverySearch
+  ]);
+
+  useEffect(() => () => {
+    onDiscoveryDockChange?.(null);
+  }, [onDiscoveryDockChange]);
 
   useEffect(() => {
     if (densityViewport !== 'desktop' && feedDensity === 'medium') {
@@ -1839,7 +2057,25 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     densityTransitionTimersRef.current.push(fadeOutTimer);
   };
 
-  const trendingRenderable = trendingImages.filter((item) => Boolean(item.previewUrl));
+  const searchNeedle = discoverySearch.trim().toLowerCase();
+  const trendingAfterSearch = searchNeedle.length > 0
+    ? trendingImages.filter((item) => {
+      const haystack = [
+        item.title,
+        item.artistName,
+        item.gallerySlug,
+        item.galleryId,
+        item.displayedContentRating,
+        item.displayedAiDisclosure,
+        ...(item.displayedHeavyTopics || [])
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(searchNeedle);
+    })
+    : trendingImages;
+  const trendingRenderable = trendingAfterSearch.filter((item) => Boolean(item.previewUrl));
   const smallTopItemCount = densityTopRows.small * 4;
   const smallTopItems = trendingRenderable.slice(0, smallTopItemCount);
   const smallContinuationItems = trendingRenderable.slice(smallTopItemCount);
@@ -1935,6 +2171,7 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     : (continuationBlockThreeRows.length > 0 || Boolean(trendingCursor));
   const densityTransitionClass = densityFadeState === 'idle' ? '' : ` ${densityFadeState}`;
   const isDensityTransitioning = densityFadeState !== 'idle';
+  const densitySliderValue = feedDensity === 'small' ? 0 : (feedDensity === 'medium' ? 1 : 2);
 
   const latest = galleries
     .filter((gallery) => Boolean((gallery.stackPreviewUrls && gallery.stackPreviewUrls[0]) || gallery.galleryThumbnailUrl))
@@ -2046,14 +2283,103 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     }
   };
 
+  const toFocusedAsset = (item: TrendingImage): GalleryAsset => ({
+    imageId: item.imageId,
+    assetType: item.assetType === 'video' ? 'video' : 'image',
+    effectiveContentRating: item.effectiveContentRating,
+    displayedContentRating: item.displayedContentRating,
+    blurred: item.blurred,
+    effectiveAiDisclosure: item.effectiveAiDisclosure,
+    displayedAiDisclosure: item.displayedAiDisclosure,
+    effectiveHeavyTopics: item.effectiveHeavyTopics,
+    displayedHeavyTopics: item.displayedHeavyTopics,
+    previewUrl: item.previewUrl,
+    previewPosterUrl: item.previewPosterUrl,
+    favoriteCount: item.favoriteCount || 0
+  });
+
+  const openFocusedDiscovery = async (item: TrendingImage) => {
+    const fallback = toFocusedAsset(item);
+    setFocusedDiscoveryOpen(true);
+    setFocusedDiscoveryGallerySlug(item.gallerySlug || '');
+    setFocusedDiscoveryGalleryTitle(item.title || 'Artwork');
+    setFocusedDiscoveryItems([fallback]);
+    setFocusedDiscoveryIndex(0);
+    setFocusedDiscoveryError('');
+    if (!item.gallerySlug) {
+      setFocusedDiscoveryLoading(false);
+      return;
+    }
+    const requestId = focusedDiscoveryRequestRef.current + 1;
+    focusedDiscoveryRequestRef.current = requestId;
+    setFocusedDiscoveryLoading(true);
+    try {
+      const response = await api.getGallery(item.gallerySlug) as Gallery;
+      if (focusedDiscoveryRequestRef.current !== requestId) return;
+      const media = (response.media || []).filter((asset) => Boolean(asset.previewUrl));
+      const nextItems = media.length > 0 ? media : [fallback];
+      const focusedIndex = Math.max(0, nextItems.findIndex((asset) => asset.imageId === item.imageId));
+      setFocusedDiscoveryGalleryTitle(response.title || item.title || 'Artwork');
+      setFocusedDiscoveryItems(nextItems);
+      setFocusedDiscoveryIndex(focusedIndex);
+      setFocusedDiscoveryError('');
+    } catch (e) {
+      if (focusedDiscoveryRequestRef.current !== requestId) return;
+      setFocusedDiscoveryError((e as Error).message || 'Could not load gallery media');
+    } finally {
+      if (focusedDiscoveryRequestRef.current === requestId) {
+        setFocusedDiscoveryLoading(false);
+      }
+    }
+  };
+
+  const closeFocusedDiscovery = () => {
+    setFocusedDiscoveryOpen(false);
+    setFocusedDiscoveryLoading(false);
+    setFocusedDiscoveryError('');
+    focusedDiscoveryRequestRef.current += 1;
+  };
+
+  const focusedDiscoveryItem = focusedDiscoveryItems[focusedDiscoveryIndex] || null;
+  const focusedDiscoveryHasPrevious = focusedDiscoveryIndex > 0;
+  const focusedDiscoveryHasNext = focusedDiscoveryIndex >= 0 && focusedDiscoveryIndex < focusedDiscoveryItems.length - 1;
+
+  useEffect(() => {
+    if (!focusedDiscoveryOpen || typeof window === 'undefined') return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeFocusedDiscovery();
+        return;
+      }
+      if (event.key === 'ArrowLeft' && focusedDiscoveryHasPrevious) {
+        setFocusedDiscoveryIndex((index) => Math.max(0, index - 1));
+      }
+      if (event.key === 'ArrowRight' && focusedDiscoveryHasNext) {
+        setFocusedDiscoveryIndex((index) => Math.min(focusedDiscoveryItems.length - 1, index + 1));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [
+    focusedDiscoveryOpen,
+    focusedDiscoveryHasPrevious,
+    focusedDiscoveryHasNext,
+    focusedDiscoveryItems.length
+  ]);
+
   const renderTrendingCard = (
     item: TrendingImage,
     cardIndex: number,
     options?: { forceSquareFrame?: boolean; compactCard?: boolean; preload?: boolean }
   ) => {
-    const href = item.gallerySlug
-      ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}`
-      : '/';
+    const assetType = item.assetType === 'video' ? 'video' : 'image';
+    const effectivePosterUrl = item.previewPosterUrl
+      || (assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
     const isPreview = item.galleryVisibility === 'preview';
     const isFavorite = favoriteImageIds.has(item.imageId);
     const displayedRating = item.displayedContentRating || 'General';
@@ -2079,28 +2405,54 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
         className={`discovery-feature-card${isSmallLandscape ? ' is-landscape' : ''}${largeCardClass}${compactCardClass}`}
         style={{ '--media-aspect': frameRatio.toFixed(4) } as any}
       >
-        <Link to={href} className="discovery-feature-link no-underline">
+        <button
+          type="button"
+          className="discovery-feature-link discovery-feature-link-btn no-underline"
+          onClick={() => void openFocusedDiscovery(item)}
+        >
           <div
             className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}${nonCropClass}`}
             style={{
               aspectRatio: `${frameRatio.toFixed(3)} / 1`
             }}
           >
-            <img
-              src={item.previewUrl}
-              alt={item.title || 'Artwork preview'}
-              loading={preload || cardIndex < 2 ? 'eager' : 'lazy'}
-              fetchPriority={preload || cardIndex < 2 ? 'high' : (cardIndex < 8 ? 'auto' : 'low')}
-              decoding="async"
-              style={{
-                objectPosition: 'center center',
-                filter: isBlurredByRating ? 'blur(28px)' : undefined
-              }}
-            />
+            {(assetType === 'video' && !effectivePosterUrl) ? (
+              <video
+                src={item.previewUrl}
+                muted
+                playsInline
+                preload="metadata"
+                aria-label={item.title || 'Video preview'}
+                style={{
+                  objectPosition: 'center center',
+                  filter: isBlurredByRating ? 'blur(28px)' : undefined
+                }}
+              />
+            ) : (
+              <img
+                src={assetType === 'video' ? (effectivePosterUrl || '') : item.previewUrl}
+                alt={item.title || 'Artwork preview'}
+                loading={preload || cardIndex < 2 ? 'eager' : 'lazy'}
+                fetchPriority={preload || cardIndex < 2 ? 'high' : (cardIndex < 8 ? 'auto' : 'low')}
+                decoding="async"
+                style={{
+                  objectPosition: 'center center',
+                  filter: isBlurredByRating ? 'blur(28px)' : undefined
+                }}
+              />
+            )}
             {isPreview && <span className="discovery-chip">Preview</span>}
+            {assetType === 'video' && (
+              <span
+                className="discovery-chip"
+                style={{ left: 'unset', right: isBlurredByRating ? '8.2rem' : '1rem' }}
+              >
+                Video
+              </span>
+            )}
             {isBlurredByRating && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
           </div>
-        </Link>
+        </button>
         <div className="discovery-feature-footer">
           <div className="discovery-feature-text">
             <h3 className="discovery-feature-title">{item.title || 'Artwork title'}</h3>
@@ -2116,7 +2468,13 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
             </div>
           )}
           <div className="discovery-feature-actions">
-            <Link to={href} className="discovery-quick-view-link no-underline">Quick view</Link>
+            <button
+              type="button"
+              className="discovery-quick-view-link discovery-quick-view-btn no-underline"
+              onClick={() => void openFocusedDiscovery(item)}
+            >
+              Quick view
+            </button>
             {currentUser && !compactCard && (
               <button
                 className="auth-secondary-btn discovery-inline-btn"
@@ -2239,6 +2597,154 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
     );
   };
 
+  const setCompactSection = (section: DiscoveryFilterSection) => {
+    setCompactFilterSection(section);
+    if (section === 'heavy') {
+      setCompactHeavyTopicsExpanded(true);
+    }
+  };
+
+  const closeCompactFilters = () => setCompactFiltersOpen(false);
+
+  const compactTabs: Array<{ section: DiscoveryFilterSection; label: string }> = [
+    { section: 'period', label: trendingPeriod === 'daily' ? 'Daily' : 'Hourly' },
+    { section: 'density', label: `Density: ${densityLabel[feedDensity]}` },
+    { section: 'heavy', label: heavySummaryLabel },
+    { section: 'search', label: discoverySearch.trim().length > 0 ? 'Search active' : 'Search' }
+  ];
+
+  const renderCompactFilterBody = () => {
+    if (compactFilterSection === 'period') {
+      return (
+        <div className="discovery-compact-section discovery-compact-period-section">
+          <div className="discovery-filter-label">Trending period</div>
+          <div className="discovery-trending-filter">
+            <button
+              className={`discovery-pill-btn${trendingPeriod === 'hourly' ? ' is-active' : ''}`}
+              onClick={() => setTrendingPeriod('hourly')}
+            >
+              Hourly
+            </button>
+            <button
+              className={`discovery-pill-btn${trendingPeriod === 'daily' ? ' is-active' : ''}`}
+              onClick={() => setTrendingPeriod('daily')}
+            >
+              Daily
+            </button>
+            <Link className="discovery-pill-btn no-underline" to="/trending" onClick={closeCompactFilters}>View all</Link>
+          </div>
+        </div>
+      );
+    }
+
+    if (compactFilterSection === 'heavy') {
+      return (
+        <div className="discovery-heavy-card">
+          <div className="discovery-heavy-head">
+            <label className="discovery-heavy-row is-primary">
+              <input
+                type="checkbox"
+                checked={hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy)}
+                onChange={(e) => applyHideAllHeavyTopics(e.target.checked)}
+              />
+              <span>Hide all heavy topics</span>
+            </label>
+            <button
+              type="button"
+              className={`discovery-heavy-toggle${compactHeavyTopicsExpanded ? ' is-expanded' : ''}`}
+              onClick={() => setCompactHeavyTopicsExpanded((prev) => !prev)}
+              aria-label={compactHeavyTopicsExpanded ? 'Collapse heavy topics options' : 'Expand heavy topics options'}
+            >
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M6 12L10 8L14 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
+          {compactHeavyTopicsExpanded && (
+            <div className="discovery-heavy-body">
+              <label className="discovery-heavy-row">
+                <input
+                  type="checkbox"
+                  checked={hidePoliticsPublicAffairs}
+                  onChange={(e) => applyHidePoliticsPublicAffairs(e.target.checked)}
+                />
+                <span>{heavyTopicLabels['politics-public-affairs']}</span>
+              </label>
+              <label className="discovery-heavy-row">
+                <input
+                  type="checkbox"
+                  checked={hideCrimeDisastersTragedy}
+                  onChange={(e) => applyHideCrimeDisastersTragedy(e.target.checked)}
+                />
+                <span>{heavyTopicLabels['crime-disasters-tragedy']}</span>
+              </label>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (compactFilterSection === 'density') {
+      return (
+        <div className="discovery-density-card">
+          <div className="discovery-density-head">
+            <span>Feed density</span>
+            <strong>{densityLabel[feedDensity]}</strong>
+          </div>
+          {densityViewport === 'desktop' && (
+            <input
+              className="discovery-density-range"
+              type="range"
+              min={0}
+              max={2}
+              step={1}
+              value={densitySliderValue}
+              disabled={isDensityTransitioning}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                resetTrendingViewForDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
+              }}
+            />
+          )}
+          <div className={`discovery-density-options${densityOptions.length === 2 ? ' is-two' : ''}`}>
+            {densityOptions.map((option) => (
+              <button
+                key={`compact-density-option-${option}`}
+                type="button"
+                disabled={isDensityTransitioning}
+                className={feedDensity === option ? 'is-active' : ''}
+                onClick={() => resetTrendingViewForDensity(option)}
+              >
+                {densityLabel[option]}
+              </button>
+            ))}
+          </div>
+          <p className="small m-0">
+            Small shows more rows before editorial sections. Large emphasizes image size.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="discovery-search-card is-compact">
+        <div className="discovery-filter-label">Search</div>
+        <div className="discovery-search-input-wrap">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M9 4.25a4.75 4.75 0 103.78 7.64l2.16 2.16a.75.75 0 101.06-1.06l-2.16-2.16A4.75 4.75 0 009 4.25z" fill="currentColor" />
+          </svg>
+          <input
+            ref={compactSearchInputRef}
+            type="text"
+            value={discoverySearch}
+            onChange={(e) => setDiscoverySearch(e.target.value)}
+            placeholder="Search titles, artists, galleries, tags..."
+          />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="layout discovery-layout">
       <section className="panel discovery-hero">
@@ -2254,6 +2760,62 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
         </div>
       </section>
 
+      {showCompactDiscoveryDock && densityViewport !== 'mobile' && compactFiltersOpen && (
+        <div className="discovery-compact-popover-layer" onClick={closeCompactFilters}>
+          <div className="discovery-compact-popover" role="dialog" aria-label="Discovery filters" onClick={(e) => e.stopPropagation()}>
+            <div className="discovery-compact-popover-toolbar">
+              <button type="button" className="discovery-compact-close-btn" onClick={closeCompactFilters} aria-label="Close discovery filters">
+                ✕
+              </button>
+            </div>
+            <div className="discovery-compact-tabs discovery-compact-tabs-tablet">
+              {compactTabs.map((tab) => (
+                <button
+                  key={`compact-tab-desktop-${tab.section}`}
+                  type="button"
+                  className={`topbar-discovery-chip topbar-discovery-chip-interactive${compactFilterSection === tab.section ? ' is-active' : ''}`}
+                  onClick={() => setCompactSection(tab.section)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="discovery-compact-body">
+              {renderCompactFilterBody()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCompactDiscoveryDock && densityViewport === 'mobile' && compactFiltersOpen && (
+        <div className="discovery-compact-sheet-layer" onClick={closeCompactFilters}>
+          <div className="discovery-compact-sheet" role="dialog" aria-label="Discovery filters" onClick={(e) => e.stopPropagation()}>
+            <div className="discovery-compact-sheet-handle" />
+            <div className="discovery-compact-header">
+              <div className="discovery-filter-label">Discovery controls</div>
+              <button type="button" className="discovery-compact-close-btn" onClick={closeCompactFilters} aria-label="Close discovery filters">
+                ✕
+              </button>
+            </div>
+            <div className="discovery-compact-tabs">
+              {compactTabs.map((tab) => (
+                <button
+                  key={`compact-tab-mobile-${tab.section}`}
+                  type="button"
+                  className={`topbar-discovery-chip topbar-discovery-chip-interactive${compactFilterSection === tab.section ? ' is-active' : ''}`}
+                  onClick={() => setCompactSection(tab.section)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="discovery-compact-body">
+              {renderCompactFilterBody()}
+            </div>
+          </div>
+        </div>
+      )}
+
       <section id="trending" aria-busy={densitySwitchLoading}>
         <div className="discovery-section-header">
           <div>
@@ -2262,108 +2824,146 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
               Variable-width rows based on image aspect ratio keep landscape and portrait media visually balanced.
             </p>
           </div>
-          <div className="discovery-home-controls">
-            <div className="discovery-trending-filter">
-              <button className={trendingPeriod === 'hourly' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setTrendingPeriod('hourly')}>Hourly</button>
-              <button className={trendingPeriod === 'daily' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setTrendingPeriod('daily')}>Daily</button>
-              <Link className="auth-secondary-btn no-underline" to="/trending">View all</Link>
-            </div>
-            <div className="inline-form">
-              <label className="small">Heavy Topics</label>
-              <label className="inline-form">
-                <input
-                  type="checkbox"
-                  checked={hideHeavyTopics}
-                  onChange={(e) => {
-                    const enabled = e.target.checked;
-                    setHideHeavyTopics(enabled);
-                    if (enabled) {
-                      setHidePoliticsPublicAffairs(true);
-                      setHideCrimeDisastersTragedy(true);
-                    }
-                  }}
-                />
-                <span>Hide all heavy topics</span>
-              </label>
-              <label className="inline-form">
-                <input
-                  type="checkbox"
-                  checked={hidePoliticsPublicAffairs}
-                  onChange={(e) => {
-                    const enabled = e.target.checked;
-                    setHidePoliticsPublicAffairs(enabled);
-                    if (!enabled) setHideHeavyTopics(false);
-                  }}
-                />
-                <span>{heavyTopicLabels['politics-public-affairs']}</span>
-              </label>
-              <label className="inline-form">
-                <input
-                  type="checkbox"
-                  checked={hideCrimeDisastersTragedy}
-                  onChange={(e) => {
-                    const enabled = e.target.checked;
-                    setHideCrimeDisastersTragedy(enabled);
-                    if (!enabled) setHideHeavyTopics(false);
-                  }}
-                />
-                <span>{heavyTopicLabels['crime-disasters-tragedy']}</span>
-              </label>
-            </div>
-            <div className="discovery-density-card">
-              <div className="discovery-density-head">
-                <span>Feed density</span>
-                <strong>{densityLabel[feedDensity]}</strong>
-              </div>
-              {densityViewport === 'desktop' && (
-                <input
-                  type="range"
-                  min={0}
-                  max={2}
-                  step={1}
-                  value={feedDensity === 'small' ? 0 : (feedDensity === 'medium' ? 1 : 2)}
-                  disabled={isDensityTransitioning}
-                  onChange={(e) => {
-                    const next = Number(e.target.value);
-                    resetTrendingViewForDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
-                  }}
-                />
-              )}
-              <div className={`discovery-density-options${densityOptions.length === 2 ? ' is-two' : ''}`}>
-                {densityOptions.map((option) => (
+        </div>
+        <div id="discovery-filter-panel" ref={discoveryFilterPanelRef} className="discovery-filter-shell">
+          <div className="discovery-filter-grid">
+            <div className="discovery-filter-left">
+              <div>
+                <div className="discovery-filter-label">Trending period</div>
+                <div className="discovery-trending-filter">
                   <button
-                    key={`density-option-${option}`}
-                    type="button"
-                    disabled={isDensityTransitioning}
-                    className={feedDensity === option ? 'is-active' : ''}
-                    onClick={() => resetTrendingViewForDensity(option)}
+                    className={`discovery-pill-btn${trendingPeriod === 'hourly' ? ' is-active' : ''}`}
+                    onClick={() => setTrendingPeriod('hourly')}
                   >
-                    {densityLabel[option]}
+                    Hourly
                   </button>
-                ))}
+                  <button
+                    className={`discovery-pill-btn${trendingPeriod === 'daily' ? ' is-active' : ''}`}
+                    onClick={() => setTrendingPeriod('daily')}
+                  >
+                    Daily
+                  </button>
+                  <Link className="discovery-pill-btn no-underline" to="/trending">View all</Link>
+                </div>
               </div>
-              <p className="small m-0">
-                Small shows more rows before editorial sections. Large emphasizes image size.
-              </p>
+
+              <div className="discovery-heavy-card">
+                <div className="discovery-heavy-head">
+                  <label className="discovery-heavy-row is-primary">
+                    <input
+                      type="checkbox"
+                      checked={hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy)}
+                      onChange={(e) => applyHideAllHeavyTopics(e.target.checked)}
+                    />
+                    <span>Hide all heavy topics</span>
+                  </label>
+                  <button
+                    type="button"
+                    className={`discovery-heavy-toggle${heavyTopicsExpanded ? ' is-expanded' : ''}`}
+                    onClick={() => setHeavyTopicsExpanded((prev) => !prev)}
+                    aria-label={heavyTopicsExpanded ? 'Collapse heavy topics options' : 'Expand heavy topics options'}
+                  >
+                    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                      <path d="M6 12L10 8L14 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+                {heavyTopicsExpanded && (
+                  <div className="discovery-heavy-body">
+                    <label className="discovery-heavy-row">
+                      <input
+                        type="checkbox"
+                        checked={hidePoliticsPublicAffairs}
+                        onChange={(e) => applyHidePoliticsPublicAffairs(e.target.checked)}
+                      />
+                      <span>{heavyTopicLabels['politics-public-affairs']}</span>
+                    </label>
+                    <label className="discovery-heavy-row">
+                      <input
+                        type="checkbox"
+                        checked={hideCrimeDisastersTragedy}
+                        onChange={(e) => applyHideCrimeDisastersTragedy(e.target.checked)}
+                      />
+                      <span>{heavyTopicLabels['crime-disasters-tragedy']}</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="discovery-filter-right">
+              <div className="discovery-density-card">
+                <div className="discovery-density-head">
+                  <span>Feed density</span>
+                  <strong>{densityLabel[feedDensity]}</strong>
+                </div>
+                {densityViewport === 'desktop' && (
+                  <input
+                    className="discovery-density-range"
+                    type="range"
+                    min={0}
+                    max={2}
+                    step={1}
+                    value={densitySliderValue}
+                    disabled={isDensityTransitioning}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      resetTrendingViewForDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
+                    }}
+                  />
+                )}
+                <div className={`discovery-density-options${densityOptions.length === 2 ? ' is-two' : ''}`}>
+                  {densityOptions.map((option) => (
+                    <button
+                      key={`density-option-${option}`}
+                      type="button"
+                      disabled={isDensityTransitioning}
+                      className={feedDensity === option ? 'is-active' : ''}
+                      onClick={() => resetTrendingViewForDensity(option)}
+                    >
+                      {densityLabel[option]}
+                    </button>
+                  ))}
+                </div>
+                <p className="small m-0">
+                  Small shows more rows before editorial sections. Large emphasizes image size.
+                </p>
+              </div>
+
+              <div className="discovery-search-card">
+                <div className="discovery-filter-label">Search</div>
+                <div className="discovery-search-input-wrap">
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path d="M9 4.25a4.75 4.75 0 103.78 7.64l2.16 2.16a.75.75 0 101.06-1.06l-2.16-2.16A4.75 4.75 0 009 4.25z" fill="currentColor" />
+                  </svg>
+                  <input
+                    ref={discoverySearchInputRef}
+                    type="text"
+                    value={discoverySearch}
+                    onChange={(e) => setDiscoverySearch(e.target.value)}
+                    placeholder="Search titles, artists, galleries, tags..."
+                  />
+                </div>
+                {currentUser && (
+                  <div className="discovery-favorite-context">
+                    <label className="small">Favorite as</label>
+                    <select
+                      className="settings-select"
+                      value={favoriteIdentity}
+                      onChange={(e) => setFavoriteIdentity(e.target.value)}
+                    >
+                      <option value="user">User Profile</option>
+                      {managedArtists.map((artist) => (
+                        <option key={`home-favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
+                          Artist: {artist.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-          {currentUser && (
-            <div className="inline-form">
-              <label className="small">Favorite as</label>
-              <select
-                className="settings-select"
-                value={favoriteIdentity}
-                onChange={(e) => setFavoriteIdentity(e.target.value)}
-              >
-                <option value="user">User Profile</option>
-                {managedArtists.map((artist) => (
-                  <option key={`home-favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
-                    Artist: {artist.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
         </div>
 
         {densitySwitchLoading && densityViewport !== 'mobile' && (
@@ -2554,6 +3154,81 @@ function HomePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
             onLoadMore={() => loadMoreTrending()}
           />
         </section>
+      )}
+
+      {focusedDiscoveryOpen && (
+        <div className="discovery-focus-modal-layer" onClick={closeFocusedDiscovery}>
+          <div className="discovery-focus-modal" role="dialog" aria-modal="true" aria-label="Focused media viewer" onClick={(e) => e.stopPropagation()}>
+            <div className="discovery-focus-modal-header">
+              <div className="discovery-focus-modal-title-wrap">
+                <h3>{focusedDiscoveryItem ? (focusedDiscoveryItem.imageId || 'Focused view') : 'Focused view'}</h3>
+                <p>{focusedDiscoveryGalleryTitle || 'Gallery preview'}</p>
+              </div>
+              <button type="button" className="discovery-focus-modal-close" onClick={closeFocusedDiscovery} aria-label="Close focused viewer">
+                ✕
+              </button>
+            </div>
+            <div className="discovery-focus-modal-media">
+              {focusedDiscoveryItem && (
+                focusedDiscoveryItem.assetType === 'video'
+                  ? (
+                    <video
+                      controls
+                      playsInline
+                      poster={focusedDiscoveryItem.previewPosterUrl}
+                      style={{ filter: focusedDiscoveryItem.blurred ? 'blur(28px)' : undefined }}
+                    >
+                      <source src={focusedDiscoveryItem.previewUrl} />
+                    </video>
+                  )
+                  : (
+                    <img
+                      src={focusedDiscoveryItem.thumbnailUrls?.w1280 || focusedDiscoveryItem.thumbnailUrls?.w640 || focusedDiscoveryItem.previewUrl}
+                      alt={focusedDiscoveryItem.imageId || 'Focused media'}
+                      style={{ filter: focusedDiscoveryItem.blurred ? 'blur(28px)' : undefined }}
+                    />
+                  )
+              )}
+              {!focusedDiscoveryItem && <div className="small">No media selected.</div>}
+            </div>
+            <div className="discovery-focus-modal-footer">
+              <div className="discovery-focus-modal-meta">
+                <span>{focusedDiscoveryItem?.displayedContentRating || 'General'}</span>
+                {focusedDiscoveryItem && formatDisclosureLine(focusedDiscoveryItem) && <span>{formatDisclosureLine(focusedDiscoveryItem)}</span>}
+                <span>{Math.max(1, focusedDiscoveryIndex + 1)} / {Math.max(1, focusedDiscoveryItems.length)}</span>
+              </div>
+              <div className="discovery-focus-modal-actions">
+                <button
+                  type="button"
+                  className="auth-secondary-btn"
+                  disabled={!focusedDiscoveryHasPrevious}
+                  onClick={() => setFocusedDiscoveryIndex((index) => Math.max(0, index - 1))}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  className="auth-secondary-btn"
+                  disabled={!focusedDiscoveryHasNext}
+                  onClick={() => setFocusedDiscoveryIndex((index) => Math.min(focusedDiscoveryItems.length - 1, index + 1))}
+                >
+                  Next
+                </button>
+                {focusedDiscoveryGallerySlug && (
+                  <Link
+                    className="auth-primary-btn no-underline"
+                    to={`/gallery/${focusedDiscoveryGallerySlug}?image=${encodeURIComponent(focusedDiscoveryItem?.imageId || '')}`}
+                    onClick={closeFocusedDiscovery}
+                  >
+                    Open gallery
+                  </Link>
+                )}
+              </div>
+              {focusedDiscoveryLoading && <p className="small m-0">Loading gallery media…</p>}
+              {focusedDiscoveryError && <p className="error">{focusedDiscoveryError}</p>}
+            </div>
+          </div>
+        </div>
       )}
 
       {error && (
@@ -3322,9 +3997,26 @@ function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null })
           <article key={item.imageId} className="discovery-card">
             <Link to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="no-underline">
               <div className="discovery-card-media" style={{ height: masonryHeights[i % masonryHeights.length] }}>
-                {item.previewUrl
-                  ? <img src={item.previewUrl} alt={item.title || 'Artwork preview'} loading="lazy" style={{ filter: item.blurred ? 'blur(24px)' : undefined }} />
-                  : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length] }} />}
+                {item.previewUrl ? (
+                  (item.assetType === 'video' && !item.previewPosterUrl && !isLikelyImageUrl(item.previewUrl))
+                    ? (
+                      <video
+                        src={item.previewUrl}
+                        muted
+                        playsInline
+                        preload="metadata"
+                        style={{ filter: item.blurred ? 'blur(24px)' : undefined }}
+                      />
+                    )
+                    : (
+                      <img
+                        src={item.assetType === 'video' ? (item.previewPosterUrl || item.previewUrl) : item.previewUrl}
+                        alt={item.title || 'Artwork preview'}
+                        loading="lazy"
+                        style={{ filter: item.blurred ? 'blur(24px)' : undefined }}
+                      />
+                    )
+                ) : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length] }} />}
                 {item.galleryVisibility !== 'free' && <span className="discovery-chip">Preview</span>}
                 {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '0.75rem' }}>Mature Content</span>}
               </div>
@@ -3434,9 +4126,26 @@ function ArtistProfilePage() {
         <div className="discovery-three-rows-grid">
           {(trending || []).slice(0, 18).map((item, i) => (
             <Link key={item.imageId} to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="discovery-small-card no-underline">
-              {item.previewUrl
-                ? <img src={item.previewUrl} alt={item.title || 'Artwork preview'} loading="lazy" style={{ filter: item.blurred ? 'blur(24px)' : undefined }} />
-                : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length], height: 160 }} />}
+              {item.previewUrl ? (
+                (item.assetType === 'video' && !item.previewPosterUrl && !isLikelyImageUrl(item.previewUrl))
+                  ? (
+                    <video
+                      src={item.previewUrl}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      style={{ filter: item.blurred ? 'blur(24px)' : undefined }}
+                    />
+                  )
+                  : (
+                    <img
+                      src={item.assetType === 'video' ? (item.previewPosterUrl || item.previewUrl) : item.previewUrl}
+                      alt={item.title || 'Artwork preview'}
+                      loading="lazy"
+                      style={{ filter: item.blurred ? 'blur(24px)' : undefined }}
+                    />
+                  )
+              ) : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length], height: 160 }} />}
               <div className="discovery-small-card-body">
                 <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
                 <div className="discovery-card-subtitle">{item.displayedContentRating || 'General'}</div>
@@ -3536,9 +4245,11 @@ function ArtistProfilePage() {
 }
 
 export default function App() {
+  const location = useLocation();
   const [user, setUser] = useState<CurrentUser>(() => getCurrentUser());
   const [myProfile, setMyProfile] = useState<UserProfile | null>(null);
   const [settings, setSettings] = useState<SiteSettings>({ siteName: 'Ubeeq', theme: 'ubeeq' });
+  const [discoveryDock, setDiscoveryDock] = useState<DiscoveryDockSummary | null>(null);
 
   const handleSignOut = async () => {
     await signOut();
@@ -3563,11 +4274,17 @@ export default function App() {
     };
   }, [user?.username]);
 
+  useEffect(() => {
+    if (location.pathname !== '/' && discoveryDock) {
+      setDiscoveryDock(null);
+    }
+  }, [location.pathname, discoveryDock]);
+
   return (
     <div className="app-shell" data-theme={settings.theme || 'ubeeq'}>
-      <HeaderAuth user={user} onSignOut={handleSignOut} settings={settings} profile={myProfile} />
+      <HeaderAuth user={user} onSignOut={handleSignOut} settings={settings} profile={myProfile} discoveryDock={discoveryDock} />
       <Routes>
-        <Route path="/" element={<HomePage viewerProfile={myProfile} />} />
+        <Route path="/" element={<HomePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/trending" element={<TrendingPage viewerProfile={myProfile} />} />
         <Route path="/artists/:slug" element={<ArtistProfilePage />} />
         <Route path="/gallery/:slug" element={<GalleryPage />} />

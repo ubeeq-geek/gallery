@@ -33,6 +33,7 @@ const isHiddenByVisibility = (visibility?: 'public' | 'hidden' | 'removed'): boo
 
 interface CandidateItem {
   imageId: string;
+  assetType: 'image' | 'video';
   artistId: string;
   artistName: string;
   galleryId: string;
@@ -44,6 +45,7 @@ interface CandidateItem {
   effectiveHeavyTopics: HeavyTopic[];
   title: string;
   previewKey: string;
+  previewPosterKey?: string;
   width: number;
   height: number;
   aspectRatio: number;
@@ -157,13 +159,17 @@ const buildCandidates = async (
   for (const { gallery, media } of mediaRows) {
     for (const item of media) {
       const assetType = (item.assetType || 'image');
-      if (assetType !== 'image') continue;
       if (isHiddenByVisibility(item.releaseVisibility)) continue;
       if (item.status && item.status !== 'published' && item.status !== 'scheduled') continue;
       if (!canViewBySchedule(item.publishAt || gallery.publishAt, item.publicReleaseAt || gallery.publicReleaseAt, nowMs, false)) {
         continue;
       }
-      const previewKey = item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewPosterKey || item.previewKey;
+      const previewPosterKey = item.previewPosterKey
+        || item.thumbnailKeys?.w640
+        || item.thumbnailKeys?.w320;
+      const previewKey = assetType === 'video'
+        ? item.previewKey
+        : (item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewKey);
       if (!previewKey) continue;
       const createdAtMs = asTime(item.createdAt) || nowMs;
       const discoverSquareCropEnabled =
@@ -173,6 +179,7 @@ const buildCandidates = async (
       const artist = artistById.get(item.artistId);
       candidates.push({
         imageId: item.mediaId,
+        assetType: assetType === 'video' ? 'video' : 'image',
         artistId: item.artistId,
         artistName: artistById.get(item.artistId)?.name || 'Artist',
         galleryId: gallery.galleryId,
@@ -184,6 +191,7 @@ const buildCandidates = async (
         effectiveHeavyTopics: getEffectiveHeavyTopics(item, gallery, artist),
         title: item.title || gallery.title || 'Artwork',
         previewKey,
+        previewPosterKey,
         width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
         height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
         aspectRatio: (
@@ -360,6 +368,7 @@ export const buildTrendingFeedForPeriod = async (
     period,
     rank: index + 1,
     imageId: item.imageId,
+    assetType: item.assetType,
     artistId: item.artistId,
     artistName: item.artistName,
     galleryId: item.galleryId,
@@ -371,6 +380,7 @@ export const buildTrendingFeedForPeriod = async (
     effectiveHeavyTopics: item.effectiveHeavyTopics,
     title: item.title,
     previewKey: item.previewKey,
+    previewPosterKey: item.previewPosterKey,
     width: item.width,
     height: item.height,
     aspectRatio: item.aspectRatio,
