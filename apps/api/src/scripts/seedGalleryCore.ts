@@ -98,6 +98,7 @@ type ArtistSeed = {
   name: string;
   slug: string;
   filePrefix: string;
+  includePrefixes?: string[];
   contentRating?: ContentRating;
   aiDisclosure?: AiDisclosure;
   heavyTopics?: HeavyTopic[];
@@ -135,6 +136,7 @@ const artistSeeds: ArtistSeed[] = [
     name: 'Bureau of Occupational Records',
     slug: 'bureau-of-occupational-records',
     filePrefix: 'alp-',
+    includePrefixes: ['alp-0001', 'alp-0002', 'alp-0003', 'alp-0004', 'alp-0005'],
     discoverSquareCropEnabled: false,
     galleries: ['free'],
     freeGalleryTitle: 'Atlas of Lost Occupations',
@@ -490,16 +492,28 @@ const main = async () => {
     if (premiumGallery) galleries.push(premiumGallery);
 
     const artistFiles = mediaFiles.filter((file) => normalize(file.filename).startsWith(normalize(seed.filePrefix)));
+    const selectedArtistFiles = seed.includePrefixes?.length
+      ? artistFiles.filter((file) => seed.includePrefixes!.some((prefix) => normalize(file.filename).startsWith(normalize(prefix))))
+      : artistFiles;
 
-    const imageFiles = artistFiles
+    if (seed.includePrefixes?.length) {
+      const missingPrefixes = seed.includePrefixes.filter(
+        (prefix) => !selectedArtistFiles.some((file) => normalize(file.filename).startsWith(normalize(prefix)))
+      );
+      if (missingPrefixes.length > 0) {
+        throw new Error(`Missing media files for ${seed.name}: ${missingPrefixes.join(', ')}`);
+      }
+    }
+
+    const imageFiles = selectedArtistFiles
       .filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && !isPoster(file.filename))
       .sort((a, b) => extractSequence(a.filename) - extractSequence(b.filename));
 
-    const videoFiles = artistFiles
+    const videoFiles = selectedArtistFiles
       .filter((file) => VIDEO_EXT.has(path.extname(file.filename).toLowerCase()))
       .sort((a, b) => extractSequence(a.filename) - extractSequence(b.filename));
 
-    const posterFiles = artistFiles.filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && isPoster(file.filename));
+    const posterFiles = selectedArtistFiles.filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && isPoster(file.filename));
 
     const hasPremiumTier = Boolean(previewGallery || premiumGallery);
     const imageSplit = hasPremiumTier

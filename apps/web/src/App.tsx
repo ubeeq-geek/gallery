@@ -1497,6 +1497,8 @@ function HomePage({
   const [focusedDiscoveryIndex, setFocusedDiscoveryIndex] = useState(0);
   const [focusedDiscoveryLoading, setFocusedDiscoveryLoading] = useState(false);
   const [focusedDiscoveryError, setFocusedDiscoveryError] = useState('');
+  const [focusedDiscoveryVideoMuted, setFocusedDiscoveryVideoMuted] = useState(true);
+  const [focusedDiscoveryVideoVolume, setFocusedDiscoveryVideoVolume] = useState(1);
   const [error, setError] = useState('');
   const densityTransitionTimersRef = useRef<number[]>([]);
   const densitySwitchRequestRef = useRef<number | null>(null);
@@ -1507,6 +1509,7 @@ function HomePage({
   const discoverySearchInputRef = useRef<HTMLInputElement | null>(null);
   const compactSearchInputRef = useRef<HTMLInputElement | null>(null);
   const focusedDiscoveryRequestRef = useRef(0);
+  const focusedDiscoveryVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const fallbackAspectRatios = [1.6, 0.8, 1.5, 0.56, 1.78, 1.25, 1.33, 0.75];
   const collectionPalettes = [
@@ -2345,6 +2348,53 @@ function HomePage({
   const focusedDiscoveryHasNext = focusedDiscoveryIndex >= 0 && focusedDiscoveryIndex < focusedDiscoveryItems.length - 1;
 
   useEffect(() => {
+    const video = focusedDiscoveryVideoRef.current;
+    if (!video || focusedDiscoveryItem?.assetType !== 'video') return;
+    const clampedVolume = Math.max(0, Math.min(1, focusedDiscoveryVideoVolume));
+    if (Math.abs(video.volume - clampedVolume) > 0.001) {
+      video.volume = clampedVolume;
+    }
+    if (video.muted !== focusedDiscoveryVideoMuted) {
+      video.muted = focusedDiscoveryVideoMuted;
+    }
+  }, [focusedDiscoveryItem?.assetType, focusedDiscoveryItem?.imageId, focusedDiscoveryVideoMuted, focusedDiscoveryVideoVolume]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const video = focusedDiscoveryVideoRef.current;
+    if (!focusedDiscoveryOpen || !video || focusedDiscoveryItem?.assetType !== 'video') return undefined;
+    let disposed = false;
+    const safePlay = () => {
+      if (disposed) return;
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => undefined);
+      }
+    };
+    const observer = new window.IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+          safePlay();
+        } else if (!video.paused) {
+          video.pause();
+        }
+      },
+      { threshold: [0.2, 0.6, 0.9] }
+    );
+    observer.observe(video);
+    safePlay();
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      if (!video.paused) {
+        video.pause();
+      }
+    };
+  }, [focusedDiscoveryOpen, focusedDiscoveryItem?.assetType, focusedDiscoveryItem?.imageId]);
+
+  useEffect(() => {
     if (!focusedDiscoveryOpen || typeof window === 'undefined') return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -3161,41 +3211,17 @@ function HomePage({
           <div className="discovery-focus-modal" role="dialog" aria-modal="true" aria-label="Focused media viewer" onClick={(e) => e.stopPropagation()}>
             <div className="discovery-focus-modal-header">
               <div className="discovery-focus-modal-title-wrap">
-                <h3>{focusedDiscoveryItem ? (focusedDiscoveryItem.imageId || 'Focused view') : 'Focused view'}</h3>
-                <p>{focusedDiscoveryGalleryTitle || 'Gallery preview'}</p>
+                <span className="discovery-focus-modal-title-id">
+                  {focusedDiscoveryItem ? (focusedDiscoveryItem.imageId || 'Focused view') : 'Focused view'}
+                </span>
+                <span className="discovery-focus-modal-title-gallery">{focusedDiscoveryGalleryTitle || 'Gallery preview'}</span>
               </div>
-              <button type="button" className="discovery-focus-modal-close" onClick={closeFocusedDiscovery} aria-label="Close focused viewer">
-                ✕
-              </button>
-            </div>
-            <div className="discovery-focus-modal-media">
-              {focusedDiscoveryItem && (
-                focusedDiscoveryItem.assetType === 'video'
-                  ? (
-                    <video
-                      controls
-                      playsInline
-                      poster={focusedDiscoveryItem.previewPosterUrl}
-                      style={{ filter: focusedDiscoveryItem.blurred ? 'blur(28px)' : undefined }}
-                    >
-                      <source src={focusedDiscoveryItem.previewUrl} />
-                    </video>
-                  )
-                  : (
-                    <img
-                      src={focusedDiscoveryItem.thumbnailUrls?.w1280 || focusedDiscoveryItem.thumbnailUrls?.w640 || focusedDiscoveryItem.previewUrl}
-                      alt={focusedDiscoveryItem.imageId || 'Focused media'}
-                      style={{ filter: focusedDiscoveryItem.blurred ? 'blur(28px)' : undefined }}
-                    />
-                  )
-              )}
-              {!focusedDiscoveryItem && <div className="small">No media selected.</div>}
-            </div>
-            <div className="discovery-focus-modal-footer">
               <div className="discovery-focus-modal-meta">
                 <span>{focusedDiscoveryItem?.displayedContentRating || 'General'}</span>
                 {focusedDiscoveryItem && formatDisclosureLine(focusedDiscoveryItem) && <span>{formatDisclosureLine(focusedDiscoveryItem)}</span>}
                 <span>{Math.max(1, focusedDiscoveryIndex + 1)} / {Math.max(1, focusedDiscoveryItems.length)}</span>
+                {focusedDiscoveryLoading && <span className="discovery-focus-modal-status-chip">Loading…</span>}
+                {focusedDiscoveryError && <span className="discovery-focus-modal-error-chip">{focusedDiscoveryError}</span>}
               </div>
               <div className="discovery-focus-modal-actions">
                 <button
@@ -3224,8 +3250,41 @@ function HomePage({
                   </Link>
                 )}
               </div>
-              {focusedDiscoveryLoading && <p className="small m-0">Loading gallery media…</p>}
-              {focusedDiscoveryError && <p className="error">{focusedDiscoveryError}</p>}
+              <button type="button" className="discovery-focus-modal-close" onClick={closeFocusedDiscovery} aria-label="Close focused viewer">
+                ✕
+              </button>
+            </div>
+            <div className="discovery-focus-modal-media">
+              {focusedDiscoveryItem && (
+                focusedDiscoveryItem.assetType === 'video'
+                  ? (
+                    <video
+                      key={focusedDiscoveryItem.imageId}
+                      ref={focusedDiscoveryVideoRef}
+                      autoPlay
+                      controls
+                      playsInline
+                      muted={focusedDiscoveryVideoMuted}
+                      poster={focusedDiscoveryItem.previewPosterUrl}
+                      style={{ filter: focusedDiscoveryItem.blurred ? 'blur(28px)' : undefined }}
+                      onVolumeChange={(event) => {
+                        const target = event.currentTarget;
+                        setFocusedDiscoveryVideoMuted(target.muted);
+                        setFocusedDiscoveryVideoVolume(Math.max(0, Math.min(1, target.volume)));
+                      }}
+                    >
+                      <source src={focusedDiscoveryItem.previewUrl} />
+                    </video>
+                  )
+                  : (
+                    <img
+                      src={focusedDiscoveryItem.thumbnailUrls?.w1280 || focusedDiscoveryItem.thumbnailUrls?.w640 || focusedDiscoveryItem.previewUrl}
+                      alt={focusedDiscoveryItem.imageId || 'Focused media'}
+                      style={{ filter: focusedDiscoveryItem.blurred ? 'blur(28px)' : undefined }}
+                    />
+                  )
+              )}
+              {!focusedDiscoveryItem && <div className="small">No media selected.</div>}
             </div>
           </div>
         </div>
