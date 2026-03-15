@@ -299,6 +299,20 @@
     transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
   }
 
+  .create-account-label-short {
+    display: none;
+  }
+
+  @media (max-width: 449px) {
+    .create-account-label-long {
+      display: none;
+    }
+
+    .create-account-label-short {
+      display: inline;
+    }
+  }
+
   @media (min-width: 700px) {
     .auth-nav-btn {
       font-size: 0.9rem;

@@ -23,7 +23,13 @@ type DiscoveryDockSummary = {
   viewport: DensityViewport;
   period: 'hourly' | 'daily';
   density: FeedDensity;
-  heavyLabel: 'Heavy Shown' | 'Some Heavy' | 'Heavy Hidden';
+  heavyLabel:
+    | 'Heavy Shown'
+    | 'Some Heavy'
+    | 'Heavy Hidden'
+    | 'Heavy Topics Shown'
+    | 'Some Heavy Topics'
+    | 'Heavy Topics Hidden';
   searchActive: boolean;
 };
 const DISCOVERY_FILTER_EVENT_NAME = 'ubeeq:discovery-filters';
@@ -451,7 +457,8 @@ function HeaderAuth({
                     to="/auth/register"
                     className={`auth-nav-btn auth-nav-btn-primary${location.pathname.startsWith('/auth/register') ? ' is-active' : ''}`}
                   >
-                    Create account
+                    <span className="create-account-label-long">Create account</span>
+                    <span className="create-account-label-short">Sign Up</span>
                   </Link>
                 </div>
               </div>
@@ -505,7 +512,8 @@ function HeaderAuth({
               to="/auth/register"
               className={`auth-nav-btn auth-nav-btn-primary${location.pathname.startsWith('/auth/register') ? ' is-active' : ''}`}
             >
-              Create account
+              <span className="create-account-label-long">Create account</span>
+              <span className="create-account-label-short">Sign Up</span>
             </Link>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
@@ -1536,10 +1544,12 @@ function HomePage({
     hidePoliticsPublicAffairs: hideHeavyTopics ? true : hidePoliticsPublicAffairs,
     hideCrimeDisastersTragedy: hideHeavyTopics ? true : hideCrimeDisastersTragedy
   };
+  const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
+  const someHeavyHidden = !heavyHidden && (hidePoliticsPublicAffairs || hideCrimeDisastersTragedy);
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
-    (hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy))
-      ? 'Heavy Hidden'
-      : ((hidePoliticsPublicAffairs || hideCrimeDisastersTragedy) ? 'Some Heavy' : 'Heavy Shown')
+    densityViewport === 'mobile'
+      ? (heavyHidden ? 'Heavy Hidden' : (someHeavyHidden ? 'Some Heavy' : 'Heavy Shown'))
+      : (heavyHidden ? 'Heavy Topics Hidden' : (someHeavyHidden ? 'Some Heavy Topics' : 'Heavy Topics Shown'))
   );
 
   const clearDensityTransitionTimers = () => {
