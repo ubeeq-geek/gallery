@@ -359,10 +359,12 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     'content-type',
     'if-none-match',
     'cache-control',
+    'range',
     'x-gallery-access-token',
     'x-unlock-token',
     'x-idempotency-key'
   ];
+  const exposedHeaders = ['accept-ranges', 'content-range', 'content-length', 'content-type', 'etag'];
 
   const encodeS3LikePath = (key: string): string => key.split('/').map((part) => encodeURIComponent(part)).join('/');
   const publicMediaUrl = async (key?: string): Promise<string | undefined> => {
@@ -931,13 +933,15 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', allowedHeaders.join(','));
+    res.setHeader('Access-Control-Expose-Headers', exposedHeaders.join(','));
     res.setHeader('Access-Control-Max-Age', '600');
     return res.status(204).send();
   });
   app.use(cors({
     origin: '*',
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders
+    allowedHeaders,
+    exposedHeaders
   }));
   app.use(express.json());
   app.use(createOptionalAuthMiddleware(config));

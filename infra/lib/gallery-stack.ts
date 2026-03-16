@@ -121,8 +121,10 @@ export class GalleryStack extends Stack {
       cors: [
         {
           allowedOrigins: ['*'],
-          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.PUT],
-          allowedHeaders: ['*']
+          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD, s3.HttpMethods.PUT],
+          allowedHeaders: ['*'],
+          exposedHeaders: ['Accept-Ranges', 'Content-Range', 'Content-Length', 'Content-Type', 'ETag'],
+          maxAge: 86400
         }
       ]
     });
@@ -143,6 +145,18 @@ export class GalleryStack extends Stack {
     );
 
     const mediaOrigin = origins.S3BucketOrigin.withOriginAccessControl(mediaBucket);
+    const mediaResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, 'MediaResponseHeadersPolicy', {
+      comment: 'CORS and range headers for MP4 byte-range playback',
+      corsBehavior: {
+        accessControlAllowCredentials: false,
+        accessControlAllowHeaders: ['*'],
+        accessControlAllowMethods: ['GET', 'HEAD', 'OPTIONS'],
+        accessControlAllowOrigins: ['*'],
+        accessControlExposeHeaders: ['Accept-Ranges', 'Content-Range', 'Content-Length', 'Content-Type', 'ETag'],
+        accessControlMaxAge: Duration.days(1),
+        originOverride: true
+      }
+    });
     const publicKeyFile = process.env.CLOUDFRONT_PUBLIC_KEY_FILE;
     const privateKeyFile = process.env.CLOUDFRONT_PRIVATE_KEY_FILE;
     const cloudFrontPublicKeyPem = (
@@ -173,6 +187,7 @@ export class GalleryStack extends Stack {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        responseHeadersPolicy: mediaResponseHeadersPolicy,
         compress: true
       },
       comment: 'Ubeeq media CDN'
@@ -184,6 +199,7 @@ export class GalleryStack extends Stack {
             allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
             viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
             cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+            responseHeadersPolicy: mediaResponseHeadersPolicy,
             trustedKeyGroups: [keyGroup],
             compress: true
           },
