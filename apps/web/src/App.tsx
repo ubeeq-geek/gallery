@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api';
 import {
   changePassword,
@@ -66,6 +66,37 @@ const formatDisclosureLine = (item: {
     if (topic) parts.push(topic);
   }
   return parts.join(' • ');
+};
+const passesAiDisclosureFilter = (aiDisclosure: AiDisclosure | undefined, aiFilter: AiFilterPreference): boolean => {
+  const normalized = aiDisclosure || 'none';
+  if (aiFilter === 'hide-ai-generated') return normalized !== 'ai-generated';
+  if (aiFilter === 'hide-all-ai') return normalized === 'none';
+  return true;
+};
+const passesHeavyTopicFilter = (
+  topics: string[] | undefined,
+  options: {
+    hideHeavyTopics: boolean;
+    hidePoliticsPublicAffairs: boolean;
+    hideCrimeDisastersTragedy: boolean;
+  }
+): boolean => {
+  const normalized = topics || [];
+  if (options.hideHeavyTopics) {
+    return !normalized.includes('politics-public-affairs') && !normalized.includes('crime-disasters-tragedy');
+  }
+  if (options.hidePoliticsPublicAffairs && normalized.includes('politics-public-affairs')) return false;
+  if (options.hideCrimeDisastersTragedy && normalized.includes('crime-disasters-tragedy')) return false;
+  return true;
+};
+const matchesDiscoverySearch = (needle: string, fields: Array<string | undefined>): boolean => {
+  const trimmed = needle.trim().toLowerCase();
+  if (!trimmed) return true;
+  return fields
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .includes(trimmed);
 };
 type CollectionSummary = {
   collectionId: string;
@@ -3308,9 +3339,8 @@ function HomePage({
     </div>
   );
 }
-function GalleryPage() {
+function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   const { slug = '' } = useParams();
-  const [searchParams, setSearchParams] = useSearchParams();
   const currentUser = getCurrentUser();
   const [gallery, setGallery] = useState<Gallery | null>(null);
   const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
@@ -3340,10 +3370,37 @@ function GalleryPage() {
     premiumUrl: string;
     premiumPosterUrl?: string;
   }>>([]);
+  const [feedDensity, setFeedDensity] = useState<FeedDensity>('medium');
+  const [densityViewport, setDensityViewport] = useState<DensityViewport>(() => {
+    if (typeof window === 'undefined') return 'desktop';
+    if (window.innerWidth >= 1100) return 'desktop';
+    if (window.innerWidth >= 700) return 'tablet';
+    return 'mobile';
+  });
+  const [discoverySearch, setDiscoverySearch] = useState('');
+  const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [heavyTopicsExpanded, setHeavyTopicsExpanded] = useState(true);
+  const [galleryScope, setGalleryScope] = useState<'all' | 'preview' | 'premium'>('all');
+  const [focusedOpen, setFocusedOpen] = useState(false);
+  const [focusedItems, setFocusedItems] = useState<GalleryAsset[]>([]);
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [focusedSectionTitle, setFocusedSectionTitle] = useState('Gallery');
+  const [focusedVideoMuted, setFocusedVideoMuted] = useState(true);
+  const [focusedVideoVolume, setFocusedVideoVolume] = useState(1);
+  const focusedVideoRef = useRef<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string>('');
+
+  const densityLabel: Record<FeedDensity, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
+  const densityOptions: FeedDensity[] = densityViewport === 'desktop' ? ['small', 'medium', 'large'] : ['small', 'large'];
+  const densitySliderValue = feedDensity === 'small' ? 0 : (feedDensity === 'medium' ? 1 : 2);
+  const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
 
   const load = async () => {
     try {
+      setError('');
       const stored = getStoredGalleryAccessToken(slug);
       if (stored && stored !== rememberToken) {
         setRememberToken(stored);
@@ -3378,24 +3435,46 @@ function GalleryPage() {
     setUnlockToken('');
     setPremiumImages([]);
     setHasPremiumAccess(false);
+    setFocusedOpen(false);
     setRememberToken(getStoredGalleryAccessToken(slug) || '');
   }, [slug]);
 
   useEffect(() => {
-    const applyLimit = () => {
+    const applyResponsiveState = () => {
       const width = window.innerWidth;
       if (width >= 1280) setTeaserLimit(9);
       else if (width >= 768) setTeaserLimit(6);
       else setTeaserLimit(3);
+      if (width >= 1100) setDensityViewport('desktop');
+      else if (width >= 700) setDensityViewport('tablet');
+      else setDensityViewport('mobile');
     };
-    applyLimit();
-    window.addEventListener('resize', applyLimit);
-    return () => window.removeEventListener('resize', applyLimit);
+    applyResponsiveState();
+    window.addEventListener('resize', applyResponsiveState);
+    return () => window.removeEventListener('resize', applyResponsiveState);
   }, []);
 
   useEffect(() => {
     void load();
   }, [slug, rememberToken]);
+
+  useEffect(() => {
+    if (densityViewport !== 'desktop' && feedDensity === 'medium') {
+      setFeedDensity('large');
+    }
+  }, [densityViewport, feedDensity]);
+
+  useEffect(() => {
+    setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
+    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  }, [
+    viewerProfile?.aiFilter,
+    viewerProfile?.hideHeavyTopics,
+    viewerProfile?.hidePoliticsPublicAffairs,
+    viewerProfile?.hideCrimeDisastersTragedy
+  ]);
 
   useEffect(() => {
     if (!currentUser) {
@@ -3444,6 +3523,7 @@ function GalleryPage() {
 
   const submitComment = async () => {
     try {
+      setError('');
       if (commentIdentity.startsWith('artist:')) {
         await api.postGalleryCommentAsProfile(slug, commentBody, {
           authorProfileType: 'artist',
@@ -3461,6 +3541,7 @@ function GalleryPage() {
 
   const unlock = async () => {
     try {
+      setError('');
       const response = await api.unlockGallery(slug, password);
       setUnlockToken(response.unlockToken);
       if (response.rememberToken) {
@@ -3530,184 +3611,466 @@ function GalleryPage() {
     }
   };
 
+  const applyHideAllHeavyTopics = (enabled: boolean) => {
+    setHideHeavyTopics(enabled);
+    setHidePoliticsPublicAffairs(enabled);
+    setHideCrimeDisastersTragedy(enabled);
+  };
+
+  const applyHidePoliticsPublicAffairs = (enabled: boolean) => {
+    setHidePoliticsPublicAffairs(enabled);
+    setHideHeavyTopics(enabled && hideCrimeDisastersTragedy);
+  };
+
+  const applyHideCrimeDisastersTragedy = (enabled: boolean) => {
+    setHideCrimeDisastersTragedy(enabled);
+    setHideHeavyTopics(enabled && hidePoliticsPublicAffairs);
+  };
+
+  const previewItems = gallery?.media || [];
+  const teaserItems: GalleryAsset[] = (gallery?.premiumTeaserMedia || []).map((item) => ({
+    imageId: item.imageId,
+    assetType: item.assetType,
+    effectiveContentRating: item.effectiveContentRating,
+    displayedContentRating: item.displayedContentRating,
+    blurred: item.blurred,
+    effectiveAiDisclosure: item.effectiveAiDisclosure,
+    displayedAiDisclosure: item.displayedAiDisclosure,
+    effectiveHeavyTopics: item.effectiveHeavyTopics,
+    displayedHeavyTopics: item.displayedHeavyTopics,
+    previewUrl: item.previewUrl,
+    previewPosterUrl: item.previewPosterUrl,
+    favoriteCount: 0
+  }));
+  const premiumItems: GalleryAsset[] = premiumImages.map((item) => ({
+    imageId: item.imageId,
+    assetType: item.assetType,
+    effectiveContentRating: item.effectiveContentRating,
+    displayedContentRating: item.displayedContentRating,
+    blurred: item.blurred,
+    effectiveAiDisclosure: item.effectiveAiDisclosure,
+    displayedAiDisclosure: item.displayedAiDisclosure,
+    effectiveHeavyTopics: item.effectiveHeavyTopics,
+    displayedHeavyTopics: item.displayedHeavyTopics,
+    previewUrl: item.premiumUrl,
+    previewPosterUrl: item.premiumPosterUrl,
+    favoriteCount: 0
+  }));
+
+  const filterItems = (items: GalleryAsset[]): GalleryAsset[] => items.filter((item) => (
+    passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
+    && passesHeavyTopicFilter(item.effectiveHeavyTopics, {
+      hideHeavyTopics,
+      hidePoliticsPublicAffairs,
+      hideCrimeDisastersTragedy
+    })
+    && matchesDiscoverySearch(discoverySearch, [
+      item.imageId,
+      item.displayedContentRating,
+      item.displayedAiDisclosure,
+      ...(item.displayedHeavyTopics || [])
+    ])
+  ));
+
+  const filteredPreviewItems = filterItems(previewItems);
+  const filteredTeaserItems = filterItems(teaserItems).slice(0, teaserLimit);
+  const filteredPremiumItems = filterItems(premiumItems);
+
+  const mediaColumns = (() => {
+    if (feedDensity === 'large') return 1;
+    if (feedDensity === 'medium') return densityViewport === 'mobile' ? 1 : 2;
+    if (densityViewport === 'desktop') return 3;
+    if (densityViewport === 'tablet') return 2;
+    return 1;
+  })();
+  const mediaAspect = feedDensity === 'small' ? 1 : (feedDensity === 'medium' ? 1.05 : 1.28);
+  const pseudoViewCount = (index: number): string => `${(1.8 + (index % 8) * 0.19).toFixed(1)}k`;
+  const hasPremiumSegments = gallery ? (gallery.visibility !== 'free' || teaserItems.length > 0 || premiumItems.length > 0) : false;
+  const showPreviewSection = galleryScope !== 'premium';
+  const showPremiumSection = galleryScope !== 'preview' && hasPremiumSegments;
+
+  const openFocusedViewer = (items: GalleryAsset[], imageId: string, sectionTitle: string) => {
+    const available = items.filter((item) => Boolean(item.previewUrl));
+    if (available.length === 0) return;
+    setFocusedItems(available);
+    setFocusedSectionTitle(sectionTitle);
+    setFocusedIndex(Math.max(0, available.findIndex((item) => item.imageId === imageId)));
+    setFocusedOpen(true);
+  };
+
+  const closeFocusedViewer = () => setFocusedOpen(false);
+  const focusedItem = focusedItems[focusedIndex] || null;
+  const focusedHasPrevious = focusedIndex > 0;
+  const focusedHasNext = focusedIndex >= 0 && focusedIndex < focusedItems.length - 1;
+
+  useEffect(() => {
+    const video = focusedVideoRef.current;
+    if (!video || focusedItem?.assetType !== 'video') return;
+    const clamped = Math.max(0, Math.min(1, focusedVideoVolume));
+    if (Math.abs(video.volume - clamped) > 0.001) video.volume = clamped;
+    if (video.muted !== focusedVideoMuted) video.muted = focusedVideoMuted;
+  }, [focusedItem?.assetType, focusedItem?.imageId, focusedVideoMuted, focusedVideoVolume]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const video = focusedVideoRef.current;
+    if (!focusedOpen || !video || focusedItem?.assetType !== 'video') return undefined;
+    let disposed = false;
+    const safePlay = () => {
+      if (disposed) return;
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => undefined);
+    };
+    const observer = new window.IntersectionObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+        safePlay();
+      } else if (!video.paused) {
+        video.pause();
+      }
+    }, { threshold: [0.2, 0.6, 0.9] });
+    observer.observe(video);
+    safePlay();
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      if (!video.paused) video.pause();
+    };
+  }, [focusedOpen, focusedItem?.assetType, focusedItem?.imageId]);
+
+  useEffect(() => {
+    if (!focusedOpen || typeof window === 'undefined') return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeFocusedViewer();
+        return;
+      }
+      if (event.key === 'ArrowLeft' && focusedHasPrevious) {
+        setFocusedIndex((index) => Math.max(0, index - 1));
+      }
+      if (event.key === 'ArrowRight' && focusedHasNext) {
+        setFocusedIndex((index) => Math.min(focusedItems.length - 1, index + 1));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [focusedOpen, focusedHasPrevious, focusedHasNext, focusedItems.length]);
+
   if (!gallery) return <div className="layout">Loading...</div>;
 
-  const setFocusedImage = (imageId?: string) => {
-    const next = new URLSearchParams(searchParams);
-    if (imageId) next.set('image', imageId);
-    else next.delete('image');
-    setSearchParams(next, { replace: true });
-  };
-  const focusedImageId = searchParams.get('image') || '';
-  const mediaItems = gallery.media || [];
-  const focusedIndex = focusedImageId ? mediaItems.findIndex((item) => item.imageId === focusedImageId) : -1;
-  const resolvedFocusedIndex = focusedIndex >= 0 ? focusedIndex : (mediaItems.length ? 0 : -1);
-  const focusedMedia = resolvedFocusedIndex >= 0 ? mediaItems[resolvedFocusedIndex] : null;
-  const previousMedia = resolvedFocusedIndex > 0 ? mediaItems[resolvedFocusedIndex - 1] : null;
-  const nextMedia = resolvedFocusedIndex >= 0 && resolvedFocusedIndex < mediaItems.length - 1 ? mediaItems[resolvedFocusedIndex + 1] : null;
-
-  return (
-    <div className="layout">
-      <Link to="/">Back</Link>
-      <h1>{gallery.title}</h1>
-      {currentUser && (
-        <div className="inline-form">
-          <label className="small">Favorite as</label>
-          <select
-            className="settings-select"
-            value={favoriteIdentity}
-            onChange={(e) => setFavoriteIdentity(e.target.value)}
-          >
-            <option value="user">User Profile</option>
-                {managedArtists.map((artist) => (
-                  <option key={`favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
-                    Artist: {artist.name}
-                  </option>
-                ))}
-              </select>
-              <label className="small">Add to collection</label>
-              <select
-                className="settings-select"
-                value={selectedCollectionId}
-                onChange={(e) => setSelectedCollectionId(e.target.value)}
-              >
-                <option value="">Select collection</option>
-                {profileCollections.map((item) => (
-                  <option key={`gallery-collection-${item.collectionId}`} value={item.collectionId}>
-                    {item.title}
-                  </option>
-                ))}
-              </select>
-        </div>
-      )}
-      {gallery.coverPreviewUrl && (
-        <img
-          src={gallery.coverPreviewUrl}
-          alt={`${gallery.title} cover`}
-          className={gallery.coverBlur ? 'blur-md' : ''}
-          style={{ maxHeight: '320px', width: '100%', objectFit: 'cover', borderRadius: '0.75rem' }}
-        />
-      )}
-      <button onClick={favoriteGallery}>
-        {favoriteGallerySelected ? 'Unfavorite Gallery' : 'Favorite Gallery'} ({gallery.favoriteCount})
-      </button>
-      {focusedMedia && (
-        <section className="panel">
-          <div className="discovery-section-header">
-            <h2>Focused View</h2>
-            <div className="inline-form">
-              <button disabled={!previousMedia} onClick={() => setFocusedImage(previousMedia?.imageId)}>Previous</button>
-              <button disabled={!nextMedia} onClick={() => setFocusedImage(nextMedia?.imageId)}>Next</button>
-            </div>
-          </div>
-          {focusedMedia.assetType === 'video'
-            ? <video controls poster={focusedMedia.previewPosterUrl} style={{ width: '100%', maxHeight: '70vh', borderRadius: '0.75rem', background: '#000', filter: focusedMedia.blurred ? 'blur(28px)' : undefined }}><source src={focusedMedia.previewUrl} /></video>
-            : (
-              <img
-                src={focusedMedia.thumbnailUrls?.w1280 || focusedMedia.thumbnailUrls?.w640 || focusedMedia.previewUrl}
-                srcSet={[
-                  focusedMedia.thumbnailUrls?.w320 ? `${focusedMedia.thumbnailUrls.w320} 320w` : '',
-                  focusedMedia.thumbnailUrls?.w640 ? `${focusedMedia.thumbnailUrls.w640} 640w` : '',
-                  focusedMedia.thumbnailUrls?.w1280 ? `${focusedMedia.thumbnailUrls.w1280} 1280w` : '',
-                  focusedMedia.thumbnailUrls?.w1920 ? `${focusedMedia.thumbnailUrls.w1920} 1920w` : ''
-                ].filter(Boolean).join(', ')}
-                sizes="100vw"
-                alt={focusedMedia.imageId}
-                style={{
-                  width: '100%',
-                  maxHeight: '70vh',
-                  objectFit: 'contain',
-                  borderRadius: '0.75rem',
-                  background: '#111827',
-                  filter: focusedMedia.blurred ? 'blur(28px)' : undefined
-                }}
-              />
-            )}
-          {focusedMedia.blurred && <p className="small">Mature Content</p>}
-          {!focusedMedia.blurred && focusedMedia.displayedContentRating && <p className="small">{focusedMedia.displayedContentRating}</p>}
-          {formatDisclosureLine(focusedMedia) && <p className="small">{formatDisclosureLine(focusedMedia)}</p>}
-          <p className="small">Item {resolvedFocusedIndex + 1} of {mediaItems.length}</p>
-        </section>
-      )}
-      <h2>Preview Media</h2>
-      <div className="grid three">
-        {gallery.media.map((image) => (
-          <article key={image.imageId} className="image-card">
-            {image.assetType === 'video'
-              ? <video controls poster={image.previewPosterUrl} style={{ filter: image.blurred ? 'blur(24px)' : undefined }}><source src={image.previewUrl} /></video>
+  const renderGalleryCard = (
+    item: GalleryAsset,
+    cardIndex: number,
+    sourceItems: GalleryAsset[],
+    sectionTitle: string,
+    previewTag: boolean
+  ) => {
+    const fallbackPosterUrl = item.previewPosterUrl || (item.assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
+    const disclosureLine = formatDisclosureLine(item);
+    return (
+      <article key={`${sectionTitle}-${item.imageId}`} className="discovery-feature-card gallery-discovery-card" style={{ '--media-aspect': mediaAspect.toFixed(3) } as any}>
+        <button
+          type="button"
+          className="discovery-feature-link discovery-feature-link-btn no-underline"
+          onClick={() => openFocusedViewer(sourceItems, item.imageId, sectionTitle)}
+        >
+          <div className="discovery-feature-media no-crop" style={{ aspectRatio: `${mediaAspect} / 1` }}>
+            {(item.assetType === 'video' && !fallbackPosterUrl)
+              ? (
+                <video
+                  src={item.previewUrl}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  style={{
+                    objectPosition: 'center center',
+                    filter: item.blurred ? 'blur(28px)' : undefined
+                  }}
+                />
+              )
               : (
                 <img
-                  src={image.thumbnailUrls?.w640 || image.thumbnailUrls?.w320 || image.previewUrl}
-                  srcSet={[
-                    image.thumbnailUrls?.w320 ? `${image.thumbnailUrls.w320} 320w` : '',
-                    image.thumbnailUrls?.w640 ? `${image.thumbnailUrls.w640} 640w` : '',
-                    image.thumbnailUrls?.w1280 ? `${image.thumbnailUrls.w1280} 1280w` : ''
-                  ].filter(Boolean).join(', ')}
-                  sizes="(max-width: 768px) 100vw, 33vw"
-                  alt="Preview"
-                  loading="lazy"
-                  style={{ filter: image.blurred ? 'blur(24px)' : undefined }}
+                  src={item.assetType === 'video' ? (fallbackPosterUrl || '') : item.previewUrl}
+                  alt={item.imageId}
+                  loading={cardIndex < 2 ? 'eager' : 'lazy'}
+                  fetchPriority={cardIndex < 2 ? 'high' : 'low'}
+                  decoding="async"
+                  style={{
+                    objectPosition: 'center center',
+                    filter: item.blurred ? 'blur(28px)' : undefined
+                  }}
                 />
               )}
-            <button onClick={() => setFocusedImage(image.imageId)}>
-              {focusedImageId === image.imageId ? 'Viewing' : 'View Focus'}
+            {previewTag && <span className="discovery-chip">Preview</span>}
+            {item.assetType === 'video' && <span className="discovery-chip" style={{ left: 'unset', right: previewTag ? '8.2rem' : '1rem' }}>Video</span>}
+            {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
+          </div>
+        </button>
+        <div className="discovery-feature-footer">
+          <div className="discovery-feature-text">
+            <h3 className="discovery-feature-title">{item.imageId}</h3>
+            <p className="discovery-feature-subtitle">{item.displayedContentRating || 'General'}</p>
+            {disclosureLine && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
+          </div>
+          <div className="discovery-feature-stats">
+            <span>❤ {item.favoriteCount || 0}</span>
+            <span>👁 {pseudoViewCount(cardIndex)}</span>
+            <span>{previewTag ? 'Preview' : 'Premium'}</span>
+          </div>
+          <div className="discovery-feature-actions">
+            <button
+              type="button"
+              className="discovery-quick-view-link discovery-quick-view-btn no-underline"
+              onClick={() => openFocusedViewer(sourceItems, item.imageId, sectionTitle)}
+            >
+              Quick view
             </button>
-            <small>{image.displayedContentRating || 'General'}</small>
-            {formatDisclosureLine(image) && <small>{formatDisclosureLine(image)}</small>}
-            <small>Likes: {image.favoriteCount}</small>
-            <div className="inline-form">
-              <button onClick={() => void toggleImageFavorite(image.imageId)}>
-                {favoriteImageIds.has(image.imageId) ? 'Unfavorite Image' : 'Favorite Image'}
+            {currentUser && (
+              <button
+                className="auth-secondary-btn discovery-inline-btn"
+                onClick={() => void toggleImageFavorite(item.imageId)}
+              >
+                {favoriteImageIds.has(item.imageId) ? 'Unfavorite' : 'Favorite'}
               </button>
-              {selectedCollectionId && (
-                <button onClick={() => void addImageToCollection(image.imageId)}>Add to Collection</button>
-              )}
-            </div>
-          </article>
-        ))}
-      </div>
+            )}
+            {selectedCollectionId && (
+              <button className="auth-secondary-btn discovery-inline-btn" onClick={() => void addImageToCollection(item.imageId)}>
+                Add to collection
+              </button>
+            )}
+          </div>
+        </div>
+      </article>
+    );
+  };
 
-      {gallery.visibility === 'preview' && !gallery.hasAccess && (
-        <section>
-          <h2>Premium Preview</h2>
+  return (
+    <div className="layout discovery-layout">
+      <section className="panel discovery-hero">
+        <div>
+          <h1>{gallery.title}</h1>
+          <p>
+            Discovery-style gallery browsing with focused view modal, filtering, and separate preview/premium media sections.
+          </p>
+        </div>
+        <div className="discovery-hero-actions">
+          <Link to="/" className="auth-secondary-btn no-underline">Back to discovery</Link>
+          <button className="auth-primary-btn" onClick={favoriteGallery}>
+            {favoriteGallerySelected ? 'Unfavorite gallery' : 'Favorite gallery'} ({gallery.favoriteCount})
+          </button>
+        </div>
+      </section>
+
+      <section className="discovery-editorial-section">
+        <div className="discovery-section-header">
+          <h2>Gallery Discovery View</h2>
+        </div>
+        <div className="discovery-filter-shell">
+          <div className="discovery-filter-grid">
+            <div className="discovery-filter-left">
+              <div>
+                <div className="discovery-filter-label">Gallery media</div>
+                <div className="discovery-trending-filter">
+                  <button className={`discovery-pill-btn${galleryScope === 'all' ? ' is-active' : ''}`} onClick={() => setGalleryScope('all')}>All</button>
+                  <button className={`discovery-pill-btn${galleryScope === 'preview' ? ' is-active' : ''}`} onClick={() => setGalleryScope('preview')}>Preview</button>
+                  <button
+                    className={`discovery-pill-btn${galleryScope === 'premium' ? ' is-active' : ''}`}
+                    onClick={() => setGalleryScope('premium')}
+                    disabled={!hasPremiumSegments}
+                  >
+                    Premium
+                  </button>
+                </div>
+              </div>
+              <div className="discovery-heavy-card">
+                <div className="discovery-heavy-head">
+                  <label className="discovery-heavy-row is-primary">
+                    <input
+                      type="checkbox"
+                      checked={hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy)}
+                      onChange={(e) => applyHideAllHeavyTopics(e.target.checked)}
+                    />
+                    <span>Hide all heavy topics</span>
+                  </label>
+                  <button
+                    type="button"
+                    className={`discovery-heavy-toggle${heavyTopicsExpanded ? ' is-expanded' : ''}`}
+                    onClick={() => setHeavyTopicsExpanded((prev) => !prev)}
+                    aria-label={heavyTopicsExpanded ? 'Collapse heavy topics options' : 'Expand heavy topics options'}
+                  >
+                    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                      <path d="M6 12L10 8L14 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+                {heavyTopicsExpanded && (
+                  <div className="discovery-heavy-body">
+                    <label className="discovery-heavy-row">
+                      <input
+                        type="checkbox"
+                        checked={hidePoliticsPublicAffairs}
+                        onChange={(e) => applyHidePoliticsPublicAffairs(e.target.checked)}
+                      />
+                      <span>{heavyTopicLabels['politics-public-affairs']}</span>
+                    </label>
+                    <label className="discovery-heavy-row">
+                      <input
+                        type="checkbox"
+                        checked={hideCrimeDisastersTragedy}
+                        onChange={(e) => applyHideCrimeDisastersTragedy(e.target.checked)}
+                      />
+                      <span>{heavyTopicLabels['crime-disasters-tragedy']}</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="discovery-filter-right">
+              <div className="discovery-density-card">
+                <div className="discovery-density-head">
+                  <span>Feed density</span>
+                  <strong>{densityLabel[feedDensity]}</strong>
+                </div>
+                {densityViewport === 'desktop' && (
+                  <input
+                    className="discovery-density-range"
+                    type="range"
+                    min={0}
+                    max={2}
+                    step={1}
+                    value={densitySliderValue}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setFeedDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
+                    }}
+                  />
+                )}
+                <div className={`discovery-density-options${densityOptions.length === 2 ? ' is-two' : ''}`}>
+                  {densityOptions.map((option) => (
+                    <button
+                      key={`gallery-density-${option}`}
+                      type="button"
+                      className={feedDensity === option ? 'is-active' : ''}
+                      onClick={() => setFeedDensity(option)}
+                    >
+                      {densityLabel[option]}
+                    </button>
+                  ))}
+                </div>
+                <p className="small m-0">
+                  Gallery and artist pages use fixed discovery frames, not dynamic aspect-ratio pair rows.
+                </p>
+              </div>
+
+              <div className="discovery-search-card">
+                <div className="discovery-filter-label">Search</div>
+                <div className="discovery-search-input-wrap">
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path d="M9 4.25a4.75 4.75 0 103.78 7.64l2.16 2.16a.75.75 0 101.06-1.06l-2.16-2.16A4.75 4.75 0 009 4.25z" fill="currentColor" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={discoverySearch}
+                    onChange={(e) => setDiscoverySearch(e.target.value)}
+                    placeholder="Search media IDs and disclosures..."
+                  />
+                </div>
+                {currentUser && (
+                  <div className="discovery-favorite-context">
+                    <label className="small">Favorite as</label>
+                    <select
+                      className="settings-select"
+                      value={favoriteIdentity}
+                      onChange={(e) => setFavoriteIdentity(e.target.value)}
+                    >
+                      <option value="user">User Profile</option>
+                      {managedArtists.map((artist) => (
+                        <option key={`favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
+                          Artist: {artist.name}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="small">Add to collection</label>
+                    <select
+                      className="settings-select"
+                      value={selectedCollectionId}
+                      onChange={(e) => setSelectedCollectionId(e.target.value)}
+                    >
+                      <option value="">Select collection</option>
+                      {profileCollections.map((item) => (
+                        <option key={`gallery-collection-${item.collectionId}`} value={item.collectionId}>
+                          {item.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {showPreviewSection && (
+        <section className="discovery-editorial-section">
+          <div className="discovery-section-header">
+            <h2>Preview Media</h2>
+          </div>
+          <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
+            {filteredPreviewItems.map((item, index) => renderGalleryCard(item, index, filteredPreviewItems, 'Preview Media', true))}
+          </div>
+          {filteredPreviewItems.length === 0 && <p className="small">No preview media matches your filters.</p>}
+        </section>
+      )}
+
+      {showPremiumSection && gallery.visibility === 'preview' && !gallery.hasAccess && (
+        <section className="discovery-editorial-section">
+          <div className="discovery-section-header">
+            <h2>Premium Preview</h2>
+          </div>
           <div className="premium-preview-cta">
             <a href={gallery.purchaseUrl || '#'} target="_blank" rel="noreferrer" className="inline-block rounded-xl bg-black/80 px-8 py-4 text-white no-underline">
               Purchase Premium Access
             </a>
           </div>
-          <div className="relative">
-            <div className="grid three">
-              {(gallery.premiumTeaserMedia || []).slice(0, teaserLimit).map((item) => (
-                item.assetType === 'video'
-                  ? <video key={item.imageId} controls={false} poster={item.previewPosterUrl} style={{ filter: item.blurred ? 'blur(24px)' : undefined }}><source src={item.previewUrl} /></video>
-                  : <img key={item.imageId} src={item.previewUrl} alt="Premium teaser" style={{ filter: item.blurred ? 'blur(24px)' : undefined }} />
-              ))}
-            </div>
+          <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
+            {filteredTeaserItems.map((item, index) => renderGalleryCard(item, index, filteredTeaserItems, 'Premium Preview', true))}
           </div>
+          {filteredTeaserItems.length === 0 && <p className="small">No premium preview media matches your filters.</p>}
         </section>
       )}
 
-      {gallery.visibility === 'premium' && (
-        <section>
-          <h2>Premium Content</h2>
+      {showPremiumSection && gallery.visibility === 'premium' && (
+        <section className="discovery-editorial-section">
+          <div className="discovery-section-header">
+            <h2>Premium Content</h2>
+          </div>
           {!hasPremiumAccess && (
             <div className="inline-form">
               <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter gallery password" />
               <button onClick={unlock}>Unlock</button>
             </div>
           )}
-          <div className="grid three">
-            {premiumImages.map((image) => (
-              image.assetType === 'video'
-                ? <video key={image.imageId} controls poster={image.premiumPosterUrl} style={{ filter: image.blurred ? 'blur(24px)' : undefined }}><source src={image.premiumUrl} /></video>
-                : <img key={image.imageId} src={image.premiumUrl} alt="Premium" style={{ filter: image.blurred ? 'blur(24px)' : undefined }} />
-            ))}
-          </div>
-          {premiumImages.some((item) => item.blurred) && <p className="small">Some items are blurred due to content rating settings.</p>}
+          {hasPremiumAccess && (
+            <>
+              <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
+                {filteredPremiumItems.map((item, index) => renderGalleryCard(item, index, filteredPremiumItems, 'Premium Content', false))}
+              </div>
+              {filteredPremiumItems.length === 0 && <p className="small">No premium media matches your filters.</p>}
+            </>
+          )}
+          {premiumItems.some((item) => item.blurred) && <p className="small">Some items are blurred due to content rating settings.</p>}
         </section>
       )}
 
-      <section>
+      <section className="panel">
         <h2>Comments</h2>
         <div className="inline-form">
           {currentUser && (
@@ -3736,7 +4099,79 @@ function GalleryPage() {
         ))}
       </section>
 
+      {focusedOpen && (
+        <div className="discovery-focus-modal-layer" onClick={closeFocusedViewer}>
+          <div className="discovery-focus-modal" role="dialog" aria-modal="true" aria-label="Focused media viewer" onClick={(e) => e.stopPropagation()}>
+            <div className="discovery-focus-modal-header">
+              <div className="discovery-focus-modal-title-wrap">
+                <span className="discovery-focus-modal-title-id">{focusedItem?.imageId || gallery.title}</span>
+                <span className="discovery-focus-modal-title-gallery">{focusedSectionTitle}</span>
+              </div>
+              <div className="discovery-focus-modal-meta">
+                <span>{focusedItem?.displayedContentRating || 'General'}</span>
+                {focusedItem && formatDisclosureLine(focusedItem) && <span>{formatDisclosureLine(focusedItem)}</span>}
+                <span>{Math.max(1, focusedIndex + 1)} / {Math.max(1, focusedItems.length)}</span>
+              </div>
+              <div className="discovery-focus-modal-actions">
+                <button
+                  type="button"
+                  className="auth-secondary-btn"
+                  disabled={!focusedHasPrevious}
+                  onClick={() => setFocusedIndex((index) => Math.max(0, index - 1))}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  className="auth-secondary-btn"
+                  disabled={!focusedHasNext}
+                  onClick={() => setFocusedIndex((index) => Math.min(focusedItems.length - 1, index + 1))}
+                >
+                  Next
+                </button>
+              </div>
+              <button type="button" className="discovery-focus-modal-close" onClick={closeFocusedViewer} aria-label="Close focused viewer">
+                ✕
+              </button>
+            </div>
+            <div className="discovery-focus-modal-media">
+              {focusedItem && (
+                focusedItem.assetType === 'video'
+                  ? (
+                    <video
+                      key={focusedItem.imageId}
+                      ref={focusedVideoRef}
+                      autoPlay
+                      controls
+                      playsInline
+                      muted={focusedVideoMuted}
+                      poster={focusedItem.previewPosterUrl}
+                      style={{ filter: focusedItem.blurred ? 'blur(28px)' : undefined }}
+                      onVolumeChange={(event) => {
+                        const target = event.currentTarget;
+                        setFocusedVideoMuted(target.muted);
+                        setFocusedVideoVolume(Math.max(0, Math.min(1, target.volume)));
+                      }}
+                    >
+                      <source src={focusedItem.previewUrl} />
+                    </video>
+                  )
+                  : (
+                    <img
+                      src={focusedItem.thumbnailUrls?.w1280 || focusedItem.thumbnailUrls?.w640 || focusedItem.previewUrl}
+                      alt={focusedItem.imageId || 'Focused media'}
+                      style={{ filter: focusedItem.blurred ? 'blur(28px)' : undefined }}
+                    />
+                  )
+              )}
+              {!focusedItem && <div className="small">No media selected.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
       {error && <p className="error">{error}</p>}
+      {heavyHidden && <p className="small">Heavy topics are hidden by your filter settings.</p>}
     </div>
   );
 }
@@ -4119,7 +4554,7 @@ function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null })
   );
 }
 
-function ArtistProfilePage() {
+function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | null }) {
   const { slug = '' } = useParams();
   const [profile, setProfile] = useState<ArtistProfilePayload | null>(null);
   const [period, setPeriod] = useState<'hourly' | 'daily'>('daily');
@@ -4128,7 +4563,43 @@ function ArtistProfilePage() {
   const [trendingLoading, setTrendingLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [feedDensity, setFeedDensity] = useState<FeedDensity>('medium');
+  const [densityViewport, setDensityViewport] = useState<DensityViewport>(() => {
+    if (typeof window === 'undefined') return 'desktop';
+    if (window.innerWidth >= 1100) return 'desktop';
+    if (window.innerWidth >= 700) return 'tablet';
+    return 'mobile';
+  });
+  const [discoverySearch, setDiscoverySearch] = useState('');
+  const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [heavyTopicsExpanded, setHeavyTopicsExpanded] = useState(true);
+  const [focusedOpen, setFocusedOpen] = useState(false);
+  const [focusedItems, setFocusedItems] = useState<GalleryAsset[]>([]);
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [focusedGallerySlug, setFocusedGallerySlug] = useState('');
+  const [focusedGalleryTitle, setFocusedGalleryTitle] = useState('');
+  const [focusedLoading, setFocusedLoading] = useState(false);
+  const [focusedError, setFocusedError] = useState('');
+  const [focusedVideoMuted, setFocusedVideoMuted] = useState(true);
+  const [focusedVideoVolume, setFocusedVideoVolume] = useState(1);
+  const focusedVideoRef = useRef<HTMLVideoElement | null>(null);
+  const focusedRequestRef = useRef(0);
   const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
+
+  const densityLabel: Record<FeedDensity, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
+  const densityOptions: FeedDensity[] = densityViewport === 'desktop' ? ['small', 'medium', 'large'] : ['small', 'large'];
+  const densitySliderValue = feedDensity === 'small' ? 0 : (feedDensity === 'medium' ? 1 : 2);
+  const cardAspect = feedDensity === 'small' ? 1 : (feedDensity === 'medium' ? 1.05 : 1.28);
+  const mediaColumns = (() => {
+    if (feedDensity === 'large') return 1;
+    if (feedDensity === 'medium') return densityViewport === 'mobile' ? 1 : 2;
+    if (densityViewport === 'desktop') return 3;
+    if (densityViewport === 'tablet') return 2;
+    return 1;
+  })();
 
   const loadProfile = async () => {
     try {
@@ -4168,8 +4639,247 @@ function ArtistProfilePage() {
     void loadTrending(false);
   }, [period, slug, profile?.artistId]);
 
+  useEffect(() => {
+    const applyViewport = () => {
+      const width = window.innerWidth;
+      if (width >= 1100) setDensityViewport('desktop');
+      else if (width >= 700) setDensityViewport('tablet');
+      else setDensityViewport('mobile');
+    };
+    applyViewport();
+    window.addEventListener('resize', applyViewport);
+    return () => window.removeEventListener('resize', applyViewport);
+  }, []);
+
+  useEffect(() => {
+    if (densityViewport !== 'desktop' && feedDensity === 'medium') {
+      setFeedDensity('large');
+    }
+  }, [densityViewport, feedDensity]);
+
+  useEffect(() => {
+    setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
+    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  }, [
+    viewerProfile?.aiFilter,
+    viewerProfile?.hideHeavyTopics,
+    viewerProfile?.hidePoliticsPublicAffairs,
+    viewerProfile?.hideCrimeDisastersTragedy
+  ]);
+
+  const applyHideAllHeavyTopics = (enabled: boolean) => {
+    setHideHeavyTopics(enabled);
+    setHidePoliticsPublicAffairs(enabled);
+    setHideCrimeDisastersTragedy(enabled);
+  };
+  const applyHidePoliticsPublicAffairs = (enabled: boolean) => {
+    setHidePoliticsPublicAffairs(enabled);
+    setHideHeavyTopics(enabled && hideCrimeDisastersTragedy);
+  };
+  const applyHideCrimeDisastersTragedy = (enabled: boolean) => {
+    setHideCrimeDisastersTragedy(enabled);
+    setHideHeavyTopics(enabled && hidePoliticsPublicAffairs);
+  };
+
+  const toFocusedAsset = (item: TrendingImage): GalleryAsset => ({
+    imageId: item.imageId,
+    assetType: item.assetType === 'video' ? 'video' : 'image',
+    effectiveContentRating: item.effectiveContentRating,
+    displayedContentRating: item.displayedContentRating,
+    blurred: item.blurred,
+    effectiveAiDisclosure: item.effectiveAiDisclosure,
+    displayedAiDisclosure: item.displayedAiDisclosure,
+    effectiveHeavyTopics: item.effectiveHeavyTopics,
+    displayedHeavyTopics: item.displayedHeavyTopics,
+    previewUrl: item.previewUrl,
+    previewPosterUrl: item.previewPosterUrl,
+    favoriteCount: item.favoriteCount || 0
+  });
+
+  const openFocusedViewer = async (item: TrendingImage) => {
+    const fallback = toFocusedAsset(item);
+    setFocusedOpen(true);
+    setFocusedGallerySlug(item.gallerySlug || '');
+    setFocusedGalleryTitle(item.title || 'Artwork');
+    setFocusedItems([fallback]);
+    setFocusedIndex(0);
+    setFocusedError('');
+    if (!item.gallerySlug) {
+      setFocusedLoading(false);
+      return;
+    }
+    const requestId = focusedRequestRef.current + 1;
+    focusedRequestRef.current = requestId;
+    setFocusedLoading(true);
+    try {
+      const response = await api.getGallery(item.gallerySlug) as Gallery;
+      if (focusedRequestRef.current !== requestId) return;
+      const media = (response.media || []).filter((asset) => Boolean(asset.previewUrl));
+      const nextItems = media.length > 0 ? media : [fallback];
+      const focusedAssetIndex = Math.max(0, nextItems.findIndex((asset) => asset.imageId === item.imageId));
+      setFocusedGalleryTitle(response.title || item.title || 'Artwork');
+      setFocusedItems(nextItems);
+      setFocusedIndex(focusedAssetIndex);
+      setFocusedError('');
+    } catch (e) {
+      if (focusedRequestRef.current !== requestId) return;
+      setFocusedError((e as Error).message || 'Could not load gallery media');
+    } finally {
+      if (focusedRequestRef.current === requestId) {
+        setFocusedLoading(false);
+      }
+    }
+  };
+
+  const closeFocusedViewer = () => {
+    setFocusedOpen(false);
+    setFocusedLoading(false);
+    setFocusedError('');
+    focusedRequestRef.current += 1;
+  };
+
+  const filteredTrending = trending.filter((item) => (
+    passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
+    && passesHeavyTopicFilter(item.effectiveHeavyTopics, {
+      hideHeavyTopics,
+      hidePoliticsPublicAffairs,
+      hideCrimeDisastersTragedy
+    })
+    && matchesDiscoverySearch(discoverySearch, [
+      item.title,
+      item.artistName,
+      item.gallerySlug,
+      item.displayedContentRating,
+      item.displayedAiDisclosure,
+      ...(item.displayedHeavyTopics || [])
+    ])
+  ));
+
+  const focusedItem = focusedItems[focusedIndex] || null;
+  const focusedHasPrevious = focusedIndex > 0;
+  const focusedHasNext = focusedIndex >= 0 && focusedIndex < focusedItems.length - 1;
+
+  useEffect(() => {
+    const video = focusedVideoRef.current;
+    if (!video || focusedItem?.assetType !== 'video') return;
+    const clamped = Math.max(0, Math.min(1, focusedVideoVolume));
+    if (Math.abs(video.volume - clamped) > 0.001) video.volume = clamped;
+    if (video.muted !== focusedVideoMuted) video.muted = focusedVideoMuted;
+  }, [focusedItem?.assetType, focusedItem?.imageId, focusedVideoMuted, focusedVideoVolume]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const video = focusedVideoRef.current;
+    if (!focusedOpen || !video || focusedItem?.assetType !== 'video') return undefined;
+    let disposed = false;
+    const safePlay = () => {
+      if (disposed) return;
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => undefined);
+    };
+    const observer = new window.IntersectionObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+        safePlay();
+      } else if (!video.paused) {
+        video.pause();
+      }
+    }, { threshold: [0.2, 0.6, 0.9] });
+    observer.observe(video);
+    safePlay();
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      if (!video.paused) video.pause();
+    };
+  }, [focusedOpen, focusedItem?.assetType, focusedItem?.imageId]);
+
+  useEffect(() => {
+    if (!focusedOpen || typeof window === 'undefined') return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeFocusedViewer();
+        return;
+      }
+      if (event.key === 'ArrowLeft' && focusedHasPrevious) {
+        setFocusedIndex((index) => Math.max(0, index - 1));
+      }
+      if (event.key === 'ArrowRight' && focusedHasNext) {
+        setFocusedIndex((index) => Math.min(focusedItems.length - 1, index + 1));
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [focusedOpen, focusedHasPrevious, focusedHasNext, focusedItems.length]);
+
   if (loading && !profile) return <div className="layout">Loading...</div>;
   if (!profile) return <div className="layout">{error || 'Artist not found'}</div>;
+
+  const renderArtistCard = (item: TrendingImage, index: number) => {
+    const fallbackPosterUrl = item.previewPosterUrl || (item.assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
+    const disclosureLine = formatDisclosureLine(item);
+    const isPreview = item.galleryVisibility !== 'free';
+    return (
+      <article key={item.imageId} className="discovery-feature-card gallery-discovery-card" style={{ '--media-aspect': cardAspect.toFixed(3) } as any}>
+        <button
+          type="button"
+          className="discovery-feature-link discovery-feature-link-btn no-underline"
+          onClick={() => void openFocusedViewer(item)}
+        >
+          <div className="discovery-feature-media no-crop" style={{ aspectRatio: `${cardAspect} / 1` }}>
+            {(item.assetType === 'video' && !fallbackPosterUrl)
+              ? (
+                <video
+                  src={item.previewUrl}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  style={{ objectPosition: 'center center', filter: item.blurred ? 'blur(28px)' : undefined }}
+                />
+              )
+              : (
+                <img
+                  src={item.assetType === 'video' ? (fallbackPosterUrl || '') : item.previewUrl}
+                  alt={item.title || 'Artwork preview'}
+                  loading={index < 2 ? 'eager' : 'lazy'}
+                  fetchPriority={index < 2 ? 'high' : 'low'}
+                  decoding="async"
+                  style={{ objectPosition: 'center center', filter: item.blurred ? 'blur(28px)' : undefined }}
+                />
+              )}
+            {isPreview && <span className="discovery-chip">Preview</span>}
+            {item.assetType === 'video' && <span className="discovery-chip" style={{ left: 'unset', right: isPreview ? '8.2rem' : '1rem' }}>Video</span>}
+            {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
+          </div>
+        </button>
+        <div className="discovery-feature-footer">
+          <div className="discovery-feature-text">
+            <h3 className="discovery-feature-title">{item.title || item.imageId}</h3>
+            <p className="discovery-feature-subtitle">by {item.artistName || profile.name}</p>
+            {disclosureLine && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
+          </div>
+          <div className="discovery-feature-stats">
+            <span>❤ {item.favoriteCount || 0}</span>
+            <span>👁 {(2.0 + (index % 8) * 0.2).toFixed(1)}k</span>
+            <span>{item.displayedContentRating || 'General'}</span>
+          </div>
+          <div className="discovery-feature-actions">
+            <button type="button" className="discovery-quick-view-link discovery-quick-view-btn no-underline" onClick={() => void openFocusedViewer(item)}>
+              Quick view
+            </button>
+          </div>
+        </div>
+      </article>
+    );
+  };
 
   return (
     <div className="layout discovery-layout">
@@ -4184,68 +4894,165 @@ function ArtistProfilePage() {
         </div>
       </section>
 
-      <section>
-        <div className="discovery-section-header">
-          <h2>Trending from {profile.name}</h2>
-          <div className="discovery-trending-filter">
-            <button className={period === 'hourly' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setPeriod('hourly')}>Hourly</button>
-            <button className={period === 'daily' ? 'auth-primary-btn' : 'auth-secondary-btn'} onClick={() => setPeriod('daily')}>Daily</button>
-          </div>
-        </div>
-        <div className="discovery-three-rows-grid">
-          {(trending || []).slice(0, 18).map((item, i) => (
-            <Link key={item.imageId} to={item.gallerySlug ? `/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}` : '/'} className="discovery-small-card no-underline">
-              {item.previewUrl ? (
-                (item.assetType === 'video' && !item.previewPosterUrl && !isLikelyImageUrl(item.previewUrl))
-                  ? (
-                    <video
-                      src={item.previewUrl}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      style={{ filter: item.blurred ? 'blur(24px)' : undefined }}
-                    />
-                  )
-                  : (
-                    <img
-                      src={item.assetType === 'video' ? (item.previewPosterUrl || item.previewUrl) : item.previewUrl}
-                      alt={item.title || 'Artwork preview'}
-                      loading="lazy"
-                      style={{ filter: item.blurred ? 'blur(24px)' : undefined }}
-                    />
-                  )
-              ) : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length], height: 160 }} />}
-              <div className="discovery-small-card-body">
-                <div className="discovery-card-title">{item.title || 'Artwork title'}</div>
-                <div className="discovery-card-subtitle">{item.displayedContentRating || 'General'}</div>
-                {formatDisclosureLine(item) && <div className="discovery-card-subtitle">{formatDisclosureLine(item)}</div>}
-              </div>
-            </Link>
-          ))}
-        </div>
-        <AutoLoadSentinel enabled={Boolean(cursor)} loading={trendingLoading} onLoadMore={() => loadTrending(true)} />
-      </section>
-
-      <section>
+      <section className="discovery-editorial-section">
         <div className="discovery-section-header">
           <h2>Latest Galleries</h2>
         </div>
-        <div className="discovery-scroll-row">
-          {(profile.galleries || []).map((gallery, i) => (
-            <Link key={gallery.galleryId} to={`/gallery/${gallery.slug}`} className="discovery-row-card no-underline">
-              {gallery.galleryThumbnailUrl
-                ? <img src={gallery.galleryThumbnailUrl} alt={gallery.title} loading="lazy" />
-                : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length], height: 160 }} />}
-              <div className="discovery-small-card-body">
-                <div className="discovery-card-title">{gallery.title}</div>
-                <div className="discovery-card-subtitle">{gallery.imageCount} images • ❤ {gallery.favoriteCount}</div>
-              </div>
-            </Link>
-          ))}
+        <div className="discovery-latest-row">
+          {(profile.galleries || []).map((gallery, i) => {
+            const front = gallery.galleryThumbnailUrl;
+            const mid = gallery.galleryThumbnailUrl;
+            const back = gallery.galleryThumbnailUrl;
+            return (
+              <article key={gallery.galleryId || `artist-gallery-${i}`} className="discovery-gallery-stack-card">
+                <Link to={`/gallery/${gallery.slug}`} className="no-underline">
+                  <div className="discovery-stack discovery-stack-tall">
+                    <div className="discovery-stack-layer discovery-stack-layer-back">
+                      {back ? <img src={back} alt="" loading="lazy" aria-hidden="true" /> : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length] }} />}
+                    </div>
+                    <div className="discovery-stack-layer discovery-stack-layer-mid">
+                      {mid ? <img src={mid} alt="" loading="lazy" aria-hidden="true" /> : <div className="discovery-swatch" style={{ backgroundColor: swatches[(i + 1) % swatches.length] }} />}
+                    </div>
+                    <div className="discovery-stack-layer discovery-stack-layer-front">
+                      {front ? <img src={front} alt={gallery.title || 'Gallery cover'} loading="lazy" /> : <div className="discovery-swatch" style={{ backgroundColor: swatches[(i + 2) % swatches.length] }} />}
+                    </div>
+                  </div>
+                  <div className="discovery-gallery-stack-meta">
+                    <div className="discovery-card-title">{gallery.title}</div>
+                    <div className="discovery-card-subtitle">{gallery.imageCount} images • ❤ {gallery.favoriteCount}</div>
+                  </div>
+                </Link>
+              </article>
+            );
+          })}
         </div>
       </section>
 
-      <section>
+      <section className="discovery-editorial-section">
+        <div className="discovery-section-header">
+          <h2>Artist Discovery View</h2>
+        </div>
+        <div className="discovery-filter-shell">
+          <div className="discovery-filter-grid">
+            <div className="discovery-filter-left">
+              <div>
+                <div className="discovery-filter-label">Trending period</div>
+                <div className="discovery-trending-filter">
+                  <button className={`discovery-pill-btn${period === 'hourly' ? ' is-active' : ''}`} onClick={() => setPeriod('hourly')}>Hourly</button>
+                  <button className={`discovery-pill-btn${period === 'daily' ? ' is-active' : ''}`} onClick={() => setPeriod('daily')}>Daily</button>
+                  <Link className="discovery-pill-btn no-underline" to="/trending">View all</Link>
+                </div>
+              </div>
+              <div className="discovery-heavy-card">
+                <div className="discovery-heavy-head">
+                  <label className="discovery-heavy-row is-primary">
+                    <input
+                      type="checkbox"
+                      checked={hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy)}
+                      onChange={(e) => applyHideAllHeavyTopics(e.target.checked)}
+                    />
+                    <span>Hide all heavy topics</span>
+                  </label>
+                  <button
+                    type="button"
+                    className={`discovery-heavy-toggle${heavyTopicsExpanded ? ' is-expanded' : ''}`}
+                    onClick={() => setHeavyTopicsExpanded((prev) => !prev)}
+                    aria-label={heavyTopicsExpanded ? 'Collapse heavy topics options' : 'Expand heavy topics options'}
+                  >
+                    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                      <path d="M6 12L10 8L14 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+                {heavyTopicsExpanded && (
+                  <div className="discovery-heavy-body">
+                    <label className="discovery-heavy-row">
+                      <input
+                        type="checkbox"
+                        checked={hidePoliticsPublicAffairs}
+                        onChange={(e) => applyHidePoliticsPublicAffairs(e.target.checked)}
+                      />
+                      <span>{heavyTopicLabels['politics-public-affairs']}</span>
+                    </label>
+                    <label className="discovery-heavy-row">
+                      <input
+                        type="checkbox"
+                        checked={hideCrimeDisastersTragedy}
+                        onChange={(e) => applyHideCrimeDisastersTragedy(e.target.checked)}
+                      />
+                      <span>{heavyTopicLabels['crime-disasters-tragedy']}</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="discovery-filter-right">
+              <div className="discovery-density-card">
+                <div className="discovery-density-head">
+                  <span>Feed density</span>
+                  <strong>{densityLabel[feedDensity]}</strong>
+                </div>
+                {densityViewport === 'desktop' && (
+                  <input
+                    className="discovery-density-range"
+                    type="range"
+                    min={0}
+                    max={2}
+                    step={1}
+                    value={densitySliderValue}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setFeedDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
+                    }}
+                  />
+                )}
+                <div className={`discovery-density-options${densityOptions.length === 2 ? ' is-two' : ''}`}>
+                  {densityOptions.map((option) => (
+                    <button
+                      key={`artist-density-${option}`}
+                      type="button"
+                      className={feedDensity === option ? 'is-active' : ''}
+                      onClick={() => setFeedDensity(option)}
+                    >
+                      {densityLabel[option]}
+                    </button>
+                  ))}
+                </div>
+                <p className="small m-0">This view uses fixed discovery cards rather than variable aspect-ratio rows.</p>
+              </div>
+
+              <div className="discovery-search-card">
+                <div className="discovery-filter-label">Search</div>
+                <div className="discovery-search-input-wrap">
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path d="M9 4.25a4.75 4.75 0 103.78 7.64l2.16 2.16a.75.75 0 101.06-1.06l-2.16-2.16A4.75 4.75 0 009 4.25z" fill="currentColor" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={discoverySearch}
+                    onChange={(e) => setDiscoverySearch(e.target.value)}
+                    placeholder="Search titles, galleries, and disclosures..."
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="discovery-editorial-section">
+        <div className="discovery-section-header">
+          <h2>Trending from {profile.name}</h2>
+        </div>
+        <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
+          {filteredTrending.map((item, i) => renderArtistCard(item, i))}
+        </div>
+        {filteredTrending.length === 0 && <p className="small">No artist media matches your filters.</p>}
+        <AutoLoadSentinel enabled={Boolean(cursor)} loading={trendingLoading} onLoadMore={() => loadTrending(true)} />
+      </section>
+
+      <section className="discovery-editorial-section">
         <div className="discovery-section-header">
           <h2>Public Favorites</h2>
         </div>
@@ -4289,7 +5096,7 @@ function ArtistProfilePage() {
         </div>
       </section>
 
-      <section>
+      <section className="discovery-editorial-section">
         <div className="discovery-section-header">
           <h2>Public Collections</h2>
         </div>
@@ -4307,6 +5114,88 @@ function ArtistProfilePage() {
           )}
         </div>
       </section>
+
+      {focusedOpen && (
+        <div className="discovery-focus-modal-layer" onClick={closeFocusedViewer}>
+          <div className="discovery-focus-modal" role="dialog" aria-modal="true" aria-label="Focused media viewer" onClick={(e) => e.stopPropagation()}>
+            <div className="discovery-focus-modal-header">
+              <div className="discovery-focus-modal-title-wrap">
+                <span className="discovery-focus-modal-title-id">{focusedItem?.imageId || 'Focused view'}</span>
+                <span className="discovery-focus-modal-title-gallery">{focusedGalleryTitle || profile.name}</span>
+              </div>
+              <div className="discovery-focus-modal-meta">
+                <span>{focusedItem?.displayedContentRating || 'General'}</span>
+                {focusedItem && formatDisclosureLine(focusedItem) && <span>{formatDisclosureLine(focusedItem)}</span>}
+                <span>{Math.max(1, focusedIndex + 1)} / {Math.max(1, focusedItems.length)}</span>
+                {focusedLoading && <span className="discovery-focus-modal-status-chip">Loading…</span>}
+                {focusedError && <span className="discovery-focus-modal-error-chip">{focusedError}</span>}
+              </div>
+              <div className="discovery-focus-modal-actions">
+                <button
+                  type="button"
+                  className="auth-secondary-btn"
+                  disabled={!focusedHasPrevious}
+                  onClick={() => setFocusedIndex((index) => Math.max(0, index - 1))}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  className="auth-secondary-btn"
+                  disabled={!focusedHasNext}
+                  onClick={() => setFocusedIndex((index) => Math.min(focusedItems.length - 1, index + 1))}
+                >
+                  Next
+                </button>
+                {focusedGallerySlug && (
+                  <Link
+                    className="auth-primary-btn no-underline"
+                    to={`/gallery/${focusedGallerySlug}?image=${encodeURIComponent(focusedItem?.imageId || '')}`}
+                    onClick={closeFocusedViewer}
+                  >
+                    Open gallery
+                  </Link>
+                )}
+              </div>
+              <button type="button" className="discovery-focus-modal-close" onClick={closeFocusedViewer} aria-label="Close focused viewer">
+                ✕
+              </button>
+            </div>
+            <div className="discovery-focus-modal-media">
+              {focusedItem && (
+                focusedItem.assetType === 'video'
+                  ? (
+                    <video
+                      key={focusedItem.imageId}
+                      ref={focusedVideoRef}
+                      autoPlay
+                      controls
+                      playsInline
+                      muted={focusedVideoMuted}
+                      poster={focusedItem.previewPosterUrl}
+                      style={{ filter: focusedItem.blurred ? 'blur(28px)' : undefined }}
+                      onVolumeChange={(event) => {
+                        const target = event.currentTarget;
+                        setFocusedVideoMuted(target.muted);
+                        setFocusedVideoVolume(Math.max(0, Math.min(1, target.volume)));
+                      }}
+                    >
+                      <source src={focusedItem.previewUrl} />
+                    </video>
+                  )
+                  : (
+                    <img
+                      src={focusedItem.thumbnailUrls?.w1280 || focusedItem.thumbnailUrls?.w640 || focusedItem.previewUrl}
+                      alt={focusedItem.imageId || 'Focused media'}
+                      style={{ filter: focusedItem.blurred ? 'blur(28px)' : undefined }}
+                    />
+                  )
+              )}
+              {!focusedItem && <div className="small">No media selected.</div>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && <p className="error">{error}</p>}
     </div>
@@ -4355,8 +5244,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/trending" element={<TrendingPage viewerProfile={myProfile} />} />
-        <Route path="/artists/:slug" element={<ArtistProfilePage />} />
-        <Route path="/gallery/:slug" element={<GalleryPage />} />
+        <Route path="/artists/:slug" element={<ArtistProfilePage viewerProfile={myProfile} />} />
+        <Route path="/gallery/:slug" element={<GalleryPage viewerProfile={myProfile} />} />
         <Route path="/collections" element={<CollectionsPage />} />
         <Route path="/collections/:collectionId" element={<CollectionDetailPage />} />
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
