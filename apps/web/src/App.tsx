@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api';
+import { ArtistAreaWorkspace } from './ArtistAreaWorkspace';
 import {
   changePassword,
   confirmForgotPassword,
@@ -348,6 +349,7 @@ type StoredAccessMap = Record<string, StoredAccessToken>;
 
 const GALLERY_ACCESS_STORAGE_KEY = 'gallery.access.tokens';
 const AUTH_PERSISTENCE_KEY = 'authPersistence';
+const LEGACY_ADMIN_URL = import.meta.env.VITE_LEGACY_ADMIN_URL || 'http://localhost:5174';
 
 const readAccessMap = (): StoredAccessMap => {
   try {
@@ -747,6 +749,10 @@ function HeaderAuth({
                   <span>Settings</span>
                   <span aria-hidden="true">›</span>
                 </Link>
+                <Link to="/artist-area" className="user-menu-settings-row" onClick={closeUserMenus}>
+                  <span>Artist Area</span>
+                  <span aria-hidden="true">›</span>
+                </Link>
                 <button className="user-menu-signout-btn" onClick={() => void handleSignOutClick()}>Sign out</button>
               </div>
             </details>
@@ -780,6 +786,57 @@ function HeaderAuth({
       )}
     </>
   );
+}
+
+function ArtistAreaPage({ user }: { user: CurrentUser }) {
+  if (!user) {
+    return <Navigate to="/auth/signin" replace />;
+  }
+
+  return (
+    <div className="layout discovery-layout">
+      <section className="panel">
+        <p className="small">Creator workspace</p>
+        <h1>Artist Area</h1>
+        <p className="small">
+          We&apos;re starting the migration away from a segregated admin app into this unified artist area so uploads,
+          publishing, and moderation can happen in one place.
+        </p>
+      </section>
+
+      <section className="panel artist-public-grid">
+        <article>
+          <h3>Upload & Publish</h3>
+          <p className="small">Upload media, set access rules, and control release sequencing.</p>
+        </article>
+        <article>
+          <h3>Content Management</h3>
+          <p className="small">Manage artists, galleries, media metadata, and disclosures from one workspace.</p>
+        </article>
+        <article>
+          <h3>Operations</h3>
+          <p className="small">Handle moderation, user controls, and branding updates as tools migrate in.</p>
+        </article>
+      </section>
+
+      <section className="panel">
+        <h2>Legacy admin (temporary)</h2>
+        <p className="small">Use the current admin app while we migrate each capability into the Artist Area.</p>
+        <div className="inline-form" style={{ gap: 12 }}>
+          <Link className="auth-primary-btn no-underline" to="/artist-area/admin">Open migrated admin tools</Link>
+          <a className="auth-secondary-btn no-underline" href={LEGACY_ADMIN_URL} rel="noreferrer" target="_blank">Open legacy admin</a>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ArtistAreaAdminPage({ user }: { user: CurrentUser }) {
+  if (!user) {
+    return <Navigate to="/auth/signin" replace />;
+  }
+
+  return <ArtistAreaWorkspace />;
 }
 
 function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUser) => void }) {
