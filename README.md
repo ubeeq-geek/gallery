@@ -16,6 +16,12 @@ AWS-first gallery platform with:
 - `infra`: AWS CDK stack (API Gateway, Lambda, DynamoDB, S3, Cognito).
 - Includes migration-safe `GalleryCore` single-table support (`GALLERY_CORE_TABLE`, `USE_GALLERY_CORE_TABLE`).
 
+## Artist Area migration (in progress)
+
+- The web app now includes an authenticated **Artist Area** route at `/artist-area` as the long-term home for upload and management workflows.
+- The first migration step now provides an in-app Artist Area studio at `/artist-area/admin` for artist/gallery/media management (including create/list/delete metadata workflows).
+- During migration, the artist area still provides a fallback link to the existing `apps/admin` app via `VITE_LEGACY_ADMIN_URL` (defaults to `http://localhost:5174`).
+
 ## Requirements
 
 - Node `>=20`
