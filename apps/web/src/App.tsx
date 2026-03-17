@@ -211,6 +211,8 @@ type GalleryAsset = {
 type Gallery = {
   galleryId: string;
   title: string;
+  artistName?: string;
+  artistSlug?: string;
   visibility: 'free' | 'preview' | 'premium';
   hasAccess?: boolean;
   purchaseUrl?: string;
@@ -2471,7 +2473,11 @@ function HomePage({
     const assetType = item.assetType === 'video' ? 'video' : 'image';
     const effectivePosterUrl = item.previewPosterUrl
       || (assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
-    const isPreview = item.galleryVisibility === 'preview';
+    const visibilityPill = item.galleryVisibility === 'preview'
+      ? 'Preview'
+      : item.galleryVisibility === 'premium'
+        ? 'Premium'
+        : null;
     const isFavorite = favoriteImageIds.has(item.imageId);
     const displayedRating = item.displayedContentRating || 'General';
     const disclosureLine = formatDisclosureLine(item);
@@ -2532,11 +2538,11 @@ function HomePage({
                 }}
               />
             )}
-            {isPreview && <span className="discovery-chip">Preview</span>}
+            {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
             {assetType === 'video' && (
               <span
                 className="discovery-chip"
-                style={{ left: 'unset', right: isBlurredByRating ? '8.2rem' : '1rem' }}
+                style={{ left: 'unset', right: visibilityPill ? '8.2rem' : '1rem' }}
               >
                 Video
               </span>
@@ -2554,7 +2560,7 @@ function HomePage({
             <div className="discovery-feature-stats">
               <span>❤ {item.favoriteCount || 0}</span>
               <span>👁 {trendingViewCount(cardIndex)}</span>
-              <span>{isPreview ? 'Follower preview' : 'Public'}</span>
+              <span>{visibilityPill === 'Preview' ? 'Follower preview' : visibilityPill === 'Premium' ? 'Premium' : 'Public'}</span>
               <span>{displayedRating}</span>
             </div>
           )}
@@ -3763,16 +3769,23 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
   }, [focusedOpen, focusedHasPrevious, focusedHasNext, focusedItems.length]);
 
   if (!gallery) return <div className="layout">Loading...</div>;
+  const galleryArtistName = (gallery.artistName || '').trim() || 'Unknown Artist';
+  const discoverGalleryHeading = `Discover ${gallery.title} from ${galleryArtistName}`;
 
   const renderGalleryCard = (
     item: GalleryAsset,
     cardIndex: number,
     sourceItems: GalleryAsset[],
     sectionTitle: string,
-    previewTag: boolean
+    sectionVisibility: 'free' | 'preview' | 'premium'
   ) => {
     const fallbackPosterUrl = item.previewPosterUrl || (item.assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
     const disclosureLine = formatDisclosureLine(item);
+    const visibilityPill = sectionVisibility === 'preview'
+      ? 'Preview'
+      : sectionVisibility === 'premium'
+        ? 'Premium'
+        : null;
     return (
       <article key={`${sectionTitle}-${item.imageId}`} className="discovery-feature-card gallery-discovery-card" style={{ '--media-aspect': mediaAspect.toFixed(3) } as any}>
         <button
@@ -3807,8 +3820,8 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
                   }}
                 />
               )}
-            {previewTag && <span className="discovery-chip">Preview</span>}
-            {item.assetType === 'video' && <span className="discovery-chip" style={{ left: 'unset', right: previewTag ? '8.2rem' : '1rem' }}>Video</span>}
+            {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
+            {item.assetType === 'video' && <span className="discovery-chip" style={{ left: 'unset', right: visibilityPill ? '8.2rem' : '1rem' }}>Video</span>}
             {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
           </div>
         </button>
@@ -3821,7 +3834,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
           <div className="discovery-feature-stats">
             <span>❤ {item.favoriteCount || 0}</span>
             <span>👁 {pseudoViewCount(cardIndex)}</span>
-            <span>{previewTag ? 'Preview' : 'Premium'}</span>
+            <span>{visibilityPill || 'Public'}</span>
           </div>
           <div className="discovery-feature-actions">
             <button
@@ -3869,7 +3882,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
 
       <section className="discovery-editorial-section">
         <div className="discovery-section-header">
-          <h2>Gallery Discovery View</h2>
+          <h2>{discoverGalleryHeading}</h2>
         </div>
         <div className="discovery-filter-shell">
           <div className="discovery-filter-grid">
@@ -4021,10 +4034,16 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
       {showPreviewSection && (
         <section className="discovery-editorial-section">
           <div className="discovery-section-header">
-            <h2>Preview Media</h2>
+            <h2>{discoverGalleryHeading}</h2>
           </div>
           <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
-            {filteredPreviewItems.map((item, index) => renderGalleryCard(item, index, filteredPreviewItems, 'Preview Media', true))}
+            {filteredPreviewItems.map((item, index) => renderGalleryCard(
+              item,
+              index,
+              filteredPreviewItems,
+              discoverGalleryHeading,
+              gallery.visibility === 'preview' ? 'preview' : 'free'
+            ))}
           </div>
           {filteredPreviewItems.length === 0 && <p className="small">No preview media matches your filters.</p>}
         </section>
@@ -4041,7 +4060,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
             </a>
           </div>
           <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
-            {filteredTeaserItems.map((item, index) => renderGalleryCard(item, index, filteredTeaserItems, 'Premium Preview', true))}
+            {filteredTeaserItems.map((item, index) => renderGalleryCard(item, index, filteredTeaserItems, 'Premium Preview', 'preview'))}
           </div>
           {filteredTeaserItems.length === 0 && <p className="small">No premium preview media matches your filters.</p>}
         </section>
@@ -4061,7 +4080,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
           {hasPremiumAccess && (
             <>
               <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
-                {filteredPremiumItems.map((item, index) => renderGalleryCard(item, index, filteredPremiumItems, 'Premium Content', false))}
+                {filteredPremiumItems.map((item, index) => renderGalleryCard(item, index, filteredPremiumItems, 'Premium Content', 'premium'))}
               </div>
               {filteredPremiumItems.length === 0 && <p className="small">No premium media matches your filters.</p>}
             </>
@@ -4521,7 +4540,9 @@ function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null })
                       />
                     )
                 ) : <div className="discovery-swatch" style={{ backgroundColor: swatches[i % swatches.length] }} />}
-                {item.galleryVisibility !== 'free' && <span className="discovery-chip">Preview</span>}
+                {(item.galleryVisibility === 'preview' || item.galleryVisibility === 'premium') && (
+                  <span className="discovery-chip">{item.galleryVisibility === 'premium' ? 'Premium' : 'Preview'}</span>
+                )}
                 {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '0.75rem' }}>Mature Content</span>}
               </div>
               <div className="discovery-card-body">
@@ -4826,7 +4847,11 @@ function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | nu
   const renderArtistCard = (item: TrendingImage, index: number) => {
     const fallbackPosterUrl = item.previewPosterUrl || (item.assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
     const disclosureLine = formatDisclosureLine(item);
-    const isPreview = item.galleryVisibility !== 'free';
+    const visibilityPill = item.galleryVisibility === 'preview'
+      ? 'Preview'
+      : item.galleryVisibility === 'premium'
+        ? 'Premium'
+        : null;
     return (
       <article key={item.imageId} className="discovery-feature-card gallery-discovery-card" style={{ '--media-aspect': cardAspect.toFixed(3) } as any}>
         <button
@@ -4855,8 +4880,8 @@ function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | nu
                   style={{ objectPosition: 'center center', filter: item.blurred ? 'blur(28px)' : undefined }}
                 />
               )}
-            {isPreview && <span className="discovery-chip">Preview</span>}
-            {item.assetType === 'video' && <span className="discovery-chip" style={{ left: 'unset', right: isPreview ? '8.2rem' : '1rem' }}>Video</span>}
+            {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
+            {item.assetType === 'video' && <span className="discovery-chip" style={{ left: 'unset', right: visibilityPill ? '8.2rem' : '1rem' }}>Video</span>}
             {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
           </div>
         </button>
@@ -4930,7 +4955,7 @@ function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | nu
 
       <section className="discovery-editorial-section">
         <div className="discovery-section-header">
-          <h2>Artist Discovery View</h2>
+          <h2>Discover {profile.name}</h2>
         </div>
         <div className="discovery-filter-shell">
           <div className="discovery-filter-grid">

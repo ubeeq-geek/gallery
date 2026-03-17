@@ -1,0 +1,320 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { api } from '../api';
+import type {
+  AiFilterPreference,
+  Artist,
+  CollectionSummary,
+  GallerySummary,
+  ManagedArtist,
+  ManagedFavorite,
+  TrendingImage
+} from '../domainTypes';
+
+export type DiscoveryGallery = GallerySummary & {
+  artistName: string;
+  artistSlug: string;
+  stackPreviewUrls?: string[];
+};
+
+type DiscoveryFilters = {
+  aiFilter: AiFilterPreference;
+  hideHeavyTopics: boolean;
+  hidePoliticsPublicAffairs: boolean;
+  hideCrimeDisastersTragedy: boolean;
+};
+
+type UseDiscoveryFeedArgs = {
+  currentUser: { username?: string } | null | undefined;
+  dailySeed: string;
+  trendingPeriod: 'hourly' | 'daily';
+  trendingReloadNonce: number;
+  trendingBaseLimit: number;
+  disclosureFilters: DiscoveryFilters;
+  favoriteIdentity: string;
+};
+
+export default function useDiscoveryFeed({
+  currentUser,
+  dailySeed,
+  trendingPeriod,
+  trendingReloadNonce,
+  trendingBaseLimit,
+  disclosureFilters,
+  favoriteIdentity
+}: UseDiscoveryFeedArgs) {
+  const [artists, setArtists] = useState<Artist[]>([]);
+  const [galleries, setGalleries] = useState<DiscoveryGallery[]>([]);
+  const [trendingImages, setTrendingImages] = useState<TrendingImage[]>([]);
+  const [trendingCursor, setTrendingCursor] = useState<string | undefined>(undefined);
+  const [collections, setCollections] = useState<CollectionSummary[]>([]);
+  const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
+  const [followedArtistIds, setFollowedArtistIds] = useState<Set<string>>(new Set());
+  const [favoriteImageIds, setFavoriteImageIds] = useState<Set<string>>(new Set());
+  const [favoriteGalleryIds, setFavoriteGalleryIds] = useState<Set<string>>(new Set());
+  const [loadingMoreTrending, setLoadingMoreTrending] = useState(false);
+  const [loadingTrending, setLoadingTrending] = useState(false);
+  const [loadingLatest, setLoadingLatest] = useState(false);
+  const [loadingCollections, setLoadingCollections] = useState(false);
+  const [deferredSectionsReady, setDeferredSectionsReady] = useState(false);
+  const [error, setError] = useState('');
+
+  const favoriteAsProfile = useMemo(() => (
+    favoriteIdentity.startsWith('artist:')
+      ? { ownerProfileType: 'artist' as const, ownerProfileId: favoriteIdentity.slice('artist:'.length) }
+      : { ownerProfileType: 'user' as const }
+  ), [favoriteIdentity]);
+
+  useEffect(() => {
+    const loadTrending = async () => {
+      try {
+        setLoadingTrending(true);
+        const trendingData = await api.getTrendingImagesFiltered(
+          trendingPeriod,
+          undefined,
+          trendingBaseLimit,
+          disclosureFilters
+        ) as { items: TrendingImage[]; nextCursor?: string };
+        setTrendingImages(trendingData.items || []);
+        setTrendingCursor(trendingData.nextCursor);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setLoadingTrending(false);
+      }
+    };
+    void loadTrending();
+  }, [
+    trendingPeriod,
+    trendingReloadNonce,
+    trendingBaseLimit,
+    disclosureFilters.aiFilter,
+    disclosureFilters.hideHeavyTopics,
+    disclosureFilters.hidePoliticsPublicAffairs,
+    disclosureFilters.hideCrimeDisastersTragedy
+  ]);
+
+  useEffect(() => {
+    if (deferredSectionsReady || loadingTrending) return;
+    const schedule = (cb: () => void): number => {
+      if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+        return window.requestIdleCallback(cb, { timeout: 1200 }) as unknown as number;
+      }
+      return window.setTimeout(cb, 0);
+    };
+    const cancel = (id: number) => {
+      if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(id as unknown as any);
+      } else {
+        window.clearTimeout(id);
+      }
+    };
+    const id = schedule(() => setDeferredSectionsReady(true));
+    return () => cancel(id);
+  }, [deferredSectionsReady, loadingTrending]);
+
+  useEffect(() => {
+    if (!deferredSectionsReady) return;
+    const loadLatest = async () => {
+      try {
+        setLoadingLatest(true);
+        const [artistList, latestGalleries] = await Promise.all([
+          api.getArtists() as Promise<Artist[]>,
+          api.getLatestGalleries(12) as Promise<DiscoveryGallery[]>
+        ]);
+        setArtists(artistList);
+        setGalleries(latestGalleries || []);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setLoadingLatest(false);
+      }
+    };
+    void loadLatest();
+  }, [deferredSectionsReady]);
+
+  useEffect(() => {
+    if (!deferredSectionsReady) return;
+    const loadCollectionData = async () => {
+      try {
+        setLoadingCollections(true);
+        const collectionData = await api.getCollections(undefined, 9, { order: 'popular', seed: dailySeed }) as { items: CollectionSummary[] };
+        setCollections(collectionData.items || []);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setLoadingCollections(false);
+      }
+    };
+    void loadCollectionData();
+  }, [dailySeed, deferredSectionsReady]);
+
+  useEffect(() => {
+    if (!deferredSectionsReady) return;
+    const loadUserContext = async () => {
+      if (!currentUser) {
+        setFollowedArtistIds(new Set());
+        setManagedArtists([]);
+        return;
+      }
+      try {
+        const [follows, myArtists] = await Promise.all([
+          api.myFollows() as Promise<Array<{ artistId: string }>>,
+          api.getMyArtists() as Promise<ManagedArtist[]>
+        ]);
+        setFollowedArtistIds(new Set((follows || []).map((item) => item.artistId)));
+        setManagedArtists(myArtists || []);
+      } catch {
+        setFollowedArtistIds(new Set());
+        setManagedArtists([]);
+      }
+    };
+    void loadUserContext();
+  }, [currentUser?.username, deferredSectionsReady]);
+
+  useEffect(() => {
+    const loadFavorites = async () => {
+      if (!deferredSectionsReady) return;
+      if (!currentUser) {
+        setFavoriteImageIds(new Set());
+        setFavoriteGalleryIds(new Set());
+        return;
+      }
+      try {
+        const favorites = await api.myFavorites(favoriteAsProfile) as ManagedFavorite[];
+        setFavoriteImageIds(new Set(favorites.filter((item) => item.targetType === 'image').map((item) => item.targetId)));
+        setFavoriteGalleryIds(new Set(favorites.filter((item) => item.targetType === 'gallery').map((item) => item.targetId)));
+      } catch {
+        setFavoriteImageIds(new Set());
+        setFavoriteGalleryIds(new Set());
+      }
+    };
+    void loadFavorites();
+  }, [currentUser?.username, favoriteAsProfile, deferredSectionsReady]);
+
+  const loadMoreTrending = useCallback(async () => {
+    if (!trendingCursor) return;
+    try {
+      setLoadingMoreTrending(true);
+      const response = await api.getTrendingImagesFiltered(
+        trendingPeriod,
+        trendingCursor,
+        trendingBaseLimit,
+        disclosureFilters
+      ) as { items: TrendingImage[]; nextCursor?: string };
+      setTrendingImages((prev) => [...prev, ...(response.items || [])]);
+      setTrendingCursor(response.nextCursor);
+    } catch {
+      // no-op
+    } finally {
+      setLoadingMoreTrending(false);
+    }
+  }, [trendingCursor, trendingPeriod, trendingBaseLimit, disclosureFilters]);
+
+  const toggleFollow = useCallback(async (artistId?: string) => {
+    if (!artistId) return;
+    const isFollowing = followedArtistIds.has(artistId);
+    setFollowedArtistIds((prev) => {
+      const next = new Set(prev);
+      if (isFollowing) next.delete(artistId);
+      else next.add(artistId);
+      return next;
+    });
+    try {
+      if (isFollowing) {
+        await api.unfollowArtist(artistId);
+      } else {
+        await api.followArtist(artistId);
+      }
+    } catch {
+      setFollowedArtistIds((prev) => {
+        const next = new Set(prev);
+        if (isFollowing) next.add(artistId);
+        else next.delete(artistId);
+        return next;
+      });
+    }
+  }, [followedArtistIds]);
+
+  const toggleImageFavorite = useCallback(async (imageId: string) => {
+    const wasFavorited = favoriteImageIds.has(imageId);
+    setFavoriteImageIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorited) next.delete(imageId);
+      else next.add(imageId);
+      return next;
+    });
+    setTrendingImages((prev) => prev.map((item) => (
+      item.imageId === imageId
+        ? { ...item, favoriteCount: Math.max(0, (item.favoriteCount || 0) + (wasFavorited ? -1 : 1)) }
+        : item
+    )));
+    try {
+      if (wasFavorited) {
+        await api.unfavorite('image', imageId, favoriteAsProfile);
+      } else {
+        await api.favorite('image', imageId, 'public', favoriteAsProfile);
+      }
+    } catch {
+      setFavoriteImageIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorited) next.add(imageId);
+        else next.delete(imageId);
+        return next;
+      });
+      setTrendingImages((prev) => prev.map((item) => (
+        item.imageId === imageId
+          ? { ...item, favoriteCount: Math.max(0, (item.favoriteCount || 0) + (wasFavorited ? 1 : -1)) }
+          : item
+      )));
+    }
+  }, [favoriteImageIds, favoriteAsProfile]);
+
+  const toggleGalleryFavorite = useCallback(async (galleryId: string) => {
+    const wasFavorited = favoriteGalleryIds.has(galleryId);
+    setFavoriteGalleryIds((prev) => {
+      const next = new Set(prev);
+      if (wasFavorited) next.delete(galleryId);
+      else next.add(galleryId);
+      return next;
+    });
+    try {
+      if (wasFavorited) {
+        await api.unfavorite('gallery', galleryId, favoriteAsProfile);
+      } else {
+        await api.favorite('gallery', galleryId, 'public', favoriteAsProfile);
+      }
+    } catch {
+      setFavoriteGalleryIds((prev) => {
+        const next = new Set(prev);
+        if (wasFavorited) next.add(galleryId);
+        else next.delete(galleryId);
+        return next;
+      });
+    }
+  }, [favoriteGalleryIds, favoriteAsProfile]);
+
+  return {
+    artists,
+    galleries,
+    trendingImages,
+    trendingCursor,
+    collections,
+    managedArtists,
+    followedArtistIds,
+    favoriteImageIds,
+    favoriteGalleryIds,
+    loadingMoreTrending,
+    loadingTrending,
+    loadingLatest,
+    loadingCollections,
+    deferredSectionsReady,
+    error,
+    setTrendingImages,
+    setTrendingCursor,
+    setLoadingMoreTrending,
+    loadMoreTrending,
+    toggleFollow,
+    toggleImageFavorite,
+    toggleGalleryFavorite
+  };
+}
