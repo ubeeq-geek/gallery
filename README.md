@@ -141,13 +141,17 @@ npm --workspace @gallery/api run reset:core -- --region ca-central-1 --profile c
 npm --workspace @gallery/api run seed:core -- --reset --region ca-central-1 --profile cdk-ca --premium-password <your-password>
 ```
 
-`seed:core` now also seeds default branding (`siteName=Ubeeq`, `theme=ubeeq`) and uploads [ubeeq-logo.svg](/Users/reganwolfrom/workspace/gallery/media/ubeeq-logo.svg) to S3 as `branding/ubeeq-logo.svg`.
-It now seeds three artists from `media/` filenames: `Anne Smith`, `Samuel Jones`, and `Ubeeq Girl`, with automatic free/premium split based on filename cues (`free`/`premium`) plus numbered ordering.
-Seeded S3 objects now use flat UUID keys: `artist_uuid/object_uuid` (no gallery/title path encoding).
+When `--scenario-file` is omitted, `seed:core` automatically uses `seed-scenarios/default/seed.json`.
+
+`seed:core` now reads from an in-repo default scenario bundle:
+- `seed-scenarios/default/seed.json`
+- `seed-scenarios/default/media/` (child folder symlink to repo `media/`)
+
+Seeded S3 objects use flat UUID keys: `artist_uuid/object_uuid` (no gallery/title path encoding).
 
 ### Scenario File Seeding (Stack-Specific)
 
-`seed:core` also supports loading artists/galleries/site settings from a JSON file.  
+`seed:core` supports loading artists/galleries/site settings from a JSON file.  
 Use `--scenario-file` and keep the media folder as a child folder under the same scenario folder.
 
 ```text
@@ -181,6 +185,8 @@ The scenario file can set:
 - `artists[]` with nested `galleries[]` definitions (`free|preview|premium`) and optional per-premium-gallery password
 
 Reference example: `docs/seed-scenarios/example/seed.json`
+
+Default in-repo scenario: `seed-scenarios/default/seed.json`
 
 Optional flags:
 
