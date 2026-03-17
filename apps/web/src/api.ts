@@ -383,12 +383,262 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/me/artists`);
     return handleJson(response);
   },
-  async updateArtist(artistId: string, payload: { name?: string; slug?: string; status?: 'active' | 'inactive'; sortOrder?: number }) {
+  async adminListArtistMembers(artistId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/artists/${encodeURIComponent(artistId)}/members`);
+    return handleJson(response);
+  },
+  async adminAddArtistMember(artistId: string, payload: { userId: string; role?: 'owner' | 'editor' | 'manager' }) {
+    const response = await fetch(`${API_BASE}/admin/artists/${encodeURIComponent(artistId)}/members`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async adminRemoveArtistMember(artistId: string, userId: string) {
+    const response = await fetch(`${API_BASE}/admin/artists/${encodeURIComponent(artistId)}/members/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async updateArtist(artistId: string, payload: {
+    name?: string;
+    slug?: string;
+    status?: 'active' | 'inactive';
+    sortOrder?: number;
+    discoverSquareCropEnabled?: boolean;
+    defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+  }) {
     const response = await fetch(`${API_BASE}/admin/artists/${artistId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
-  }
+  },
+  async adminListArtists() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/artists`);
+    return handleJson(response);
+  },
+  async adminListGalleries() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/galleries`);
+    return handleJson(response);
+  },
+  async adminCreateArtist(payload: {
+    name: string;
+    slug: string;
+    status?: 'active' | 'inactive';
+    sortOrder?: number;
+    discoverSquareCropEnabled?: boolean;
+    defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+  }) {
+    const response = await fetch(`${API_BASE}/admin/artists`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async adminCreateGallery(payload: {
+    artistId: string;
+    artistSlug?: string;
+    title: string;
+    slug: string;
+    visibility?: 'free' | 'preview' | 'premium';
+    status?: 'draft' | 'published';
+    coverImageId?: string;
+    pairedPremiumGalleryId?: string;
+    purchaseUrl?: string;
+    premiumPassword?: string;
+    discoverSquareCropEnabled?: boolean;
+    defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+  }) {
+    const response = await fetch(`${API_BASE}/admin/galleries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+
+  async adminUpdateGallery(galleryId: string, payload: {
+    artistId?: string;
+    artistSlug?: string;
+    title?: string;
+    slug?: string;
+    visibility?: 'free' | 'preview' | 'premium';
+    status?: 'draft' | 'published';
+    coverImageId?: string;
+    pairedPremiumGalleryId?: string;
+    purchaseUrl?: string;
+    premiumPassword?: string;
+    discoverSquareCropEnabled?: boolean;
+    defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+  }) {
+    const response = await fetch(`${API_BASE}/admin/galleries/${encodeURIComponent(galleryId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async adminListGalleryMedia(galleryId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/galleries/${encodeURIComponent(galleryId)}/images`);
+    return handleJson(response);
+  },
+  async adminCreateMedia(payload: {
+    galleryId: string;
+    assetType?: 'image' | 'video';
+    title?: string;
+    originalFilename?: string;
+    previewKey: string;
+    premiumKey?: string;
+    previewPosterKey?: string;
+    premiumPosterKey?: string;
+    width?: number;
+    height?: number;
+    durationSeconds?: number;
+    sortOrder?: number;
+    contentRating?: 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+    moderatorContentRating?: 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+    aiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    moderatorAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    heavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+    moderatorHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+    discoverSquareCropEnabled?: boolean;
+    squareCrop?: { x: number; y: number; size: number };
+  }) {
+    const response = await fetch(`${API_BASE}/admin/images`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+
+  async adminGenerateMediaRenditions(galleryId: string, imageId: string, payload?: { squareCrop?: { x: number; y: number; size: number } }) {
+    const response = await fetch(`${API_BASE}/admin/images/${encodeURIComponent(galleryId)}/${encodeURIComponent(imageId)}/renditions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload || {})
+    });
+    return handleJson(response);
+  },
+  async adminUpdateMedia(galleryId: string, imageId: string, payload: {
+    assetType?: 'image' | 'video';
+    title?: string;
+    originalFilename?: string;
+    previewKey?: string;
+    premiumKey?: string;
+    previewPosterKey?: string;
+    premiumPosterKey?: string;
+    width?: number;
+    height?: number;
+    durationSeconds?: number;
+    sortOrder?: number;
+    contentRating?: 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+    moderatorContentRating?: 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+    aiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    moderatorAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    heavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+    moderatorHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+    discoverSquareCropEnabled?: boolean;
+    squareCrop?: { x: number; y: number; size: number };
+  }) {
+    const response = await fetch(`${API_BASE}/admin/images/${encodeURIComponent(galleryId)}/${encodeURIComponent(imageId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async adminDeleteArtist(artistId: string) {
+    const response = await fetch(`${API_BASE}/admin/artists/${encodeURIComponent(artistId)}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async adminDeleteGallery(galleryId: string) {
+    const response = await fetch(`${API_BASE}/admin/galleries/${encodeURIComponent(galleryId)}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async adminDeleteMedia(galleryId: string, imageId: string, sortOrder = 0) {
+    const response = await fetch(`${API_BASE}/admin/images/${encodeURIComponent(galleryId)}/${encodeURIComponent(imageId)}?sortOrder=${encodeURIComponent(String(sortOrder))}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+
+  async adminUpdateSiteSettings(payload: { siteName?: string; theme?: 'ubeeq' | 'sand' | 'forest' | 'slate'; logoKey?: string }) {
+    const response = await fetch(`${API_BASE}/admin/site-settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async adminCreateSiteSettingsLogoUploadUrl(contentType: string) {
+    const response = await fetch(`${API_BASE}/admin/site-settings/logo-upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ contentType })
+    });
+    return handleJson(response);
+  },
+  async adminSetCommentStatus(commentId: string, payload: { hidden: boolean }) {
+    const response = await fetch(`${API_BASE}/admin/comments/${encodeURIComponent(commentId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async adminDeleteComment(commentId: string) {
+    const response = await fetch(`${API_BASE}/admin/comments/${encodeURIComponent(commentId)}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async adminBlockUser(userId: string, reason?: string) {
+    const response = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(userId)}/block`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ reason })
+    });
+    return handleJson(response);
+  },
+  async adminUnblockUser(userId: string) {
+    const response = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(userId)}/block`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async adminGetAudit(limit = 50, cursor?: string, filters?: { action?: string; actorUserId?: string }) {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    if (cursor) qs.set('cursor', cursor);
+    if (filters?.action) qs.set('action', filters.action);
+    if (filters?.actorUserId) qs.set('actorUserId', filters.actorUserId);
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/audit?${qs.toString()}`);
+    return handleJson(response) as Promise<{ items: unknown[]; nextCursor?: string }>;
+  },
+  async adminRebuildTrending() {
+    const response = await fetch(`${API_BASE}/admin/trending/rebuild`, {
+      method: 'POST',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
 };

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api';
+import { ArtistAreaWorkspace } from './ArtistAreaWorkspace';
 import {
   changePassword,
   confirmForgotPassword,
@@ -472,6 +473,7 @@ function HeaderAuth({
                   <summary className="user-menu-trigger" aria-label="Open account menu">{initials}</summary>
                   <div className="user-menu-items">
                     <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
+                    <Link to="/artist-area" onClick={closeUserMenus}>Artist Area</Link>
                     <Link to="/settings" onClick={closeUserMenus}>Settings</Link>
                     <button onClick={() => void handleSignOutClick()}>Sign Out</button>
                   </div>
@@ -525,6 +527,10 @@ function HeaderAuth({
                   <span>Settings</span>
                   <span aria-hidden="true">›</span>
                 </Link>
+                <Link to="/artist-area" className="user-menu-settings-row" onClick={closeUserMenus}>
+                  <span>Artist Area</span>
+                  <span aria-hidden="true">›</span>
+                </Link>
                 <button className="user-menu-signout-btn" onClick={() => void handleSignOutClick()}>Sign out</button>
               </div>
             </details>
@@ -558,6 +564,55 @@ function HeaderAuth({
       )}
     </>
   );
+}
+
+function ArtistAreaPage({ user }: { user: CurrentUser }) {
+  if (!user) {
+    return <Navigate to="/auth/signin" replace />;
+  }
+
+  return (
+    <div className="layout discovery-layout">
+      <section className="panel">
+        <p className="small">Creator workspace</p>
+        <h1>Artist Area</h1>
+        <p className="small">
+          Use this unified area for uploads, publishing, and moderation workflows in one place.
+        </p>
+      </section>
+
+      <section className="panel artist-public-grid">
+        <article>
+          <h3>Upload & Publish</h3>
+          <p className="small">Upload media, set access rules, and control release sequencing.</p>
+        </article>
+        <article>
+          <h3>Content Management</h3>
+          <p className="small">Manage artists, galleries, media metadata, and disclosures from one workspace.</p>
+        </article>
+        <article>
+          <h3>Operations</h3>
+          <p className="small">Handle moderation, user controls, and branding updates as tools migrate in.</p>
+        </article>
+      </section>
+
+      <section className="panel">
+        <h2>Artist admin tools</h2>
+        <p className="small">Manage artists, galleries, media, and operations from the integrated workspace.</p>
+        <div className="inline-form" style={{ gap: 12 }}>
+          <Link className="auth-primary-btn no-underline" to="/artist-area/admin">Open artist workspace</Link>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ArtistAreaAdminPage({ user }: { user: CurrentUser }) {
+  if (!user) {
+    return <Navigate to="/auth/signin" replace />;
+  }
+
+  return <ArtistAreaWorkspace />;
 }
 
 function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUser) => void }) {
@@ -5275,6 +5330,8 @@ export default function App() {
         <Route path="/collections/:collectionId" element={<CollectionDetailPage />} />
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
         <Route path="/settings" element={<SettingsPage user={user} onProfileChanged={setMyProfile} />} />
+        <Route path="/artist-area" element={<ArtistAreaPage user={user} />} />
+        <Route path="/artist-area/admin" element={<ArtistAreaAdminPage user={user} />} />
       </Routes>
     </div>
   );
