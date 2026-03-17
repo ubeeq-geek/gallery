@@ -1,0 +1,217 @@
+export type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string };
+
+export type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
+
+export type FeedDensity = 'small' | 'medium' | 'large';
+
+export type DensityViewport = 'mobile' | 'tablet' | 'desktop';
+
+export type DiscoveryFilterSection = 'period' | 'density' | 'heavy' | 'search';
+
+export type DiscoveryDockSummary = {
+  active: boolean;
+  viewport: DensityViewport;
+  period: 'hourly' | 'daily';
+  density: FeedDensity;
+  heavyLabel:
+    | 'Heavy Shown'
+    | 'Some Heavy'
+    | 'Heavy Hidden'
+    | 'Heavy Topics Shown'
+    | 'Some Heavy Topics'
+    | 'Heavy Topics Hidden';
+  searchActive: boolean;
+};
+
+export const DISCOVERY_FILTER_EVENT_NAME = 'ubeeq:discovery-filters';
+
+export type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+
+export type AiDisclosure = 'none' | 'ai-assisted' | 'ai-generated';
+
+export type AiFilterPreference = 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
+
+export type HeavyTopic = 'politics-public-affairs' | 'crime-disasters-tragedy';
+
+export type CollectionSummary = {
+  collectionId: string;
+  ownerUserId: string;
+  title: string;
+  description?: string;
+  coverImageId?: string;
+  visibility: 'public' | 'private';
+  insertedDate: string;
+  updatedDate: string;
+  imageCount: number;
+  favoriteCount: number;
+};
+
+export type TrendingImage = {
+  imageId: string;
+  assetType?: 'image' | 'video';
+  artistId: string;
+  artistName: string;
+  galleryId: string;
+  gallerySlug: string;
+  galleryVisibility?: 'free' | 'preview' | 'premium';
+  discoverSquareCropEnabled?: boolean;
+  effectiveContentRating?: ContentRating;
+  displayedContentRating?: string;
+  blurred?: boolean;
+  effectiveAiDisclosure?: AiDisclosure;
+  displayedAiDisclosure?: string;
+  effectiveHeavyTopics?: HeavyTopic[];
+  displayedHeavyTopics?: string[];
+  title: string;
+  previewUrl: string;
+  previewPosterUrl?: string;
+  width?: number;
+  height?: number;
+  aspectRatio?: number;
+  favoriteCount: number;
+  createdAt: string;
+};
+
+export type ArtistProfilePayload = {
+  artistId: string;
+  name: string;
+  slug: string;
+  status: 'active' | 'inactive';
+  followerCount: number;
+  imageCount: number;
+  galleryCount: number;
+  trendingImages: TrendingImage[];
+  galleries: Array<{
+    galleryId: string;
+    title: string;
+    slug: string;
+    visibility: 'free' | 'preview' | 'premium';
+    createdAt: string;
+    imageCount: number;
+    favoriteCount: number;
+    galleryThumbnailUrl?: string;
+  }>;
+  publicFavoritesByType: {
+    images: Array<{ targetId: string; targetType?: 'image'; createdAt?: string; title?: string; previewUrl?: string }>;
+    galleries: Array<{ targetId: string; targetType?: 'gallery'; createdAt?: string; title?: string; slug?: string; galleryThumbnailUrl?: string }>;
+    collections: Array<{ targetId: string; targetType?: 'collection'; createdAt?: string; title?: string }>;
+  };
+  publicCollections: Array<{
+    collectionId: string;
+    title: string;
+    description?: string;
+    visibility: 'public' | 'private';
+    insertedDate: string;
+    updatedDate: string;
+    imageCount: number;
+    favoriteCount: number;
+  }>;
+};
+
+export type GallerySummary = {
+  galleryId: string;
+  title: string;
+  slug: string;
+  visibility: 'free' | 'preview' | 'premium';
+  hasAccess?: boolean;
+  purchaseUrl?: string;
+  galleryThumbnailUrl?: string;
+  stackPreviewUrls?: string[];
+};
+
+export type GalleryAsset = {
+  imageId: string;
+  assetType: 'image' | 'video';
+  effectiveContentRating?: ContentRating;
+  displayedContentRating?: string;
+  blurred?: boolean;
+  effectiveAiDisclosure?: AiDisclosure;
+  displayedAiDisclosure?: string;
+  effectiveHeavyTopics?: HeavyTopic[];
+  displayedHeavyTopics?: string[];
+  previewUrl: string;
+  previewPosterUrl?: string;
+  thumbnailUrls?: {
+    w320?: string;
+    w640?: string;
+    w1280?: string;
+    w1920?: string;
+    square256?: string;
+    square512?: string;
+    square1024?: string;
+  };
+  favoriteCount: number;
+};
+
+export type Gallery = {
+  galleryId: string;
+  title: string;
+  visibility: 'free' | 'preview' | 'premium';
+  hasAccess?: boolean;
+  purchaseUrl?: string;
+  coverMediaId?: string;
+  coverPreviewUrl?: string;
+  coverBlur?: boolean;
+  premiumTeaserMedia?: Array<{
+    imageId: string;
+    assetType: 'image' | 'video';
+    effectiveContentRating?: ContentRating;
+    displayedContentRating?: string;
+    blurred?: boolean;
+    effectiveAiDisclosure?: AiDisclosure;
+    displayedAiDisclosure?: string;
+    effectiveHeavyTopics?: HeavyTopic[];
+    displayedHeavyTopics?: string[];
+    previewUrl: string;
+    previewPosterUrl?: string;
+  }>;
+  favoriteCount: number;
+  media: GalleryAsset[];
+};
+
+export type Comment = {
+  commentId: string;
+  authorProfileType?: 'user' | 'artist';
+  authorProfileId?: string;
+  displayName: string;
+  body: string;
+  createdAt: string;
+};
+
+export type SiteSettings = { siteName: string; theme: 'ubeeq' | 'sand' | 'forest' | 'slate'; logoUrl?: string };
+
+export type UserProfile = {
+  userId: string;
+  username: string;
+  displayName?: string;
+  bio?: string;
+  location?: string;
+  website?: string;
+  matureContentEnabled?: boolean;
+  maxAllowedContentRating?: ContentRating;
+  aiFilter?: AiFilterPreference;
+  hideHeavyTopics?: boolean;
+  hidePoliticsPublicAffairs?: boolean;
+  hideCrimeDisastersTragedy?: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastUsernameChangeAt?: string;
+};
+
+export type ManagedFavorite = {
+  targetType: 'gallery' | 'image' | 'collection';
+  targetId: string;
+  visibility?: 'public' | 'private';
+  createdAt: string;
+};
+
+export type ManagedCollection = {
+  collectionId: string;
+  title: string;
+  description?: string;
+  visibility: 'public' | 'private';
+  imageCount: number;
+  favoriteCount: number;
+  updatedDate: string;
+  imageIds?: string[];
+};
