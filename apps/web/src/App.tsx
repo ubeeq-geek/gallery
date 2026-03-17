@@ -225,7 +225,6 @@ type StoredAccessMap = Record<string, StoredAccessToken>;
 
 const GALLERY_ACCESS_STORAGE_KEY = 'gallery.access.tokens';
 const AUTH_PERSISTENCE_KEY = 'authPersistence';
-const LEGACY_ADMIN_URL = import.meta.env.VITE_LEGACY_ADMIN_URL || 'http://localhost:5174';
 
 const readAccessMap = (): StoredAccessMap => {
   try {
@@ -476,8 +475,7 @@ function ArtistAreaPage({ user }: { user: CurrentUser }) {
         <p className="small">Creator workspace</p>
         <h1>Artist Area</h1>
         <p className="small">
-          We&apos;re starting the migration away from a segregated admin app into this unified artist area so uploads,
-          publishing, and moderation can happen in one place.
+          Use this unified area for uploads, publishing, and moderation workflows in one place.
         </p>
       </section>
 
@@ -497,11 +495,10 @@ function ArtistAreaPage({ user }: { user: CurrentUser }) {
       </section>
 
       <section className="panel">
-        <h2>Legacy admin (temporary)</h2>
-        <p className="small">Use the current admin app while we migrate each capability into the Artist Area.</p>
+        <h2>Artist admin tools</h2>
+        <p className="small">Manage artists, galleries, media, and operations from the integrated workspace.</p>
         <div className="inline-form" style={{ gap: 12 }}>
-          <Link className="auth-primary-btn no-underline" to="/artist-area/admin">Open migrated admin tools</Link>
-          <a className="auth-secondary-btn no-underline" href={LEGACY_ADMIN_URL} rel="noreferrer" target="_blank">Open legacy admin</a>
+          <Link className="auth-primary-btn no-underline" to="/artist-area/admin">Open artist workspace</Link>
         </div>
       </section>
     </div>

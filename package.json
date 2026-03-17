@@ -6,7 +6,8 @@
     "node": ">=22"
   },
   "workspaces": [
-    "apps/*",
+    "apps/api",
+    "apps/web",
     "packages/*",
     "infra"
   ],
@@ -16,8 +17,7 @@
     "lint": "npm run -ws lint",
     "dev:api": "npm --workspace @gallery/api run dev",
     "dev:web": "npm --workspace @gallery/web run dev",
-    "dev:admin": "npm --workspace @gallery/admin run dev",
-    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\" \"npm run dev:admin\""
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\""
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
