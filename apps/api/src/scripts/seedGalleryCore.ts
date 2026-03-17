@@ -1,4 +1,5 @@
 import { DescribeTableCommand, DynamoDBClient, ListTablesCommand } from '@aws-sdk/client-dynamodb';
+import { CloudFormationClient, DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
 import { DeleteObjectsCommand, HeadBucketCommand, ListBucketsCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { BatchWriteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { createHash } from 'crypto';
@@ -26,7 +27,6 @@ const getArgValue = (flagName: string): string | undefined => {
   return undefined;
 };
 
-const resolveTableName = (envValue: string, flagName: string): string => getArgValue(flagName) || envValue;
 const nowIso = () => new Date().toISOString();
 const slugify = (value: string): string =>
   value
@@ -94,6 +94,7 @@ const seedId = (entity: string, ...parts: string[]): string => {
 };
 
 type AssetFile = { filename: string; absolutePath: string };
+type GallerySeedKind = 'free' | 'preview' | 'premium';
 type ArtistSeed = {
   name: string;
   slug: string;
@@ -103,13 +104,73 @@ type ArtistSeed = {
   aiDisclosure?: AiDisclosure;
   heavyTopics?: HeavyTopic[];
   discoverSquareCropEnabled?: boolean;
-  galleries: Array<'free' | 'preview' | 'premium'>;
+  galleries: Array<GallerySeedKind>;
   freeGalleryTitle?: string;
   freeGallerySlug?: string;
+  freeGalleryStatus?: 'draft' | 'published';
+  previewGalleryTitle?: string;
+  previewGallerySlug?: string;
+  previewGalleryStatus?: 'draft' | 'published';
+  premiumGalleryTitle?: string;
+  premiumGallerySlug?: string;
+  premiumGalleryStatus?: 'draft' | 'published';
+  premiumPassword?: string;
   purchaseUrl?: string;
 };
 
-const artistSeeds: ArtistSeed[] = [
+type ScenarioGallerySeed = {
+  kind: GallerySeedKind;
+  title?: string;
+  slug?: string;
+  status?: 'draft' | 'published';
+  purchaseUrl?: string;
+  premiumPassword?: string;
+};
+
+type ScenarioArtistSeed = {
+  name: string;
+  slug: string;
+  filePrefix: string;
+  includePrefixes?: string[];
+  contentRating?: ContentRating;
+  aiDisclosure?: AiDisclosure;
+  heavyTopics?: HeavyTopic[];
+  discoverSquareCropEnabled?: boolean;
+  galleries: ScenarioGallerySeed[];
+};
+
+type ScenarioSiteSettings = {
+  stackName?: string;
+  siteName?: string;
+  theme?: SiteSettings['theme'];
+  logoKey?: string;
+  logoFile?: string;
+};
+
+type SeedScenarioFile = {
+  mediaDir?: string;
+  siteSettings?: ScenarioSiteSettings;
+  artists: ScenarioArtistSeed[];
+};
+
+type SeedScenarioInputs = {
+  artistSeeds: ArtistSeed[];
+  mediaDir: string;
+  stackName?: string;
+  siteName?: string;
+  theme?: SiteSettings['theme'];
+  logoKey?: string;
+  logoFile?: string;
+  sourceFile: string;
+};
+
+type StackTargets = {
+  galleryCoreTable?: string;
+  siteSettingsTable?: string;
+  mediaBucket?: string;
+};
+
+const defaultArtistSeeds: ArtistSeed[] = [
   {
     name: 'Anne Smith',
     slug: 'anne-smith',
@@ -188,15 +249,221 @@ const splitByAccess = (files: AssetFile[]): { free: AssetFile[]; premium: AssetF
   return { free, premium };
 };
 
-const assertUniqueArtistSeedSlugs = (): void => {
+const assertUniqueArtistSeedSlugs = (seeds: ArtistSeed[]): void => {
   const seen = new Set<string>();
-  for (const seed of artistSeeds) {
+  for (const seed of seeds) {
     const normalized = slugify(seed.slug);
     if (seen.has(normalized)) {
       throw new Error(`Duplicate artist slug in seed data: ${normalized}`);
     }
     seen.add(normalized);
   }
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const asString = (value: unknown, fieldName: string): string => {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`Scenario field "${fieldName}" must be a non-empty string`);
+  }
+  return value.trim();
+};
+
+const asOptionalString = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+const asOptionalBoolean = (value: unknown): boolean | undefined =>
+  typeof value === 'boolean' ? value : undefined;
+
+const parseOptionalStringArray = (value: unknown, fieldName: string): string[] | undefined => {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`Scenario field "${fieldName}" must be an array of strings`);
+  }
+  const parsed = value.map((item, idx) => asString(item, `${fieldName}[${idx}]`));
+  return parsed.length ? parsed : undefined;
+};
+
+const resolveScenarioChildPath = (scenarioRootDir: string, relativePathValue: string, fieldName: string): string => {
+  if (path.isAbsolute(relativePathValue)) {
+    throw new Error(`Scenario field "${fieldName}" must be a relative path under the scenario folder`);
+  }
+  const resolved = path.resolve(scenarioRootDir, relativePathValue);
+  const relative = path.relative(scenarioRootDir, resolved);
+  if (!relative || relative === '.' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`Scenario field "${fieldName}" must point to a child path inside the scenario folder`);
+  }
+  return resolved;
+};
+
+const parseScenarioGallery = (
+  value: unknown,
+  fieldName: string
+): ScenarioGallerySeed => {
+  if (!isRecord(value)) {
+    throw new Error(`Scenario field "${fieldName}" must be an object`);
+  }
+  const kindRaw = asString(value.kind, `${fieldName}.kind`);
+  if (kindRaw !== 'free' && kindRaw !== 'preview' && kindRaw !== 'premium') {
+    throw new Error(`Scenario field "${fieldName}.kind" must be one of free, preview, premium`);
+  }
+  const statusRaw = asOptionalString(value.status);
+  if (statusRaw && statusRaw !== 'draft' && statusRaw !== 'published') {
+    throw new Error(`Scenario field "${fieldName}.status" must be draft or published`);
+  }
+  return {
+    kind: kindRaw,
+    title: asOptionalString(value.title),
+    slug: asOptionalString(value.slug),
+    status: statusRaw as 'draft' | 'published' | undefined,
+    purchaseUrl: asOptionalString(value.purchaseUrl),
+    premiumPassword: asOptionalString(value.premiumPassword)
+  };
+};
+
+const parseScenarioArtist = (
+  value: unknown,
+  fieldName: string
+): ArtistSeed => {
+  if (!isRecord(value)) {
+    throw new Error(`Scenario field "${fieldName}" must be an object`);
+  }
+  const name = asString(value.name, `${fieldName}.name`);
+  const slug = slugify(asString(value.slug, `${fieldName}.slug`));
+  const filePrefix = asString(value.filePrefix, `${fieldName}.filePrefix`);
+  const includePrefixes = parseOptionalStringArray(value.includePrefixes, `${fieldName}.includePrefixes`);
+  const discoverSquareCropEnabled = asOptionalBoolean(value.discoverSquareCropEnabled);
+  const galleriesRaw = value.galleries;
+  if (!Array.isArray(galleriesRaw) || galleriesRaw.length === 0) {
+    throw new Error(`Scenario field "${fieldName}.galleries" must be a non-empty array`);
+  }
+  const galleries = galleriesRaw.map((item, idx) => parseScenarioGallery(item, `${fieldName}.galleries[${idx}]`));
+  const galleryByKind = new Map<GallerySeedKind, ScenarioGallerySeed>();
+  for (const gallery of galleries) {
+    if (galleryByKind.has(gallery.kind)) {
+      throw new Error(`Scenario field "${fieldName}.galleries" has duplicate kind "${gallery.kind}"`);
+    }
+    galleryByKind.set(gallery.kind, gallery);
+  }
+
+  const contentRatingRaw = asOptionalString(value.contentRating);
+  const aiDisclosureRaw = asOptionalString(value.aiDisclosure);
+  const heavyTopicsRaw = parseOptionalStringArray(value.heavyTopics, `${fieldName}.heavyTopics`);
+  const contentRating = contentRatingRaw as ContentRating | undefined;
+  if (contentRatingRaw && !['general', 'suggestive', 'mature', 'sexual', 'fetish', 'graphic'].includes(contentRatingRaw)) {
+    throw new Error(`Scenario field "${fieldName}.contentRating" is invalid`);
+  }
+  const aiDisclosure = aiDisclosureRaw as AiDisclosure | undefined;
+  if (aiDisclosureRaw && !['none', 'ai-assisted', 'ai-generated'].includes(aiDisclosureRaw)) {
+    throw new Error(`Scenario field "${fieldName}.aiDisclosure" is invalid`);
+  }
+  if (heavyTopicsRaw) {
+    for (const topic of heavyTopicsRaw) {
+      if (!['politics-public-affairs', 'crime-disasters-tragedy'].includes(topic)) {
+        throw new Error(`Scenario field "${fieldName}.heavyTopics" contains invalid value "${topic}"`);
+      }
+    }
+  }
+
+  const freeGallery = galleryByKind.get('free');
+  const previewGallery = galleryByKind.get('preview');
+  const premiumGallery = galleryByKind.get('premium');
+
+  return {
+    name,
+    slug,
+    filePrefix,
+    includePrefixes,
+    contentRating,
+    aiDisclosure,
+    heavyTopics: heavyTopicsRaw as HeavyTopic[] | undefined,
+    discoverSquareCropEnabled,
+    galleries: Array.from(galleryByKind.keys()),
+    freeGalleryTitle: freeGallery?.title,
+    freeGallerySlug: freeGallery?.slug,
+    freeGalleryStatus: freeGallery?.status,
+    previewGalleryTitle: previewGallery?.title,
+    previewGallerySlug: previewGallery?.slug,
+    previewGalleryStatus: previewGallery?.status,
+    premiumGalleryTitle: premiumGallery?.title,
+    premiumGallerySlug: premiumGallery?.slug,
+    premiumGalleryStatus: premiumGallery?.status,
+    premiumPassword: premiumGallery?.premiumPassword,
+    purchaseUrl: previewGallery?.purchaseUrl
+  };
+};
+
+const loadScenarioInputs = (scenarioFilePath: string): SeedScenarioInputs => {
+  const sourceFile = path.resolve(scenarioFilePath);
+  if (!existsSync(sourceFile)) {
+    throw new Error(`Scenario file not found: ${sourceFile}`);
+  }
+  const parsed = JSON.parse(readFileSync(sourceFile, 'utf8')) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error('Scenario root must be a JSON object');
+  }
+
+  const scenario = parsed as SeedScenarioFile;
+  const scenarioRoot = path.dirname(sourceFile);
+  const mediaDirRelative = asOptionalString(scenario.mediaDir) || 'media';
+  const mediaDir = resolveScenarioChildPath(scenarioRoot, mediaDirRelative, 'mediaDir');
+  if (scenario.siteSettings !== undefined && !isRecord(scenario.siteSettings)) {
+    throw new Error('Scenario field "siteSettings" must be an object');
+  }
+  const siteSettings = isRecord(scenario.siteSettings) ? scenario.siteSettings : {};
+
+  const artistsRaw = (scenario as Record<string, unknown>).artists;
+  if (!Array.isArray(artistsRaw) || artistsRaw.length === 0) {
+    throw new Error('Scenario field "artists" must be a non-empty array');
+  }
+  const parsedArtists = artistsRaw.map((item, idx) => parseScenarioArtist(item, `artists[${idx}]`));
+
+  const stackName = asOptionalString(siteSettings.stackName);
+  if (!stackName) {
+    throw new Error('Scenario field "siteSettings.stackName" is required');
+  }
+  const siteName = asOptionalString(siteSettings.siteName);
+  const themeRaw = asOptionalString(siteSettings.theme);
+  if (themeRaw && !['ubeeq', 'sand', 'forest', 'slate'].includes(themeRaw)) {
+    throw new Error('Scenario field "siteSettings.theme" must be one of ubeeq, sand, forest, slate');
+  }
+  const logoKey = asOptionalString(siteSettings.logoKey);
+  const logoFileRelative = asOptionalString(siteSettings.logoFile);
+  const logoFile = logoFileRelative
+    ? resolveScenarioChildPath(scenarioRoot, logoFileRelative, 'siteSettings.logoFile')
+    : undefined;
+
+  return {
+    artistSeeds: parsedArtists,
+    mediaDir,
+    stackName,
+    siteName,
+    theme: themeRaw as SiteSettings['theme'] | undefined,
+    logoKey,
+    logoFile,
+    sourceFile
+  };
+};
+
+const readStackTargets = async (client: CloudFormationClient, stackName: string): Promise<StackTargets> => {
+  const response = await client.send(new DescribeStacksCommand({ StackName: stackName }));
+  const stack = response.Stacks?.[0];
+  if (!stack) {
+    throw new Error(`CloudFormation stack not found: ${stackName}`);
+  }
+  const outputs = stack.Outputs || [];
+  const outputByKey = new Map<string, string>();
+  for (const output of outputs) {
+    if (output.OutputKey && output.OutputValue) {
+      outputByKey.set(output.OutputKey, output.OutputValue);
+    }
+  }
+  return {
+    galleryCoreTable: outputByKey.get('GalleryCoreTableName'),
+    siteSettingsTable: outputByKey.get('SiteSettingsTableName'),
+    mediaBucket: outputByKey.get('MediaBucketName')
+  };
 };
 
 const imageDimensionCache = new Map<string, { width: number; height: number }>();
@@ -359,26 +626,36 @@ const main = async () => {
   const dryRun = process.argv.includes('--dry-run');
   const reset = process.argv.includes('--reset');
   const preserveMedia = process.argv.includes('--preserve-media');
-  const galleryCoreTableRequested = resolveTableName(config.galleryCoreTable, '--gallery-core-table');
-  const siteSettingsTableRequested = resolveTableName(config.siteSettingsTable, '--site-settings-table');
+  const scenarioFileArg = getArgValue('--scenario-file');
+  const scenarioInputs = scenarioFileArg ? loadScenarioInputs(scenarioFileArg) : undefined;
+
+  const galleryCoreTableArg = getArgValue('--gallery-core-table');
+  const siteSettingsTableArg = getArgValue('--site-settings-table');
+  const mediaBucketArg = getArgValue('--media-bucket');
+  const stackNameArg = getArgValue('--stack-name');
+  const stackName = stackNameArg || scenarioInputs?.stackName;
+
+  const galleryCoreTableRequested = galleryCoreTableArg || config.galleryCoreTable;
+  const siteSettingsTableRequested = siteSettingsTableArg || config.siteSettingsTable;
   const premiumPassword = getArgValue('--premium-password') || 'replace-me';
-  const themeArg = getArgValue('--theme');
+  const themeArg = getArgValue('--theme') || scenarioInputs?.theme;
   const theme: SiteSettings['theme'] =
     themeArg === 'sand' || themeArg === 'forest' || themeArg === 'slate' || themeArg === 'ubeeq'
       ? themeArg
       : 'ubeeq';
-  const siteName = getArgValue('--site-name') || 'Ubeeq';
-  const logoKey = getArgValue('--logo-key') || 'branding/ubeeq-logo.svg';
+  const siteName = getArgValue('--site-name') || scenarioInputs?.siteName || 'Ubeeq';
+  const logoKey = getArgValue('--logo-key') || scenarioInputs?.logoKey || 'branding/ubeeq-logo.svg';
 
   const shouldUploadLogo = !preserveMedia && !process.argv.includes('--skip-logo-upload');
   const shouldUploadMedia = !preserveMedia && !process.argv.includes('--skip-media-upload');
   const shouldGenerateRenditions = !preserveMedia && !process.argv.includes('--skip-renditions');
 
   const workspaceRoot = path.resolve(__dirname, '../../../..');
-  const mediaDir = getArgValue('--media-dir') || path.join(workspaceRoot, 'media');
-  const logoFile = getArgValue('--logo-file') || path.join(mediaDir, 'ubeeq-logo.svg');
+  const mediaDir = getArgValue('--media-dir') || scenarioInputs?.mediaDir || path.join(workspaceRoot, 'media');
+  const logoFile = getArgValue('--logo-file') || scenarioInputs?.logoFile || path.join(mediaDir, 'ubeeq-logo.svg');
+  const activeArtistSeeds = scenarioInputs?.artistSeeds || defaultArtistSeeds;
 
-  assertUniqueArtistSeedSlugs();
+  assertUniqueArtistSeedSlugs(activeArtistSeeds);
 
   if (!existsSync(mediaDir)) {
     throw new Error(`Media directory not found: ${mediaDir}`);
@@ -389,15 +666,23 @@ const main = async () => {
     .map((name) => ({ filename: name, absolutePath: path.join(mediaDir, name) }));
 
   const lowLevel = new DynamoDBClient({ region: config.awsRegion });
+  const cloudFormation = new CloudFormationClient({ region: config.awsRegion });
   const s3 = new S3Client({ region: config.awsRegion });
-  const galleryCoreTable = await discoverTableName(lowLevel, galleryCoreTableRequested, 'GalleryCoreTable');
-  const siteSettingsTable = await discoverTableName(lowLevel, siteSettingsTableRequested, 'SiteSettingsTable');
-  const mediaBucket = await discoverMediaBucket(s3, config.mediaBucket);
+  const stackTargets = stackName ? await readStackTargets(cloudFormation, stackName) : {};
+  const galleryCoreTable = await discoverTableName(
+    lowLevel,
+    galleryCoreTableRequested || stackTargets.galleryCoreTable || '',
+    'GalleryCoreTable'
+  );
+  const siteSettingsTable = await discoverTableName(
+    lowLevel,
+    siteSettingsTableRequested || stackTargets.siteSettingsTable || '',
+    'SiteSettingsTable'
+  );
+  const mediaBucket = await discoverMediaBucket(s3, mediaBucketArg || stackTargets.mediaBucket || config.mediaBucket);
 
   const client = DynamoDBDocumentClient.from(lowLevel);
   const repo = new GalleryCoreRepository(client, galleryCoreTable);
-
-  const premiumPasswordHash = await hashPassword(premiumPassword);
 
   const artists: Artist[] = [];
   const galleries: Gallery[] = [];
@@ -411,14 +696,15 @@ const main = async () => {
     }
   };
 
-  for (let idx = 0; idx < artistSeeds.length; idx += 1) {
-    const seed = artistSeeds[idx];
+  for (let idx = 0; idx < activeArtistSeeds.length; idx += 1) {
+    const seed = activeArtistSeeds[idx];
     const createdAt = nowIso();
     const artistId = seedId('artist', seed.slug);
     const contentRating: ContentRating = seed.contentRating || 'general';
     const aiDisclosure: AiDisclosure = seed.aiDisclosure || 'none';
     const heavyTopics: HeavyTopic[] = seed.heavyTopics || [];
     const discoverSquareCropEnabled = seed.discoverSquareCropEnabled ?? true;
+    const premiumPasswordHash = await hashPassword(seed.premiumPassword || premiumPassword);
 
     const artist: Artist = {
       artistId,
@@ -445,7 +731,7 @@ const main = async () => {
           defaultAiDisclosure: aiDisclosure,
           defaultHeavyTopics: heavyTopics,
           visibility: 'free' as const,
-          status: 'published' as const,
+          status: seed.freeGalleryStatus || 'published',
           createdAt
         }
       : undefined;
@@ -455,14 +741,14 @@ const main = async () => {
           galleryId: seedId('gallery', seed.slug, 'premium'),
           artistId,
           artistSlug: seed.slug,
-          title: `${seed.name} Premium Gallery`,
-          slug: `${seed.slug}-premium`,
-          slugHistory: [`${seed.slug}-premium`],
+          title: seed.premiumGalleryTitle || `${seed.name} Premium Gallery`,
+          slug: seed.premiumGallerySlug || `${seed.slug}-premium`,
+          slugHistory: [seed.premiumGallerySlug || `${seed.slug}-premium`],
           discoverSquareCropEnabled,
           defaultAiDisclosure: aiDisclosure,
           defaultHeavyTopics: heavyTopics,
           visibility: 'premium' as const,
-          status: 'published' as const,
+          status: seed.premiumGalleryStatus || 'published',
           premiumPasswordHash,
           createdAt
         }
@@ -473,16 +759,16 @@ const main = async () => {
           galleryId: seedId('gallery', seed.slug, 'preview'),
           artistId,
           artistSlug: seed.slug,
-          title: `${seed.name} Premium Gallery (Preview)`,
-          slug: `${seed.slug}-premium-preview`,
-          slugHistory: [`${seed.slug}-premium-preview`],
+          title: seed.previewGalleryTitle || `${seed.name} Premium Gallery (Preview)`,
+          slug: seed.previewGallerySlug || `${seed.slug}-premium-preview`,
+          slugHistory: [seed.previewGallerySlug || `${seed.slug}-premium-preview`],
           discoverSquareCropEnabled,
           defaultAiDisclosure: aiDisclosure,
           defaultHeavyTopics: heavyTopics,
           visibility: 'preview' as const,
           pairedPremiumGalleryId: premiumGallery?.galleryId,
           purchaseUrl: seed.purchaseUrl,
-          status: 'published' as const,
+          status: seed.previewGalleryStatus || 'published',
           createdAt
         }
       : undefined;
@@ -764,8 +1050,11 @@ const main = async () => {
   };
 
   console.log(
-    `[seed:core] table=${galleryCoreTable} siteSettingsTable=${siteSettingsTable} bucket=${mediaBucket} region=${config.awsRegion} dryRun=${dryRun} reset=${reset} preserveMedia=${preserveMedia}`
+    `[seed:core] table=${galleryCoreTable} siteSettingsTable=${siteSettingsTable} bucket=${mediaBucket} region=${config.awsRegion} dryRun=${dryRun} reset=${reset} preserveMedia=${preserveMedia} stack=${stackName || 'auto'}`
   );
+  if (scenarioInputs) {
+    console.log(`[seed:core] scenarioFile=${scenarioInputs.sourceFile} mediaDir=${mediaDir}`);
+  }
   console.log(`[seed:core] artists=${artists.length} galleries=${galleries.length} media=${media.length}`);
   console.log(`[seed:core] siteName=${siteSettings.siteName} theme=${siteSettings.theme} logoKey=${siteSettings.logoKey || 'none'}`);
   console.log(`[seed:core] uploadJobs=${uploadJobs.size} (mediaUpload=${shouldUploadMedia} logoUpload=${shouldUploadLogo} renditions=${shouldGenerateRenditions})`);
