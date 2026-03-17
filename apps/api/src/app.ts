@@ -1567,6 +1567,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         resolvedGallery = premiumGallery;
       }
     }
+    const resolvedArtist = (await store.listArtists()).find((item) => item.artistId === resolvedGallery.artistId);
+    const resolvedArtistName = resolvedArtist?.name || '';
+    const resolvedArtistSlug = resolvedArtist?.slug || resolvedGallery.artistSlug || '';
     const mediaItems = (await store.getMediaByGallery(resolvedGallery.galleryId)).filter((item) => {
       if (isHiddenByVisibility(item.releaseVisibility)) return false;
       if (item.status && item.status !== 'published' && item.status !== 'scheduled') return false;
@@ -1656,6 +1659,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       premiumTeaserMedia = await Promise.all(premiumMedia.map(async (item) => ({
         ...(projectDisclosures(getEffectiveAiDisclosure(item), getEffectiveHeavyTopics(item))),
         imageId: item.mediaId,
+        title: item.title || item.mediaId,
         assetType: (item.assetType || 'image') as 'image' | 'video',
         ...projectContentRating(getEffectiveContentRating(item), viewerPolicy),
         previewUrl: (await publicMediaUrl(item.previewKey)) || '',
@@ -1665,6 +1669,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
     return res.json({
       ...resolvedGallery,
+      artistName: resolvedArtistName,
+      artistSlug: resolvedArtistSlug,
       sourceGalleryId: gallery.galleryId,
       premiumPasswordHash: undefined,
       hasAccess: galleryHasAccess,
@@ -1761,6 +1767,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         if (contentProjection.blurred) {
           return {
             imageId: item.mediaId,
+            title: item.title || item.mediaId,
             assetType: item.assetType || 'image',
             ...contentProjection,
             ...disclosureProjection,
@@ -1770,6 +1777,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         }
         return {
           imageId: item.mediaId,
+          title: item.title || item.mediaId,
           assetType: item.assetType || 'image',
           ...contentProjection,
           ...disclosureProjection,

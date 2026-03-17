@@ -98,6 +98,14 @@ const matchesDiscoverySearch = (needle: string, fields: Array<string | undefined
     .toLowerCase()
     .includes(trimmed);
 };
+const guessArtistNameFromSlug = (slug?: string): string => {
+  if (!slug) return '';
+  return slug
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+};
 type CollectionSummary = {
   collectionId: string;
   ownerUserId: string;
@@ -187,6 +195,7 @@ type GallerySummary = {
 };
 type GalleryAsset = {
   imageId: string;
+  title?: string;
   assetType: 'image' | 'video';
   effectiveContentRating?: ContentRating;
   displayedContentRating?: string;
@@ -221,6 +230,7 @@ type Gallery = {
   coverBlur?: boolean;
   premiumTeaserMedia?: Array<{
     imageId: string;
+    title?: string;
     assetType: 'image' | 'video';
     effectiveContentRating?: ContentRating;
     displayedContentRating?: string;
@@ -1501,7 +1511,7 @@ function HomePage({
   const [trendingCursor, setTrendingCursor] = useState<string | undefined>(undefined);
   const [trendingReloadNonce, setTrendingReloadNonce] = useState(0);
   const [trendingPeriod, setTrendingPeriod] = useState<'hourly' | 'daily'>('daily');
-  const [feedDensity, setFeedDensity] = useState<FeedDensity>('medium');
+  const [feedDensity, setFeedDensity] = useState<FeedDensity>('large');
   const [densityViewport, setDensityViewport] = useState<DensityViewport>(() => {
     if (typeof window === 'undefined') return 'desktop';
     if (window.innerWidth >= 1100) return 'desktop';
@@ -1570,7 +1580,7 @@ function HomePage({
   };
   const densityFadeOutMs = 130;
   const densityFadeInMs = 570;
-  const densityOptions: FeedDensity[] = densityViewport === 'desktop' ? ['small', 'medium', 'large'] : ['small', 'large'];
+  const densityOptions: FeedDensity[] = ['small', 'medium', 'large'];
   const disclosureFilters = {
     aiFilter: disclosureAiFilter,
     hideHeavyTopics,
@@ -1584,6 +1594,7 @@ function HomePage({
       ? (heavyHidden ? 'Heavy Hidden' : (someHeavyHidden ? 'Some Heavy' : 'Heavy Shown'))
       : (heavyHidden ? 'Heavy Topics Hidden' : (someHeavyHidden ? 'Some Heavy Topics' : 'Heavy Topics Shown'))
   );
+  const artistSlugById = new Map(artists.map((artist) => [artist.artistId, artist.slug]));
 
   const clearDensityTransitionTimers = () => {
     if (typeof window === 'undefined') return;
@@ -1749,12 +1760,6 @@ function HomePage({
   useEffect(() => () => {
     onDiscoveryDockChange?.(null);
   }, [onDiscoveryDockChange]);
-
-  useEffect(() => {
-    if (densityViewport !== 'desktop' && feedDensity === 'medium') {
-      setFeedDensity('large');
-    }
-  }, [densityViewport, feedDensity]);
 
   useEffect(() => {
     const requestNonce = trendingReloadNonce;
@@ -2552,8 +2557,22 @@ function HomePage({
         </button>
         <div className="discovery-feature-footer">
           <div className="discovery-feature-text">
-            <h3 className="discovery-feature-title">{item.title || 'Artwork title'}</h3>
-            <p className="discovery-feature-subtitle">by {item.artistName || 'Artist Name'}</p>
+            <h3 className="discovery-feature-title">
+              {item.gallerySlug ? (
+                <Link to={`/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}`} className="no-underline">
+                  {item.title || 'Artwork title'}
+                </Link>
+              ) : (item.title || 'Artwork title')}
+            </h3>
+            <p className="discovery-feature-subtitle">
+              by {artistSlugById.get(item.artistId)
+                ? (
+                  <Link to={`/artists/${artistSlugById.get(item.artistId)}`} className="no-underline">
+                    {item.artistName || 'Artist Name'}
+                  </Link>
+                )
+                : (item.artistName || 'Artist Name')}
+            </p>
             {disclosureLine && !compactCard && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
           </div>
           {!compactCard && (
@@ -2564,23 +2583,16 @@ function HomePage({
               <span>{displayedRating}</span>
             </div>
           )}
-          <div className="discovery-feature-actions">
-            <button
-              type="button"
-              className="discovery-quick-view-link discovery-quick-view-btn no-underline"
-              onClick={() => void openFocusedDiscovery(item)}
-            >
-              Quick view
-            </button>
-            {currentUser && !compactCard && (
+          {currentUser && !compactCard && (
+            <div className="discovery-feature-actions">
               <button
                 className="auth-secondary-btn discovery-inline-btn"
                 onClick={() => void toggleImageFavorite(item.imageId)}
               >
                 {isFavorite ? 'Unfavorite' : 'Favorite'}
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </article>
     );
@@ -3271,29 +3283,13 @@ function HomePage({
                 {focusedDiscoveryError && <span className="discovery-focus-modal-error-chip">{focusedDiscoveryError}</span>}
               </div>
               <div className="discovery-focus-modal-actions">
-                <button
-                  type="button"
-                  className="auth-secondary-btn"
-                  disabled={!focusedDiscoveryHasPrevious}
-                  onClick={() => setFocusedDiscoveryIndex((index) => Math.max(0, index - 1))}
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  className="auth-secondary-btn"
-                  disabled={!focusedDiscoveryHasNext}
-                  onClick={() => setFocusedDiscoveryIndex((index) => Math.min(focusedDiscoveryItems.length - 1, index + 1))}
-                >
-                  Next
-                </button>
                 {focusedDiscoveryGallerySlug && (
                   <Link
                     className="auth-primary-btn no-underline"
                     to={`/gallery/${focusedDiscoveryGallerySlug}?image=${encodeURIComponent(focusedDiscoveryItem?.imageId || '')}`}
                     onClick={closeFocusedDiscovery}
                   >
-                    Open gallery
+                    Open in Gallery
                   </Link>
                 )}
               </div>
@@ -3365,6 +3361,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
   const [teaserLimit, setTeaserLimit] = useState(9);
   const [premiumImages, setPremiumImages] = useState<Array<{
     imageId: string;
+    title?: string;
     assetType: 'image' | 'video';
     effectiveContentRating?: ContentRating;
     displayedContentRating?: string;
@@ -3376,7 +3373,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
     premiumUrl: string;
     premiumPosterUrl?: string;
   }>>([]);
-  const [feedDensity, setFeedDensity] = useState<FeedDensity>('medium');
+  const [feedDensity, setFeedDensity] = useState<FeedDensity>('large');
   const [densityViewport, setDensityViewport] = useState<DensityViewport>(() => {
     if (typeof window === 'undefined') return 'desktop';
     if (window.innerWidth >= 1100) return 'desktop';
@@ -3400,7 +3397,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
   const [error, setError] = useState<string>('');
 
   const densityLabel: Record<FeedDensity, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
-  const densityOptions: FeedDensity[] = densityViewport === 'desktop' ? ['small', 'medium', 'large'] : ['small', 'large'];
+  const densityOptions: FeedDensity[] = ['small', 'medium', 'large'];
   const densitySliderValue = feedDensity === 'small' ? 0 : (feedDensity === 'medium' ? 1 : 2);
   const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
 
@@ -3463,12 +3460,6 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
   useEffect(() => {
     void load();
   }, [slug, rememberToken]);
-
-  useEffect(() => {
-    if (densityViewport !== 'desktop' && feedDensity === 'medium') {
-      setFeedDensity('large');
-    }
-  }, [densityViewport, feedDensity]);
 
   useEffect(() => {
     setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
@@ -3636,6 +3627,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
   const previewItems = gallery?.media || [];
   const teaserItems: GalleryAsset[] = (gallery?.premiumTeaserMedia || []).map((item) => ({
     imageId: item.imageId,
+    title: item.title,
     assetType: item.assetType,
     effectiveContentRating: item.effectiveContentRating,
     displayedContentRating: item.displayedContentRating,
@@ -3650,6 +3642,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
   }));
   const premiumItems: GalleryAsset[] = premiumImages.map((item) => ({
     imageId: item.imageId,
+    title: item.title,
     assetType: item.assetType,
     effectiveContentRating: item.effectiveContentRating,
     displayedContentRating: item.displayedContentRating,
@@ -3671,6 +3664,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
       hideCrimeDisastersTragedy
     })
     && matchesDiscoverySearch(discoverySearch, [
+      item.title,
       item.imageId,
       item.displayedContentRating,
       item.displayedAiDisclosure,
@@ -3705,6 +3699,10 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
   };
 
   const closeFocusedViewer = () => setFocusedOpen(false);
+  const scrollToGalleryFilters = () => {
+    document.getElementById('gallery-discovery-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    closeFocusedViewer();
+  };
   const focusedItem = focusedItems[focusedIndex] || null;
   const focusedHasPrevious = focusedIndex > 0;
   const focusedHasNext = focusedIndex >= 0 && focusedIndex < focusedItems.length - 1;
@@ -3769,8 +3767,15 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
   }, [focusedOpen, focusedHasPrevious, focusedHasNext, focusedItems.length]);
 
   if (!gallery) return <div className="layout">Loading...</div>;
-  const galleryArtistName = (gallery.artistName || '').trim() || 'Unknown Artist';
-  const discoverGalleryHeading = `Discover ${gallery.title} from ${galleryArtistName}`;
+  const galleryArtistName = (gallery.artistName || '').trim() || guessArtistNameFromSlug(gallery.artistSlug) || 'Unknown Artist';
+  const discoverGalleryHeadingText = `Discover ${gallery.title} from ${galleryArtistName}`;
+  const discoverGalleryHeading = (
+    <>
+      Discover {gallery.title} from {gallery.artistSlug
+        ? <Link to={`/artists/${gallery.artistSlug}`} className="no-underline">{galleryArtistName}</Link>
+        : galleryArtistName}
+    </>
+  );
 
   const renderGalleryCard = (
     item: GalleryAsset,
@@ -3810,7 +3815,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
               : (
                 <img
                   src={item.assetType === 'video' ? (fallbackPosterUrl || '') : item.previewUrl}
-                  alt={item.imageId}
+                  alt={item.title || item.imageId}
                   loading={cardIndex < 2 ? 'eager' : 'lazy'}
                   fetchPriority={cardIndex < 2 ? 'high' : 'low'}
                   decoding="async"
@@ -3827,7 +3832,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
         </button>
         <div className="discovery-feature-footer">
           <div className="discovery-feature-text">
-            <h3 className="discovery-feature-title">{item.imageId}</h3>
+            <h3 className="discovery-feature-title">{item.title || item.imageId}</h3>
             <p className="discovery-feature-subtitle">{item.displayedContentRating || 'General'}</p>
             {disclosureLine && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
           </div>
@@ -3836,28 +3841,23 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
             <span>👁 {pseudoViewCount(cardIndex)}</span>
             <span>{visibilityPill || 'Public'}</span>
           </div>
-          <div className="discovery-feature-actions">
-            <button
-              type="button"
-              className="discovery-quick-view-link discovery-quick-view-btn no-underline"
-              onClick={() => openFocusedViewer(sourceItems, item.imageId, sectionTitle)}
-            >
-              Quick view
-            </button>
-            {currentUser && (
-              <button
-                className="auth-secondary-btn discovery-inline-btn"
-                onClick={() => void toggleImageFavorite(item.imageId)}
-              >
-                {favoriteImageIds.has(item.imageId) ? 'Unfavorite' : 'Favorite'}
-              </button>
-            )}
-            {selectedCollectionId && (
-              <button className="auth-secondary-btn discovery-inline-btn" onClick={() => void addImageToCollection(item.imageId)}>
-                Add to collection
-              </button>
-            )}
-          </div>
+          {(currentUser || selectedCollectionId) && (
+            <div className="discovery-feature-actions">
+              {currentUser && (
+                <button
+                  className="auth-secondary-btn discovery-inline-btn"
+                  onClick={() => void toggleImageFavorite(item.imageId)}
+                >
+                  {favoriteImageIds.has(item.imageId) ? 'Unfavorite' : 'Favorite'}
+                </button>
+              )}
+              {selectedCollectionId && (
+                <button className="auth-secondary-btn discovery-inline-btn" onClick={() => void addImageToCollection(item.imageId)}>
+                  Add to collection
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </article>
     );
@@ -3884,7 +3884,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
         <div className="discovery-section-header">
           <h2>{discoverGalleryHeading}</h2>
         </div>
-        <div className="discovery-filter-shell">
+        <div id="gallery-discovery-filters" className="discovery-filter-shell">
           <div className="discovery-filter-grid">
             <div className="discovery-filter-left">
               <div>
@@ -4041,7 +4041,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
               item,
               index,
               filteredPreviewItems,
-              discoverGalleryHeading,
+              discoverGalleryHeadingText,
               gallery.visibility === 'preview' ? 'preview' : 'free'
             ))}
           </div>
@@ -4123,7 +4123,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
           <div className="discovery-focus-modal" role="dialog" aria-modal="true" aria-label="Focused media viewer" onClick={(e) => e.stopPropagation()}>
             <div className="discovery-focus-modal-header">
               <div className="discovery-focus-modal-title-wrap">
-                <span className="discovery-focus-modal-title-id">{focusedItem?.imageId || gallery.title}</span>
+                <span className="discovery-focus-modal-title-id">{focusedItem?.title || focusedItem?.imageId || gallery.title}</span>
                 <span className="discovery-focus-modal-title-gallery">{focusedSectionTitle}</span>
               </div>
               <div className="discovery-focus-modal-meta">
@@ -4147,6 +4147,9 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
                   onClick={() => setFocusedIndex((index) => Math.min(focusedItems.length - 1, index + 1))}
                 >
                   Next
+                </button>
+                <button type="button" className="auth-secondary-btn" onClick={scrollToGalleryFilters}>
+                  Back to top
                 </button>
               </div>
               <button type="button" className="discovery-focus-modal-close" onClick={closeFocusedViewer} aria-label="Close focused viewer">
@@ -4178,7 +4181,7 @@ function GalleryPage({ viewerProfile }: { viewerProfile?: UserProfile | null }) 
                   : (
                     <img
                       src={focusedItem.thumbnailUrls?.w1280 || focusedItem.thumbnailUrls?.w640 || focusedItem.previewUrl}
-                      alt={focusedItem.imageId || 'Focused media'}
+                      alt={focusedItem.title || focusedItem.imageId || 'Focused media'}
                       style={{ filter: focusedItem.blurred ? 'blur(28px)' : undefined }}
                     />
                   )
@@ -4584,7 +4587,7 @@ function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | nu
   const [trendingLoading, setTrendingLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [feedDensity, setFeedDensity] = useState<FeedDensity>('medium');
+  const [feedDensity, setFeedDensity] = useState<FeedDensity>('large');
   const [densityViewport, setDensityViewport] = useState<DensityViewport>(() => {
     if (typeof window === 'undefined') return 'desktop';
     if (window.innerWidth >= 1100) return 'desktop';
@@ -4611,7 +4614,7 @@ function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | nu
   const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
 
   const densityLabel: Record<FeedDensity, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
-  const densityOptions: FeedDensity[] = densityViewport === 'desktop' ? ['small', 'medium', 'large'] : ['small', 'large'];
+  const densityOptions: FeedDensity[] = ['small', 'medium', 'large'];
   const densitySliderValue = feedDensity === 'small' ? 0 : (feedDensity === 'medium' ? 1 : 2);
   const cardAspect = feedDensity === 'small' ? 1 : (feedDensity === 'medium' ? 1.05 : 1.28);
   const mediaColumns = (() => {
@@ -4671,12 +4674,6 @@ function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | nu
     window.addEventListener('resize', applyViewport);
     return () => window.removeEventListener('resize', applyViewport);
   }, []);
-
-  useEffect(() => {
-    if (densityViewport !== 'desktop' && feedDensity === 'medium') {
-      setFeedDensity('large');
-    }
-  }, [densityViewport, feedDensity]);
 
   useEffect(() => {
     setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
@@ -4759,6 +4756,10 @@ function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | nu
     setFocusedLoading(false);
     setFocusedError('');
     focusedRequestRef.current += 1;
+  };
+  const scrollToArtistFilters = () => {
+    document.getElementById('artist-discovery-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    closeFocusedViewer();
   };
 
   const filteredTrending = trending.filter((item) => (
@@ -4896,11 +4897,6 @@ function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | nu
             <span>👁 {(2.0 + (index % 8) * 0.2).toFixed(1)}k</span>
             <span>{item.displayedContentRating || 'General'}</span>
           </div>
-          <div className="discovery-feature-actions">
-            <button type="button" className="discovery-quick-view-link discovery-quick-view-btn no-underline" onClick={() => void openFocusedViewer(item)}>
-              Quick view
-            </button>
-          </div>
         </div>
       </article>
     );
@@ -4957,7 +4953,7 @@ function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | nu
         <div className="discovery-section-header">
           <h2>Discover {profile.name}</h2>
         </div>
-        <div className="discovery-filter-shell">
+        <div id="artist-discovery-filters" className="discovery-filter-shell">
           <div className="discovery-filter-grid">
             <div className="discovery-filter-left">
               <div>
@@ -5178,9 +5174,12 @@ function ArtistProfilePage({ viewerProfile }: { viewerProfile?: UserProfile | nu
                     to={`/gallery/${focusedGallerySlug}?image=${encodeURIComponent(focusedItem?.imageId || '')}`}
                     onClick={closeFocusedViewer}
                   >
-                    Open gallery
+                    Open in Gallery
                   </Link>
                 )}
+                <button type="button" className="auth-secondary-btn" onClick={scrollToArtistFilters}>
+                  Back to top
+                </button>
               </div>
               <button type="button" className="discovery-focus-modal-close" onClick={closeFocusedViewer} aria-label="Close focused viewer">
                 ✕
