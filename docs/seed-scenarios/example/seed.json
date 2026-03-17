@@ -1,0 +1,53 @@
+{
+  "mediaDir": "media",
+  "siteSettings": {
+    "stackName": "GalleryStackDevScenarioA",
+    "siteName": "Scenario A Gallery",
+    "theme": "ubeeq",
+    "logoKey": "branding/scenario-a-logo.svg",
+    "logoFile": "media/scenario-a-logo.svg"
+  },
+  "artists": [
+    {
+      "name": "Anne Smith",
+      "slug": "anne-smith",
+      "filePrefix": "anne-",
+      "galleries": [
+        {
+          "kind": "free",
+          "title": "Anne Free",
+          "slug": "anne-free",
+          "status": "published"
+        },
+        {
+          "kind": "preview",
+          "title": "Anne Premium Preview",
+          "slug": "anne-premium-preview",
+          "status": "published",
+          "purchaseUrl": "https://store.example.com/anne-premium"
+        },
+        {
+          "kind": "premium",
+          "title": "Anne Premium",
+          "slug": "anne-premium",
+          "status": "published",
+          "premiumPassword": "anne-premium-password"
+        }
+      ]
+    },
+    {
+      "name": "Samuel Jones",
+      "slug": "samuel-jones",
+      "filePrefix": "samuel-",
+      "includePrefixes": ["samuel-0001", "samuel-0002", "samuel-0003"],
+      "galleries": [
+        {
+          "kind": "free",
+          "title": "Samuel Free",
+          "slug": "samuel-free",
+          "status": "published"
+        }
+      ]
+    }
+  ]
+}
