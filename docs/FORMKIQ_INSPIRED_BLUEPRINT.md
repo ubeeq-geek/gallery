@@ -15,7 +15,7 @@ It borrows proven patterns from FormKiQ-style serverless document systems:
 ## 1) Target Architecture
 
 - **Web App** (`apps/web`): customer browsing, premium unlock, comments, favorites.
-- **Admin App** (`apps/admin`): artist/gallery/media CRUD, moderation, user blocking.
+- **Artist/Admin Area** (`apps/web` at `/artist-area/admin`): artist/gallery/media CRUD, moderation, user blocking.
 - **API Service** (`apps/api`): authz, gallery logic, signed URLs, moderation APIs.
 - **Ingestion Service** (new Lambda): validates uploads and writes canonical media metadata.
 - **Workflow/Event Service** (new Lambda + EventBridge): reacts to media/comment/favorite events.
@@ -136,4 +136,3 @@ Phase 3:
 4. Add Lambda projector for favorite counters.
 5. Add admin role enforcement via Cognito groups (not just authenticated).
 6. Add seed tool for artists/galleries/image+video metadata and sample users.
-
