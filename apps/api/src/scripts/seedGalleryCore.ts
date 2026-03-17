@@ -170,71 +170,6 @@ type StackTargets = {
   mediaBucket?: string;
 };
 
-const defaultArtistSeeds: ArtistSeed[] = [
-  {
-    name: 'Anne Smith',
-    slug: 'anne-smith',
-    filePrefix: 'anne-',
-    galleries: ['free', 'preview', 'premium'],
-    purchaseUrl: 'https://store.example.com/anne-smith-premium'
-  },
-  {
-    name: 'Samuel Jones',
-    slug: 'samuel-jones',
-    filePrefix: 'samuel-',
-    galleries: ['free']
-  },
-  {
-    name: 'Ubeeq Girl',
-    slug: 'ubeeq-girl',
-    filePrefix: 'ubeeq-girl-',
-    contentRating: 'fetish',
-    discoverSquareCropEnabled: false,
-    galleries: ['preview', 'premium'],
-    purchaseUrl: 'https://store.example.com/ubeeq-girl-premium'
-  },
-  {
-    name: 'Bureau of Occupational Records',
-    slug: 'bureau-of-occupational-records',
-    filePrefix: 'alp-',
-    includePrefixes: ['alp-0001', 'alp-0002', 'alp-0003', 'alp-0004', 'alp-0005'],
-    discoverSquareCropEnabled: false,
-    galleries: ['free'],
-    freeGalleryTitle: 'Atlas of Lost Occupations',
-    freeGallerySlug: 'atlas-of-lost-occupations'
-  },
-  {
-    name: 'Daily Cosmos',
-    slug: 'daily-cosmos',
-    filePrefix: 'dc-',
-    galleries: ['free']
-  },
-  {
-    name: 'Nearly Natural Vistas',
-    slug: 'nearly-natural-vistas',
-    filePrefix: 'vista-',
-    galleries: ['free'],
-    freeGalleryTitle: 'Nearly Natural Vistas Free Gallery',
-    freeGallerySlug: 'nearly-natural-vistas-free-gallery'
-  },
-  {
-    name: 'Roadside America',
-    slug: 'roadside-america',
-    filePrefix: 'road-000',
-    galleries: ['free'],
-    freeGalleryTitle: 'Roadside America Free Gallery',
-    freeGallerySlug: 'roadside-america-free-gallery'
-  },
-  {
-    name: 'Livestreams From the Past',
-    slug: 'livestreams-from-the-past',
-    filePrefix: 'past-',
-    galleries: ['free'],
-    freeGalleryTitle: 'Livestreams From the Past Free Gallery',
-    freeGallerySlug: 'livestreams-from-the-past-free-gallery'
-  }
-];
-
 const splitByAccess = (files: AssetFile[]): { free: AssetFile[]; premium: AssetFile[] } => {
   const explicitFree = files.filter((file) => normalize(file.filename).includes('free'));
   const explicitPremium = files.filter((file) => normalize(file.filename).includes('premium'));
@@ -420,9 +355,6 @@ const loadScenarioInputs = (scenarioFilePath: string): SeedScenarioInputs => {
   const parsedArtists = artistsRaw.map((item, idx) => parseScenarioArtist(item, `artists[${idx}]`));
 
   const stackName = asOptionalString(siteSettings.stackName);
-  if (!stackName) {
-    throw new Error('Scenario field "siteSettings.stackName" is required');
-  }
   const siteName = asOptionalString(siteSettings.siteName);
   const themeRaw = asOptionalString(siteSettings.theme);
   if (themeRaw && !['ubeeq', 'sand', 'forest', 'slate'].includes(themeRaw)) {
@@ -626,8 +558,10 @@ const main = async () => {
   const dryRun = process.argv.includes('--dry-run');
   const reset = process.argv.includes('--reset');
   const preserveMedia = process.argv.includes('--preserve-media');
-  const scenarioFileArg = getArgValue('--scenario-file');
-  const scenarioInputs = scenarioFileArg ? loadScenarioInputs(scenarioFileArg) : undefined;
+  const workspaceRoot = path.resolve(__dirname, '../../../..');
+  const defaultScenarioFile = path.join(workspaceRoot, 'seed-scenarios/default/seed.json');
+  const scenarioFileArg = getArgValue('--scenario-file') || defaultScenarioFile;
+  const scenarioInputs = loadScenarioInputs(scenarioFileArg);
 
   const galleryCoreTableArg = getArgValue('--gallery-core-table');
   const siteSettingsTableArg = getArgValue('--site-settings-table');
@@ -650,10 +584,9 @@ const main = async () => {
   const shouldUploadMedia = !preserveMedia && !process.argv.includes('--skip-media-upload');
   const shouldGenerateRenditions = !preserveMedia && !process.argv.includes('--skip-renditions');
 
-  const workspaceRoot = path.resolve(__dirname, '../../../..');
-  const mediaDir = getArgValue('--media-dir') || scenarioInputs?.mediaDir || path.join(workspaceRoot, 'media');
-  const logoFile = getArgValue('--logo-file') || scenarioInputs?.logoFile || path.join(mediaDir, 'ubeeq-logo.svg');
-  const activeArtistSeeds = scenarioInputs?.artistSeeds || defaultArtistSeeds;
+  const mediaDir = getArgValue('--media-dir') || scenarioInputs.mediaDir;
+  const logoFile = getArgValue('--logo-file') || scenarioInputs.logoFile || path.join(mediaDir, 'ubeeq-logo.svg');
+  const activeArtistSeeds = scenarioInputs.artistSeeds;
 
   assertUniqueArtistSeedSlugs(activeArtistSeeds);
 

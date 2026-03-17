@@ -1,0 +1,114 @@
+{
+  "mediaDir": "media",
+  "siteSettings": {
+    "siteName": "Ubeeq",
+    "theme": "ubeeq",
+    "logoKey": "branding/ubeeq-logo.svg",
+    "logoFile": "media/ubeeq-logo.svg"
+  },
+  "artists": [
+    {
+      "name": "Anne Smith",
+      "slug": "anne-smith",
+      "filePrefix": "anne-",
+      "galleries": [
+        {
+          "kind": "free"
+        },
+        {
+          "kind": "preview",
+          "purchaseUrl": "https://store.example.com/anne-smith-premium"
+        },
+        {
+          "kind": "premium"
+        }
+      ]
+    },
+    {
+      "name": "Samuel Jones",
+      "slug": "samuel-jones",
+      "filePrefix": "samuel-",
+      "galleries": [
+        {
+          "kind": "free"
+        }
+      ]
+    },
+    {
+      "name": "Ubeeq Girl",
+      "slug": "ubeeq-girl",
+      "filePrefix": "ubeeq-girl-",
+      "contentRating": "fetish",
+      "discoverSquareCropEnabled": false,
+      "galleries": [
+        {
+          "kind": "preview",
+          "purchaseUrl": "https://store.example.com/ubeeq-girl-premium"
+        },
+        {
+          "kind": "premium"
+        }
+      ]
+    },
+    {
+      "name": "Bureau of Occupational Records",
+      "slug": "bureau-of-occupational-records",
+      "filePrefix": "alp-",
+      "includePrefixes": ["alp-0001", "alp-0002", "alp-0003", "alp-0004", "alp-0005"],
+      "discoverSquareCropEnabled": false,
+      "galleries": [
+        {
+          "kind": "free",
+          "title": "Atlas of Lost Occupations",
+          "slug": "atlas-of-lost-occupations"
+        }
+      ]
+    },
+    {
+      "name": "Daily Cosmos",
+      "slug": "daily-cosmos",
+      "filePrefix": "dc-",
+      "galleries": [
+        {
+          "kind": "free"
+        }
+      ]
+    },
+    {
+      "name": "Nearly Natural Vistas",
+      "slug": "nearly-natural-vistas",
+      "filePrefix": "vista-",
+      "galleries": [
+        {
+          "kind": "free",
+          "title": "Nearly Natural Vistas Free Gallery",
+          "slug": "nearly-natural-vistas-free-gallery"
+        }
+      ]
+    },
+    {
+      "name": "Roadside America",
+      "slug": "roadside-america",
+      "filePrefix": "road-000",
+      "galleries": [
+        {
+          "kind": "free",
+          "title": "Roadside America Free Gallery",
+          "slug": "roadside-america-free-gallery"
+        }
+      ]
+    },
+    {
+      "name": "Livestreams From the Past",
+      "slug": "livestreams-from-the-past",
+      "filePrefix": "past-",
+      "galleries": [
+        {
+          "kind": "free",
+          "title": "Livestreams From the Past Free Gallery",
+          "slug": "livestreams-from-the-past-free-gallery"
+        }
+      ]
+    }
+  ]
+}
