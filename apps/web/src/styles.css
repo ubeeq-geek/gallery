@@ -1540,6 +1540,17 @@
     @apply flex items-center gap-2;
   }
 
+  .gallery-discovery-grid {
+    @apply grid gap-4;
+    grid-template-columns: repeat(var(--gallery-grid-columns, 1), minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .gallery-discovery-card {
+    width: 100%;
+    max-width: 100%;
+  }
+
   @media (min-width: 640px) {
     .discovery-feature-actions {
       align-items: flex-end;
