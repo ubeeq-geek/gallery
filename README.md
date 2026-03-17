@@ -6,21 +6,19 @@ AWS-first gallery platform with:
 - Image and video support in both preview and premium flows.
 - Public read comments, authenticated write comments.
 - Favorites with private user saves plus public like counts.
-- Admin panel for artist/gallery/media management and moderation.
+- Integrated artist/admin workspace for artist/gallery/media management and moderation.
 
 ## Tech Stack
 
 - `apps/web`: Customer React app (Vite).
-- `apps/admin`: Admin React app (Vite).
 - `apps/api`: Express API (Lambda-compatible via `serverless-http`).
 - `infra`: AWS CDK stack (API Gateway, Lambda, DynamoDB, S3, Cognito).
 - Includes migration-safe `GalleryCore` single-table support (`GALLERY_CORE_TABLE`, `USE_GALLERY_CORE_TABLE`).
 
-## Artist Area migration (in progress)
+## Artist Area workspace
 
 - The web app now includes an authenticated **Artist Area** route at `/artist-area` as the long-term home for upload and management workflows.
-- The first migration step now provides an in-app Artist Area studio at `/artist-area/admin` for artist/gallery/media management (including create/list/delete metadata workflows).
-- During migration, the artist area still provides a fallback link to the existing `apps/admin` app via `VITE_LEGACY_ADMIN_URL` (defaults to `http://localhost:5174`).
+- The in-app Artist Area studio is available at `/artist-area/admin` for artist/gallery/media management, moderation, and operations.
 
 ## Requirements
 
@@ -34,7 +32,6 @@ AWS-first gallery platform with:
 npm install
 npm --workspace @gallery/api run dev
 npm --workspace @gallery/web run dev
-npm --workspace @gallery/admin run dev
 ```
 
 API local defaults to `http://localhost:4000`.
@@ -47,7 +44,6 @@ npm --workspace @gallery/shared run build
 npm --workspace @gallery/api run build
 npm --workspace @gallery/infra run build
 npm --workspace @gallery/web run build
-npm --workspace @gallery/admin run build
 ```
 
 ## Key API Endpoints
@@ -79,7 +75,7 @@ npm --workspace @gallery/api run build
 ```bash
 npm --workspace @gallery/infra run deploy
 ```
-3. Configure web/admin env var `VITE_API_BASE_URL` to deployed API URL.
+3. Configure web env var `VITE_API_BASE_URL` to deployed API URL.
 4. Configure Cognito social identity providers in AWS console/CDK extensions.
 
 ## GalleryCore Migration

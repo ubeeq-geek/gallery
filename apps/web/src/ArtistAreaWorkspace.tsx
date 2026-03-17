@@ -61,7 +61,7 @@ const legacyAdminParityChecklist: Array<{ area: string; status: 'migrated' | 'in
   { area: 'Site settings', status: 'migrated', notes: 'Theme/site-name/logo upload actions are in Operations panel.' },
   { area: 'Moderation tools', status: 'migrated', notes: 'Comment status/delete and user block/unblock are in Operations panel.' },
   { area: 'Operational utilities', status: 'migrated', notes: 'Trending rebuild and audit log paging/filtering are in Operations panel.' },
-  { area: 'Legacy-only auth screens', status: 'in-progress', notes: 'Password reset/change lives in main app account auth flows, not in this workspace panel.' }
+  { area: 'Account auth screens', status: 'in-progress', notes: 'Password reset/change lives in main app account settings/auth flows, not in this workspace panel.' }
 ];
 
 type ManagedMedia = {
@@ -754,7 +754,7 @@ export function ArtistAreaWorkspace() {
       <section className="panel">
         <p className="small">Artist Area / Studio</p>
         <h1>Upload & Content Management</h1>
-        <p className="small">This is the in-app migration surface for artist/admin operations. Existing admin tasks are being moved here progressively.</p>
+        <p className="small">This is the integrated in-app workspace for artist/admin operations.</p>
         <p className="small">Signed in as: <strong>{currentUser?.displayName || currentUser?.username || 'unknown user'}</strong> · Groups: {(currentUser?.groups || []).join(', ') || 'none'}</p>
         <div className="inline-form" style={{ gap: 12, alignItems: 'center' }}>
           <Link to="/artist-area" className="auth-secondary-btn no-underline">Back to Artist Area</Link>
@@ -810,7 +810,7 @@ export function ArtistAreaWorkspace() {
             </ul>
           </article>
           <article>
-            <h3>Legacy admin parity</h3>
+            <h3>Workspace coverage</h3>
             <ul>
               {legacyAdminParityChecklist.map((item) => (
                 <li key={item.area}>
@@ -1129,7 +1129,7 @@ export function ArtistAreaWorkspace() {
         <section className="panel artist-public-grid">
           <article>
             <h3>Site settings</h3>
-            <p className="small">Need account password actions from legacy admin? Use <Link to="/auth/change">Change password</Link> in this app.</p>
+            <p className="small">Need account password actions? Use <Link to="/settings">Change password</Link> in this app.</p>
             <div className="inline-form"><input placeholder="Site name" value={siteSettings.siteName} onChange={(e) => setSiteSettings({ ...siteSettings, siteName: e.target.value })} /></div>
             <div className="inline-form"><select value={siteSettings.theme} onChange={(e) => setSiteSettings({ ...siteSettings, theme: e.target.value as SiteSettings['theme'] })}><option value="ubeeq">Ubeeq</option><option value="sand">Sand</option><option value="forest">Forest</option><option value="slate">Slate</option></select></div>
             <div className="inline-form"><input placeholder="Logo key" value={siteSettings.logoKey || ''} onChange={(e) => setSiteSettings({ ...siteSettings, logoKey: e.target.value || undefined })} /></div>
