@@ -160,6 +160,17 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/profile`);
     return handleJson(response);
   },
+  async getArtistFeed(slug: string, cursor?: string, limit = 24) {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    if (cursor) qs.set('cursor', cursor);
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/feed?${qs.toString()}`);
+    return handleJson(response);
+  },
+  async getArtistFeatured(slug: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/featured`);
+    return handleJson(response);
+  },
   async getArtistTrendingImages(slug: string, period: 'hourly' | 'daily' = 'daily', cursor?: string, limit = 24) {
     const qs = new URLSearchParams();
     qs.set('period', period);

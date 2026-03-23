@@ -81,16 +81,54 @@ export class InMemoryStore implements DataStore {
       .filter((item): item is GalleryMediaView => Boolean(item));
   }
 
+  async listMediaByArtist(artistId: string): Promise<Media[]> {
+    return this.media.filter((item) => item.artistId === artistId);
+  }
+
+  async listMediaGalleryPlacements(mediaId: string): Promise<Array<{
+    galleryMediaId: string;
+    galleryId: string;
+    mediaId: string;
+    position: number;
+    createdAt: string;
+  }>> {
+    return this.galleryMedia
+      .filter((item) => item.mediaId === mediaId)
+      .sort((a, b) => a.position - b.position);
+  }
+
   async createArtist(artist: Artist): Promise<void> { this.artists.push(artist); }
   async createGallery(gallery: Gallery): Promise<void> { this.galleries.push(gallery); }
 
-  async createMedia(media: Media, galleryId: string, position: number): Promise<void> {
+  async createMedia(media: Media, galleryId?: string, position = 0): Promise<void> {
     this.media = this.media.filter((item) => item.mediaId !== media.mediaId);
-    this.media.push(media);
+    this.media.push({
+      ...media,
+      appearsInFeed: media.appearsInFeed !== false
+    });
+    if (galleryId) {
+      this.galleryMedia.push({
+        galleryMediaId: randomUUID(),
+        galleryId,
+        mediaId: media.mediaId,
+        position,
+        createdAt: new Date().toISOString()
+      });
+    }
+  }
+
+  async addMediaToGallery(galleryId: string, mediaId: string, position: number): Promise<void> {
+    const media = this.media.find((item) => item.mediaId === mediaId);
+    if (!media) return;
+    const existing = this.galleryMedia.find((item) => item.galleryId === galleryId && item.mediaId === mediaId);
+    if (existing) {
+      existing.position = position;
+      return;
+    }
     this.galleryMedia.push({
       galleryMediaId: randomUUID(),
       galleryId,
-      mediaId: media.mediaId,
+      mediaId,
       position,
       createdAt: new Date().toISOString()
     });
@@ -122,13 +160,20 @@ export class InMemoryStore implements DataStore {
     this.galleries = this.galleries.filter((g) => g.galleryId !== galleryId);
     const removedMediaIds = new Set(this.galleryMedia.filter((item) => item.galleryId === galleryId).map((item) => item.mediaId));
     this.galleryMedia = this.galleryMedia.filter((item) => item.galleryId !== galleryId);
-    this.media = this.media.filter((item) => !removedMediaIds.has(item.mediaId) || this.galleryMedia.some((p) => p.mediaId === item.mediaId));
+    this.media = this.media.filter((item) => (
+      !removedMediaIds.has(item.mediaId)
+      || this.galleryMedia.some((p) => p.mediaId === item.mediaId)
+      || item.appearsInFeed !== false
+    ));
   }
 
   async deleteMediaFromGallery(galleryId: string, mediaId: string): Promise<void> {
     this.galleryMedia = this.galleryMedia.filter((item) => !(item.galleryId === galleryId && item.mediaId === mediaId));
     if (!this.galleryMedia.some((item) => item.mediaId === mediaId)) {
-      this.media = this.media.filter((item) => item.mediaId !== mediaId);
+      const media = this.media.find((item) => item.mediaId === mediaId);
+      if (media?.appearsInFeed === false) {
+        this.media = this.media.filter((item) => item.mediaId !== mediaId);
+      }
     }
   }
 

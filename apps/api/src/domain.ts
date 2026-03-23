@@ -9,6 +9,9 @@ export interface Artist {
   name: string;
   slug: string;
   slugHistory?: string[];
+  defaultProfileTab?: 'feed' | 'galleries';
+  featuredItemIds?: string[];
+  featuredGalleryIds?: string[];
   discoverSquareCropEnabled?: boolean;
   defaultAiDisclosure?: AiDisclosure;
   defaultHeavyTopics?: HeavyTopic[];
@@ -45,6 +48,7 @@ export interface Gallery {
 export interface Media {
   mediaId: string;
   artistId: string;
+  appearsInFeed?: boolean;
   discoverSquareCropEnabled?: boolean;
   contentRating?: ContentRating;
   moderatorContentRating?: ContentRating;

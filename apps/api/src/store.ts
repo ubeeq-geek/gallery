@@ -26,10 +26,19 @@ export interface DataStore {
   listGalleriesByArtistSlug(artistSlug: string): Promise<Gallery[]>;
   getGalleryBySlug(slug: string): Promise<Gallery | null>;
   getMediaByGallery(galleryId: string): Promise<GalleryMediaView[]>;
+  listMediaByArtist(artistId: string): Promise<Media[]>;
+  listMediaGalleryPlacements(mediaId: string): Promise<Array<{
+    galleryMediaId: string;
+    galleryId: string;
+    mediaId: string;
+    position: number;
+    createdAt: string;
+  }>>;
 
   createArtist(artist: Artist): Promise<void>;
   createGallery(gallery: Gallery): Promise<void>;
-  createMedia(media: Media, galleryId: string, position: number): Promise<void>;
+  createMedia(media: Media, galleryId?: string, position?: number): Promise<void>;
+  addMediaToGallery(galleryId: string, mediaId: string, position: number): Promise<void>;
   updateArtist(artist: Artist): Promise<void>;
   updateGallery(gallery: Gallery): Promise<void>;
   updateMedia(media: Media): Promise<void>;

@@ -643,6 +643,7 @@ const main = async () => {
       artistId,
       name: seed.name,
       slug: seed.slug,
+      defaultProfileTab: 'feed',
       discoverSquareCropEnabled,
       defaultAiDisclosure: aiDisclosure,
       defaultHeavyTopics: heavyTopics,
@@ -754,7 +755,10 @@ const main = async () => {
 
     const pushMedia = (targetGalleryId: string, position: number, payload: Media) => {
       media.push({
-        media: payload,
+        media: {
+          ...payload,
+          appearsInFeed: payload.appearsInFeed !== false
+        },
         galleryId: targetGalleryId,
         position
       });

@@ -77,9 +77,23 @@ export type ArtistProfilePayload = {
   name: string;
   slug: string;
   status: 'active' | 'inactive';
+  defaultProfileTab?: 'feed' | 'galleries';
   followerCount: number;
   imageCount: number;
   galleryCount: number;
+  feedItems?: Array<{
+    imageId: string;
+    title: string;
+    assetType: 'image' | 'video';
+    createdAt: string;
+    previewUrl?: string;
+    previewPosterUrl?: string;
+    favoriteCount?: number;
+  }>;
+  featured?: {
+    items: Array<{ imageId: string; title: string; previewUrl?: string; previewPosterUrl?: string }>;
+    galleries: Array<{ galleryId: string; title: string; slug: string; visibility: 'free' | 'preview' | 'premium'; galleryThumbnailUrl?: string }>;
+  };
   trendingImages: TrendingImage[];
   galleries: Array<{
     galleryId: string;
