@@ -116,6 +116,20 @@ const parseOptionalBoolean = (value: unknown): boolean | undefined => {
   return undefined;
 };
 
+const parseStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const normalized = item.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+};
+
 const validateUsername = (value: string): { normalized: string; reasons: string[] } => {
   const normalized = normalizeUsername(value);
   const reasons: string[] = [];
@@ -1017,6 +1031,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
   });
 
+  const resolveArtistFromSlug = async (requestedSlug: string): Promise<Artist | null> => {
+    const artists = await store.listArtists();
+    return artists.find((item) => item.slug === requestedSlug || (item.slugHistory || []).includes(requestedSlug)) || null;
+  };
+
   app.get('/artists', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120');
     try {
@@ -1051,6 +1070,180 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       res.setHeader('x-api-fallback', 'artists-empty');
       res.json([]);
     }
+  });
+
+  app.get('/artists/:slug/feed', async (req, res) => {
+    const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
+    const artist = await resolveArtistFromSlug(requestedSlug);
+    if (!artist || artist.status !== 'active') {
+      return res.status(404).json({ message: 'Artist not found' });
+    }
+    if (artist.slug !== requestedSlug) {
+      return res.redirect(302, `/artists/${artist.slug}/feed`);
+    }
+
+    const nowMs = Date.now();
+    const limitRaw = Number(req.query.limit || 24);
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(60, limitRaw)) : 24;
+    const offset = parseOffsetCursor(typeof req.query.cursor === 'string' ? req.query.cursor : undefined);
+    const isFollower = req.authUser?.userId ? await store.isFollowingArtist(req.authUser.userId, artist.artistId) : false;
+    const isFollowerOrAdmin = isAdminRequest(req) || isFollower;
+    const viewerPolicy = await resolveViewerContentPolicy(req);
+
+    const media = (await store.listMediaByArtist(artist.artistId))
+      .filter((item) => item.appearsInFeed !== false)
+      .filter((item) => !isHiddenByVisibility(item.releaseVisibility))
+      .filter((item) => {
+        if (item.status && item.status !== 'published' && item.status !== 'scheduled') return false;
+        return canViewBySchedule(item.publishAt, item.publicReleaseAt, nowMs, isFollowerOrAdmin);
+      })
+      .filter((item) => {
+        const effectiveRating = getEffectiveContentRating(item);
+        if (!isRatingAllowed(effectiveRating, viewerPolicy.maxAllowedContentRating)) return false;
+        const effectiveAiDisclosure = getEffectiveAiDisclosure(item);
+        const effectiveHeavyTopics = getEffectiveHeavyTopics(item);
+        return passesDisclosureFilter(effectiveAiDisclosure, effectiveHeavyTopics, viewerPolicy.disclosurePolicy);
+      })
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+    const pageItems = media.slice(offset, offset + limit);
+    const nextCursor = offset + pageItems.length < media.length ? encodeOffsetCursor(offset + pageItems.length) : undefined;
+    const allGalleries = await store.listAllGalleries();
+    const galleryById = new Map(allGalleries.map((item) => [item.galleryId, item]));
+    const favoriteCounts = await store.getImageFavoriteCounts(pageItems.map((item) => item.mediaId));
+    const payload = await Promise.all(pageItems.map(async (item) => {
+      const placements = await store.listMediaGalleryPlacements(item.mediaId);
+      const galleryRefs = placements
+        .map((placement) => galleryById.get(placement.galleryId))
+        .filter((gallery): gallery is Gallery => Boolean(gallery))
+        .filter((gallery) => gallery.status === 'published')
+        .filter((gallery) => !isHiddenByVisibility(gallery.releaseVisibility))
+        .filter((gallery) => canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, nowMs, isFollowerOrAdmin))
+        .map((gallery) => ({
+          galleryId: gallery.galleryId,
+          gallerySlug: gallery.slug,
+          galleryTitle: gallery.title,
+          galleryVisibility: gallery.visibility
+        }));
+      const primaryGallery = galleryRefs[0];
+      const effectiveRating = getEffectiveContentRating(item);
+      const contentProjection = projectContentRating(effectiveRating, viewerPolicy);
+      const effectiveAiDisclosure = getEffectiveAiDisclosure(item);
+      const effectiveHeavyTopics = getEffectiveHeavyTopics(item);
+      const disclosureProjection = projectDisclosures(effectiveAiDisclosure, effectiveHeavyTopics);
+      return {
+        imageId: item.mediaId,
+        title: item.title || item.originalFilename?.replace(/\.[^.]+$/, '') || item.mediaId,
+        assetType: (item.assetType || 'image') as 'image' | 'video',
+        createdAt: item.createdAt,
+        previewUrl: await publicMediaUrl(item.previewKey),
+        previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
+        thumbnailUrls: item.thumbnailKeys
+          ? Object.fromEntries(
+              await Promise.all(
+                Object.entries(item.thumbnailKeys).map(async ([name, key]) => {
+                  if (!key) return [name, undefined];
+                  return [name, await publicMediaUrl(key)];
+                })
+              )
+            )
+          : undefined,
+        width: item.width,
+        height: item.height,
+        aspectRatio: item.width > 0 && item.height > 0 ? Number((item.width / item.height).toFixed(5)) : undefined,
+        effectiveContentRating: contentProjection.effectiveContentRating,
+        displayedContentRating: contentProjection.displayedContentRating,
+        blurred: contentProjection.blurred,
+        effectiveAiDisclosure: disclosureProjection.effectiveAiDisclosure,
+        displayedAiDisclosure: disclosureProjection.displayedAiDisclosure,
+        effectiveHeavyTopics: disclosureProjection.effectiveHeavyTopics,
+        displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
+        discoverSquareCropEnabled: item.discoverSquareCropEnabled !== false,
+        appearsInFeed: item.appearsInFeed !== false,
+        favoriteCount: favoriteCounts[item.mediaId] || 0,
+        primaryGallery,
+        galleryRefs
+      };
+    }));
+
+    return res.json({
+      artistId: artist.artistId,
+      artistSlug: artist.slug,
+      items: payload,
+      nextCursor
+    });
+  });
+
+  app.get('/artists/:slug/featured', async (req, res) => {
+    const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
+    const artist = await resolveArtistFromSlug(requestedSlug);
+    if (!artist || artist.status !== 'active') {
+      return res.status(404).json({ message: 'Artist not found' });
+    }
+    if (artist.slug !== requestedSlug) {
+      return res.redirect(302, `/artists/${artist.slug}/featured`);
+    }
+    const featuredItemIds = artist.featuredItemIds || [];
+    const featuredGalleryIds = artist.featuredGalleryIds || [];
+    if (featuredItemIds.length === 0 && featuredGalleryIds.length === 0) {
+      return res.json({ artistId: artist.artistId, artistSlug: artist.slug, items: [], galleries: [] });
+    }
+
+    const nowMs = Date.now();
+    const isFollower = req.authUser?.userId ? await store.isFollowingArtist(req.authUser.userId, artist.artistId) : false;
+    const isFollowerOrAdmin = isAdminRequest(req) || isFollower;
+    const viewerPolicy = await resolveViewerContentPolicy(req);
+    const [media, galleries] = await Promise.all([
+      store.listMediaByArtist(artist.artistId),
+      store.listAllGalleries()
+    ]);
+    const mediaById = new Map(media.map((item) => [item.mediaId, item]));
+    const galleriesById = new Map(
+      galleries
+        .filter((item) => item.artistId === artist.artistId && item.status === 'published' && !isHiddenByVisibility(item.releaseVisibility))
+        .map((item) => [item.galleryId, item])
+    );
+
+    const featuredItems = await Promise.all(featuredItemIds.map(async (mediaId) => {
+      const item = mediaById.get(mediaId);
+      if (!item) return null;
+      if (isHiddenByVisibility(item.releaseVisibility)) return null;
+      if (!canViewBySchedule(item.publishAt, item.publicReleaseAt, nowMs, isFollowerOrAdmin)) return null;
+      const effectiveRating = getEffectiveContentRating(item);
+      if (!isRatingAllowed(effectiveRating, viewerPolicy.maxAllowedContentRating)) return null;
+      const effectiveAiDisclosure = getEffectiveAiDisclosure(item);
+      const effectiveHeavyTopics = getEffectiveHeavyTopics(item);
+      if (!passesDisclosureFilter(effectiveAiDisclosure, effectiveHeavyTopics, viewerPolicy.disclosurePolicy)) return null;
+      return {
+        imageId: item.mediaId,
+        title: item.title || item.originalFilename?.replace(/\.[^.]+$/, '') || item.mediaId,
+        assetType: (item.assetType || 'image') as 'image' | 'video',
+        createdAt: item.createdAt,
+        previewUrl: await publicMediaUrl(item.previewKey),
+        previewPosterUrl: await publicMediaUrl(item.previewPosterKey)
+      };
+    }));
+
+    const featuredGalleries = await Promise.all(featuredGalleryIds.map(async (galleryId) => {
+      const gallery = galleriesById.get(galleryId);
+      if (!gallery) return null;
+      if (!canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, nowMs, isFollowerOrAdmin)) return null;
+      const thumb = await resolveGalleryThumbnail(gallery);
+      return {
+        galleryId: gallery.galleryId,
+        gallerySlug: gallery.slug,
+        title: gallery.title,
+        visibility: gallery.visibility,
+        galleryThumbnailUrl: thumb.galleryThumbnailUrl
+      };
+    }));
+
+    return res.json({
+      artistId: artist.artistId,
+      artistSlug: artist.slug,
+      items: featuredItems.filter((item): item is NonNullable<typeof item> => Boolean(item)),
+      galleries: featuredGalleries.filter((item): item is NonNullable<typeof item> => Boolean(item))
+    });
   });
 
   app.get('/site-settings', async (_req, res) => {
@@ -1444,8 +1637,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
   app.get('/artists/:slug/profile', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
-    const artists = await store.listArtists();
-    const artist = artists.find((item) => item.slug === requestedSlug || (item.slugHistory || []).includes(requestedSlug));
+    const artist = await resolveArtistFromSlug(requestedSlug);
     if (!artist || artist.status !== 'active') {
       return res.status(404).json({ message: 'Artist not found' });
     }
@@ -1458,6 +1650,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const nowMs = Date.now();
     const isFollower = req.authUser?.userId ? await store.isFollowingArtist(req.authUser.userId, artist.artistId) : false;
     const isFollowerOrAdmin = isAdminRequest(req) || isFollower;
+    const viewerPolicy = await resolveViewerContentPolicy(req);
     const visibleGalleries = allGalleries.filter((item) => canViewBySchedule(item.publishAt, item.publicReleaseAt, nowMs, isFollowerOrAdmin));
     const imageCount = (await Promise.all(visibleGalleries.map((gallery) => store.getMediaByGallery(gallery.galleryId)))).flat().filter((item) => (item.assetType || 'image') === 'image').length;
     const followerCount = await store.countFollowersByArtist(artist.artistId);
@@ -1478,6 +1671,19 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const trending = await computeTrendingImages(req, { period: 'daily', limit: 18, artistId: artist.artistId });
     const publicFavorites = await store.listPublicFavoritesByProfile('artist', artist.artistId);
     const publicCollections = await store.listPublicCollectionsByProfile('artist', artist.artistId, 6);
+    const feedAll = (await store.listMediaByArtist(artist.artistId))
+      .filter((item) => item.appearsInFeed !== false)
+      .filter((item) => !isHiddenByVisibility(item.releaseVisibility))
+      .filter((item) => canViewBySchedule(item.publishAt, item.publicReleaseAt, nowMs, isFollowerOrAdmin))
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    const feedPreview = feedAll.slice(0, 18);
+    const featuredItemIds = artist.featuredItemIds || [];
+    const featuredGalleryIds = artist.featuredGalleryIds || [];
+    const feedFavoriteCounts = await store.getImageFavoriteCounts(feedPreview.map((item) => item.mediaId));
+    const featuredFeedItems = featuredItemIds
+      .map((itemId) => feedAll.find((item) => item.mediaId === itemId))
+      .filter((item): item is Media => Boolean(item));
+    const featuredGalleries = visibleGalleries.filter((gallery) => featuredGalleryIds.includes(gallery.galleryId));
     const galleryById = new Map(visibleGalleries.map((item) => [item.galleryId, item]));
     const mediaRows = await Promise.all(visibleGalleries.map((item) => store.getMediaByGallery(item.galleryId)));
     const mediaById = new Map(mediaRows.flat().map((item) => [item.mediaId, item]));
@@ -1519,9 +1725,48 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       name: artist.name,
       slug: artist.slug,
       status: artist.status,
+      defaultProfileTab: artist.defaultProfileTab === 'galleries' ? 'galleries' : 'feed',
       followerCount,
       imageCount,
       galleryCount: visibleGalleries.length,
+      feedItems: await Promise.all(feedPreview.map(async (item) => {
+        const contentProjection = projectContentRating(getEffectiveContentRating(item), viewerPolicy);
+        const disclosureProjection = projectDisclosures(getEffectiveAiDisclosure(item), getEffectiveHeavyTopics(item));
+        return {
+          imageId: item.mediaId,
+          title: item.title || item.originalFilename?.replace(/\.[^.]+$/, '') || item.mediaId,
+          assetType: (item.assetType || 'image') as 'image' | 'video',
+          createdAt: item.createdAt,
+          previewUrl: await publicMediaUrl(item.previewKey),
+          previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
+          effectiveContentRating: contentProjection.effectiveContentRating,
+          displayedContentRating: contentProjection.displayedContentRating,
+          blurred: contentProjection.blurred,
+          effectiveAiDisclosure: disclosureProjection.effectiveAiDisclosure,
+          displayedAiDisclosure: disclosureProjection.displayedAiDisclosure,
+          effectiveHeavyTopics: disclosureProjection.effectiveHeavyTopics,
+          displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
+          favoriteCount: feedFavoriteCounts[item.mediaId] || 0
+        };
+      })),
+      featured: {
+        items: await Promise.all(featuredFeedItems.map(async (item) => ({
+          imageId: item.mediaId,
+          title: item.title || item.originalFilename?.replace(/\.[^.]+$/, '') || item.mediaId,
+          previewUrl: await publicMediaUrl(item.previewKey),
+          previewPosterUrl: await publicMediaUrl(item.previewPosterKey)
+        }))),
+        galleries: await Promise.all(featuredGalleries.map(async (gallery) => {
+          const thumb = await resolveGalleryThumbnail(gallery);
+          return {
+            galleryId: gallery.galleryId,
+            title: gallery.title,
+            slug: gallery.slug,
+            visibility: gallery.visibility,
+            galleryThumbnailUrl: thumb.galleryThumbnailUrl
+          };
+        }))
+      },
       trendingImages: trending.items,
       galleries,
       publicFavoritesByType: {
@@ -2440,6 +2685,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       name,
       slug,
       slugHistory: uniqueSlugs([slug]),
+      defaultProfileTab: req.body?.defaultProfileTab === 'galleries' ? 'galleries' : 'feed',
+      featuredItemIds: parseStringArray(req.body?.featuredItemIds),
+      featuredGalleryIds: parseStringArray(req.body?.featuredGalleryIds),
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
         : true,
@@ -2517,11 +2765,41 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return res.status(409).json({ message: 'Artist slug is already taken.', slug: conflictSlug });
     }
 
+    const requestedFeaturedItemIds = req.body?.featuredItemIds !== undefined
+      ? parseStringArray(req.body.featuredItemIds)
+      : undefined;
+    if (requestedFeaturedItemIds) {
+      const artistMediaIds = new Set((await store.listMediaByArtist(existing.artistId)).map((item) => item.mediaId));
+      const invalid = requestedFeaturedItemIds.find((itemId) => !artistMediaIds.has(itemId));
+      if (invalid) {
+        return res.status(400).json({ message: `featuredItemId does not belong to artist: ${invalid}` });
+      }
+    }
+    const requestedFeaturedGalleryIds = req.body?.featuredGalleryIds !== undefined
+      ? parseStringArray(req.body.featuredGalleryIds)
+      : undefined;
+    if (requestedFeaturedGalleryIds) {
+      const artistGalleryIds = new Set((await store.listAllGalleries()).filter((item) => item.artistId === existing.artistId).map((item) => item.galleryId));
+      const invalid = requestedFeaturedGalleryIds.find((galleryId) => !artistGalleryIds.has(galleryId));
+      if (invalid) {
+        return res.status(400).json({ message: `featuredGalleryId does not belong to artist: ${invalid}` });
+      }
+    }
+
     const updated: Artist = {
       ...existing,
       name: req.body?.name ? String(req.body.name) : existing.name,
       slug: nextSlug,
       slugHistory: nextSlugHistory,
+      defaultProfileTab: req.body?.defaultProfileTab === 'galleries'
+        ? 'galleries'
+        : (req.body?.defaultProfileTab === 'feed' ? 'feed' : (existing.defaultProfileTab === 'galleries' ? 'galleries' : 'feed')),
+      featuredItemIds: req.body?.featuredItemIds !== undefined
+        ? (requestedFeaturedItemIds || [])
+        : (existing.featuredItemIds || []),
+      featuredGalleryIds: req.body?.featuredGalleryIds !== undefined
+        ? (requestedFeaturedGalleryIds || [])
+        : (existing.featuredGalleryIds || []),
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
         : (existing.discoverSquareCropEnabled ?? true),
@@ -2720,13 +2998,22 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   });
 
   app.post('/admin/images', requireAuth, async (req, res) => {
-    const galleryId = String(req.body?.galleryId || '');
+    const galleryIdRaw = req.body?.galleryId ? String(req.body.galleryId) : '';
+    const galleryId = galleryIdRaw.trim() || undefined;
     const position = Number(req.body?.sortOrder || 0);
-    const gallery = (await store.listAllGalleries()).find((item) => item.galleryId === galleryId);
-    if (!gallery) {
-      return res.status(400).json({ message: 'galleryId is required and must exist' });
+    const gallery = galleryId
+      ? (await store.listAllGalleries()).find((item) => item.galleryId === galleryId)
+      : undefined;
+    const artistId = gallery
+      ? gallery.artistId
+      : String(req.body?.artistId || '').trim();
+    if (galleryId && !gallery) {
+      return res.status(400).json({ message: 'galleryId must exist when provided' });
     }
-    if (!(await ensureArtistContentAccess(req, res, gallery.artistId))) {
+    if (!artistId) {
+      return res.status(400).json({ message: 'artistId is required when galleryId is not provided' });
+    }
+    if (!(await ensureArtistContentAccess(req, res, artistId))) {
       return;
     }
     const originalFilename = req.body?.originalFilename ? String(req.body.originalFilename) : undefined;
@@ -2736,7 +3023,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const slug = title ? slugify(title) : undefined;
     const media: Media = {
       mediaId: randomUUID(),
-      artistId: gallery.artistId,
+      artistId,
+      appearsInFeed: parseOptionalBoolean(req.body?.appearsInFeed) ?? true,
       assetType: req.body?.assetType === 'video' ? 'video' : 'image',
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
@@ -2763,7 +3051,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     };
 
     if (media.assetType === 'image') {
-      const targetPrefix = `${gallery.artistId}/${media.mediaId}`;
+      const targetPrefix = `${artistId}/${media.mediaId}`;
       const generated = await generateImageRenditions({
         s3: s3Client,
         bucket: config.mediaBucket,
@@ -2778,7 +3066,32 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
 
     await store.createMedia(media, galleryId, position);
-    return res.status(201).json({ ...media, imageId: media.mediaId, galleryId, sortOrder: position });
+    return res.status(201).json({ ...media, imageId: media.mediaId, galleryId, sortOrder: galleryId ? position : undefined });
+  });
+
+  app.post('/admin/galleries/:galleryId/items/:imageId', requireAuth, async (req, res) => {
+    const gallery = (await store.listAllGalleries()).find((item) => item.galleryId === req.params.galleryId);
+    if (!gallery) {
+      return res.status(404).json({ message: 'Gallery not found' });
+    }
+    if (!(await ensureArtistContentAccess(req, res, gallery.artistId))) {
+      return;
+    }
+    const artistMedia = await store.listMediaByArtist(gallery.artistId);
+    const media = artistMedia.find((item) => item.mediaId === req.params.imageId);
+    if (!media) {
+      return res.status(404).json({ message: 'Image not found for artist' });
+    }
+    const position = Number(req.body?.sortOrder);
+    const resolvedPosition = Number.isFinite(position)
+      ? Math.max(0, Math.floor(position))
+      : (await store.getMediaByGallery(gallery.galleryId)).length;
+    await store.addMediaToGallery(gallery.galleryId, media.mediaId, resolvedPosition);
+    return res.status(201).json({
+      galleryId: gallery.galleryId,
+      imageId: media.mediaId,
+      sortOrder: resolvedPosition
+    });
   });
 
   app.patch('/admin/images/:galleryId/:imageId', requireAuth, async (req, res) => {
@@ -2805,6 +3118,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const updated: Media = {
       ...existing,
       mediaId: req.params.imageId,
+      appearsInFeed: req.body?.appearsInFeed !== undefined
+        ? Boolean(req.body.appearsInFeed)
+        : (existing.appearsInFeed !== false),
       assetType: req.body?.assetType === 'video' ? 'video' : (req.body?.assetType === 'image' ? 'image' : existing.assetType),
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled

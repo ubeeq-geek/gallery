@@ -168,6 +168,62 @@ export class DynamoStore implements DataStore {
       .filter((item) => Boolean(item.mediaId));
   }
 
+  async listMediaByArtist(artistId: string): Promise<Media[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listMediaByArtist(artistId);
+    }
+    const response = await this.client.send(
+      new ScanCommand({
+        TableName: this.config.imagesTable,
+        FilterExpression: 'artistId = :artistId',
+        ExpressionAttributeValues: { ':artistId': artistId }
+      })
+    );
+    const byId = new Map<string, Media>();
+    for (const item of (response.Items || []) as Array<Media & { imageId?: string }>) {
+      const mediaId = item.mediaId || item.imageId;
+      if (!mediaId) continue;
+      byId.set(mediaId, {
+        ...item,
+        mediaId,
+        appearsInFeed: item.appearsInFeed !== false
+      });
+    }
+    return [...byId.values()];
+  }
+
+  async listMediaGalleryPlacements(mediaId: string): Promise<Array<{
+    galleryMediaId: string;
+    galleryId: string;
+    mediaId: string;
+    position: number;
+    createdAt: string;
+  }>> {
+    if (this.coreRepo) {
+      return this.coreRepo.listMediaGalleryPlacements(mediaId);
+    }
+    const response = await this.client.send(
+      new ScanCommand({
+        TableName: this.config.imagesTable,
+        FilterExpression: 'imageId = :imageId OR mediaId = :mediaId',
+        ExpressionAttributeValues: {
+          ':imageId': mediaId,
+          ':mediaId': mediaId
+        }
+      })
+    );
+    return ((response.Items || []) as Array<{ galleryId: string; sortOrder?: number; createdAt?: string; imageId?: string; mediaId?: string }>)
+      .filter((item) => Boolean(item.galleryId))
+      .map((item, index) => ({
+        galleryMediaId: `${item.galleryId}:${mediaId}:${index}`,
+        galleryId: item.galleryId,
+        mediaId,
+        position: Number(item.sortOrder || 0),
+        createdAt: item.createdAt || new Date().toISOString()
+      }))
+      .sort((a, b) => a.position - b.position);
+  }
+
   async createArtist(artist: Artist): Promise<void> {
     if (this.coreRepo) {
       await this.coreRepo.createArtist(artist);
@@ -182,17 +238,51 @@ export class DynamoStore implements DataStore {
     await this.client.send(new PutCommand({ TableName: this.config.galleriesTable, Item: gallery }));
   }
 
-  async createMedia(media: Media, galleryId: string, position: number): Promise<void> {
+  async createMedia(media: Media, galleryId?: string, position = 0): Promise<void> {
     if (this.coreRepo) {
       await this.coreRepo.createMedia(media, galleryId, position);
       return;
     }
+    const resolvedGalleryId = galleryId || `FEED#${media.artistId}`;
     await this.client.send(
       new PutCommand({
         TableName: this.config.imagesTable,
         Item: {
           ...media,
+          appearsInFeed: media.appearsInFeed !== false,
           imageId: media.mediaId,
+          galleryId: resolvedGalleryId,
+          sortOrder: position
+        }
+      })
+    );
+  }
+
+  async addMediaToGallery(galleryId: string, mediaId: string, position: number): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.addMediaToGallery(galleryId, mediaId, position);
+      return;
+    }
+    const response = await this.client.send(
+      new ScanCommand({
+        TableName: this.config.imagesTable,
+        FilterExpression: 'imageId = :imageId OR mediaId = :mediaId',
+        ExpressionAttributeValues: {
+          ':imageId': mediaId,
+          ':mediaId': mediaId
+        },
+        Limit: 1
+      })
+    );
+    const base = (response.Items || [])[0] as (Media & { imageId?: string }) | undefined;
+    if (!base) return;
+    await this.client.send(
+      new PutCommand({
+        TableName: this.config.imagesTable,
+        Item: {
+          ...base,
+          mediaId,
+          imageId: mediaId,
           galleryId,
           sortOrder: position
         }
@@ -222,7 +312,7 @@ export class DynamoStore implements DataStore {
     await this.client.send(
       new PutCommand({
         TableName: this.config.imagesTable,
-        Item: { ...media, imageId: media.mediaId }
+        Item: { ...media, appearsInFeed: media.appearsInFeed !== false, imageId: media.mediaId }
       })
     );
   }

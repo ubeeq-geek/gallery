@@ -459,8 +459,57 @@ export class GalleryCoreRepository {
       .filter((item): item is GalleryMediaView => Boolean(item));
   }
 
+  async listMediaByArtist(artistId: string): Promise<Media[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `ARTIST#${artistId}`,
+          ':prefix': 'MEDIA#'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'MEDIA_OBJECT')
+      .map((item) => stripEntityFields<Media>(item));
+  }
+
+  async listMediaGalleryPlacements(mediaId: string): Promise<Array<{
+    galleryMediaId: string;
+    galleryId: string;
+    mediaId: string;
+    position: number;
+    createdAt: string;
+  }>> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI1',
+        KeyConditionExpression: 'GSI1PK = :pk AND begins_with(GSI1SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `MEDIA#${mediaId}`,
+          ':prefix': 'GALLERY#'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'GALLERY_MEDIA')
+      .map((item) => stripEntityFields<{
+        galleryMediaId: string;
+        galleryId: string;
+        mediaId: string;
+        position: number;
+        createdAt: string;
+      }>(item))
+      .sort((a, b) => a.position - b.position);
+  }
+
   async createArtist(artist: Artist): Promise<void> {
     const slugHistory = uniqueValues([...(artist.slugHistory || []), artist.slug]);
+    const featuredItemIds = uniqueValues(artist.featuredItemIds || []);
+    const featuredGalleryIds = uniqueValues(artist.featuredGalleryIds || []);
     await this.client.send(
       new PutCommand({
         TableName: this.tableName,
@@ -473,7 +522,10 @@ export class GalleryCoreRepository {
           GSI2SK: `ARTIST#${artist.sortOrder.toString().padStart(8, '0')}#${artist.artistId}`,
           entityType: 'ARTIST',
           ...artist,
-          slugHistory
+          slugHistory,
+          defaultProfileTab: artist.defaultProfileTab === 'galleries' ? 'galleries' : 'feed',
+          featuredItemIds,
+          featuredGalleryIds
         }
       })
     );
@@ -575,7 +627,7 @@ export class GalleryCoreRepository {
     );
   }
 
-  async createMedia(media: Media, galleryId: string, position: number): Promise<void> {
+  async createMedia(media: Media, galleryId?: string, position = 0): Promise<void> {
     await this.client.send(
       new PutCommand({
         TableName: this.tableName,
@@ -587,12 +639,19 @@ export class GalleryCoreRepository {
           GSI2PK: `ARTIST#${media.artistId}`,
           GSI2SK: `MEDIA#${media.createdAt}#${media.mediaId}`,
           entityType: 'MEDIA_OBJECT',
-          ...media
+          ...media,
+          appearsInFeed: media.appearsInFeed !== false
         }
       })
     );
 
-    await this.putGalleryPlacement(galleryId, media.mediaId, position);
+    if (galleryId) {
+      await this.putGalleryPlacement(galleryId, media.mediaId, position);
+    }
+  }
+
+  async addMediaToGallery(galleryId: string, mediaId: string, position: number): Promise<void> {
+    await this.putGalleryPlacement(galleryId, mediaId, position);
   }
 
   async addArtistMember(member: ArtistMember): Promise<void> {
@@ -841,7 +900,8 @@ export class GalleryCoreRepository {
           GSI2PK: `ARTIST#${media.artistId}`,
           GSI2SK: `MEDIA#${media.createdAt}#${media.mediaId}`,
           entityType: 'MEDIA_OBJECT',
-          ...media
+          ...media,
+          appearsInFeed: media.appearsInFeed !== false
         }
       })
     );
@@ -958,6 +1018,18 @@ export class GalleryCoreRepository {
 
     const remainingPlacements = await this.countGalleryPlacementsForMedia(mediaId);
     if (remainingPlacements === 0) {
+      const mediaProfile = await this.client.send(
+        new GetCommand({
+          TableName: this.tableName,
+          Key: {
+            PK: `MEDIA#${mediaId}`,
+            SK: 'PROFILE'
+          }
+        })
+      );
+      if (mediaProfile.Item && mediaProfile.Item.appearsInFeed !== false) {
+        return;
+      }
       await this.client.send(
         new DeleteCommand({
           TableName: this.tableName,

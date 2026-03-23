@@ -160,6 +160,17 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/profile`);
     return handleJson(response);
   },
+  async getArtistFeed(slug: string, cursor?: string, limit = 24) {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    if (cursor) qs.set('cursor', cursor);
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/feed?${qs.toString()}`);
+    return handleJson(response);
+  },
+  async getArtistFeatured(slug: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/featured`);
+    return handleJson(response);
+  },
   async getArtistTrendingImages(slug: string, period: 'hourly' | 'daily' = 'daily', cursor?: string, limit = 24) {
     const qs = new URLSearchParams();
     qs.set('period', period);
@@ -386,6 +397,75 @@ export const api = {
   async updateArtist(artistId: string, payload: { name?: string; slug?: string; status?: 'active' | 'inactive'; sortOrder?: number }) {
     const response = await fetch(`${API_BASE}/admin/artists/${artistId}`, {
       method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async listAdminGalleries() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/galleries`);
+    return handleJson(response);
+  },
+  async createAdminGallery(payload: {
+    artistId: string;
+    artistSlug?: string;
+    title: string;
+    slug?: string;
+    visibility?: 'free' | 'preview' | 'premium';
+    status?: 'draft' | 'published';
+    purchaseUrl?: string;
+    discoverSquareCropEnabled?: boolean;
+    premiumPassword?: string;
+  }) {
+    const response = await fetch(`${API_BASE}/admin/galleries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async updateAdminGallery(galleryId: string, payload: {
+    artistId?: string;
+    artistSlug?: string;
+    title?: string;
+    slug?: string;
+    visibility?: 'free' | 'preview' | 'premium';
+    status?: 'draft' | 'published';
+    purchaseUrl?: string;
+    discoverSquareCropEnabled?: boolean;
+    premiumPassword?: string;
+  }) {
+    const response = await fetch(`${API_BASE}/admin/galleries/${galleryId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async listAdminGalleryItems(galleryId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/galleries/${galleryId}/images`);
+    return handleJson(response);
+  },
+  async createAdminImage(payload: {
+    artistId: string;
+    galleryId?: string;
+    sortOrder?: number;
+    assetType?: 'image' | 'video';
+    title?: string;
+    slug?: string;
+    originalFilename?: string;
+    previewKey: string;
+    premiumKey?: string;
+    previewPosterKey?: string;
+    premiumPosterKey?: string;
+    appearsInFeed?: boolean;
+    discoverSquareCropEnabled?: boolean;
+    contentRating?: 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
+    aiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    heavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+  }) {
+    const response = await fetch(`${API_BASE}/admin/images`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
