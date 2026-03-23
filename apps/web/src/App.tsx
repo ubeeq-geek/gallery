@@ -6633,6 +6633,8 @@ export default function App() {
         <Route path="/settings" element={<SettingsPage user={user} onProfileChanged={setMyProfile} />} />
         <Route path="/studio" element={<StudioDashboardPage user={user} managedArtists={managedArtists} roleNotificationCounts={roleNotificationCounts} />} />
         <Route path="/admin" element={<AdminLandingPage user={user} />} />
+        <Route path="/artist-area" element={<ArtistAreaPage user={user} />} />
+        <Route path="/artist-area/admin" element={<ArtistAreaAdminPage user={user} />} />
       </Routes>
     </div>
   );
