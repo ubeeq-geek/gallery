@@ -247,9 +247,10 @@ const parseScenarioGallery = (
   if (statusRaw && statusRaw !== 'draft' && statusRaw !== 'published') {
     throw new Error(`Scenario field "${fieldName}.status" must be draft or published`);
   }
+  const title = asString(value.title, `${fieldName}.title`);
   return {
     kind: kindRaw,
-    title: asOptionalString(value.title),
+    title,
     slug: asOptionalString(value.slug),
     status: statusRaw as 'draft' | 'published' | undefined,
     purchaseUrl: asOptionalString(value.purchaseUrl),
@@ -658,7 +659,7 @@ const main = async () => {
           galleryId: seedId('gallery', seed.slug, 'free'),
           artistId,
           artistSlug: seed.slug,
-          title: seed.freeGalleryTitle || `${seed.name} Free Gallery`,
+          title: seed.freeGalleryTitle!,
           slug: seed.freeGallerySlug || `${seed.slug}-free`,
           slugHistory: [seed.freeGallerySlug || `${seed.slug}-free`],
           discoverSquareCropEnabled,
@@ -675,7 +676,7 @@ const main = async () => {
           galleryId: seedId('gallery', seed.slug, 'premium'),
           artistId,
           artistSlug: seed.slug,
-          title: seed.premiumGalleryTitle || `${seed.name} Premium Gallery`,
+          title: seed.premiumGalleryTitle!,
           slug: seed.premiumGallerySlug || `${seed.slug}-premium`,
           slugHistory: [seed.premiumGallerySlug || `${seed.slug}-premium`],
           discoverSquareCropEnabled,
@@ -693,7 +694,7 @@ const main = async () => {
           galleryId: seedId('gallery', seed.slug, 'preview'),
           artistId,
           artistSlug: seed.slug,
-          title: seed.previewGalleryTitle || `${seed.name} Premium Gallery (Preview)`,
+          title: seed.previewGalleryTitle!,
           slug: seed.previewGallerySlug || `${seed.slug}-premium-preview`,
           slugHistory: [seed.previewGallerySlug || `${seed.slug}-premium-preview`],
           discoverSquareCropEnabled,
