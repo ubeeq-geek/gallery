@@ -13,14 +13,17 @@
       "filePrefix": "anne-",
       "galleries": [
         {
-          "kind": "free"
+          "kind": "free",
+          "title": "Anne Smith"
         },
         {
           "kind": "preview",
-          "purchaseUrl": "https://store.example.com/anne-smith-premium"
+          "purchaseUrl": "https://store.example.com/anne-smith-premium",
+          "title": "Anne Smith Preview"
         },
         {
-          "kind": "premium"
+          "kind": "premium",
+          "title": "Anne Smith Collection"
         }
       ]
     },
@@ -30,7 +33,8 @@
       "filePrefix": "samuel-",
       "galleries": [
         {
-          "kind": "free"
+          "kind": "free",
+          "title": "Samuel Jones"
         }
       ]
     },
@@ -43,10 +47,12 @@
       "galleries": [
         {
           "kind": "preview",
-          "purchaseUrl": "https://store.example.com/ubeeq-girl-premium"
+          "purchaseUrl": "https://store.example.com/ubeeq-girl-premium",
+          "title": "Ubeeq Girl Preview"
         },
         {
-          "kind": "premium"
+          "kind": "premium",
+          "title": "Ubeeq Girl Collection"
         }
       ]
     },
@@ -54,7 +60,13 @@
       "name": "Bureau of Occupational Records",
       "slug": "bureau-of-occupational-records",
       "filePrefix": "alp-",
-      "includePrefixes": ["alp-0001", "alp-0002", "alp-0003", "alp-0004", "alp-0005"],
+      "includePrefixes": [
+        "alp-0001",
+        "alp-0002",
+        "alp-0003",
+        "alp-0004",
+        "alp-0005"
+      ],
       "discoverSquareCropEnabled": false,
       "galleries": [
         {
@@ -70,7 +82,8 @@
       "filePrefix": "dc-",
       "galleries": [
         {
-          "kind": "free"
+          "kind": "free",
+          "title": "Daily Cosmos"
         }
       ]
     },
