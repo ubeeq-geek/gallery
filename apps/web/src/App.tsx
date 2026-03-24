@@ -748,8 +748,8 @@ function HeaderAuth({
                   <span>Settings</span>
                   <span aria-hidden="true">›</span>
                 </Link>
-                <Link to="/artist-area" className="user-menu-settings-row" onClick={closeUserMenus}>
-                  <span>Artist Area</span>
+                <Link to="/studio" className="user-menu-settings-row" onClick={closeUserMenus}>
+                  <span>Studio</span>
                   <span aria-hidden="true">›</span>
                 </Link>
                 <button className="user-menu-signout-btn" onClick={() => void handleSignOutClick()}>Sign out</button>
@@ -787,53 +787,12 @@ function HeaderAuth({
   );
 }
 
-function ArtistAreaPage({ user }: { user: CurrentUser }) {
-  if (!user) {
-    return <Navigate to="/auth/signin" replace />;
-  }
-
-  return (
-    <div className="layout discovery-layout">
-      <section className="panel">
-        <p className="small">Creator workspace</p>
-        <h1>Artist Area</h1>
-        <p className="small">
-          Use this unified area for uploads, publishing, and moderation workflows in one place.
-        </p>
-      </section>
-
-      <section className="panel artist-public-grid">
-        <article>
-          <h3>Upload & Publish</h3>
-          <p className="small">Upload media, set access rules, and control release sequencing.</p>
-        </article>
-        <article>
-          <h3>Content Management</h3>
-          <p className="small">Manage artists, galleries, media metadata, and disclosures from one workspace.</p>
-        </article>
-        <article>
-          <h3>Operations</h3>
-          <p className="small">Handle moderation, user controls, and branding updates as tools migrate in.</p>
-        </article>
-      </section>
-
-      <section className="panel">
-        <h2>Artist admin tools</h2>
-        <p className="small">Manage artists, galleries, media, and operations from the integrated workspace.</p>
-        <div className="inline-form" style={{ gap: 12 }}>
-          <Link className="auth-primary-btn no-underline" to="/artist-area/admin">Open artist workspace</Link>
-        </div>
-      </section>
-    </div>
-  );
+function LegacyArtistAreaRedirect() {
+  return <Navigate to="/studio" replace />;
 }
 
-function ArtistAreaAdminPage({ user }: { user: CurrentUser }) {
-  if (!user) {
-    return <Navigate to="/auth/signin" replace />;
-  }
-
-  return <ArtistAreaWorkspace />;
+function LegacyArtistAreaWorkspaceRedirect() {
+  return <Navigate to="/studio/workspace" replace />;
 }
 
 function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUser) => void }) {
@@ -6459,6 +6418,7 @@ function StudioDashboardPage({
           Use Studio to manage artist profiles, jump into public artist pages, and access admin tools when you have admin rights.
         </p>
         <div className="inline-form mt-3">
+          <Link to="/studio/workspace" className="auth-primary-btn no-underline">Workspace</Link>
           <Link to="/settings" className="auth-secondary-btn no-underline">Settings</Link>
           <Link to="/collections" className="auth-secondary-btn no-underline">Collections</Link>
           <Link to="/trending" className="auth-secondary-btn no-underline">Discovery</Link>
@@ -6528,7 +6488,10 @@ function AdminLandingPage({ user }: { user: CurrentUser }) {
             <p><a className="auth-primary-btn no-underline" href={externalAdminUrl}>Open Admin</a></p>
           </>
         ) : (
-          <p className="small">Admin route is available. Build out admin modules here or set <code>VITE_ADMIN_APP_URL</code> to your dedicated admin app URL.</p>
+          <>
+            <p className="small">Use the integrated workspace for admin operations.</p>
+            <p><Link className="auth-primary-btn no-underline" to="/studio/workspace">Open Admin Workspace</Link></p>
+          </>
         )}
       </div>
     </div>
@@ -6632,9 +6595,10 @@ export default function App() {
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
         <Route path="/settings" element={<SettingsPage user={user} onProfileChanged={setMyProfile} />} />
         <Route path="/studio" element={<StudioDashboardPage user={user} managedArtists={managedArtists} roleNotificationCounts={roleNotificationCounts} />} />
+        <Route path="/studio/workspace" element={user ? <ArtistAreaWorkspace /> : <Navigate to="/auth/signin" replace />} />
         <Route path="/admin" element={<AdminLandingPage user={user} />} />
-        <Route path="/artist-area" element={<ArtistAreaPage user={user} />} />
-        <Route path="/artist-area/admin" element={<ArtistAreaAdminPage user={user} />} />
+        <Route path="/artist-area" element={<LegacyArtistAreaRedirect />} />
+        <Route path="/artist-area/admin" element={<LegacyArtistAreaWorkspaceRedirect />} />
       </Routes>
     </div>
   );

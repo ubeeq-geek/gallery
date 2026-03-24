@@ -757,7 +757,7 @@ export function ArtistAreaWorkspace() {
         <p className="small">This is the integrated in-app workspace for artist/admin operations.</p>
         <p className="small">Signed in as: <strong>{currentUser?.displayName || currentUser?.username || 'unknown user'}</strong> · Groups: {(currentUser?.groups || []).join(', ') || 'none'}</p>
         <div className="inline-form" style={{ gap: 12, alignItems: 'center' }}>
-          <Link to="/artist-area" className="auth-secondary-btn no-underline">Back to Artist Area</Link>
+          <Link to="/studio" className="auth-secondary-btn no-underline">Back to Studio</Link>
           <button onClick={() => void load()} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh data'}</button>
           <button onClick={exportSnapshot}>Export snapshot JSON</button>
           <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
