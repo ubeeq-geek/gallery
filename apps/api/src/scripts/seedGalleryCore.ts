@@ -568,9 +568,16 @@ const main = async () => {
   const mediaBucketArg = getArgValue('--media-bucket');
   const stackNameArg = getArgValue('--stack-name');
   const stackName = stackNameArg || scenarioInputs?.stackName;
+  if (!stackName) {
+    throw new Error(
+      'Stack name is required. Provide --stack-name <name> or set siteSettings.stackName in the scenario file.'
+    );
+  }
 
-  const galleryCoreTableRequested = galleryCoreTableArg || config.galleryCoreTable;
-  const siteSettingsTableRequested = siteSettingsTableArg || config.siteSettingsTable;
+  const galleryCoreTableRequested =
+    galleryCoreTableArg || (stackName ? undefined : config.galleryCoreTable);
+  const siteSettingsTableRequested =
+    siteSettingsTableArg || (stackName ? undefined : config.siteSettingsTable);
   const premiumPassword = getArgValue('--premium-password') || 'replace-me';
   const themeArg = getArgValue('--theme') || scenarioInputs?.theme;
   const theme: SiteSettings['theme'] =

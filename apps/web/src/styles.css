@@ -1244,14 +1244,24 @@
   .discovery-density-range::-webkit-slider-runnable-track {
     height: 0.62rem;
     border-radius: 9999px;
-    background: linear-gradient(to right, #d5dfeb 0 18%, #0f1d42 18% 82%, #d5dfeb 82% 100%);
+    background: linear-gradient(
+      to right,
+      #d5dfeb 0 var(--density-start, 18%),
+      #0f1d42 var(--density-start, 18%) var(--density-end, 82%),
+      #d5dfeb var(--density-end, 82%) 100%
+    );
   }
 
   .discovery-density-card input[type='range']::-moz-range-track,
   .discovery-density-range::-moz-range-track {
     height: 0.62rem;
     border-radius: 9999px;
-    background: #d5dfeb;
+    background: linear-gradient(
+      to right,
+      #d5dfeb 0 var(--density-start, 18%),
+      #0f1d42 var(--density-start, 18%) var(--density-end, 82%),
+      #d5dfeb var(--density-end, 82%) 100%
+    );
   }
 
   .discovery-density-card input[type='range']::-webkit-slider-thumb,

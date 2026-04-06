@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api';
 import { ArtistAreaWorkspace } from './ArtistAreaWorkspace';
@@ -133,6 +133,16 @@ const matchesDiscoverySearch = (needle: string, fields: Array<string | undefined
     .join(' ')
     .toLowerCase()
     .includes(trimmed);
+};
+const getDensityRangeStyle = (sliderValue: number): CSSProperties => {
+  const clamped = Math.max(0, Math.min(2, sliderValue));
+  const darkSegmentWidth = 64;
+  const start = (clamped / 2) * (100 - darkSegmentWidth);
+  const end = start + darkSegmentWidth;
+  return {
+    ['--density-start' as any]: `${start}%`,
+    ['--density-end' as any]: `${end}%`
+  };
 };
 const guessArtistNameFromSlug = (slug?: string): string => {
   if (!slug) return '';
@@ -2459,6 +2469,7 @@ function HomePage({
   const densityTransitionClass = densityFadeState === 'idle' ? '' : ` ${densityFadeState}`;
   const isDensityTransitioning = densityFadeState !== 'idle';
   const densitySliderValue = feedDensity === 'small' ? 0 : (feedDensity === 'medium' ? 1 : 2);
+  const densityRangeStyle = getDensityRangeStyle(densitySliderValue);
 
   const latest = galleries
     .filter((gallery) => Boolean((gallery.stackPreviewUrls && gallery.stackPreviewUrls[0]) || gallery.galleryThumbnailUrl))
@@ -3056,6 +3067,7 @@ function HomePage({
               max={2}
               step={1}
               value={densitySliderValue}
+              style={densityRangeStyle}
               disabled={isDensityTransitioning}
               onChange={(e) => {
                 const next = Number(e.target.value);
@@ -3271,6 +3283,7 @@ function HomePage({
                     max={2}
                     step={1}
                     value={densitySliderValue}
+                    style={densityRangeStyle}
                     disabled={isDensityTransitioning}
                     onChange={(e) => {
                       const next = Number(e.target.value);
@@ -3671,6 +3684,7 @@ function GalleryPage({
   const densityLabel: Record<FeedDensity, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
   const densityOptions: FeedDensity[] = ['small', 'medium', 'large'];
   const densitySliderValue = feedDensity === 'small' ? 0 : (feedDensity === 'medium' ? 1 : 2);
+  const densityRangeStyle = getDensityRangeStyle(densitySliderValue);
   const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
   const someHeavyHidden = !heavyHidden && (hidePoliticsPublicAffairs || hideCrimeDisastersTragedy);
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
@@ -4408,6 +4422,7 @@ function GalleryPage({
               max={2}
               step={1}
               value={densitySliderValue}
+              style={densityRangeStyle}
               onChange={(e) => {
                 const next = Number(e.target.value);
                 setFeedDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
@@ -4597,6 +4612,7 @@ function GalleryPage({
                     max={2}
                     step={1}
                     value={densitySliderValue}
+                    style={densityRangeStyle}
                     onChange={(e) => {
                       const next = Number(e.target.value);
                       setFeedDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
@@ -5270,6 +5286,7 @@ function ArtistProfilePage({
   const densityLabel: Record<FeedDensity, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
   const densityOptions: FeedDensity[] = ['small', 'medium', 'large'];
   const densitySliderValue = feedDensity === 'small' ? 0 : (feedDensity === 'medium' ? 1 : 2);
+  const densityRangeStyle = getDensityRangeStyle(densitySliderValue);
   const cardAspect = feedDensity === 'small' ? 1 : (feedDensity === 'medium' ? 1.05 : 1.28);
   const mediaColumns = (() => {
     if (feedDensity === 'large') return 1;
@@ -5916,6 +5933,7 @@ function ArtistProfilePage({
               max={2}
               step={1}
               value={densitySliderValue}
+              style={densityRangeStyle}
               onChange={(e) => {
                 const next = Number(e.target.value);
                 setFeedDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
@@ -6146,6 +6164,7 @@ function ArtistProfilePage({
                     max={2}
                     step={1}
                     value={densitySliderValue}
+                    style={densityRangeStyle}
                     onChange={(e) => {
                       const next = Number(e.target.value);
                       setFeedDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
