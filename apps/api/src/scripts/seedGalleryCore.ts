@@ -95,11 +95,26 @@ const seedId = (entity: string, ...parts: string[]): string => {
 
 type AssetFile = { filename: string; absolutePath: string };
 type GallerySeedKind = 'free' | 'preview' | 'premium';
+type ArtistMediaSeed = {
+  file: string;
+  gallerySlug: string;
+  title?: string;
+  altText?: string;
+  contentRating?: ContentRating;
+  aiDisclosure?: AiDisclosure;
+  heavyTopics?: HeavyTopic[];
+  discoverSquareCropEnabled?: boolean;
+  appearsInFeed?: boolean;
+  assetType?: 'image' | 'video';
+  posterFile?: string;
+  durationSeconds?: number;
+};
 type ArtistSeed = {
   name: string;
   slug: string;
-  filePrefix: string;
+  filePrefix?: string;
   includePrefixes?: string[];
+  media?: ArtistMediaSeed[];
   contentRating?: ContentRating;
   aiDisclosure?: AiDisclosure;
   heavyTopics?: HeavyTopic[];
@@ -130,8 +145,9 @@ type ScenarioGallerySeed = {
 type ScenarioArtistSeed = {
   name: string;
   slug: string;
-  filePrefix: string;
+  filePrefix?: string;
   includePrefixes?: string[];
+  media?: ArtistMediaSeed[];
   contentRating?: ContentRating;
   aiDisclosure?: AiDisclosure;
   heavyTopics?: HeavyTopic[];
@@ -220,6 +236,74 @@ const parseOptionalStringArray = (value: unknown, fieldName: string): string[] |
   return parsed.length ? parsed : undefined;
 };
 
+const CONTENT_RATINGS: ContentRating[] = ['general', 'suggestive', 'mature', 'sexual', 'fetish', 'graphic'];
+const AI_DISCLOSURES: AiDisclosure[] = ['none', 'ai-assisted', 'ai-generated'];
+const HEAVY_TOPICS: HeavyTopic[] = ['politics-public-affairs', 'crime-disasters-tragedy'];
+
+const parseOptionalContentRating = (value: unknown, fieldName: string): ContentRating | undefined => {
+  const raw = asOptionalString(value);
+  if (!raw) return undefined;
+  if (!CONTENT_RATINGS.includes(raw as ContentRating)) {
+    throw new Error(`Scenario field "${fieldName}" is invalid`);
+  }
+  return raw as ContentRating;
+};
+
+const parseOptionalAiDisclosure = (value: unknown, fieldName: string): AiDisclosure | undefined => {
+  const raw = asOptionalString(value);
+  if (!raw) return undefined;
+  if (!AI_DISCLOSURES.includes(raw as AiDisclosure)) {
+    throw new Error(`Scenario field "${fieldName}" is invalid`);
+  }
+  return raw as AiDisclosure;
+};
+
+const parseOptionalHeavyTopics = (value: unknown, fieldName: string): HeavyTopic[] | undefined => {
+  const raw = parseOptionalStringArray(value, fieldName);
+  if (!raw) return undefined;
+  for (const topic of raw) {
+    if (!HEAVY_TOPICS.includes(topic as HeavyTopic)) {
+      throw new Error(`Scenario field "${fieldName}" contains invalid value "${topic}"`);
+    }
+  }
+  return raw as HeavyTopic[];
+};
+
+const parseScenarioArtistMedia = (value: unknown, fieldName: string): ArtistMediaSeed => {
+  if (!isRecord(value)) {
+    throw new Error(`Scenario field "${fieldName}" must be an object`);
+  }
+  const file = asString(value.file, `${fieldName}.file`);
+  const gallerySlug = slugify(asString(value.gallerySlug, `${fieldName}.gallerySlug`));
+  const assetType = asOptionalString(value.assetType);
+  if (assetType && assetType !== 'image' && assetType !== 'video') {
+    throw new Error(`Scenario field "${fieldName}.assetType" must be image or video`);
+  }
+  const durationSecondsRaw = value.durationSeconds;
+  const durationSeconds =
+    typeof durationSecondsRaw === 'number' && Number.isFinite(durationSecondsRaw) && durationSecondsRaw > 0
+      ? durationSecondsRaw
+      : undefined;
+  if (durationSecondsRaw !== undefined && durationSeconds === undefined) {
+    throw new Error(`Scenario field "${fieldName}.durationSeconds" must be a positive number`);
+  }
+
+  return {
+    file,
+    gallerySlug,
+    title: asOptionalString(value.title),
+    altText: asOptionalString(value.altText),
+    contentRating: parseOptionalContentRating(value.contentRating, `${fieldName}.contentRating`),
+    aiDisclosure: parseOptionalAiDisclosure(value.aiDisclosure, `${fieldName}.aiDisclosure`),
+    heavyTopics: parseOptionalHeavyTopics(value.heavyTopics, `${fieldName}.heavyTopics`),
+    discoverSquareCropEnabled: asOptionalBoolean(value.discoverSquareCropEnabled),
+    appearsInFeed: asOptionalBoolean(value.appearsInFeed),
+    assetType: assetType as 'image' | 'video' | undefined,
+    posterFile: asOptionalString(value.posterFile),
+    durationSeconds
+  };
+};
+
 const resolveScenarioChildPath = (scenarioRootDir: string, relativePathValue: string, fieldName: string): string => {
   if (path.isAbsolute(relativePathValue)) {
     throw new Error(`Scenario field "${fieldName}" must be a relative path under the scenario folder`);
@@ -266,8 +350,15 @@ const parseScenarioArtist = (
   }
   const name = asString(value.name, `${fieldName}.name`);
   const slug = slugify(asString(value.slug, `${fieldName}.slug`));
-  const filePrefix = asString(value.filePrefix, `${fieldName}.filePrefix`);
+  const filePrefix = asOptionalString(value.filePrefix);
   const includePrefixes = parseOptionalStringArray(value.includePrefixes, `${fieldName}.includePrefixes`);
+  const mediaRaw = value.media;
+  const media = Array.isArray(mediaRaw)
+    ? mediaRaw.map((item, idx) => parseScenarioArtistMedia(item, `${fieldName}.media[${idx}]`))
+    : undefined;
+  if (!filePrefix && (!media || media.length === 0)) {
+    throw new Error(`Scenario field "${fieldName}.filePrefix" is required when "${fieldName}.media" is not provided`);
+  }
   const discoverSquareCropEnabled = asOptionalBoolean(value.discoverSquareCropEnabled);
   const galleriesRaw = value.galleries;
   if (!Array.isArray(galleriesRaw) || galleriesRaw.length === 0) {
@@ -282,24 +373,9 @@ const parseScenarioArtist = (
     galleryByKind.set(gallery.kind, gallery);
   }
 
-  const contentRatingRaw = asOptionalString(value.contentRating);
-  const aiDisclosureRaw = asOptionalString(value.aiDisclosure);
-  const heavyTopicsRaw = parseOptionalStringArray(value.heavyTopics, `${fieldName}.heavyTopics`);
-  const contentRating = contentRatingRaw as ContentRating | undefined;
-  if (contentRatingRaw && !['general', 'suggestive', 'mature', 'sexual', 'fetish', 'graphic'].includes(contentRatingRaw)) {
-    throw new Error(`Scenario field "${fieldName}.contentRating" is invalid`);
-  }
-  const aiDisclosure = aiDisclosureRaw as AiDisclosure | undefined;
-  if (aiDisclosureRaw && !['none', 'ai-assisted', 'ai-generated'].includes(aiDisclosureRaw)) {
-    throw new Error(`Scenario field "${fieldName}.aiDisclosure" is invalid`);
-  }
-  if (heavyTopicsRaw) {
-    for (const topic of heavyTopicsRaw) {
-      if (!['politics-public-affairs', 'crime-disasters-tragedy'].includes(topic)) {
-        throw new Error(`Scenario field "${fieldName}.heavyTopics" contains invalid value "${topic}"`);
-      }
-    }
-  }
+  const contentRating = parseOptionalContentRating(value.contentRating, `${fieldName}.contentRating`);
+  const aiDisclosure = parseOptionalAiDisclosure(value.aiDisclosure, `${fieldName}.aiDisclosure`);
+  const heavyTopicsRaw = parseOptionalHeavyTopics(value.heavyTopics, `${fieldName}.heavyTopics`);
 
   const freeGallery = galleryByKind.get('free');
   const previewGallery = galleryByKind.get('preview');
@@ -310,6 +386,7 @@ const parseScenarioArtist = (
     slug,
     filePrefix,
     includePrefixes,
+    media,
     contentRating,
     aiDisclosure,
     heavyTopics: heavyTopicsRaw as HeavyTopic[] | undefined,
@@ -604,6 +681,7 @@ const main = async () => {
   const mediaFiles = readdirSync(mediaDir)
     .filter((name) => !name.startsWith('.'))
     .map((name) => ({ filename: name, absolutePath: path.join(mediaDir, name) }));
+  const mediaFileByName = new Map(mediaFiles.map((file) => [normalize(file.filename), file]));
 
   const lowLevel = new DynamoDBClient({ region: config.awsRegion });
   const cloudFormation = new CloudFormationClient({ region: config.awsRegion });
@@ -718,7 +796,156 @@ const main = async () => {
     if (previewGallery) galleries.push(previewGallery);
     if (premiumGallery) galleries.push(premiumGallery);
 
-    const artistFiles = mediaFiles.filter((file) => normalize(file.filename).startsWith(normalize(seed.filePrefix)));
+    const galleryIdByKind: Partial<Record<GallerySeedKind, string>> = {
+      free: freeGallery?.galleryId,
+      preview: previewGallery?.galleryId,
+      premium: premiumGallery?.galleryId
+    };
+    const galleryBySlug = new Map<string, Gallery>();
+    for (const gallery of galleries) {
+      galleryBySlug.set(gallery.slug, gallery);
+    }
+    const nextPositionByKind: Record<GallerySeedKind, number> = { free: 1, preview: 1, premium: 1 };
+    const nextPositionByGallerySlug = new Map<string, number>();
+    const pushMedia = (targetGalleryId: string, position: number, payload: Media) => {
+      media.push({
+        media: {
+          ...payload,
+          appearsInFeed: payload.appearsInFeed !== false
+        },
+        galleryId: targetGalleryId,
+        position
+      });
+    };
+    const pushMediaToKind = (kind: GallerySeedKind, payload: Media) => {
+      const galleryId = galleryIdByKind[kind];
+      if (!galleryId) {
+        throw new Error(`Artist ${seed.name} media references "${kind}" gallery, but that gallery kind is not configured`);
+      }
+      const position = nextPositionByKind[kind];
+      nextPositionByKind[kind] += 1;
+      pushMedia(galleryId, position, payload);
+    };
+    const pushMediaToGallerySlug = (gallerySlug: string, payload: Media) => {
+      const gallery = galleryBySlug.get(gallerySlug);
+      if (!gallery) {
+        throw new Error(`Artist ${seed.name} media references unknown gallerySlug "${gallerySlug}"`);
+      }
+      const nextPosition = (nextPositionByGallerySlug.get(gallerySlug) ?? 1);
+      nextPositionByGallerySlug.set(gallerySlug, nextPosition + 1);
+      pushMedia(gallery.galleryId, nextPosition, payload);
+      return gallery;
+    };
+
+    if (seed.media?.length) {
+      const posterFiles = mediaFiles.filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && isPoster(file.filename));
+      const findPosterForVideo = (videoFile: AssetFile): AssetFile | undefined => {
+        const base = normalize(videoFile.filename).replace(path.extname(videoFile.filename).toLowerCase(), '');
+        return posterFiles.find((poster) => {
+          const p = normalize(poster.filename);
+          return p.includes(base) || p.includes(base.replace('-video', ''));
+        });
+      };
+
+      for (const mediaSeed of seed.media) {
+        const file = mediaFileByName.get(normalize(mediaSeed.file));
+        if (!file) {
+          throw new Error(`Media file not found for ${seed.name}: ${mediaSeed.file}`);
+        }
+        const ext = path.extname(file.filename).toLowerCase();
+        const inferredAssetType: 'image' | 'video' = VIDEO_EXT.has(ext) ? 'video' : 'image';
+        const assetType = mediaSeed.assetType || inferredAssetType;
+        if (assetType === 'image' && !IMAGE_EXT.has(ext)) {
+          throw new Error(`Media file "${file.filename}" is not an image but was configured as image`);
+        }
+        if (assetType === 'video' && !VIDEO_EXT.has(ext)) {
+          throw new Error(`Media file "${file.filename}" is not a video but was configured as video`);
+        }
+
+        const title = mediaSeed.title || titleFromFilename(file.filename);
+        const slug = slugify(title);
+        const mediaId = seedId('media', seed.slug, mediaSeed.gallerySlug, file.filename);
+        const objectKey = `${artistId}/${mediaId}`;
+        const effectiveContentRating = mediaSeed.contentRating || contentRating;
+        const effectiveAiDisclosure = mediaSeed.aiDisclosure || aiDisclosure;
+        const effectiveHeavyTopics = mediaSeed.heavyTopics || heavyTopics;
+        const effectiveSquareCrop = mediaSeed.discoverSquareCropEnabled ?? discoverSquareCropEnabled;
+        const appearsInFeed = mediaSeed.appearsInFeed ?? true;
+        const gallery = galleryBySlug.get(mediaSeed.gallerySlug);
+        if (!gallery) {
+          throw new Error(`Artist ${seed.name} media references unknown gallerySlug "${mediaSeed.gallerySlug}"`);
+        }
+        const isPremiumGallery = gallery.visibility === 'premium';
+
+        if (assetType === 'image') {
+          const dimensions = await getImageDimensions(file);
+          pushMediaToGallerySlug(mediaSeed.gallerySlug, {
+            mediaId,
+            artistId,
+            assetType: 'image',
+            discoverSquareCropEnabled: effectiveSquareCrop,
+            contentRating: effectiveContentRating,
+            aiDisclosure: effectiveAiDisclosure,
+            heavyTopics: effectiveHeavyTopics,
+            appearsInFeed,
+            title,
+            slug,
+            slugHistory: [slug],
+            originalFilename: file.filename,
+            previewKey: objectKey,
+            premiumKey: isPremiumGallery ? objectKey : undefined,
+            width: dimensions.width,
+            height: dimensions.height,
+            altText: mediaSeed.altText,
+            createdAt
+          });
+          queueUpload(objectKey, file);
+          continue;
+        }
+
+        const explicitPoster = mediaSeed.posterFile ? mediaFileByName.get(normalize(mediaSeed.posterFile)) : undefined;
+        if (mediaSeed.posterFile && !explicitPoster) {
+          throw new Error(`Poster file not found for ${seed.name}: ${mediaSeed.posterFile}`);
+        }
+        const poster = explicitPoster || findPosterForVideo(file);
+        const posterKey = poster ? `${artistId}/${seedId('poster', seed.slug, mediaSeed.gallerySlug, file.filename)}` : undefined;
+        pushMediaToGallerySlug(mediaSeed.gallerySlug, {
+          mediaId,
+          artistId,
+          assetType: 'video',
+          discoverSquareCropEnabled: effectiveSquareCrop,
+          contentRating: effectiveContentRating,
+          aiDisclosure: effectiveAiDisclosure,
+          heavyTopics: effectiveHeavyTopics,
+          appearsInFeed,
+          title,
+          slug,
+          slugHistory: [slug],
+          originalFilename: file.filename,
+          previewKey: objectKey,
+          premiumKey: isPremiumGallery ? objectKey : undefined,
+          previewPosterKey: posterKey,
+          premiumPosterKey: isPremiumGallery ? posterKey : undefined,
+          width: 1920,
+          height: 1080,
+          durationSeconds: mediaSeed.durationSeconds ?? (isPremiumGallery ? 24 : 20),
+          altText: mediaSeed.altText,
+          createdAt
+        });
+        queueUpload(objectKey, file);
+        if (poster && posterKey) {
+          queueUpload(posterKey, poster);
+        }
+      }
+      continue;
+    }
+
+    const filePrefix = seed.filePrefix;
+    if (!filePrefix) {
+      throw new Error(`Artist ${seed.name} is missing filePrefix and has no explicit media list`);
+    }
+
+    const artistFiles = mediaFiles.filter((file) => normalize(file.filename).startsWith(normalize(filePrefix)));
     const selectedArtistFiles = seed.includePrefixes?.length
       ? artistFiles.filter((file) => seed.includePrefixes!.some((prefix) => normalize(file.filename).startsWith(normalize(prefix))))
       : artistFiles;
@@ -759,17 +986,6 @@ const main = async () => {
     let freeOrder = 1;
     let previewOrder = 1;
     let premiumOrder = 1;
-
-    const pushMedia = (targetGalleryId: string, position: number, payload: Media) => {
-      media.push({
-        media: {
-          ...payload,
-          appearsInFeed: payload.appearsInFeed !== false
-        },
-        galleryId: targetGalleryId,
-        position
-      });
-    };
 
     for (const file of freeImages) {
       const dimensions = await getImageDimensions(file);
