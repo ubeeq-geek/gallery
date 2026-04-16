@@ -13,14 +13,17 @@
       "filePrefix": "anne-",
       "galleries": [
         {
-          "kind": "free"
+          "kind": "free",
+          "slug": "anne-smith-free"
         },
         {
           "kind": "preview",
+          "slug": "anne-smith-premium-preview",
           "purchaseUrl": "https://store.example.com/anne-smith-premium"
         },
         {
-          "kind": "premium"
+          "kind": "premium",
+          "slug": "anne-smith-premium"
         }
       ],
       "media": [
@@ -138,7 +141,8 @@
       "filePrefix": "samuel-",
       "galleries": [
         {
-          "kind": "free"
+          "kind": "free",
+          "slug": "samuel-jones-free"
         }
       ],
       "media": [
@@ -193,10 +197,12 @@
       "galleries": [
         {
           "kind": "preview",
+          "slug": "ubeeq-girl-premium-preview",
           "purchaseUrl": "https://store.example.com/ubeeq-girl-premium"
         },
         {
-          "kind": "premium"
+          "kind": "premium",
+          "slug": "ubeeq-girl-premium"
         }
       ],
       "media": [
@@ -321,7 +327,8 @@
       "filePrefix": "dc-",
       "galleries": [
         {
-          "kind": "free"
+          "kind": "free",
+          "slug": "daily-cosmos-free"
         }
       ],
       "media": [
