@@ -421,7 +421,16 @@ export class GalleryCoreRepository {
 
     const placements = (placementResponse.Items || [])
       .filter((item) => item.entityType === 'GALLERY_MEDIA' && typeof item.mediaId === 'string')
-      .map((item) => stripEntityFields<{ galleryMediaId: string; galleryId: string; mediaId: string; position: number }>(item));
+      .map((item) =>
+        stripEntityFields<{
+          galleryMediaId: string;
+          galleryId: string;
+          mediaId: string;
+          position: number;
+          isPreview?: boolean;
+          previewMaxWidth?: number;
+        }>(item)
+      );
 
     if (placements.length === 0) {
       return [];
@@ -453,7 +462,9 @@ export class GalleryCoreRepository {
           ...media,
           galleryId: placement.galleryId,
           galleryMediaId: placement.galleryMediaId,
-          position: placement.position
+          position: placement.position,
+          isPreview: placement.isPreview,
+          previewMaxWidth: placement.previewMaxWidth
         } as GalleryMediaView;
       })
       .filter((item): item is GalleryMediaView => Boolean(item));
@@ -481,6 +492,8 @@ export class GalleryCoreRepository {
     galleryId: string;
     mediaId: string;
     position: number;
+    isPreview?: boolean;
+    previewMaxWidth?: number;
     createdAt: string;
   }>> {
     const response = await this.client.send(
@@ -501,6 +514,8 @@ export class GalleryCoreRepository {
         galleryId: string;
         mediaId: string;
         position: number;
+        isPreview?: boolean;
+        previewMaxWidth?: number;
         createdAt: string;
       }>(item))
       .sort((a, b) => a.position - b.position);
@@ -603,7 +618,17 @@ export class GalleryCoreRepository {
     }
   }
 
-  private async putGalleryPlacement(galleryId: string, mediaId: string, position: number, galleryMediaId?: string, createdAt?: string): Promise<void> {
+  private async putGalleryPlacement(
+    galleryId: string,
+    mediaId: string,
+    position: number,
+    galleryMediaId?: string,
+    createdAt?: string,
+    placement?: {
+      isPreview?: boolean;
+      previewMaxWidth?: number;
+    }
+  ): Promise<void> {
     const resolvedGalleryMediaId = galleryMediaId || randomUUID();
     const resolvedCreatedAt = createdAt || new Date().toISOString();
     await this.client.send(
@@ -621,13 +646,23 @@ export class GalleryCoreRepository {
           galleryId,
           mediaId,
           position,
+          isPreview: placement?.isPreview,
+          previewMaxWidth: placement?.previewMaxWidth,
           createdAt: resolvedCreatedAt
         }
       })
     );
   }
 
-  async createMedia(media: Media, galleryId?: string, position = 0): Promise<void> {
+  async createMedia(
+    media: Media,
+    galleryId?: string,
+    position = 0,
+    placement?: {
+      isPreview?: boolean;
+      previewMaxWidth?: number;
+    }
+  ): Promise<void> {
     await this.client.send(
       new PutCommand({
         TableName: this.tableName,
@@ -646,12 +681,31 @@ export class GalleryCoreRepository {
     );
 
     if (galleryId) {
-      await this.putGalleryPlacement(galleryId, media.mediaId, position);
+      await this.putGalleryPlacement(galleryId, media.mediaId, position, undefined, undefined, placement);
     }
   }
 
-  async addMediaToGallery(galleryId: string, mediaId: string, position: number): Promise<void> {
-    await this.putGalleryPlacement(galleryId, mediaId, position);
+  async addMediaToGallery(
+    galleryId: string,
+    mediaId: string,
+    position: number,
+    placement?: {
+      isPreview?: boolean;
+      previewMaxWidth?: number;
+    }
+  ): Promise<void> {
+    const existingPlacement = await this.getGalleryPlacement(galleryId, mediaId);
+    await this.putGalleryPlacement(
+      galleryId,
+      mediaId,
+      position,
+      existingPlacement?.galleryMediaId,
+      existingPlacement?.createdAt,
+      {
+        isPreview: placement?.isPreview ?? existingPlacement?.isPreview,
+        previewMaxWidth: placement?.previewMaxWidth ?? existingPlacement?.previewMaxWidth
+      }
+    );
   }
 
   async addArtistMember(member: ArtistMember): Promise<void> {
@@ -864,7 +918,15 @@ export class GalleryCoreRepository {
     }
   }
 
-  private async getGalleryPlacement(galleryId: string, mediaId: string): Promise<{ galleryMediaId: string; galleryId: string; mediaId: string; position: number; createdAt: string } | null> {
+  private async getGalleryPlacement(galleryId: string, mediaId: string): Promise<{
+    galleryMediaId: string;
+    galleryId: string;
+    mediaId: string;
+    position: number;
+    isPreview?: boolean;
+    previewMaxWidth?: number;
+    createdAt: string;
+  } | null> {
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
@@ -877,7 +939,17 @@ export class GalleryCoreRepository {
     );
 
     const item = (response.Items || []).find((candidate) => candidate.entityType === 'GALLERY_MEDIA' && candidate.mediaId === mediaId);
-    return item ? stripEntityFields<{ galleryMediaId: string; galleryId: string; mediaId: string; position: number; createdAt: string }>(item) : null;
+    return item
+      ? stripEntityFields<{
+          galleryMediaId: string;
+          galleryId: string;
+          mediaId: string;
+          position: number;
+          isPreview?: boolean;
+          previewMaxWidth?: number;
+          createdAt: string;
+        }>(item)
+      : null;
   }
 
   async updateArtist(artist: Artist): Promise<void> {
@@ -911,7 +983,10 @@ export class GalleryCoreRepository {
     const placement = await this.getGalleryPlacement(galleryId, mediaId);
     if (!placement) return;
 
-    await this.putGalleryPlacement(galleryId, mediaId, position, placement.galleryMediaId, placement.createdAt);
+    await this.putGalleryPlacement(galleryId, mediaId, position, placement.galleryMediaId, placement.createdAt, {
+      isPreview: placement.isPreview,
+      previewMaxWidth: placement.previewMaxWidth
+    });
   }
 
   async deleteArtist(artistId: string): Promise<void> {

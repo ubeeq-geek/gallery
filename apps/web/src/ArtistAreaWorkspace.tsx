@@ -37,6 +37,7 @@ type ManagedGallery = {
   purchaseUrl?: string;
   premiumPassword?: string;
   discoverSquareCropEnabled?: boolean;
+  defaultPreviewMaxWidth?: number;
   defaultAiDisclosure?: AiDisclosure;
   defaultHeavyTopics?: HeavyTopic[];
 };
@@ -79,6 +80,8 @@ type ManagedMedia = {
   height?: number;
   durationSeconds?: number;
   discoverSquareCropEnabled?: boolean;
+  isPreview?: boolean;
+  previewMaxWidth?: number;
   aiDisclosure?: AiDisclosure;
   moderatorAiDisclosure?: AiDisclosure;
   heavyTopics?: HeavyTopic[];
@@ -119,6 +122,7 @@ export function ArtistAreaWorkspace() {
     purchaseUrl: '',
     premiumPassword: '',
     discoverSquareCropEnabled: true,
+    defaultPreviewMaxWidth: '',
     defaultAiDisclosure: 'none' as AiDisclosure,
     defaultHeavyTopics: [] as HeavyTopic[]
   });
@@ -139,6 +143,7 @@ export function ArtistAreaWorkspace() {
     purchaseUrl: '',
     premiumPassword: '',
     discoverSquareCropEnabled: true,
+    defaultPreviewMaxWidth: '',
     defaultAiDisclosure: 'none' as AiDisclosure,
     defaultHeavyTopics: [] as HeavyTopic[]
   });
@@ -164,6 +169,8 @@ export function ArtistAreaWorkspace() {
     heavyTopics: [] as HeavyTopic[],
     moderatorHeavyTopics: [] as HeavyTopic[],
     discoverSquareCropEnabled: true,
+    isPreview: false,
+    previewMaxWidth: '',
     cropX: 0,
     cropY: 0,
     cropSize: 512
@@ -209,7 +216,9 @@ export function ArtistAreaWorkspace() {
     cropX: 0,
     cropY: 0,
     cropSize: 512,
-    discoverSquareCropEnabled: true
+    discoverSquareCropEnabled: true,
+    isPreview: false,
+    previewMaxWidth: ''
   });
 
   useEffect(() => {
@@ -414,6 +423,7 @@ export function ArtistAreaWorkspace() {
       purchaseUrl: gallery.purchaseUrl || '',
       premiumPassword: '',
       discoverSquareCropEnabled: gallery.discoverSquareCropEnabled !== false,
+      defaultPreviewMaxWidth: gallery.defaultPreviewMaxWidth?.toString() || '',
       defaultAiDisclosure: gallery.defaultAiDisclosure || 'none',
       defaultHeavyTopics: gallery.defaultHeavyTopics || []
     });
@@ -433,6 +443,7 @@ export function ArtistAreaWorkspace() {
       purchaseUrl: galleryEditForm.purchaseUrl.trim() || undefined,
       premiumPassword: galleryEditForm.premiumPassword.trim() || undefined,
       discoverSquareCropEnabled: galleryEditForm.discoverSquareCropEnabled,
+      defaultPreviewMaxWidth: galleryEditForm.defaultPreviewMaxWidth !== '' ? Number(galleryEditForm.defaultPreviewMaxWidth) : undefined,
       defaultAiDisclosure: galleryEditForm.defaultAiDisclosure,
       defaultHeavyTopics: galleryEditForm.defaultHeavyTopics
     });
@@ -463,6 +474,8 @@ export function ArtistAreaWorkspace() {
       heavyTopics: item.heavyTopics || [],
       moderatorHeavyTopics: item.moderatorHeavyTopics || [],
       discoverSquareCropEnabled: item.discoverSquareCropEnabled !== false,
+      isPreview: Boolean(item.isPreview),
+      previewMaxWidth: item.previewMaxWidth?.toString() || '',
       cropX: item.squareCrop?.x || 0,
       cropY: item.squareCrop?.y || 0,
       cropSize: item.squareCrop?.size || 512
@@ -516,6 +529,8 @@ export function ArtistAreaWorkspace() {
       heavyTopics: mediaEditForm.heavyTopics,
       moderatorHeavyTopics: mediaEditForm.moderatorHeavyTopics,
       discoverSquareCropEnabled: mediaEditForm.discoverSquareCropEnabled,
+      isPreview: mediaEditForm.isPreview,
+      previewMaxWidth: mediaEditForm.previewMaxWidth !== '' ? Number(mediaEditForm.previewMaxWidth) : undefined,
       squareCrop: mediaEditForm.assetType === 'image'
         ? readSquareCrop(mediaEditForm.cropX, mediaEditForm.cropY, mediaEditForm.cropSize)
         : undefined
@@ -581,10 +596,11 @@ export function ArtistAreaWorkspace() {
       purchaseUrl: galleryForm.purchaseUrl.trim() || undefined,
       premiumPassword: galleryForm.premiumPassword.trim() || undefined,
       discoverSquareCropEnabled: galleryForm.discoverSquareCropEnabled,
+      defaultPreviewMaxWidth: galleryForm.defaultPreviewMaxWidth !== '' ? Number(galleryForm.defaultPreviewMaxWidth) : undefined,
       defaultAiDisclosure: galleryForm.defaultAiDisclosure,
       defaultHeavyTopics: galleryForm.defaultHeavyTopics
     });
-    setGalleryForm((prev) => ({ ...prev, artistSlug: '', title: '', slug: '', coverImageId: '', pairedPremiumGalleryId: '', purchaseUrl: '', premiumPassword: '', discoverSquareCropEnabled: true, defaultAiDisclosure: 'none', defaultHeavyTopics: [] }));
+    setGalleryForm((prev) => ({ ...prev, artistSlug: '', title: '', slug: '', coverImageId: '', pairedPremiumGalleryId: '', purchaseUrl: '', premiumPassword: '', discoverSquareCropEnabled: true, defaultPreviewMaxWidth: '', defaultAiDisclosure: 'none', defaultHeavyTopics: [] }));
     setMessage(`Gallery created (${slug}).`);
     await load();
   });
@@ -644,12 +660,14 @@ export function ArtistAreaWorkspace() {
       heavyTopics: mediaForm.heavyTopics,
       moderatorHeavyTopics: mediaForm.moderatorHeavyTopics,
       discoverSquareCropEnabled: mediaForm.discoverSquareCropEnabled,
+      isPreview: mediaForm.isPreview,
+      previewMaxWidth: mediaForm.previewMaxWidth !== '' ? Number(mediaForm.previewMaxWidth) : undefined,
       squareCrop: mediaForm.assetType === 'image'
         ? readSquareCrop(mediaForm.cropX, mediaForm.cropY, mediaForm.cropSize)
         : undefined
     });
     setMessage('Media created.');
-    setMediaForm((prev) => ({ ...prev, title: '', originalFilename: '', previewKey: '', premiumKey: '', previewPosterKey: '', premiumPosterKey: '', moderatorContentRating: '', moderatorAiDisclosure: '', heavyTopics: [], moderatorHeavyTopics: [], cropX: 0, cropY: 0, cropSize: 512, discoverSquareCropEnabled: true }));
+    setMediaForm((prev) => ({ ...prev, title: '', originalFilename: '', previewKey: '', premiumKey: '', previewPosterKey: '', premiumPosterKey: '', moderatorContentRating: '', moderatorAiDisclosure: '', heavyTopics: [], moderatorHeavyTopics: [], cropX: 0, cropY: 0, cropSize: 512, discoverSquareCropEnabled: true, isPreview: false, previewMaxWidth: '' }));
     setMediaGalleryId(mediaForm.galleryId);
     await loadMedia(mediaForm.galleryId);
   });
@@ -936,11 +954,12 @@ export function ArtistAreaWorkspace() {
               <div className="inline-form"><input placeholder="Purchase URL (optional)" value={galleryForm.purchaseUrl} onChange={(e) => setGalleryForm({ ...galleryForm, purchaseUrl: e.target.value })} /></div>
               <div className="inline-form"><input type="password" placeholder="Premium password (optional)" value={galleryForm.premiumPassword} onChange={(e) => setGalleryForm({ ...galleryForm, premiumPassword: e.target.value })} /></div>
               <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={galleryForm.discoverSquareCropEnabled} onChange={(e) => setGalleryForm({ ...galleryForm, discoverSquareCropEnabled: e.target.checked })} /> Allow square crop in discovery</label>
+              <div className="inline-form"><input type="number" placeholder="Default preview max width (optional)" value={galleryForm.defaultPreviewMaxWidth} onChange={(e) => setGalleryForm({ ...galleryForm, defaultPreviewMaxWidth: e.target.value })} /></div>
               <div className="inline-form"><select value={galleryForm.defaultAiDisclosure} onChange={(e) => setGalleryForm({ ...galleryForm, defaultAiDisclosure: e.target.value as AiDisclosure })}>{aiDisclosureOptions.map((opt) => <option key={`g-${opt}`} value={opt}>{opt}</option>)}</select></div>
               <div className="inline-form" style={{ gap: 10, flexWrap: 'wrap' }}>{heavyTopicOptions.map((topic) => (<label key={`g-${topic.value}`} className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={galleryForm.defaultHeavyTopics.includes(topic.value)} onChange={(e) => setGalleryForm({ ...galleryForm, defaultHeavyTopics: e.target.checked ? Array.from(new Set([...galleryForm.defaultHeavyTopics, topic.value])) : galleryForm.defaultHeavyTopics.filter((v) => v !== topic.value) })} />{topic.label}</label>))}</div>
               <div className="inline-form" style={{ gap: 8 }}>
                 <button onClick={() => void createGallery()} disabled={submitting}>Create gallery</button>
-                <button onClick={() => setGalleryForm((prev) => ({ ...prev, artistSlug: '', title: '', slug: '', coverImageId: '', pairedPremiumGalleryId: '', purchaseUrl: '', premiumPassword: '' }))} disabled={submitting}>Reset</button>
+                <button onClick={() => setGalleryForm((prev) => ({ ...prev, artistSlug: '', title: '', slug: '', coverImageId: '', pairedPremiumGalleryId: '', purchaseUrl: '', premiumPassword: '', defaultPreviewMaxWidth: '' }))} disabled={submitting}>Reset</button>
               </div>
             </article>
             <article>
@@ -1006,6 +1025,7 @@ export function ArtistAreaWorkspace() {
               <div className="inline-form"><input placeholder="Purchase URL" value={galleryEditForm.purchaseUrl} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, purchaseUrl: e.target.value })} /></div>
               <div className="inline-form"><input type="password" placeholder="Set new premium password (optional)" value={galleryEditForm.premiumPassword} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, premiumPassword: e.target.value })} /></div>
               <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={galleryEditForm.discoverSquareCropEnabled} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, discoverSquareCropEnabled: e.target.checked })} /> Allow square crop in discovery</label>
+              <div className="inline-form"><input type="number" placeholder="Default preview max width (optional)" value={galleryEditForm.defaultPreviewMaxWidth} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, defaultPreviewMaxWidth: e.target.value })} /></div>
               <div className="inline-form"><select value={galleryEditForm.defaultAiDisclosure} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, defaultAiDisclosure: e.target.value as AiDisclosure })}>{aiDisclosureOptions.map((opt) => <option key={`ge-${opt}`} value={opt}>{opt}</option>)}</select></div>
               <div className="inline-form" style={{ gap: 10, flexWrap: 'wrap' }}>{heavyTopicOptions.map((topic) => (<label key={`ge-${topic.value}`} className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={galleryEditForm.defaultHeavyTopics.includes(topic.value)} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, defaultHeavyTopics: e.target.checked ? Array.from(new Set([...galleryEditForm.defaultHeavyTopics, topic.value])) : galleryEditForm.defaultHeavyTopics.filter((v) => v !== topic.value) })} />{topic.label}</label>))}</div>
               <div className="inline-form" style={{ gap: 8 }}><button onClick={() => void saveGalleryEdit()} disabled={submitting}>Save gallery</button><button onClick={() => setEditingGalleryId(null)} disabled={submitting}>Cancel</button></div>
@@ -1018,7 +1038,7 @@ export function ArtistAreaWorkspace() {
               <ul>
                 {visibleGalleries.slice(0, 80).map((gallery) => (
                   <li key={gallery.galleryId}>
-                    <strong>{gallery.title}</strong> ({gallery.slug}) · artist: {gallery.artistSlug || artists.find((a) => a.artistId === gallery.artistId)?.slug || gallery.artistId} · {gallery.visibility} · {gallery.status}{gallery.coverImageId ? ` · cover: ${gallery.coverImageId}` : ''}
+                    <strong>{gallery.title}</strong> ({gallery.slug}) · artist: {gallery.artistSlug || artists.find((a) => a.artistId === gallery.artistId)?.slug || gallery.artistId} · {gallery.visibility} · {gallery.status} · preview default: {gallery.defaultPreviewMaxWidth ?? 'none'}{gallery.coverImageId ? ` · cover: ${gallery.coverImageId}` : ''}
                     <button style={{ marginLeft: 8 }} onClick={() => startEditGallery(gallery)} disabled={submitting}>Edit</button>
                     <button style={{ marginLeft: 8 }} onClick={() => void deleteGallery(gallery)} disabled={submitting}>Delete</button>
                   </li>
@@ -1055,6 +1075,8 @@ export function ArtistAreaWorkspace() {
             <div className="inline-form"><select value={mediaForm.aiDisclosure} onChange={(e) => setMediaForm({ ...mediaForm, aiDisclosure: e.target.value as AiDisclosure })}>{aiDisclosureOptions.map((opt) => <option key={`m-ai-${opt}`} value={opt}>{opt}</option>)}</select></div>
             <div className="inline-form"><select value={mediaForm.moderatorAiDisclosure} onChange={(e) => setMediaForm({ ...mediaForm, moderatorAiDisclosure: e.target.value as '' | AiDisclosure })}><option value="">moderator AI disclosure (optional)</option>{aiDisclosureOptions.map((opt) => <option key={`m-mai-${opt}`} value={opt}>{opt}</option>)}</select></div>
             <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={mediaForm.discoverSquareCropEnabled} onChange={(e) => setMediaForm({ ...mediaForm, discoverSquareCropEnabled: e.target.checked })} /> Allow square crop in discovery</label>
+            <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={mediaForm.isPreview} onChange={(e) => setMediaForm({ ...mediaForm, isPreview: e.target.checked })} /> Show as preview in premium gallery</label>
+            <div className="inline-form"><input type="number" placeholder="Preview max width (optional)" value={mediaForm.previewMaxWidth} onChange={(e) => setMediaForm({ ...mediaForm, previewMaxWidth: e.target.value })} /></div>
             <div className="inline-form" style={{ gap: 10, flexWrap: 'wrap' }}>{heavyTopicOptions.map((topic) => (<label key={`m-topic-${topic.value}`} className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={mediaForm.heavyTopics.includes(topic.value)} onChange={(e) => setMediaForm({ ...mediaForm, heavyTopics: e.target.checked ? Array.from(new Set([...mediaForm.heavyTopics, topic.value])) : mediaForm.heavyTopics.filter((v) => v !== topic.value) })} />{topic.label}</label>))}</div>
             <div className="inline-form" style={{ gap: 10, flexWrap: 'wrap' }}>{heavyTopicOptions.map((topic) => (<label key={`m-mtopic-${topic.value}`} className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={mediaForm.moderatorHeavyTopics.includes(topic.value)} onChange={(e) => setMediaForm({ ...mediaForm, moderatorHeavyTopics: e.target.checked ? Array.from(new Set([...mediaForm.moderatorHeavyTopics, topic.value])) : mediaForm.moderatorHeavyTopics.filter((v) => v !== topic.value) })} />Moderator: {topic.label}</label>))}</div>
             {mediaForm.assetType === 'image' && (<div className="inline-form" style={{ gap: 8 }}><input type="number" placeholder="Crop X" value={mediaForm.cropX} onChange={(e) => setMediaForm({ ...mediaForm, cropX: Number(e.target.value || 0) })} /><input type="number" placeholder="Crop Y" value={mediaForm.cropY} onChange={(e) => setMediaForm({ ...mediaForm, cropY: Number(e.target.value || 0) })} /><input type="number" placeholder="Crop size" min={1} value={mediaForm.cropSize} onChange={(e) => setMediaForm({ ...mediaForm, cropSize: Number(e.target.value || 512) })} /></div>)}
@@ -1080,7 +1102,7 @@ export function ArtistAreaWorkspace() {
             </div>
             <ul>
               {visibleMedia.slice(0, 40).map((item) => (
-                <li key={item.imageId}>{item.assetType || 'image'} · {item.imageId} · {item.previewKey} · {item.contentRating || 'general'} · AI: {item.aiDisclosure || 'none'} · Topics: {(item.heavyTopics || []).join(', ') || 'none'}<button style={{ marginLeft: 8 }} onClick={() => startEditMedia(item)} disabled={submitting}>Edit</button><button style={{ marginLeft: 8 }} onClick={() => void setMediaAsGalleryCover(item)} disabled={submitting}>Set as cover</button><button style={{ marginLeft: 8 }} onClick={() => void generateMediaRenditions(item)} disabled={submitting || (item.assetType || 'image') !== 'image'}>Generate renditions</button><button style={{ marginLeft: 8 }} onClick={() => void deleteMedia(item)} disabled={submitting}>Delete</button></li>
+                <li key={item.imageId}>{item.assetType || 'image'} · {item.imageId} · {item.previewKey} · {item.contentRating || 'general'} · isPreview: {item.isPreview ? 'yes' : 'no'} · previewMaxWidth: {item.previewMaxWidth ?? 'none'} · AI: {item.aiDisclosure || 'none'} · Topics: {(item.heavyTopics || []).join(', ') || 'none'}<button style={{ marginLeft: 8 }} onClick={() => startEditMedia(item)} disabled={submitting}>Edit</button><button style={{ marginLeft: 8 }} onClick={() => void setMediaAsGalleryCover(item)} disabled={submitting}>Set as cover</button><button style={{ marginLeft: 8 }} onClick={() => void generateMediaRenditions(item)} disabled={submitting || (item.assetType || 'image') !== 'image'}>Generate renditions</button><button style={{ marginLeft: 8 }} onClick={() => void deleteMedia(item)} disabled={submitting}>Delete</button></li>
               ))}
               {!visibleMedia.length && <li className="small">No media records for current filter.</li>}
             </ul>
@@ -1111,6 +1133,8 @@ export function ArtistAreaWorkspace() {
               <div className="inline-form"><select value={mediaEditForm.aiDisclosure} onChange={(e) => setMediaEditForm({ ...mediaEditForm, aiDisclosure: e.target.value as AiDisclosure })}>{aiDisclosureOptions.map((opt) => <option key={`me-ai-${opt}`} value={opt}>{opt}</option>)}</select></div>
               <div className="inline-form"><select value={mediaEditForm.moderatorAiDisclosure} onChange={(e) => setMediaEditForm({ ...mediaEditForm, moderatorAiDisclosure: e.target.value as '' | AiDisclosure })}><option value="">moderator AI disclosure (optional)</option>{aiDisclosureOptions.map((opt) => <option key={`me-mai-${opt}`} value={opt}>{opt}</option>)}</select></div>
               <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={mediaEditForm.discoverSquareCropEnabled} onChange={(e) => setMediaEditForm({ ...mediaEditForm, discoverSquareCropEnabled: e.target.checked })} /> Allow square crop in discovery</label>
+              <label className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><input type="checkbox" checked={mediaEditForm.isPreview} onChange={(e) => setMediaEditForm({ ...mediaEditForm, isPreview: e.target.checked })} /> Show as preview in premium gallery</label>
+              <div className="inline-form"><input type="number" placeholder="Preview max width (optional)" value={mediaEditForm.previewMaxWidth} onChange={(e) => setMediaEditForm({ ...mediaEditForm, previewMaxWidth: e.target.value })} /></div>
               <div className="inline-form" style={{ gap: 10, flexWrap: 'wrap' }}>{heavyTopicOptions.map((topic) => (<label key={`me-topic-${topic.value}`} className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={mediaEditForm.heavyTopics.includes(topic.value)} onChange={(e) => setMediaEditForm({ ...mediaEditForm, heavyTopics: e.target.checked ? Array.from(new Set([...mediaEditForm.heavyTopics, topic.value])) : mediaEditForm.heavyTopics.filter((v) => v !== topic.value) })} />{topic.label}</label>))}</div>
               <div className="inline-form" style={{ gap: 10, flexWrap: 'wrap' }}>{heavyTopicOptions.map((topic) => (<label key={`me-mtopic-${topic.value}`} className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={mediaEditForm.moderatorHeavyTopics.includes(topic.value)} onChange={(e) => setMediaEditForm({ ...mediaEditForm, moderatorHeavyTopics: e.target.checked ? Array.from(new Set([...mediaEditForm.moderatorHeavyTopics, topic.value])) : mediaEditForm.moderatorHeavyTopics.filter((v) => v !== topic.value) })} />Moderator: {topic.label}</label>))}</div>
               {mediaEditForm.assetType === 'image' && (<div className="inline-form" style={{ gap: 8 }}><input type="number" placeholder="Crop X" value={mediaEditForm.cropX} onChange={(e) => setMediaEditForm({ ...mediaEditForm, cropX: Number(e.target.value || 0) })} /><input type="number" placeholder="Crop Y" value={mediaEditForm.cropY} onChange={(e) => setMediaEditForm({ ...mediaEditForm, cropY: Number(e.target.value || 0) })} /><input type="number" placeholder="Crop size" min={1} value={mediaEditForm.cropSize} onChange={(e) => setMediaEditForm({ ...mediaEditForm, cropSize: Number(e.target.value || 512) })} /></div>)}

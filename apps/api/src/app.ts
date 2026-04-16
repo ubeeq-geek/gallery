@@ -116,6 +116,13 @@ const parseOptionalBoolean = (value: unknown): boolean | undefined => {
   return undefined;
 };
 
+const parseOptionalPreviewWidth = (value: unknown): number | undefined => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.floor(parsed);
+};
+
 const parseStringArray = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -1815,14 +1822,20 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const resolvedArtist = (await store.listArtists()).find((item) => item.artistId === resolvedGallery.artistId);
     const resolvedArtistName = resolvedArtist?.name || '';
     const resolvedArtistSlug = resolvedArtist?.slug || resolvedGallery.artistSlug || '';
-    const mediaItems = (await store.getMediaByGallery(resolvedGallery.galleryId)).filter((item) => {
+    const allMediaItems = (await store.getMediaByGallery(resolvedGallery.galleryId)).filter((item) => {
       if (isHiddenByVisibility(item.releaseVisibility)) return false;
       if (item.status && item.status !== 'published' && item.status !== 'scheduled') return false;
       const effectiveContentRating = getEffectiveContentRating(item);
       if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) return false;
       return canViewBySchedule(item.publishAt || resolvedGallery.publishAt, item.publicReleaseAt || resolvedGallery.publicReleaseAt, Date.now(), isFollowerOrAdmin);
     });
-    const coverMedia = mediaItems.find((item) => item.mediaId === gallery.coverImageId) || mediaItems[0];
+    let mediaItems = allMediaItems;
+    if (resolvedGallery.visibility === 'premium' && !galleryHasAccess) {
+      const previewItems = allMediaItems.filter((item) => item.isPreview);
+      mediaItems = previewItems.length > 0 ? previewItems : [];
+    }
+    const coverPool = mediaItems.length > 0 ? mediaItems : allMediaItems;
+    const coverMedia = coverPool.find((item) => item.mediaId === gallery.coverImageId) || coverPool[0];
     let coverPreviewUrl = coverMedia
       ? await publicMediaUrl(coverMedia.previewPosterKey || coverMedia.previewKey)
       : undefined;
@@ -1857,6 +1870,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         ...item,
         imageId: item.mediaId,
         sortOrder: item.position,
+        isPreview: item.isPreview,
+        previewMaxWidth: item.previewMaxWidth ?? resolvedGallery.defaultPreviewMaxWidth,
         assetType: item.assetType || 'image',
         contentRating: contentProjection.effectiveContentRating,
         moderatorContentRating: undefined,
@@ -1899,8 +1914,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       previewPosterUrl?: string;
     }> = [];
     if (gallery.visibility === 'preview' && gallery.pairedPremiumGalleryId && !galleryHasAccess) {
-      const premiumMedia = (await store.getMediaByGallery(gallery.pairedPremiumGalleryId))
+      const premiumMediaRaw = (await store.getMediaByGallery(gallery.pairedPremiumGalleryId))
         .filter((item) => isRatingAllowed(getEffectiveContentRating(item), viewerPolicy.maxAllowedContentRating));
+      const premiumMediaPreviewOnly = premiumMediaRaw.filter((item) => item.isPreview);
+      const premiumMedia = premiumMediaPreviewOnly.length > 0 ? premiumMediaPreviewOnly : premiumMediaRaw;
       premiumTeaserMedia = await Promise.all(premiumMedia.map(async (item) => ({
         ...(projectDisclosures(getEffectiveAiDisclosure(item), getEffectiveHeavyTopics(item))),
         imageId: item.mediaId,
@@ -2904,6 +2921,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       visibility,
       pairedPremiumGalleryId: req.body?.pairedPremiumGalleryId ? String(req.body.pairedPremiumGalleryId) : undefined,
       purchaseUrl: req.body?.purchaseUrl ? String(req.body.purchaseUrl) : undefined,
+      defaultPreviewMaxWidth: parseOptionalPreviewWidth(req.body?.defaultPreviewMaxWidth),
       status: req.body?.status === 'published' ? 'published' : 'draft',
       premiumPasswordHash: passwordHash,
       createdAt: new Date().toISOString()
@@ -2960,6 +2978,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       purchaseUrl: req.body?.purchaseUrl !== undefined
         ? (req.body.purchaseUrl ? String(req.body.purchaseUrl) : undefined)
         : existing.purchaseUrl,
+      defaultPreviewMaxWidth: req.body?.defaultPreviewMaxWidth !== undefined
+        ? parseOptionalPreviewWidth(req.body.defaultPreviewMaxWidth)
+        : existing.defaultPreviewMaxWidth,
       status: req.body?.status === 'published' ? 'published' : (req.body?.status === 'draft' ? 'draft' : existing.status)
     };
 
@@ -3065,7 +3086,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       media.height = generated.sourceHeight;
     }
 
-    await store.createMedia(media, galleryId, position);
+    await store.createMedia(media, galleryId, position, {
+      isPreview: parseOptionalBoolean(req.body?.isPreview),
+      previewMaxWidth: parseOptionalPreviewWidth(req.body?.previewMaxWidth)
+    });
     return res.status(201).json({ ...media, imageId: media.mediaId, galleryId, sortOrder: galleryId ? position : undefined });
   });
 
@@ -3086,11 +3110,16 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const resolvedPosition = Number.isFinite(position)
       ? Math.max(0, Math.floor(position))
       : (await store.getMediaByGallery(gallery.galleryId)).length;
-    await store.addMediaToGallery(gallery.galleryId, media.mediaId, resolvedPosition);
+    await store.addMediaToGallery(gallery.galleryId, media.mediaId, resolvedPosition, {
+      isPreview: parseOptionalBoolean(req.body?.isPreview),
+      previewMaxWidth: parseOptionalPreviewWidth(req.body?.previewMaxWidth)
+    });
     return res.status(201).json({
       galleryId: gallery.galleryId,
       imageId: media.mediaId,
-      sortOrder: resolvedPosition
+      sortOrder: resolvedPosition,
+      isPreview: parseOptionalBoolean(req.body?.isPreview),
+      previewMaxWidth: parseOptionalPreviewWidth(req.body?.previewMaxWidth)
     });
   });
 
@@ -3191,10 +3220,30 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
     await store.updateMedia(updated);
     const nextPosition = req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : existing.position;
-    if (nextPosition !== existing.position) {
-      await store.moveMediaInGallery(req.params.galleryId, updated.mediaId, nextPosition);
+    const nextIsPreview = req.body?.isPreview !== undefined
+      ? Boolean(req.body.isPreview)
+      : existing.isPreview;
+    const nextPreviewMaxWidth = req.body?.previewMaxWidth !== undefined
+      ? parseOptionalPreviewWidth(req.body.previewMaxWidth)
+      : existing.previewMaxWidth;
+    if (
+      nextPosition !== existing.position
+      || nextIsPreview !== existing.isPreview
+      || nextPreviewMaxWidth !== existing.previewMaxWidth
+    ) {
+      await store.addMediaToGallery(req.params.galleryId, updated.mediaId, nextPosition, {
+        isPreview: nextIsPreview,
+        previewMaxWidth: nextPreviewMaxWidth
+      });
     }
-    return res.json({ ...updated, imageId: updated.mediaId, galleryId: req.params.galleryId, sortOrder: nextPosition });
+    return res.json({
+      ...updated,
+      imageId: updated.mediaId,
+      galleryId: req.params.galleryId,
+      sortOrder: nextPosition,
+      isPreview: nextIsPreview,
+      previewMaxWidth: nextPreviewMaxWidth
+    });
   });
 
   app.post('/admin/images/:galleryId/:imageId/renditions', requireAuth, async (req, res) => {

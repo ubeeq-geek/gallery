@@ -465,6 +465,7 @@ export const api = {
     purchaseUrl?: string;
     premiumPassword?: string;
     discoverSquareCropEnabled?: boolean;
+    defaultPreviewMaxWidth?: number;
     defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
     defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
   }) {
@@ -488,6 +489,7 @@ export const api = {
     purchaseUrl?: string;
     premiumPassword?: string;
     discoverSquareCropEnabled?: boolean;
+    defaultPreviewMaxWidth?: number;
     defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
     defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
   }) {
@@ -522,6 +524,8 @@ export const api = {
     heavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
     moderatorHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
     discoverSquareCropEnabled?: boolean;
+    isPreview?: boolean;
+    previewMaxWidth?: number;
     squareCrop?: { x: number; y: number; size: number };
   }) {
     const response = await fetch(`${API_BASE}/admin/images`, {
@@ -559,6 +563,8 @@ export const api = {
     heavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
     moderatorHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
     discoverSquareCropEnabled?: boolean;
+    isPreview?: boolean;
+    previewMaxWidth?: number;
     squareCrop?: { x: number; y: number; size: number };
   }) {
     const response = await fetch(`${API_BASE}/admin/images/${encodeURIComponent(galleryId)}/${encodeURIComponent(imageId)}`, {

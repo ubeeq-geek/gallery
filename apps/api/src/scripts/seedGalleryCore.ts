@@ -98,6 +98,8 @@ type GallerySeedKind = 'free' | 'preview' | 'premium';
 type ArtistMediaSeed = {
   file: string;
   gallerySlug: string;
+  isPreview?: boolean;
+  previewMaxWidth?: number;
   title?: string;
   altText?: string;
   contentRating?: ContentRating;
@@ -123,12 +125,15 @@ type ArtistSeed = {
   freeGalleryTitle?: string;
   freeGallerySlug?: string;
   freeGalleryStatus?: 'draft' | 'published';
+  freeGalleryDefaultPreviewMaxWidth?: number;
   previewGalleryTitle?: string;
   previewGallerySlug?: string;
   previewGalleryStatus?: 'draft' | 'published';
+  previewGalleryDefaultPreviewMaxWidth?: number;
   premiumGalleryTitle?: string;
   premiumGallerySlug?: string;
   premiumGalleryStatus?: 'draft' | 'published';
+  premiumGalleryDefaultPreviewMaxWidth?: number;
   premiumPassword?: string;
   purchaseUrl?: string;
 };
@@ -138,6 +143,7 @@ type ScenarioGallerySeed = {
   title?: string;
   slug?: string;
   status?: 'draft' | 'published';
+  defaultPreviewMaxWidth?: number;
   purchaseUrl?: string;
   premiumPassword?: string;
 };
@@ -287,10 +293,20 @@ const parseScenarioArtistMedia = (value: unknown, fieldName: string): ArtistMedi
   if (durationSecondsRaw !== undefined && durationSeconds === undefined) {
     throw new Error(`Scenario field "${fieldName}.durationSeconds" must be a positive number`);
   }
+  const previewMaxWidthRaw = value.previewMaxWidth;
+  const previewMaxWidth =
+    typeof previewMaxWidthRaw === 'number' && Number.isFinite(previewMaxWidthRaw) && previewMaxWidthRaw > 0
+      ? Math.floor(previewMaxWidthRaw)
+      : undefined;
+  if (previewMaxWidthRaw !== undefined && previewMaxWidth === undefined) {
+    throw new Error(`Scenario field "${fieldName}.previewMaxWidth" must be a positive number`);
+  }
 
   return {
     file,
     gallerySlug,
+    isPreview: asOptionalBoolean(value.isPreview),
+    previewMaxWidth,
     title: asOptionalString(value.title),
     altText: asOptionalString(value.altText),
     contentRating: parseOptionalContentRating(value.contentRating, `${fieldName}.contentRating`),
@@ -331,11 +347,20 @@ const parseScenarioGallery = (
   if (statusRaw && statusRaw !== 'draft' && statusRaw !== 'published') {
     throw new Error(`Scenario field "${fieldName}.status" must be draft or published`);
   }
+  const defaultPreviewMaxWidthRaw = value.defaultPreviewMaxWidth;
+  const defaultPreviewMaxWidth =
+    typeof defaultPreviewMaxWidthRaw === 'number' && Number.isFinite(defaultPreviewMaxWidthRaw) && defaultPreviewMaxWidthRaw > 0
+      ? Math.floor(defaultPreviewMaxWidthRaw)
+      : undefined;
+  if (defaultPreviewMaxWidthRaw !== undefined && defaultPreviewMaxWidth === undefined) {
+    throw new Error(`Scenario field "${fieldName}.defaultPreviewMaxWidth" must be a positive number`);
+  }
   return {
     kind: kindRaw,
     title: asOptionalString(value.title),
     slug: asOptionalString(value.slug),
     status: statusRaw as 'draft' | 'published' | undefined,
+    defaultPreviewMaxWidth,
     purchaseUrl: asOptionalString(value.purchaseUrl),
     premiumPassword: asOptionalString(value.premiumPassword)
   };
@@ -395,12 +420,15 @@ const parseScenarioArtist = (
     freeGalleryTitle: freeGallery?.title,
     freeGallerySlug: freeGallery?.slug,
     freeGalleryStatus: freeGallery?.status,
+    freeGalleryDefaultPreviewMaxWidth: freeGallery?.defaultPreviewMaxWidth,
     previewGalleryTitle: previewGallery?.title,
     previewGallerySlug: previewGallery?.slug,
     previewGalleryStatus: previewGallery?.status,
+    previewGalleryDefaultPreviewMaxWidth: previewGallery?.defaultPreviewMaxWidth,
     premiumGalleryTitle: premiumGallery?.title,
     premiumGallerySlug: premiumGallery?.slug,
     premiumGalleryStatus: premiumGallery?.status,
+    premiumGalleryDefaultPreviewMaxWidth: premiumGallery?.defaultPreviewMaxWidth,
     premiumPassword: premiumGallery?.premiumPassword,
     purchaseUrl: previewGallery?.purchaseUrl
   };
@@ -704,7 +732,15 @@ const main = async () => {
 
   const artists: Artist[] = [];
   const galleries: Gallery[] = [];
-  const media: Array<{ media: Media; galleryId: string; position: number }> = [];
+  const media: Array<{
+    media: Media;
+    galleryId: string;
+    position: number;
+    placement?: {
+      isPreview?: boolean;
+      previewMaxWidth?: number;
+    };
+  }> = [];
   const uploadJobs = new Map<string, { localPath: string; contentType: string }>();
 
   const queueUpload = (key: string | undefined, file: AssetFile) => {
@@ -750,6 +786,7 @@ const main = async () => {
           defaultAiDisclosure: aiDisclosure,
           defaultHeavyTopics: heavyTopics,
           visibility: 'free' as const,
+          defaultPreviewMaxWidth: seed.freeGalleryDefaultPreviewMaxWidth,
           status: seed.freeGalleryStatus || 'published',
           createdAt
         }
@@ -767,6 +804,7 @@ const main = async () => {
           defaultAiDisclosure: aiDisclosure,
           defaultHeavyTopics: heavyTopics,
           visibility: 'premium' as const,
+          defaultPreviewMaxWidth: seed.premiumGalleryDefaultPreviewMaxWidth,
           status: seed.premiumGalleryStatus || 'published',
           premiumPasswordHash,
           createdAt
@@ -787,6 +825,7 @@ const main = async () => {
           visibility: 'preview' as const,
           pairedPremiumGalleryId: premiumGallery?.galleryId,
           purchaseUrl: seed.purchaseUrl,
+          defaultPreviewMaxWidth: seed.previewGalleryDefaultPreviewMaxWidth,
           status: seed.previewGalleryStatus || 'published',
           createdAt
         }
@@ -807,33 +846,56 @@ const main = async () => {
     }
     const nextPositionByKind: Record<GallerySeedKind, number> = { free: 1, preview: 1, premium: 1 };
     const nextPositionByGallerySlug = new Map<string, number>();
-    const pushMedia = (targetGalleryId: string, position: number, payload: Media) => {
+    const pushMedia = (
+      targetGalleryId: string,
+      position: number,
+      payload: Media,
+      placement?: {
+        isPreview?: boolean;
+        previewMaxWidth?: number;
+      }
+    ) => {
       media.push({
         media: {
           ...payload,
           appearsInFeed: payload.appearsInFeed !== false
         },
         galleryId: targetGalleryId,
-        position
+        position,
+        placement
       });
     };
-    const pushMediaToKind = (kind: GallerySeedKind, payload: Media) => {
+    const pushMediaToKind = (
+      kind: GallerySeedKind,
+      payload: Media,
+      placement?: {
+        isPreview?: boolean;
+        previewMaxWidth?: number;
+      }
+    ) => {
       const galleryId = galleryIdByKind[kind];
       if (!galleryId) {
         throw new Error(`Artist ${seed.name} media references "${kind}" gallery, but that gallery kind is not configured`);
       }
       const position = nextPositionByKind[kind];
       nextPositionByKind[kind] += 1;
-      pushMedia(galleryId, position, payload);
+      pushMedia(galleryId, position, payload, placement);
     };
-    const pushMediaToGallerySlug = (gallerySlug: string, payload: Media) => {
+    const pushMediaToGallerySlug = (
+      gallerySlug: string,
+      payload: Media,
+      placement?: {
+        isPreview?: boolean;
+        previewMaxWidth?: number;
+      }
+    ) => {
       const gallery = galleryBySlug.get(gallerySlug);
       if (!gallery) {
         throw new Error(`Artist ${seed.name} media references unknown gallerySlug "${gallerySlug}"`);
       }
       const nextPosition = (nextPositionByGallerySlug.get(gallerySlug) ?? 1);
       nextPositionByGallerySlug.set(gallerySlug, nextPosition + 1);
-      pushMedia(gallery.galleryId, nextPosition, payload);
+      pushMedia(gallery.galleryId, nextPosition, payload, placement);
       return gallery;
     };
 
@@ -898,6 +960,9 @@ const main = async () => {
             height: dimensions.height,
             altText: mediaSeed.altText,
             createdAt
+          }, {
+            isPreview: mediaSeed.isPreview,
+            previewMaxWidth: mediaSeed.previewMaxWidth
           });
           queueUpload(objectKey, file);
           continue;
@@ -931,6 +996,9 @@ const main = async () => {
           durationSeconds: mediaSeed.durationSeconds ?? (isPremiumGallery ? 24 : 20),
           altText: mediaSeed.altText,
           createdAt
+        }, {
+          isPreview: mediaSeed.isPreview,
+          previewMaxWidth: mediaSeed.previewMaxWidth
         });
         queueUpload(objectKey, file);
         if (poster && posterKey) {
@@ -1278,7 +1346,7 @@ const main = async () => {
     await repo.createGallery(gallery);
   }
   for (const item of media) {
-    await repo.createMedia(item.media, item.galleryId, item.position);
+    await repo.createMedia(item.media, item.galleryId, item.position, item.placement);
   }
 
   await client.send(new PutCommand({ TableName: siteSettingsTable, Item: siteSettings }));

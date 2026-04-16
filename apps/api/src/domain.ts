@@ -37,6 +37,7 @@ export interface Gallery {
   releaseVisibility?: 'public' | 'hidden' | 'removed';
   pairedPremiumGalleryId?: string;
   purchaseUrl?: string;
+  defaultPreviewMaxWidth?: number;
   status: 'draft' | 'published';
   publishAt?: string;
   publicReleaseAt?: string;
@@ -101,6 +102,8 @@ export interface GalleryMedia {
   galleryId: string;
   mediaId: string;
   position: number;
+  isPreview?: boolean;
+  previewMaxWidth?: number;
   createdAt: string;
 }
 
@@ -108,6 +111,8 @@ export interface GalleryMediaView extends Media {
   galleryId: string;
   galleryMediaId: string;
   position: number;
+  isPreview?: boolean;
+  previewMaxWidth?: number;
 }
 
 export interface Comment {

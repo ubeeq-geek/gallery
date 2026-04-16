@@ -163,7 +163,9 @@ export class DynamoStore implements DataStore {
         ...item,
         mediaId: item.mediaId || item.imageId || '',
         galleryMediaId: `${item.galleryId}:${item.mediaId || item.imageId || ''}`,
-        position: item.sortOrder || 0
+        position: item.sortOrder || 0,
+        isPreview: (item as { isPreview?: boolean }).isPreview,
+        previewMaxWidth: (item as { previewMaxWidth?: number }).previewMaxWidth
       }))
       .filter((item) => Boolean(item.mediaId));
   }
@@ -197,6 +199,8 @@ export class DynamoStore implements DataStore {
     galleryId: string;
     mediaId: string;
     position: number;
+    isPreview?: boolean;
+    previewMaxWidth?: number;
     createdAt: string;
   }>> {
     if (this.coreRepo) {
@@ -212,13 +216,15 @@ export class DynamoStore implements DataStore {
         }
       })
     );
-    return ((response.Items || []) as Array<{ galleryId: string; sortOrder?: number; createdAt?: string; imageId?: string; mediaId?: string }>)
+    return ((response.Items || []) as Array<{ galleryId: string; sortOrder?: number; createdAt?: string; imageId?: string; mediaId?: string; isPreview?: boolean; previewMaxWidth?: number }>)
       .filter((item) => Boolean(item.galleryId))
       .map((item, index) => ({
         galleryMediaId: `${item.galleryId}:${mediaId}:${index}`,
         galleryId: item.galleryId,
         mediaId,
         position: Number(item.sortOrder || 0),
+        isPreview: item.isPreview,
+        previewMaxWidth: item.previewMaxWidth,
         createdAt: item.createdAt || new Date().toISOString()
       }))
       .sort((a, b) => a.position - b.position);
@@ -238,9 +244,17 @@ export class DynamoStore implements DataStore {
     await this.client.send(new PutCommand({ TableName: this.config.galleriesTable, Item: gallery }));
   }
 
-  async createMedia(media: Media, galleryId?: string, position = 0): Promise<void> {
+  async createMedia(
+    media: Media,
+    galleryId?: string,
+    position = 0,
+    placement?: {
+      isPreview?: boolean;
+      previewMaxWidth?: number;
+    }
+  ): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.createMedia(media, galleryId, position);
+      await this.coreRepo.createMedia(media, galleryId, position, placement);
       return;
     }
     const resolvedGalleryId = galleryId || `FEED#${media.artistId}`;
@@ -258,9 +272,17 @@ export class DynamoStore implements DataStore {
     );
   }
 
-  async addMediaToGallery(galleryId: string, mediaId: string, position: number): Promise<void> {
+  async addMediaToGallery(
+    galleryId: string,
+    mediaId: string,
+    position: number,
+    placement?: {
+      isPreview?: boolean;
+      previewMaxWidth?: number;
+    }
+  ): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.addMediaToGallery(galleryId, mediaId, position);
+      await this.coreRepo.addMediaToGallery(galleryId, mediaId, position, placement);
       return;
     }
     const response = await this.client.send(

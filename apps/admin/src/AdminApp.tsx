@@ -43,6 +43,7 @@ type Gallery = {
   visibility: 'free' | 'preview' | 'premium';
   status: 'draft' | 'published';
   discoverSquareCropEnabled?: boolean;
+  defaultPreviewMaxWidth?: number;
   defaultAiDisclosure?: AiDisclosure;
   defaultHeavyTopics?: HeavyTopic[];
 };
@@ -62,6 +63,8 @@ type Media = {
   originalFilename?: string;
   squareCrop?: { x: number; y: number; size: number };
   discoverSquareCropEnabled?: boolean;
+  isPreview?: boolean;
+  previewMaxWidth?: number;
   previewKey: string;
   premiumKey?: string;
 };
@@ -123,6 +126,7 @@ export function AdminApp() {
     visibility: 'free',
     premiumPassword: '',
     discoverSquareCropEnabled: true,
+    defaultPreviewMaxWidth: '',
     defaultAiDisclosure: 'none' as AiDisclosure,
     defaultHeavyTopics: [] as HeavyTopic[]
   });
@@ -148,7 +152,9 @@ export function AdminApp() {
     cropX: 0,
     cropY: 0,
     cropSize: 512,
-    discoverSquareCropEnabled: true
+    discoverSquareCropEnabled: true,
+    isPreview: false,
+    previewMaxWidth: ''
   });
   const [editingArtistId, setEditingArtistId] = useState<string | null>(null);
   const [editingGalleryId, setEditingGalleryId] = useState<string | null>(null);
@@ -174,6 +180,7 @@ export function AdminApp() {
     status: 'published',
     premiumPassword: '',
     discoverSquareCropEnabled: true,
+    defaultPreviewMaxWidth: '',
     defaultAiDisclosure: 'none' as AiDisclosure,
     defaultHeavyTopics: [] as HeavyTopic[]
   });
@@ -200,7 +207,9 @@ export function AdminApp() {
     cropX: 0,
     cropY: 0,
     cropSize: 512,
-    discoverSquareCropEnabled: true
+    discoverSquareCropEnabled: true,
+    isPreview: false,
+    previewMaxWidth: ''
   });
 
   const [mediaGalleryId, setMediaGalleryId] = useState('');
@@ -359,7 +368,11 @@ export function AdminApp() {
   }, 'Artist updated');
 
   const createGallery = () => withFeedback(async () => {
-    await request('/admin/galleries', 'POST', { ...galleryForm, status: 'published' });
+    await request('/admin/galleries', 'POST', {
+      ...galleryForm,
+      status: 'published',
+      defaultPreviewMaxWidth: galleryForm.defaultPreviewMaxWidth !== '' ? Number(galleryForm.defaultPreviewMaxWidth) : undefined
+    });
     setGalleryForm({
       artistId: '',
       artistSlug: '',
@@ -371,6 +384,7 @@ export function AdminApp() {
       visibility: 'free',
       premiumPassword: '',
       discoverSquareCropEnabled: true,
+      defaultPreviewMaxWidth: '',
       defaultAiDisclosure: 'none',
       defaultHeavyTopics: []
     });
@@ -396,13 +410,17 @@ export function AdminApp() {
       status: gallery.status,
       premiumPassword: '',
       discoverSquareCropEnabled: gallery.discoverSquareCropEnabled !== false,
+      defaultPreviewMaxWidth: gallery.defaultPreviewMaxWidth?.toString() || '',
       defaultAiDisclosure: gallery.defaultAiDisclosure || 'none',
       defaultHeavyTopics: gallery.defaultHeavyTopics || []
     });
   };
 
   const saveEditGallery = (galleryId: string) => withFeedback(async () => {
-    await request(`/admin/galleries/${galleryId}`, 'PATCH', galleryEditForm);
+    await request(`/admin/galleries/${galleryId}`, 'PATCH', {
+      ...galleryEditForm,
+      defaultPreviewMaxWidth: galleryEditForm.defaultPreviewMaxWidth !== '' ? Number(galleryEditForm.defaultPreviewMaxWidth) : undefined
+    });
     setEditingGalleryId(null);
     await loadGalleries();
   }, 'Gallery updated');
@@ -418,6 +436,7 @@ export function AdminApp() {
       (mediaForm.cropX !== 0 || mediaForm.cropY !== 0 || mediaForm.cropSize !== 512);
     await request('/admin/images', 'POST', {
       ...mediaForm,
+      previewMaxWidth: mediaForm.previewMaxWidth !== '' ? Number(mediaForm.previewMaxWidth) : undefined,
       squareCrop: includeSquareCrop
         ? { x: mediaForm.cropX, y: mediaForm.cropY, size: mediaForm.cropSize }
         : undefined
@@ -457,7 +476,9 @@ export function AdminApp() {
       cropX: item.squareCrop?.x || 0,
       cropY: item.squareCrop?.y || 0,
       cropSize: item.squareCrop?.size || 512,
-      discoverSquareCropEnabled: item.discoverSquareCropEnabled !== false
+      discoverSquareCropEnabled: item.discoverSquareCropEnabled !== false,
+      isPreview: Boolean(item.isPreview),
+      previewMaxWidth: item.previewMaxWidth?.toString() || ''
     });
   };
 
@@ -467,6 +488,7 @@ export function AdminApp() {
       (mediaEditForm.cropX !== 0 || mediaEditForm.cropY !== 0 || mediaEditForm.cropSize !== 512);
     await request(`/admin/images/${mediaEditForm.galleryId}/${mediaEditForm.imageId}`, 'PATCH', {
       ...mediaEditForm,
+      previewMaxWidth: mediaEditForm.previewMaxWidth !== '' ? Number(mediaEditForm.previewMaxWidth) : undefined,
       squareCrop: includeSquareCrop
         ? { x: mediaEditForm.cropX, y: mediaEditForm.cropY, size: mediaEditForm.cropSize }
         : undefined,
@@ -687,7 +709,10 @@ export function AdminApp() {
             <div className="list">
               {galleries.map((gallery) => (
                 <div className="list-row" key={gallery.galleryId}>
-                  <span>{gallery.title} ({gallery.slug})</span>
+                  <span>
+                    {gallery.title} ({gallery.slug})
+                    {' · '}preview default: {gallery.defaultPreviewMaxWidth ?? 'none'}
+                  </span>
                   {isAdmin && (
                     <div className="row-actions">
                       <button onClick={() => startEditGallery(gallery)}>Edit</button>
@@ -724,6 +749,12 @@ export function AdminApp() {
                   />
                   <span>Allow square crop in discovery</span>
                 </label>
+                <input
+                  type="number"
+                  placeholder="Default preview max width (optional)"
+                  value={galleryEditForm.defaultPreviewMaxWidth}
+                  onChange={(e) => setGalleryEditForm({ ...galleryEditForm, defaultPreviewMaxWidth: e.target.value })}
+                />
                 <label className="inline-form">
                   <span>Default AI disclosure</span>
                   <select value={galleryEditForm.defaultAiDisclosure} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, defaultAiDisclosure: e.target.value as AiDisclosure })}>
@@ -771,6 +802,12 @@ export function AdminApp() {
               />
               <span>Allow square crop in discovery</span>
             </label>
+            <input
+              type="number"
+              placeholder="Default preview max width (optional)"
+              value={galleryForm.defaultPreviewMaxWidth}
+              onChange={(e) => setGalleryForm({ ...galleryForm, defaultPreviewMaxWidth: e.target.value })}
+            />
             <label className="inline-form">
               <span>Default AI disclosure</span>
               <select value={galleryForm.defaultAiDisclosure} onChange={(e) => setGalleryForm({ ...galleryForm, defaultAiDisclosure: e.target.value as AiDisclosure })}>
@@ -811,6 +848,8 @@ export function AdminApp() {
                 <div className="list-row" key={item.imageId}>
                   <span>
                     {item.assetType || 'image'}: {item.imageId} ({item.previewKey}) [{item.contentRating || 'general'}]
+                    {' · '}isPreview: {item.isPreview ? 'yes' : 'no'}
+                    {' · '}previewMaxWidth: {item.previewMaxWidth ?? 'none'}
                     {' · '}AI: {item.aiDisclosure || 'none'}
                     {' · '}Topics: {(item.heavyTopics || []).join(', ') || 'none'}
                   </span>
@@ -898,6 +937,20 @@ export function AdminApp() {
                   />
                   <span>Allow square crop in discovery</span>
                 </label>
+                <label className="inline-form">
+                  <input
+                    type="checkbox"
+                    checked={mediaEditForm.isPreview}
+                    onChange={(e) => setMediaEditForm({ ...mediaEditForm, isPreview: e.target.checked })}
+                  />
+                  <span>Show as preview in premium gallery</span>
+                </label>
+                <input
+                  type="number"
+                  placeholder="Preview max width (optional)"
+                  value={mediaEditForm.previewMaxWidth}
+                  onChange={(e) => setMediaEditForm({ ...mediaEditForm, previewMaxWidth: e.target.value })}
+                />
                 {mediaEditForm.assetType === 'image' && (
                   <>
                     <input type="number" placeholder="Square crop X" value={mediaEditForm.cropX} onChange={(e) => setMediaEditForm({ ...mediaEditForm, cropX: Number(e.target.value || 0) })} />
@@ -977,6 +1030,20 @@ export function AdminApp() {
               />
               <span>Allow square crop in discovery</span>
             </label>
+            <label className="inline-form">
+              <input
+                type="checkbox"
+                checked={mediaForm.isPreview}
+                onChange={(e) => setMediaForm({ ...mediaForm, isPreview: e.target.checked })}
+              />
+              <span>Show as preview in premium gallery</span>
+            </label>
+            <input
+              type="number"
+              placeholder="Preview max width (optional)"
+              value={mediaForm.previewMaxWidth}
+              onChange={(e) => setMediaForm({ ...mediaForm, previewMaxWidth: e.target.value })}
+            />
             {mediaForm.assetType === 'image' && (
               <>
                 <input type="number" placeholder="Square crop X" value={mediaForm.cropX} onChange={(e) => setMediaForm({ ...mediaForm, cropX: Number(e.target.value || 0) })} />

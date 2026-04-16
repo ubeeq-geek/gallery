@@ -71,12 +71,19 @@ export class InMemoryStore implements DataStore {
       .map((placement) => {
         const media = this.media.find((item) => item.mediaId === placement.mediaId);
         if (!media) return null;
-        return {
+        const view: GalleryMediaView = {
           ...media,
           galleryId,
           galleryMediaId: placement.galleryMediaId,
           position: placement.position
         };
+        if (placement.isPreview !== undefined) {
+          view.isPreview = placement.isPreview;
+        }
+        if (placement.previewMaxWidth !== undefined) {
+          view.previewMaxWidth = placement.previewMaxWidth;
+        }
+        return view;
       })
       .filter((item): item is GalleryMediaView => Boolean(item));
   }
@@ -90,6 +97,8 @@ export class InMemoryStore implements DataStore {
     galleryId: string;
     mediaId: string;
     position: number;
+    isPreview?: boolean;
+    previewMaxWidth?: number;
     createdAt: string;
   }>> {
     return this.galleryMedia
@@ -100,7 +109,15 @@ export class InMemoryStore implements DataStore {
   async createArtist(artist: Artist): Promise<void> { this.artists.push(artist); }
   async createGallery(gallery: Gallery): Promise<void> { this.galleries.push(gallery); }
 
-  async createMedia(media: Media, galleryId?: string, position = 0): Promise<void> {
+  async createMedia(
+    media: Media,
+    galleryId?: string,
+    position = 0,
+    placement?: {
+      isPreview?: boolean;
+      previewMaxWidth?: number;
+    }
+  ): Promise<void> {
     this.media = this.media.filter((item) => item.mediaId !== media.mediaId);
     this.media.push({
       ...media,
@@ -112,17 +129,33 @@ export class InMemoryStore implements DataStore {
         galleryId,
         mediaId: media.mediaId,
         position,
+        isPreview: placement?.isPreview,
+        previewMaxWidth: placement?.previewMaxWidth,
         createdAt: new Date().toISOString()
       });
     }
   }
 
-  async addMediaToGallery(galleryId: string, mediaId: string, position: number): Promise<void> {
+  async addMediaToGallery(
+    galleryId: string,
+    mediaId: string,
+    position: number,
+    placement?: {
+      isPreview?: boolean;
+      previewMaxWidth?: number;
+    }
+  ): Promise<void> {
     const media = this.media.find((item) => item.mediaId === mediaId);
     if (!media) return;
     const existing = this.galleryMedia.find((item) => item.galleryId === galleryId && item.mediaId === mediaId);
     if (existing) {
       existing.position = position;
+      if (placement?.isPreview !== undefined) {
+        existing.isPreview = placement.isPreview;
+      }
+      if (placement?.previewMaxWidth !== undefined) {
+        existing.previewMaxWidth = placement.previewMaxWidth;
+      }
       return;
     }
     this.galleryMedia.push({
@@ -130,6 +163,8 @@ export class InMemoryStore implements DataStore {
       galleryId,
       mediaId,
       position,
+      isPreview: placement?.isPreview,
+      previewMaxWidth: placement?.previewMaxWidth,
       createdAt: new Date().toISOString()
     });
   }

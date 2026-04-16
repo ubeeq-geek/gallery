@@ -32,13 +32,31 @@ export interface DataStore {
     galleryId: string;
     mediaId: string;
     position: number;
+    isPreview?: boolean;
+    previewMaxWidth?: number;
     createdAt: string;
   }>>;
 
   createArtist(artist: Artist): Promise<void>;
   createGallery(gallery: Gallery): Promise<void>;
-  createMedia(media: Media, galleryId?: string, position?: number): Promise<void>;
-  addMediaToGallery(galleryId: string, mediaId: string, position: number): Promise<void>;
+  createMedia(
+    media: Media,
+    galleryId?: string,
+    position?: number,
+    placement?: {
+      isPreview?: boolean;
+      previewMaxWidth?: number;
+    }
+  ): Promise<void>;
+  addMediaToGallery(
+    galleryId: string,
+    mediaId: string,
+    position: number,
+    placement?: {
+      isPreview?: boolean;
+      previewMaxWidth?: number;
+    }
+  ): Promise<void>;
   updateArtist(artist: Artist): Promise<void>;
   updateGallery(gallery: Gallery): Promise<void>;
   updateMedia(media: Media): Promise<void>;
