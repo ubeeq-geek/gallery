@@ -2,15 +2,19 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api';
 import { ArtistAreaWorkspace } from './ArtistAreaWorkspace';
+import { ForCreatorsPage } from './pages/ForCreatorsPage';
 import {
   changePassword,
+  clearStoredAuthSession,
   confirmForgotPassword,
   confirmRegistration,
   forgotPassword,
   getCurrentUser,
+  startEmailOtpSignIn,
   setInitialPassword,
   signIn,
   signOut,
+  verifyEmailOtpSignIn,
   type CurrentUser
 } from './cognitoAuth';
 
@@ -36,6 +40,24 @@ type DiscoveryDockSummary = {
 };
 const DISCOVERY_FILTER_EVENT_NAME = 'ubeeq:discovery-filters';
 const ADMIN_AREA_URL = (import.meta.env.VITE_ADMIN_APP_URL || '/admin').trim() || '/admin';
+const OTP_TRUST_DAYS = 30;
+const otpTrustStorageKey = (email: string) => `ubeeq.otpTrust.${email.trim().toLowerCase()}`;
+const hasValidOtpTrust = (email: string): boolean => {
+  if (!email.trim()) return false;
+  const raw = localStorage.getItem(otpTrustStorageKey(email));
+  if (!raw) return false;
+  const expiresAt = Number(raw);
+  if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) {
+    localStorage.removeItem(otpTrustStorageKey(email));
+    return false;
+  }
+  return true;
+};
+const rememberOtpTrust = (email: string) => {
+  if (!email.trim()) return;
+  const expiresAt = Date.now() + OTP_TRUST_DAYS * 24 * 60 * 60 * 1000;
+  localStorage.setItem(otpTrustStorageKey(email), String(expiresAt));
+};
 type RoleNotificationCounts = { studio: number; admin: number };
 const ROLE_NOTIFICATION_STORAGE_KEY = 'ubeeq.roleNotifications';
 const sanitizeNotificationCount = (value: unknown): number => {
@@ -794,6 +816,12 @@ function HeaderAuth({
               <div className="auth-line">
                 <div className="auth-links">
                   <Link
+                    to="/for-creators"
+                    className={`auth-nav-btn auth-nav-btn-secondary${location.pathname.startsWith('/for-creators') ? ' is-active' : ''}`}
+                  >
+                    For Creators
+                  </Link>
+                  <Link
                     to="/auth/signin"
                     className={`auth-nav-btn auth-nav-btn-secondary${location.pathname.startsWith('/auth/signin') ? ' is-active' : ''}`}
                   >
@@ -914,6 +942,11 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [code, setCode] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSession, setOtpSession] = useState('');
+  const [otpContext, setOtpContext] = useState<'direct' | 'mfa'>('direct');
+  const [trustBrowser, setTrustBrowser] = useState(true);
+  const [signinMethod, setSigninMethod] = useState<'password' | 'email_otp'>('password');
   const [forgotStage, setForgotStage] = useState<'request' | 'confirm'>('request');
   const [keepSignedIn, setKeepSignedIn] = useState(() => localStorage.getItem(AUTH_PERSISTENCE_KEY) !== 'session');
   const [message, setMessage] = useState('');
@@ -929,6 +962,13 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   useEffect(() => {
     if (authMode === 'initial') {
       setEmail(sessionStorage.getItem('auth.initial.username') || '');
+    }
+    if (authMode === 'signin') {
+      setOtpCode('');
+      setOtpSession('');
+      setOtpContext('direct');
+      setTrustBrowser(true);
+      setSigninMethod('password');
     }
     if (authMode === 'forgot') {
       setForgotStage('request');
@@ -988,7 +1028,54 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
       navigate('/auth/initial');
       return;
     }
+
+    const groups = new Set(result.user?.groups || []);
+    const bypassOtpMfa = groups.has('Admins') || groups.has('Artists');
+    if (!bypassOtpMfa && !hasValidOtpTrust(email)) {
+      clearStoredAuthSession();
+      const otpResult = await startEmailOtpSignIn(email.trim(), keepSignedIn);
+      if (otpResult.status === 'authenticated') {
+        if (trustBrowser) rememberOtpTrust(email);
+        setUser(otpResult.user);
+        navigate('/');
+        return;
+      }
+      setOtpContext('mfa');
+      setOtpSession(otpResult.session);
+      setSigninMethod('email_otp');
+      setMessage('Password verified. Enter the email code to finish signing in.');
+      return;
+    }
+
     setUser(result.user);
+    navigate('/');
+  });
+
+  const doStartOtpSignIn = () => withFeedback(async () => {
+    if (!email.trim()) throw new Error('Email is required');
+    const result = await startEmailOtpSignIn(email.trim(), keepSignedIn);
+    if (result.status === 'authenticated') {
+      setUser(result.user);
+      navigate('/');
+      return;
+    }
+    setOtpContext('direct');
+    setOtpSession(result.session);
+    setMessage('A sign-in code was sent to your email.');
+  });
+
+  const doVerifyOtpSignIn = () => withFeedback(async () => {
+    if (!email.trim()) throw new Error('Email is required');
+    if (!otpSession) throw new Error('Start email OTP sign-in first.');
+    if (!otpCode.trim()) throw new Error('Enter the verification code.');
+    const loggedIn = await verifyEmailOtpSignIn(email.trim(), otpSession, otpCode.trim());
+    setUser(loggedIn);
+    if (otpContext === 'mfa' && trustBrowser) {
+      rememberOtpTrust(email);
+    }
+    setOtpSession('');
+    setOtpCode('');
+    setOtpContext('direct');
     navigate('/');
   });
 
@@ -1058,7 +1145,33 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
             <h2>{authMode === 'signin' ? 'Welcome back' : 'Create account'}</h2>
             <span className="badge">Secure sign-in</span>
           </div>
-          <p className="small">{authMode === 'signin' ? 'Sign in to continue to your account.' : 'Create your account to continue.'}</p>
+          <p className="small">
+            {authMode === 'signin'
+              ? (otpContext === 'mfa'
+                ? 'Complete sign-in with the email code. Trusted browsers can skip this step for 30 days.'
+                : signinMethod === 'email_otp'
+                ? 'Sign in with a one-time code sent to your email.'
+                : 'Sign in to continue to your account.')
+              : 'Create your account to continue.'}
+          </p>
+          {authMode === 'signin' && otpContext !== 'mfa' && (
+            <div className="auth-method-switch">
+              <button
+                type="button"
+                className={`auth-nav-btn auth-nav-btn-secondary${signinMethod === 'password' ? ' is-active' : ''}`}
+                onClick={() => setSigninMethod('password')}
+              >
+                Password
+              </button>
+              <button
+                type="button"
+                className={`auth-nav-btn auth-nav-btn-secondary${signinMethod === 'email_otp' ? ' is-active' : ''}`}
+                onClick={() => setSigninMethod('email_otp')}
+              >
+                Email OTP
+              </button>
+            </div>
+          )}
           <input
             name="email"
             autoComplete="email"
@@ -1091,11 +1204,15 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
               )}
             </>
           )}
-          <div className="auth-inline-label">
-            <span>Password</span>
-            {authMode === 'signin' && <Link to="/auth/forgot">Forgot password?</Link>}
-          </div>
-          <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          {(authMode === 'register' || (authMode === 'signin' && signinMethod === 'password')) && (
+            <>
+              <div className="auth-inline-label">
+                <span>Password</span>
+                {authMode === 'signin' && <Link to="/auth/forgot">Forgot password?</Link>}
+              </div>
+              <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </>
+          )}
           {authMode === 'register' && (
             <input
               type="password"
@@ -1104,6 +1221,19 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
             />
+          )}
+          {authMode === 'signin' && signinMethod === 'email_otp' && otpSession && (
+            <input
+              placeholder="Verification code"
+              value={otpCode}
+              onChange={(e) => setOtpCode(e.target.value)}
+            />
+          )}
+          {authMode === 'signin' && otpContext === 'mfa' && (
+            <label className="auth-checkbox">
+              <input type="checkbox" checked={trustBrowser} onChange={(e) => setTrustBrowser(e.target.checked)} />
+              <span>Trust this browser for {OTP_TRUST_DAYS} days</span>
+            </label>
           )}
 
           {authMode === 'signin' && (
@@ -1115,7 +1245,15 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
 
           <div className="auth-main-actions">
             {authMode === 'signin'
-              ? <button className="auth-primary-btn w-full" onClick={doSignIn}>Sign in</button>
+              ? (
+                signinMethod === 'password'
+                  ? <button className="auth-primary-btn w-full" onClick={doSignIn}>Sign in</button>
+                  : (
+                    otpSession
+                      ? <button className="auth-primary-btn w-full" onClick={doVerifyOtpSignIn}>Verify code</button>
+                      : <button className="auth-primary-btn w-full" onClick={doStartOtpSignIn}>Send code</button>
+                  )
+              )
               : <button className="auth-primary-btn w-full" onClick={doRegister}>Create account</button>}
             <button className="auth-secondary-btn w-full" onClick={() => navigate('/')}>Cancel</button>
           </div>
@@ -6969,6 +7107,7 @@ export default function App() {
         <Route path="/gallery/:slug" element={<GalleryPage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/posts/:slug" element={<PostPage />} />
         <Route path="/collections" element={<CollectionsPage />} />
+        <Route path="/for-creators" element={<ForCreatorsPage />} />
         <Route path="/collections/:collectionId" element={<CollectionDetailPage />} />
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
         <Route path="/settings" element={<SettingsPage user={user} onProfileChanged={setMyProfile} />} />

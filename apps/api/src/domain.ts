@@ -339,6 +339,125 @@ export interface AuditEvent {
 
 export type TrendingPeriod = 'hourly' | 'daily';
 
+export type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
+
+export interface UserCapabilities {
+  canBrowse: boolean;
+  canComment: boolean;
+  canVote: boolean;
+  canSubmitToContexts: boolean;
+  canPublishPosts: boolean;
+  canManageGroups: boolean;
+  canModerate: boolean;
+  canAwardPrizes: boolean;
+}
+
+export interface UserIdentity {
+  userId: string;
+  role: PlatformRole;
+  isBeeker: boolean;
+  capabilities: UserCapabilities;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserExternalLink {
+  linkId: string;
+  userId: string;
+  type: 'website' | 'deviantart' | 'instagram' | 'x' | 'other';
+  label?: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserBadge {
+  badgeId: string;
+  userId: string;
+  code: string;
+  label: string;
+  description?: string;
+  awardedAt: string;
+}
+
+export type ContributionContextType = 'challenge' | 'event' | 'prompt' | 'open_call' | 'editorial_call' | 'contest';
+export type ContributionContextStatus = 'draft' | 'active' | 'closed' | 'archived';
+
+export interface ContributionContext {
+  contextId: string;
+  type: ContributionContextType;
+  title: string;
+  slug: string;
+  status: ContributionContextStatus;
+  description?: string;
+  rules: {
+    maxEntriesPerUser: number;
+    requiresOtp: boolean;
+  };
+  submissionWindow?: {
+    opensAt?: string;
+    closesAt?: string;
+  };
+  rewardConfig?: {
+    manual: boolean;
+  };
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ContextSubmissionStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ContextSubmission {
+  submissionId: string;
+  contextId: string;
+  userId: string;
+  status: ContextSubmissionStatus;
+  title: string;
+  notes?: string;
+  mediaIds: string[];
+  fileIds: string[];
+  submittedAt: string;
+  reviewedAt?: string;
+  reviewedByUserId?: string;
+  convertedPostId?: string;
+}
+
+export interface ContextUnlockThreshold {
+  unlockId: string;
+  contextId: string;
+  metric: 'approved_entries' | 'supports' | 'unique_visitors';
+  threshold: number;
+  effectDescription: string;
+  isActive: boolean;
+  activatedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChallengePrize {
+  prizeId: string;
+  contextId: string;
+  title: string;
+  description: string;
+  category: 'platform' | 'digital' | 'physical' | 'draw';
+  placement: 'winner' | 'runner_up' | 'top_n' | 'random_supporter';
+  quantity: number;
+  status: 'draft' | 'active' | 'awarded';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PrizeAward {
+  prizeAwardId: string;
+  prizeId: string;
+  contextId: string;
+  recipientUserId: string;
+  awardedAt: string;
+  fulfillmentStatus: 'pending' | 'in_progress' | 'fulfilled' | 'cancelled';
+  fulfillmentNotes?: string;
+}
+
 export interface ImageStats {
   imageId: string;
   favoriteCount: number;

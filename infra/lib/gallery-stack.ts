@@ -212,6 +212,11 @@ export class GalleryStack extends Stack {
       signInAliases: { email: true },
       standardAttributes: { email: { required: true, mutable: false } }
     });
+    const userPoolCfn = userPool.node.defaultChild as cognito.CfnUserPool;
+    userPoolCfn.addPropertyOverride('Policies.SignInPolicy.AllowedFirstAuthFactors', [
+      'PASSWORD',
+      'EMAIL_OTP'
+    ]);
 
     const userPoolClient = new cognito.UserPoolClient(this, 'GalleryUserPoolClient', {
       userPool,
@@ -230,6 +235,13 @@ export class GalleryStack extends Stack {
       writeAttributes: new cognito.ClientAttributes()
         .withStandardAttributes({ email: true, preferredUsername: true })
     });
+    const userPoolClientCfn = userPoolClient.node.defaultChild as cognito.CfnUserPoolClient;
+    userPoolClientCfn.addPropertyOverride('ExplicitAuthFlows', [
+      'ALLOW_USER_AUTH',
+      'ALLOW_USER_SRP_AUTH',
+      'ALLOW_USER_PASSWORD_AUTH',
+      'ALLOW_REFRESH_TOKEN_AUTH'
+    ]);
 
     const adminsGroup = new cognito.CfnUserPoolGroup(this, 'AdminsGroup', {
       groupName: 'Admins',
