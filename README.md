@@ -12,6 +12,8 @@ AWS-first gallery platform with:
 
 - `apps/web`: Customer React app (Vite).
 - `apps/api`: Express API (Lambda-compatible via `serverless-http`).
+- `apps/syndication-web`: Independent admin React app for syndication source registration and manual runs.
+- `apps/syndication-api`: Independent Express/Lambda API for syndication source management + Openverse ingestion.
 - `infra`: AWS CDK stack (API Gateway, Lambda, DynamoDB, S3, Cognito).
 - Includes migration-safe `GalleryCore` single-table support (`GALLERY_CORE_TABLE`, `USE_GALLERY_CORE_TABLE`).
 
@@ -35,6 +37,15 @@ npm --workspace @gallery/web run dev
 ```
 
 API local defaults to `http://localhost:4000`.
+
+Syndication local defaults:
+
+```bash
+npx ts-node-dev --respawn --transpile-only apps/syndication-api/src/dev.ts
+npx vite --config apps/syndication-web/vite.config.ts
+```
+
+The syndication UI/API shares Cognito `UserPool`/`UserPoolClient` with `GalleryStack`, but all syndication API endpoints require users in the `Admins` group. Current source registration is intentionally Openverse-specific (API stream only, no RSS/manual mode yet).
 
 ## Build and Test
 
