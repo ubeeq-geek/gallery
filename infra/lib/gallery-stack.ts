@@ -18,6 +18,10 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 
 export class GalleryStack extends Stack {
+  public readonly userPool: cognito.UserPool;
+  public readonly userPoolClient: cognito.UserPoolClient;
+  public readonly galleryCoreTable: dynamodb.Table;
+
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
@@ -222,8 +226,8 @@ export class GalleryStack extends Stack {
       oAuth: {
         flows: { authorizationCodeGrant: true },
         scopes: [cognito.OAuthScope.EMAIL, cognito.OAuthScope.OPENID, cognito.OAuthScope.PROFILE],
-        callbackUrls: ['http://localhost:5173/callback', 'http://localhost:5174/callback'],
-        logoutUrls: ['http://localhost:5173', 'http://localhost:5174']
+        callbackUrls: ['http://localhost:5173/callback', 'http://localhost:5174/callback', 'http://localhost:5175/callback'],
+        logoutUrls: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175']
       },
       readAttributes: new cognito.ClientAttributes()
         .withStandardAttributes({ email: true, preferredUsername: true }),
@@ -400,5 +404,9 @@ export class GalleryStack extends Stack {
     new CfnOutput(this, 'AdminsGroupName', { value: adminsGroup.groupName || 'Admins' });
     new CfnOutput(this, 'ArtistsGroupName', { value: artistsGroup.groupName || 'Artists' });
     new CfnOutput(this, 'UsersGroupName', { value: usersGroup.groupName || 'Users' });
+
+    this.userPool = userPool;
+    this.userPoolClient = userPoolClient;
+    this.galleryCoreTable = galleryCoreTable;
   }
 }
