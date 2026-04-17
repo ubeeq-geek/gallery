@@ -6,13 +6,14 @@ export type FeedDensity = 'small' | 'medium' | 'large';
 
 export type DensityViewport = 'mobile' | 'tablet' | 'desktop';
 
-export type DiscoveryFilterSection = 'period' | 'density' | 'heavy' | 'search';
+export type DiscoveryFilterSection = 'period' | 'density' | 'media' | 'heavy' | 'search';
 
 export type DiscoveryDockSummary = {
   active: boolean;
   viewport: DensityViewport;
   period: 'hourly' | 'daily';
   density: FeedDensity;
+  mediaLabel: string;
   heavyLabel:
     | 'Heavy Shown'
     | 'Some Heavy'

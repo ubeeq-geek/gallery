@@ -23,6 +23,9 @@ type DiscoveryControlsPanelProps = {
   hideHeavyTopics: boolean;
   hidePoliticsPublicAffairs: boolean;
   hideCrimeDisastersTragedy: boolean;
+  showImageMedia: boolean;
+  showVideoMedia: boolean;
+  showPostMedia: boolean;
   heavyTopicsExpanded: boolean;
   discoverySearch: string;
   currentUserPresent: boolean;
@@ -38,6 +41,9 @@ type DiscoveryControlsPanelProps = {
   onHideAllHeavyTopicsChange: (enabled: boolean) => void;
   onHidePoliticsPublicAffairsChange: (enabled: boolean) => void;
   onHideCrimeDisastersTragedyChange: (enabled: boolean) => void;
+  onShowImageMediaChange: (enabled: boolean) => void;
+  onShowVideoMediaChange: (enabled: boolean) => void;
+  onShowPostMediaChange: (enabled: boolean) => void;
   onHeavyTopicsExpandedChange: (expanded: boolean) => void;
   onDensitySliderChange: (value: number) => void;
   onDensityOptionChange: (density: FeedDensity) => void;
@@ -61,6 +67,9 @@ export default function DiscoveryControlsPanel({
   hideHeavyTopics,
   hidePoliticsPublicAffairs,
   hideCrimeDisastersTragedy,
+  showImageMedia,
+  showVideoMedia,
+  showPostMedia,
   heavyTopicsExpanded,
   discoverySearch,
   currentUserPresent,
@@ -76,6 +85,9 @@ export default function DiscoveryControlsPanel({
   onHideAllHeavyTopicsChange,
   onHidePoliticsPublicAffairsChange,
   onHideCrimeDisastersTragedyChange,
+  onShowImageMediaChange,
+  onShowVideoMediaChange,
+  onShowPostMediaChange,
   onHeavyTopicsExpandedChange,
   onDensitySliderChange,
   onDensityOptionChange,
@@ -101,6 +113,25 @@ export default function DiscoveryControlsPanel({
               Daily
             </button>
             <Link className="discovery-pill-btn no-underline" to="/trending" onClick={onCloseCompactFilters}>View all</Link>
+          </div>
+        </div>
+      );
+    }
+
+    if (compactFilterSection === 'media') {
+      return (
+        <div className="discovery-compact-section discovery-compact-period-section">
+          <div className="discovery-filter-label">Media types</div>
+          <div className="discovery-trending-filter">
+            <button className={`discovery-pill-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => onShowImageMediaChange(!showImageMedia)}>
+              🖼 Images
+            </button>
+            <button className={`discovery-pill-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => onShowVideoMediaChange(!showVideoMedia)}>
+              🎬 Videos
+            </button>
+            <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => onShowPostMediaChange(!showPostMedia)}>
+              📝 Posts
+            </button>
           </div>
         </div>
       );
@@ -185,8 +216,8 @@ export default function DiscoveryControlsPanel({
               </button>
             ))}
           </div>
-          <p className="small m-0">
-            Small shows more rows before editorial sections. Large emphasizes image size.
+          <p className="small m-0 pt-4">
+            Small shows more items. Large makes each item bigger.
           </p>
         </div>
       );
@@ -268,9 +299,9 @@ export default function DiscoveryControlsPanel({
       <div id="discovery-filter-panel" ref={discoveryFilterPanelRef} className="discovery-filter-shell">
         <div className="discovery-filter-grid">
           <div className="discovery-filter-left">
-            <div>
-              <div className="discovery-filter-label">Trending period</div>
-              <div className="discovery-trending-filter">
+              <div>
+                <div className="discovery-filter-label">Trending period</div>
+                <div className="discovery-trending-filter">
                 <button
                   className={`discovery-pill-btn${trendingPeriod === 'hourly' ? ' is-active' : ''}`}
                   onClick={() => onTrendingPeriodChange('hourly')}
@@ -283,9 +314,24 @@ export default function DiscoveryControlsPanel({
                 >
                   Daily
                 </button>
-                <Link className="discovery-pill-btn no-underline" to="/trending">View all</Link>
+                  <Link className="discovery-pill-btn no-underline" to="/trending">View all</Link>
+                </div>
               </div>
-            </div>
+
+              <div>
+                <div className="discovery-filter-label">Media types</div>
+                <div className="discovery-trending-filter">
+                  <button className={`discovery-pill-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => onShowImageMediaChange(!showImageMedia)}>
+                    🖼 Images
+                  </button>
+                  <button className={`discovery-pill-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => onShowVideoMediaChange(!showVideoMedia)}>
+                    🎬 Videos
+                  </button>
+                  <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => onShowPostMediaChange(!showPostMedia)}>
+                    📝 Posts
+                  </button>
+                </div>
+              </div>
 
             <div className="discovery-heavy-card">
               <div className="discovery-heavy-head">
@@ -362,8 +408,8 @@ export default function DiscoveryControlsPanel({
                   </button>
                 ))}
               </div>
-              <p className="small m-0">
-                Small shows more rows before editorial sections. Large emphasizes image size.
+              <p className="small m-0 pt-4">
+                Small shows more items. Large makes each item bigger.
               </p>
             </div>
 

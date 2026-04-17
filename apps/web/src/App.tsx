@@ -18,13 +18,14 @@ type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl
 type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
 type FeedDensity = 'small' | 'medium' | 'large';
 type DensityViewport = 'mobile' | 'tablet' | 'desktop';
-type DiscoveryFilterSection = 'period' | 'density' | 'heavy' | 'search';
+type DiscoveryFilterSection = 'period' | 'density' | 'media' | 'heavy' | 'search';
 type DiscoveryDockSummary = {
   active: boolean;
   viewport: DensityViewport;
   period: 'hourly' | 'daily';
   periodLabel?: string;
   density: FeedDensity;
+  mediaLabel: string;
   heavyLabel:
     | 'Heavy Shown'
     | 'Some Heavy'
@@ -103,6 +104,28 @@ const formatDisclosureLine = (item: {
   }
   return parts.join(' • ');
 };
+type DiscoveryMediaFilters = {
+  showImages: boolean;
+  showVideos: boolean;
+  showPosts: boolean;
+};
+const getDiscoveryMediaLabel = (filters: DiscoveryMediaFilters): string => {
+  const parts: string[] = [];
+  if (filters.showImages) parts.push('🖼');
+  if (filters.showVideos) parts.push('🎬');
+  if (filters.showPosts) parts.push('📝');
+  return parts.length > 0 ? `Media: ${parts.join(' ')}` : 'Media: none';
+};
+const passesDiscoveryMediaFilter = (
+  item: { assetType?: 'image' | 'video'; surfaceType?: 'media' | 'post'; postId?: string },
+  filters: DiscoveryMediaFilters
+): boolean => {
+  const isPostSurface = item.surfaceType === 'post' || Boolean(item.postId);
+  if (isPostSurface) return filters.showPosts;
+  const normalizedType = item.assetType === 'video' ? 'video' : 'image';
+  if (normalizedType === 'video') return filters.showVideos;
+  return filters.showImages;
+};
 const passesAiDisclosureFilter = (aiDisclosure: AiDisclosure | undefined, aiFilter: AiFilterPreference): boolean => {
   const normalized = aiDisclosure || 'none';
   if (aiFilter === 'hide-ai-generated') return normalized !== 'ai-generated';
@@ -167,6 +190,8 @@ type CollectionSummary = {
 type TrendingImage = {
   imageId: string;
   assetType?: 'image' | 'video';
+  surfaceType?: 'media' | 'post';
+  postId?: string;
   artistId: string;
   artistName: string;
   galleryId: string;
@@ -644,11 +669,14 @@ function HeaderAuth({
           {discoveryDock?.active && discoveryDock.viewport !== 'mobile' && (
             <div className="topbar-discovery-summary" aria-label="Discovery filter summary">
               <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive topbar-discovery-open-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                {`Filters ${discoveryDock.mediaLabel.replace('Media: ', '')}`.trim()}
               </button>
               <div className="topbar-discovery-chip-list">
                 <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('period')}>
                   {discoveryDock.periodLabel || (discoveryDock.period === 'daily' ? 'Daily' : 'Hourly')}
+                </button>
+                <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('media')}>
+                  {discoveryDock.mediaLabel}
                 </button>
                 <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('density')}>
                   Density: {discoveryDock.density[0].toUpperCase() + discoveryDock.density.slice(1)}
@@ -818,7 +846,7 @@ function HeaderAuth({
           <div className={`mobile-user-dock-inner${showMobileDiscoveryButton || showCreatorNav ? ' has-discovery' : ''}`}>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                {`Filters ${discoveryDock?.mediaLabel.replace('Media: ', '') || ''}`.trim()}
               </button>
             )}
             {showCreatorNav && (
@@ -885,7 +913,7 @@ function HeaderAuth({
             </Link>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                {`Filters ${discoveryDock?.mediaLabel.replace('Media: ', '') || ''}`.trim()}
               </button>
             )}
           </div>
@@ -1869,6 +1897,9 @@ function HomePage({
   const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
   const [heavyTopicsExpanded, setHeavyTopicsExpanded] = useState(true);
   const [discoverySearch, setDiscoverySearch] = useState('');
+  const [showImageMedia, setShowImageMedia] = useState(true);
+  const [showVideoMedia, setShowVideoMedia] = useState(true);
+  const [showPostMedia, setShowPostMedia] = useState(true);
   const [showCompactDiscoveryDock, setShowCompactDiscoveryDock] = useState(false);
   const [compactFiltersOpen, setCompactFiltersOpen] = useState(false);
   const [compactFilterSection, setCompactFilterSection] = useState<DiscoveryFilterSection>('period');
@@ -1923,6 +1954,11 @@ function HomePage({
   };
   const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
   const someHeavyHidden = !heavyHidden && (hidePoliticsPublicAffairs || hideCrimeDisastersTragedy);
+  const mediaSummaryLabel = getDiscoveryMediaLabel({
+    showImages: showImageMedia,
+    showVideos: showVideoMedia,
+    showPosts: showPostMedia
+  });
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
     densityViewport === 'mobile'
       ? (heavyHidden ? 'Heavy Hidden' : (someHeavyHidden ? 'Some Heavy' : 'Heavy Shown'))
@@ -1986,7 +2022,7 @@ function HomePage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.requestAnimationFrame(() => window.dispatchEvent(new Event('scroll')));
-  }, [heavyTopicsExpanded, densityViewport, feedDensity, trendingPeriod, discoverySearch]);
+  }, [heavyTopicsExpanded, densityViewport, feedDensity, trendingPeriod, discoverySearch, showImageMedia, showVideoMedia, showPostMedia]);
 
   useEffect(() => {
     if (densityViewport !== 'mobile' && !showCompactDiscoveryDock) {
@@ -2079,6 +2115,7 @@ function HomePage({
       period: trendingPeriod,
       periodLabel: discoverySort === 'latest' ? 'Latest' : undefined,
       density: feedDensity,
+      mediaLabel: mediaSummaryLabel,
       heavyLabel: heavySummaryLabel,
       searchActive: discoverySearch.trim().length > 0
     });
@@ -2089,6 +2126,7 @@ function HomePage({
     discoverySort,
     trendingPeriod,
     feedDensity,
+    mediaSummaryLabel,
     heavySummaryLabel,
     discoverySearch
   ]);
@@ -2470,7 +2508,12 @@ function HomePage({
       return haystack.includes(searchNeedle);
     })
     : trendingImages;
-  const trendingRenderable = trendingAfterSearch.filter((item) => Boolean(item.previewUrl));
+  const trendingAfterMediaType = trendingAfterSearch.filter((item) => passesDiscoveryMediaFilter(item, {
+    showImages: showImageMedia,
+    showVideos: showVideoMedia,
+    showPosts: showPostMedia
+  }));
+  const trendingRenderable = trendingAfterMediaType.filter((item) => Boolean(item.previewUrl));
   const smallTopItemCount = densityTopRows.small * 4;
   const smallTopItems = trendingRenderable.slice(0, smallTopItemCount);
   const smallContinuationItems = trendingRenderable.slice(smallTopItemCount);
@@ -3062,6 +3105,7 @@ function HomePage({
 
   const compactTabs: Array<{ section: DiscoveryFilterSection; label: string }> = [
     { section: 'period', label: discoverySort === 'latest' ? 'Latest' : (trendingPeriod === 'daily' ? 'Daily' : 'Hourly') },
+    { section: 'media', label: mediaSummaryLabel },
     { section: 'density', label: `Density: ${densityLabel[feedDensity]}` },
     { section: 'heavy', label: heavySummaryLabel },
     { section: 'search', label: discoverySearch.trim().length > 0 ? 'Search active' : 'Search' }
@@ -3098,6 +3142,25 @@ function HomePage({
               Daily
             </button>
             <Link className="discovery-pill-btn no-underline" to="/trending" onClick={closeCompactFilters}>View all</Link>
+          </div>
+        </div>
+      );
+    }
+
+    if (compactFilterSection === 'media') {
+      return (
+        <div className="discovery-compact-section discovery-compact-period-section">
+          <div className="discovery-filter-label">Media types</div>
+          <div className="discovery-trending-filter">
+            <button className={`discovery-pill-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+              🖼 Images
+            </button>
+            <button className={`discovery-pill-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+              🎬 Videos
+            </button>
+            <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+              📝 Posts
+            </button>
           </div>
         </div>
       );
@@ -3186,8 +3249,8 @@ function HomePage({
               </button>
             ))}
           </div>
-          <p className="small m-0">
-            Small shows more rows before editorial sections. Large emphasizes image size.
+          <p className="small m-0 pt-4">
+            Small shows more items. Large makes each item bigger.
           </p>
         </div>
       );
@@ -3280,15 +3343,7 @@ function HomePage({
         </div>
       )}
 
-      <section id="trending" aria-busy={densitySwitchLoading}>
-        <div className="discovery-section-header">
-          <div>
-            <h2>Trending</h2>
-            <p className="small m-0 mt-1">
-              Variable-width rows based on image aspect ratio keep landscape and portrait media visually balanced.
-            </p>
-          </div>
-        </div>
+      <section id="trending" aria-busy={densitySwitchLoading}>        
         <div id="discovery-filter-panel" ref={discoveryFilterPanelRef} className="discovery-filter-shell">
           <div className="discovery-filter-grid">
             <div className="discovery-filter-left">
@@ -3320,6 +3375,21 @@ function HomePage({
                     Daily
                   </button>
                   <Link className="discovery-pill-btn no-underline" to="/trending">View all</Link>
+                </div>
+              </div>
+
+              <div>
+                <div className="discovery-filter-label">Media types</div>
+                <div className="discovery-trending-filter">
+                  <button className={`discovery-pill-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+                    🖼 Images
+                  </button>
+                  <button className={`discovery-pill-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+                    🎬 Videos
+                  </button>
+                  <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+                    📝 Posts
+                  </button>
                 </div>
               </div>
 
@@ -3402,8 +3472,8 @@ function HomePage({
                     </button>
                   ))}
                 </div>
-                <p className="small m-0">
-                  Small shows more rows before editorial sections. Large emphasizes image size.
+                <p className="small m-0 pt-4">
+                  Small shows more items. Large makes each item bigger.
                 </p>
               </div>
 
@@ -3756,6 +3826,9 @@ function GalleryPage({
     return 'mobile';
   });
   const [discoverySearch, setDiscoverySearch] = useState('');
+  const [showImageMedia, setShowImageMedia] = useState(true);
+  const [showVideoMedia, setShowVideoMedia] = useState(true);
+  const [showPostMedia, setShowPostMedia] = useState(true);
   const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
   const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
   const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
@@ -3785,6 +3858,11 @@ function GalleryPage({
   const densityRangeStyle = getDensityRangeStyle(densitySliderValue);
   const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
   const someHeavyHidden = !heavyHidden && (hidePoliticsPublicAffairs || hideCrimeDisastersTragedy);
+  const mediaSummaryLabel = getDiscoveryMediaLabel({
+    showImages: showImageMedia,
+    showVideos: showVideoMedia,
+    showPosts: showPostMedia
+  });
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
     densityViewport === 'mobile'
       ? (heavyHidden ? 'Heavy Hidden' : (someHeavyHidden ? 'Some Heavy' : 'Heavy Shown'))
@@ -4047,7 +4125,12 @@ function GalleryPage({
   }));
 
   const filterItems = (items: GalleryAsset[]): GalleryAsset[] => items.filter((item) => (
-    passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
+    passesDiscoveryMediaFilter(item, {
+      showImages: showImageMedia,
+      showVideos: showVideoMedia,
+      showPosts: showPostMedia
+    })
+    && passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
     && passesHeavyTopicFilter(item.effectiveHeavyTopics, {
       hideHeavyTopics,
       hidePoliticsPublicAffairs,
@@ -4114,7 +4197,7 @@ function GalleryPage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.requestAnimationFrame(() => window.dispatchEvent(new Event('scroll')));
-  }, [galleryScope, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch]);
+  }, [galleryScope, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch, showImageMedia, showVideoMedia, showPostMedia]);
 
   useEffect(() => {
     if (densityViewport !== 'mobile' && !showCompactDiscoveryDock) {
@@ -4179,6 +4262,7 @@ function GalleryPage({
       period: 'daily',
       periodLabel: galleryScopeLabel,
       density: feedDensity,
+      mediaLabel: mediaSummaryLabel,
       heavyLabel: heavySummaryLabel,
       searchActive: discoverySearch.trim().length > 0
     });
@@ -4188,6 +4272,7 @@ function GalleryPage({
     densityViewport,
     galleryScopeLabel,
     feedDensity,
+    mediaSummaryLabel,
     heavySummaryLabel,
     discoverySearch
   ]);
@@ -4440,6 +4525,7 @@ function GalleryPage({
 
   const compactTabs: Array<{ section: DiscoveryFilterSection; label: string }> = [
     { section: 'period', label: galleryScopeLabel },
+    { section: 'media', label: mediaSummaryLabel },
     { section: 'density', label: `Density: ${densityLabel[feedDensity]}` },
     { section: 'heavy', label: heavySummaryLabel },
     { section: 'search', label: discoverySearch.trim().length > 0 ? 'Search active' : 'Search' }
@@ -4453,6 +4539,25 @@ function GalleryPage({
           <div className="discovery-trending-filter">
             <button className={`discovery-pill-btn${galleryScope === 'all' ? ' is-active' : ''}`} onClick={() => setGalleryScope('all')}>All</button>
             <button className={`discovery-pill-btn${galleryScope === 'public' ? ' is-active' : ''}`} onClick={() => setGalleryScope('public')}>Free and previews only</button>
+          </div>
+        </div>
+      );
+    }
+
+    if (compactFilterSection === 'media') {
+      return (
+        <div className="discovery-compact-section discovery-compact-period-section">
+          <div className="discovery-filter-label">Media types</div>
+          <div className="discovery-trending-filter">
+            <button className={`discovery-pill-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+              🖼 Images
+            </button>
+            <button className={`discovery-pill-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+              🎬 Videos
+            </button>
+            <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+              📝 Posts
+            </button>
           </div>
         </div>
       );
@@ -4650,6 +4755,20 @@ function GalleryPage({
                 <div className="discovery-trending-filter">
                   <button className={`discovery-pill-btn${galleryScope === 'all' ? ' is-active' : ''}`} onClick={() => setGalleryScope('all')}>All</button>
                   <button className={`discovery-pill-btn${galleryScope === 'public' ? ' is-active' : ''}`} onClick={() => setGalleryScope('public')}>Free and previews only</button>
+                </div>
+              </div>
+              <div>
+                <div className="discovery-filter-label">Media types</div>
+                <div className="discovery-trending-filter">
+                  <button className={`discovery-pill-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+                    🖼 Images
+                  </button>
+                  <button className={`discovery-pill-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+                    🎬 Videos
+                  </button>
+                  <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+                    📝 Posts
+                  </button>
                 </div>
               </div>
               <div className="discovery-heavy-card">
@@ -5356,6 +5475,9 @@ function ArtistProfilePage({
     return 'mobile';
   });
   const [discoverySearch, setDiscoverySearch] = useState('');
+  const [showImageMedia, setShowImageMedia] = useState(true);
+  const [showVideoMedia, setShowVideoMedia] = useState(true);
+  const [showPostMedia, setShowPostMedia] = useState(true);
   const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
   const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
   const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
@@ -5407,6 +5529,11 @@ function ArtistProfilePage({
   })();
   const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
   const someHeavyHidden = !heavyHidden && (hidePoliticsPublicAffairs || hideCrimeDisastersTragedy);
+  const mediaSummaryLabel = getDiscoveryMediaLabel({
+    showImages: showImageMedia,
+    showVideos: showVideoMedia,
+    showPosts: showPostMedia
+  });
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
     densityViewport === 'mobile'
       ? (heavyHidden ? 'Heavy Hidden' : (someHeavyHidden ? 'Some Heavy' : 'Heavy Shown'))
@@ -5590,7 +5717,7 @@ function ArtistProfilePage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.requestAnimationFrame(() => window.dispatchEvent(new Event('scroll')));
-  }, [artistTab, artistFeedSort, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch]);
+  }, [artistTab, artistFeedSort, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch, showImageMedia, showVideoMedia, showPostMedia]);
 
   useEffect(() => {
     if (densityViewport !== 'mobile' && !showCompactDiscoveryDock) {
@@ -5656,6 +5783,7 @@ function ArtistProfilePage({
       period: 'daily',
       periodLabel: artistFeedSort === 'latest' ? 'Latest' : 'Trending',
       density: feedDensity,
+      mediaLabel: mediaSummaryLabel,
       heavyLabel: heavySummaryLabel,
       searchActive: discoverySearch.trim().length > 0
     });
@@ -5666,6 +5794,7 @@ function ArtistProfilePage({
     densityViewport,
     artistFeedSort,
     feedDensity,
+    mediaSummaryLabel,
     heavySummaryLabel,
     discoverySearch
   ]);
@@ -5799,7 +5928,12 @@ function ArtistProfilePage({
   };
 
   const filteredFeedItems = feedItems.filter((item) => (
-    passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
+    passesDiscoveryMediaFilter(item, {
+      showImages: showImageMedia,
+      showVideos: showVideoMedia,
+      showPosts: showPostMedia
+    })
+    && passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
     && passesHeavyTopicFilter(item.effectiveHeavyTopics, {
       hideHeavyTopics,
       hidePoliticsPublicAffairs,
@@ -5964,6 +6098,7 @@ function ArtistProfilePage({
 
   const compactTabs: Array<{ section: DiscoveryFilterSection; label: string }> = [
     { section: 'period', label: artistFeedSort === 'latest' ? 'Latest' : 'Trending' },
+    { section: 'media', label: mediaSummaryLabel },
     { section: 'density', label: `Density: ${densityLabel[feedDensity]}` },
     { section: 'heavy', label: heavySummaryLabel },
     { section: 'search', label: discoverySearch.trim().length > 0 ? 'Search active' : 'Search' }
@@ -5988,6 +6123,25 @@ function ArtistProfilePage({
               onClick={() => setArtistFeedSort('trending')}
             >
               Trending
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (compactFilterSection === 'media') {
+      return (
+        <div className="discovery-compact-section discovery-compact-period-section">
+          <div className="discovery-filter-label">Media types</div>
+          <div className="discovery-trending-filter">
+            <button className={`discovery-pill-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+              🖼 Images
+            </button>
+            <button className={`discovery-pill-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+              🎬 Videos
+            </button>
+            <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+              📝 Posts
             </button>
           </div>
         </div>
@@ -6226,6 +6380,20 @@ function ArtistProfilePage({
                     onClick={() => setArtistFeedSort('trending')}
                   >
                     Trending
+                  </button>
+                </div>
+              </div>
+              <div>
+                <div className="discovery-filter-label">Media types</div>
+                <div className="discovery-trending-filter">
+                  <button className={`discovery-pill-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+                    🖼 Images
+                  </button>
+                  <button className={`discovery-pill-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+                    🎬 Videos
+                  </button>
+                  <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+                    📝 Posts
                   </button>
                 </div>
               </div>

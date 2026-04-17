@@ -97,11 +97,14 @@ export default function HeaderAuth({
           {discoveryDock?.active && discoveryDock.viewport !== 'mobile' && (
             <div className="topbar-discovery-summary" aria-label="Discovery filter summary">
               <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive topbar-discovery-open-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                {`Filters ${discoveryDock.mediaLabel.replace('Media: ', '')}`.trim()}
               </button>
               <div className="topbar-discovery-chip-list">
                 <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('period')}>
                   {discoveryDock.period === 'daily' ? 'Daily' : 'Hourly'}
+                </button>
+                <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('media')}>
+                  {discoveryDock.mediaLabel}
                 </button>
                 <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('density')}>
                   Density: {discoveryDock.density[0].toUpperCase() + discoveryDock.density.slice(1)}
@@ -155,7 +158,7 @@ export default function HeaderAuth({
           <div className={`mobile-user-dock-inner${showMobileDiscoveryButton ? ' has-discovery' : ''}`}>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                {`Filters ${discoveryDock?.mediaLabel.replace('Media: ', '') || ''}`.trim()}
               </button>
             )}
             <details className="user-menu">
@@ -200,7 +203,7 @@ export default function HeaderAuth({
             </Link>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                {`Filters ${discoveryDock?.mediaLabel.replace('Media: ', '') || ''}`.trim()}
               </button>
             )}
           </div>

@@ -336,13 +336,22 @@ const toSeedPostBlocks = (
 ): PostBlock[] => {
   if (!blocks?.length) return [];
   return blocks.map((block, index) => {
-    const mediaId = resolveScenarioMediaId(
-      { mediaId: block.mediaId, file: block.file, gallerySlug: block.gallerySlug },
-      `${postKey}.blocks[${index}]`,
-      mediaIdByComposite,
-      mediaIdsByFile
+    const hasMediaRef = Boolean(
+      sanitizeOptional(block.mediaId, 128) || sanitizeOptional(block.file, 512)
     );
-    return {
+    const mediaRequired = block.type === 'image' || block.type === 'video' || block.type === 'audio';
+    if (mediaRequired && !hasMediaRef) {
+      throw new Error(`Scenario ${postKey}.blocks[${index}] of type "${block.type}" must include mediaId or file`);
+    }
+    const mediaId = hasMediaRef
+      ? resolveScenarioMediaId(
+        { mediaId: block.mediaId, file: block.file, gallerySlug: block.gallerySlug },
+        `${postKey}.blocks[${index}]`,
+        mediaIdByComposite,
+        mediaIdsByFile
+      )
+      : undefined;
+    const seedBlock: PostBlock = {
       blockId: sanitizeOptional(block.blockId, 128) || `${block.type}-${index + 1}`,
       type: block.type as PostBlock['type'],
       text: sanitizeOptional(block.text, 20000),
@@ -357,6 +366,7 @@ const toSeedPostBlocks = (
       html: sanitizeOptional(block.html, 50000),
       payload: block.payload
     };
+    return JSON.parse(JSON.stringify(seedBlock)) as PostBlock;
   });
 };
 
@@ -1668,7 +1678,7 @@ const main = async () => {
                 }
               : undefined;
 
-        posts.push({
+        const post: Post = {
           postId: seedId('post', seed.slug, slug),
           artistId,
           title: postSeed.title.trim().slice(0, 300),
@@ -1687,7 +1697,8 @@ const main = async () => {
           createdAt,
           updatedAt: createdAt,
           publishedAt: status === 'published' ? createdAt : undefined
-        });
+        };
+        posts.push(JSON.parse(JSON.stringify(post)) as Post);
       }
     }
   }
