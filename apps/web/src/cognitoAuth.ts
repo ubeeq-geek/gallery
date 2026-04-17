@@ -60,6 +60,10 @@ const clearTokenStorage = () => {
   sessionStorage.removeItem(USERNAME_KEY);
 };
 
+export const clearStoredAuthSession = () => {
+  clearTokenStorage();
+};
+
 const persistTokens = (username: string, authResult: { IdToken?: string; AccessToken?: string; RefreshToken?: string }) => {
   if (!authResult.IdToken || !authResult.AccessToken) {
     throw new Error('Authentication tokens missing');
@@ -82,6 +86,9 @@ export type CurrentUser = {
 export type SignInResult =
   | { status: 'authenticated'; user: CurrentUser }
   | { status: 'new_password_required'; username: string; session: string };
+export type EmailOtpStartResult =
+  | { status: 'authenticated'; user: CurrentUser }
+  | { status: 'code_sent'; username: string; session: string };
 
 export const getCurrentUser = (): CurrentUser => {
   const idToken = getStoredValue(ID_TOKEN_KEY);
@@ -127,6 +134,76 @@ export const signIn = async (username: string, password: string, keepSignedIn = 
 
   persistTokens(username, response.AuthenticationResult);
   return { status: 'authenticated', user: getCurrentUser() };
+};
+
+const requestEmailOtpChallenge = async (username: string, session: string): Promise<EmailOtpStartResult> => {
+  const response = await client.send(
+    new RespondToAuthChallengeCommand({
+      ClientId: COGNITO_CLIENT_ID,
+      Session: session,
+      ChallengeName: 'SELECT_CHALLENGE',
+      ChallengeResponses: {
+        USERNAME: username,
+        ANSWER: 'EMAIL_OTP'
+      }
+    })
+  );
+
+  if (response.AuthenticationResult) {
+    persistTokens(username, response.AuthenticationResult);
+    return { status: 'authenticated', user: getCurrentUser() };
+  }
+  if (response.ChallengeName === 'EMAIL_OTP' && response.Session) {
+    return { status: 'code_sent', username, session: response.Session };
+  }
+  throw new Error('Email OTP is not available for this account.');
+};
+
+export const startEmailOtpSignIn = async (username: string, keepSignedIn = true): Promise<EmailOtpStartResult> => {
+  requireClientId();
+  localStorage.setItem(AUTH_PERSISTENCE_KEY, keepSignedIn ? 'local' : 'session');
+  const response = await client.send(
+    new InitiateAuthCommand({
+      AuthFlow: 'USER_AUTH',
+      ClientId: COGNITO_CLIENT_ID,
+      AuthParameters: {
+        USERNAME: username,
+        PREFERRED_CHALLENGE: 'EMAIL_OTP'
+      }
+    })
+  );
+
+  if (response.AuthenticationResult) {
+    persistTokens(username, response.AuthenticationResult);
+    return { status: 'authenticated', user: getCurrentUser() };
+  }
+  if (response.ChallengeName === 'EMAIL_OTP' && response.Session) {
+    return { status: 'code_sent', username, session: response.Session };
+  }
+  if (response.ChallengeName === 'SELECT_CHALLENGE' && response.Session) {
+    return requestEmailOtpChallenge(username, response.Session);
+  }
+  throw new Error('Email OTP sign-in is not configured.');
+};
+
+export const verifyEmailOtpSignIn = async (username: string, session: string, code: string): Promise<CurrentUser> => {
+  requireClientId();
+  const response = await client.send(
+    new RespondToAuthChallengeCommand({
+      ClientId: COGNITO_CLIENT_ID,
+      Session: session,
+      ChallengeName: 'EMAIL_OTP',
+      ChallengeResponses: {
+        USERNAME: username,
+        EMAIL_OTP_CODE: code
+      }
+    })
+  );
+  if (!response.AuthenticationResult) {
+    throw new Error('OTP verification failed');
+  }
+  persistTokens(username, response.AuthenticationResult);
+  return getCurrentUser();
 };
 
 export const setInitialPassword = async (username: string, session: string, newPassword: string): Promise<CurrentUser> => {

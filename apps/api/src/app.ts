@@ -11,7 +11,26 @@ import { issueRememberAccessToken, issueUnlockToken, verifyPassword, verifyUnloc
 import type { AppConfig } from './config';
 import type { DataStore } from './store';
 import { hashPassword } from './unlock';
-import type { AiDisclosure, Artist, ArtistMember, Comment, ContentRating, Gallery, HeavyTopic, Media, Post, PostBlock, PostDiscoveryMode, SiteSettings, UserProfile } from './domain';
+import type {
+  AiDisclosure,
+  Artist,
+  ArtistMember,
+  ChallengePrize,
+  Comment,
+  ContentRating,
+  ContextSubmission,
+  ContributionContext,
+  Gallery,
+  HeavyTopic,
+  Media,
+  PlatformRole,
+  Post,
+  PostBlock,
+  PostDiscoveryMode,
+  SiteSettings,
+  UserCapabilities,
+  UserProfile
+} from './domain';
 import { generateImageRenditions, type SquareCropInput } from './renditions';
 import { refreshTrendingFeeds } from './trendingFeed';
 import {
@@ -206,6 +225,22 @@ const parsePostMediaRefs = (value: unknown): Post['media'] => {
 const parsePostDiscoveryMode = (value: unknown): PostDiscoveryMode => {
   if (value === 'all' || value === 'selected') return value;
   return 'primary';
+};
+
+const capabilityMap = (role: PlatformRole): UserCapabilities => ({
+  canBrowse: true,
+  canComment: true,
+  canVote: true,
+  canSubmitToContexts: role === 'contributor' || role === 'creator' || role === 'admin',
+  canPublishPosts: role === 'creator' || role === 'admin',
+  canManageGroups: role === 'creator' || role === 'admin',
+  canModerate: role === 'admin',
+  canAwardPrizes: role === 'admin'
+});
+
+const normalizePlatformRole = (input: unknown): PlatformRole => {
+  if (input === 'admin' || input === 'creator' || input === 'contributor') return input;
+  return 'user';
 };
 
 const validateUsername = (value: string): { normalized: string; reasons: string[] } => {
@@ -1147,6 +1182,34 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   }));
   app.use(express.json());
   app.use(createOptionalAuthMiddleware(config));
+
+  const resolvePlatformRole = async (userId: string): Promise<PlatformRole> => {
+    if (store.getUserIdentity) {
+      const identity = await store.getUserIdentity(userId);
+      if (identity) return normalizePlatformRole(identity.role);
+    }
+    return 'user';
+  };
+
+  const resolveCapabilities = (role: PlatformRole): UserCapabilities => capabilityMap(role);
+
+  const promoteToContributor = async (userId: string): Promise<void> => {
+    if (!store.setUserRole) return;
+    const currentRole = await resolvePlatformRole(userId);
+    if (currentRole === 'user') {
+      const promoted = await store.setUserRole(userId, 'contributor');
+      if (store.upsertUserIdentity) {
+        await store.upsertUserIdentity({ ...promoted, isBeeker: true, updatedAt: new Date().toISOString() });
+      }
+      return;
+    }
+    if (store.upsertUserIdentity) {
+      const existing = await store.getUserIdentity?.(userId);
+      if (existing && !existing.isBeeker) {
+        await store.upsertUserIdentity({ ...existing, isBeeker: true, updatedAt: new Date().toISOString() });
+      }
+    }
+  };
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
@@ -2999,6 +3062,186 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return { status: 204 };
     });
     return res.status(result.status).send();
+  });
+
+  app.get('/me/identity', requireAuth, async (req, res) => {
+    const stored = await store.getUserIdentity?.(req.authUser!.userId);
+    const role = normalizePlatformRole(stored?.role ?? (resolveRole(req.authUser!) === 'admin' ? 'admin' : 'user'));
+    const capabilities = stored?.capabilities || resolveCapabilities(role);
+    return res.json({
+      userId: req.authUser!.userId,
+      role,
+      isBeeker: Boolean(stored?.isBeeker),
+      capabilities
+    });
+  });
+
+  app.get('/contribution-contexts', async (_req, res) => {
+    if (!store.listContributionContexts) return res.json([]);
+    const contexts = await store.listContributionContexts();
+    return res.json(contexts.filter((item) => item.status !== 'draft'));
+  });
+
+  app.get('/contribution-contexts/:slug', async (req, res) => {
+    if (!store.getContributionContextBySlug) return res.status(404).json({ message: 'Context not found' });
+    const context = await store.getContributionContextBySlug(req.params.slug);
+    if (!context || context.status === 'draft') return res.status(404).json({ message: 'Context not found' });
+    const submissions = await store.listContextSubmissions?.(context.contextId) || [];
+    const approvedSubmissions = submissions.filter((item) => item.status === 'approved').length;
+    const thresholds = await store.listContextUnlockThresholds?.(context.contextId) || [];
+    const prizes = await store.listChallengePrizes?.(context.contextId) || [];
+    return res.json({
+      ...context,
+      metrics: {
+        submissionCount: submissions.length,
+        approvedSubmissionCount: approvedSubmissions
+      },
+      unlockThresholds: thresholds,
+      prizes
+    });
+  });
+
+  app.post('/contribution-contexts/:contextId/submissions', requireAuth, async (req, res) => {
+    if (!store.getContributionContextById || !store.createContextSubmission) {
+      return res.status(503).json({ message: 'Submission service unavailable' });
+    }
+    const context = await store.getContributionContextById(req.params.contextId);
+    if (!context || context.status !== 'active') {
+      return res.status(404).json({ message: 'Active context not found' });
+    }
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    if (!title) return res.status(400).json({ message: 'title is required' });
+    const role = await resolvePlatformRole(req.authUser!.userId);
+    const canSubmit = resolveCapabilities(role).canSubmitToContexts || role === 'user';
+    if (!canSubmit) return res.status(403).json({ message: 'Contributor permissions required' });
+    const mediaIds = Array.isArray(req.body?.mediaIds) ? req.body.mediaIds.filter((id: unknown) => typeof id === 'string' && id.trim()) : [];
+    const fileIds = Array.isArray(req.body?.fileIds) ? req.body.fileIds.filter((id: unknown) => typeof id === 'string' && id.trim()) : [];
+    const submission: ContextSubmission = {
+      submissionId: randomUUID(),
+      contextId: context.contextId,
+      userId: req.authUser!.userId,
+      status: 'pending',
+      title,
+      notes: sanitizeOptional(req.body?.notes, 4000),
+      mediaIds,
+      fileIds,
+      submittedAt: new Date().toISOString()
+    };
+    await store.createContextSubmission(submission);
+    return res.status(201).json(submission);
+  });
+
+  app.get('/admin/contribution-contexts', requireAdmin, async (_req, res) => {
+    if (!store.listContributionContexts) return res.json([]);
+    return res.json(await store.listContributionContexts());
+  });
+
+  app.post('/admin/contribution-contexts', requireAdmin, async (req, res) => {
+    if (!store.createContributionContext) return res.status(503).json({ message: 'Context service unavailable' });
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    if (!title) return res.status(400).json({ message: 'title is required' });
+    const now = new Date().toISOString();
+    const context: ContributionContext = {
+      contextId: randomUUID(),
+      type: req.body?.type === 'event' ? 'event' : 'challenge',
+      title,
+      slug: slugify(typeof req.body?.slug === 'string' && req.body.slug.trim() ? req.body.slug : title),
+      status: req.body?.status === 'active' || req.body?.status === 'closed' || req.body?.status === 'archived'
+        ? req.body.status
+        : 'draft',
+      description: sanitizeOptional(req.body?.description, 5000),
+      rules: {
+        maxEntriesPerUser: Number.isFinite(Number(req.body?.rules?.maxEntriesPerUser)) ? Math.max(1, Math.floor(Number(req.body.rules.maxEntriesPerUser))) : 3,
+        requiresOtp: req.body?.rules?.requiresOtp !== false
+      },
+      submissionWindow: {
+        opensAt: sanitizeOptional(req.body?.submissionWindow?.opensAt, 64),
+        closesAt: sanitizeOptional(req.body?.submissionWindow?.closesAt, 64)
+      },
+      rewardConfig: { manual: true },
+      createdByUserId: req.authUser!.userId,
+      createdAt: now,
+      updatedAt: now
+    };
+    await store.createContributionContext(context);
+    return res.status(201).json(context);
+  });
+
+  app.get('/admin/contribution-contexts/:contextId/submissions', requireAdmin, async (req, res) => {
+    if (!store.listContextSubmissions) return res.json([]);
+    return res.json(await store.listContextSubmissions(req.params.contextId));
+  });
+
+  app.patch('/admin/contribution-submissions/:submissionId', requireAdmin, async (req, res) => {
+    if (!store.getContextSubmissionById || !store.updateContextSubmission) {
+      return res.status(503).json({ message: 'Submission moderation unavailable' });
+    }
+    const submission = await store.getContextSubmissionById(req.params.submissionId);
+    if (!submission) return res.status(404).json({ message: 'Submission not found' });
+    const nextStatus = req.body?.status === 'approved' || req.body?.status === 'rejected' ? req.body.status : undefined;
+    if (!nextStatus) return res.status(400).json({ message: 'status must be approved or rejected' });
+    const now = new Date().toISOString();
+    const updated: ContextSubmission = {
+      ...submission,
+      status: nextStatus,
+      reviewedAt: now,
+      reviewedByUserId: req.authUser!.userId
+    };
+
+    if (nextStatus === 'approved' && !submission.convertedPostId) {
+      const mediaRef = (submission.mediaIds || []).slice(0, 8).map((mediaId, index) => ({ mediaId, discoverable: true, sortOrder: index }));
+      const post: Post = {
+        postId: randomUUID(),
+        artistId: 'community',
+        creatorId: submission.userId,
+        authorId: submission.userId,
+        title: submission.title,
+        slug: slugify(`${submission.title}-${submission.submissionId.slice(0, 8)}`),
+        slugHistory: [],
+        summary: sanitizeOptional(submission.notes, 2000),
+        status: 'published',
+        blocks: [],
+        media: mediaRef,
+        primaryMediaId: mediaRef[0]?.mediaId,
+        discovery: { mode: 'selected' },
+        createdAt: now,
+        updatedAt: now,
+        publishedAt: now
+      };
+      await store.createPost(post);
+      updated.convertedPostId = post.postId;
+      await promoteToContributor(submission.userId);
+    }
+
+    await store.updateContextSubmission(updated);
+    return res.json(updated);
+  });
+
+  app.get('/admin/contribution-contexts/:contextId/prizes', requireAdmin, async (req, res) => {
+    if (!store.listChallengePrizes) return res.json([]);
+    return res.json(await store.listChallengePrizes(req.params.contextId));
+  });
+
+  app.post('/admin/contribution-contexts/:contextId/prizes', requireAdmin, async (req, res) => {
+    if (!store.createChallengePrize) return res.status(503).json({ message: 'Prize service unavailable' });
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
+    if (!title || !description) return res.status(400).json({ message: 'title and description are required' });
+    const now = new Date().toISOString();
+    const prize: ChallengePrize = {
+      prizeId: randomUUID(),
+      contextId: req.params.contextId,
+      title,
+      description,
+      category: req.body?.category === 'digital' || req.body?.category === 'physical' || req.body?.category === 'draw' ? req.body.category : 'platform',
+      placement: req.body?.placement === 'runner_up' || req.body?.placement === 'top_n' || req.body?.placement === 'random_supporter' ? req.body.placement : 'winner',
+      quantity: Number.isFinite(Number(req.body?.quantity)) ? Math.max(1, Math.floor(Number(req.body.quantity))) : 1,
+      status: req.body?.status === 'active' || req.body?.status === 'awarded' ? req.body.status : 'draft',
+      createdAt: now,
+      updatedAt: now
+    };
+    await store.createChallengePrize(prize);
+    return res.status(201).json(prize);
   });
 
   app.get('/admin/artists', requireAuth, async (req, res) => {

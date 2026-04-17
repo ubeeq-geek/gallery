@@ -17,7 +17,16 @@ import type {
   SourceFile,
   CreatorGroup,
   TrendingFeedItem,
-  TrendingPeriod
+  TrendingPeriod,
+  UserIdentity,
+  UserExternalLink,
+  UserBadge,
+  ContributionContext,
+  ContextSubmission,
+  ContextUnlockThreshold,
+  ChallengePrize,
+  PrizeAward,
+  PlatformRole
 } from './domain';
 
 export interface DataStore {
@@ -140,6 +149,30 @@ export interface DataStore {
   getUserProfileBySlug(slug: string): Promise<UserProfile | null>;
   getUserProfile(userId: string): Promise<UserProfile | null>;
   upsertUserProfile(profile: UserProfile): Promise<void>;
+  getUserIdentity?(userId: string): Promise<UserIdentity | null>;
+  upsertUserIdentity?(identity: UserIdentity): Promise<void>;
+  setUserRole?(userId: string, role: PlatformRole): Promise<UserIdentity>;
+  listUserExternalLinks?(userId: string): Promise<UserExternalLink[]>;
+  upsertUserExternalLink?(link: UserExternalLink): Promise<void>;
+  listUserBadges?(userId: string): Promise<UserBadge[]>;
+  awardUserBadge?(badge: UserBadge): Promise<void>;
+  listContributionContexts?(): Promise<ContributionContext[]>;
+  getContributionContextById?(contextId: string): Promise<ContributionContext | null>;
+  getContributionContextBySlug?(slug: string): Promise<ContributionContext | null>;
+  createContributionContext?(context: ContributionContext): Promise<void>;
+  updateContributionContext?(context: ContributionContext): Promise<void>;
+  listContextSubmissions?(contextId: string): Promise<ContextSubmission[]>;
+  getContextSubmissionById?(submissionId: string): Promise<ContextSubmission | null>;
+  createContextSubmission?(submission: ContextSubmission): Promise<void>;
+  updateContextSubmission?(submission: ContextSubmission): Promise<void>;
+  listContextUnlockThresholds?(contextId: string): Promise<ContextUnlockThreshold[]>;
+  createContextUnlockThreshold?(threshold: ContextUnlockThreshold): Promise<void>;
+  updateContextUnlockThreshold?(threshold: ContextUnlockThreshold): Promise<void>;
+  listChallengePrizes?(contextId: string): Promise<ChallengePrize[]>;
+  createChallengePrize?(prize: ChallengePrize): Promise<void>;
+  updateChallengePrize?(prize: ChallengePrize): Promise<void>;
+  listPrizeAwards?(contextId: string): Promise<PrizeAward[]>;
+  createPrizeAward?(award: PrizeAward): Promise<void>;
 
   getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null>;
   putIdempotencyRecord(record: IdempotencyRecord): Promise<void>;

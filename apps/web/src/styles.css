@@ -2399,6 +2399,10 @@
     color: var(--muted);
   }
 
+  .auth-method-switch {
+    @apply mb-3 flex flex-wrap gap-2;
+  }
+
   .auth-checkbox {
     @apply mt-3 flex items-center gap-2 rounded-2xl px-3 py-2 text-sm;
     border: 1px solid color-mix(in srgb, var(--line) 70%, white);
