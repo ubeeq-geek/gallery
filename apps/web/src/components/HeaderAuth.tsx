@@ -3,6 +3,53 @@ import { Link, useLocation } from 'react-router-dom';
 import type { CurrentUser } from '../cognitoAuth';
 import { DISCOVERY_FILTER_EVENT_NAME, type DiscoveryDockSummary, type DiscoveryFilterSection, type SiteSettings, type UserProfile } from '../domainTypes';
 
+type DiscoveryMediaKind = 'image' | 'video' | 'post';
+
+const DiscoveryMediaIcon = ({ kind, className }: { kind: DiscoveryMediaKind; className?: string }) => {
+  if (kind === 'video') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+        <rect x="2.5" y="4.5" width="10.5" height="11" rx="2" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M9 8.2L12.4 10L9 11.8V8.2Z" fill="currentColor" />
+        <path d="M13 8L17 5.8V14.2L13 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === 'post') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+        <rect x="3" y="2.8" width="14" height="14.4" rx="2" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M6.2 7.1H13.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M6.2 10H13.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M6.2 12.9H10.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+      <rect x="2.8" y="3.3" width="14.4" height="13.4" rx="2" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="7.2" cy="8.1" r="1.3" fill="currentColor" />
+      <path d="M4.7 14L8.2 10.5C8.6 10.1 9.2 10.1 9.6 10.5L11 11.9C11.4 12.3 12 12.3 12.4 11.9L15.3 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+};
+
+const DiscoveryMediaIndicator = ({
+  showImages,
+  showVideos,
+  showPosts
+}: {
+  showImages: boolean;
+  showVideos: boolean;
+  showPosts: boolean;
+}) => (
+  <span className="discovery-media-indicator" aria-hidden="true">
+    {showImages && <DiscoveryMediaIcon kind="image" className="discovery-media-icon" />}
+    {showVideos && <DiscoveryMediaIcon kind="video" className="discovery-media-icon" />}
+    {showPosts && <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />}
+  </span>
+);
+
 export default function HeaderAuth({
   user,
   onSignOut,
@@ -97,7 +144,12 @@ export default function HeaderAuth({
           {discoveryDock?.active && discoveryDock.viewport !== 'mobile' && (
             <div className="topbar-discovery-summary" aria-label="Discovery filter summary">
               <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive topbar-discovery-open-btn" onClick={() => openDiscoveryFilters('period')}>
-                {`Filters ${discoveryDock.mediaLabel.replace('Media: ', '')}`.trim()}
+                <span>Filters</span>
+                <DiscoveryMediaIndicator
+                  showImages={discoveryDock.showImages}
+                  showVideos={discoveryDock.showVideos}
+                  showPosts={discoveryDock.showPosts}
+                />
               </button>
               <div className="topbar-discovery-chip-list">
                 <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('period')}>
@@ -158,7 +210,14 @@ export default function HeaderAuth({
           <div className={`mobile-user-dock-inner${showMobileDiscoveryButton ? ' has-discovery' : ''}`}>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
-                {`Filters ${discoveryDock?.mediaLabel.replace('Media: ', '') || ''}`.trim()}
+                <span>Filters</span>
+                {discoveryDock && (
+                  <DiscoveryMediaIndicator
+                    showImages={discoveryDock.showImages}
+                    showVideos={discoveryDock.showVideos}
+                    showPosts={discoveryDock.showPosts}
+                  />
+                )}
               </button>
             )}
             <details className="user-menu">
@@ -203,7 +262,14 @@ export default function HeaderAuth({
             </Link>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
-                {`Filters ${discoveryDock?.mediaLabel.replace('Media: ', '') || ''}`.trim()}
+                <span>Filters</span>
+                {discoveryDock && (
+                  <DiscoveryMediaIndicator
+                    showImages={discoveryDock.showImages}
+                    showVideos={discoveryDock.showVideos}
+                    showPosts={discoveryDock.showPosts}
+                  />
+                )}
               </button>
             )}
           </div>

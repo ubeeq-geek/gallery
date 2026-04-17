@@ -14,6 +14,9 @@ export type DiscoveryDockSummary = {
   period: 'hourly' | 'daily';
   density: FeedDensity;
   mediaLabel: string;
+  showImages: boolean;
+  showVideos: boolean;
+  showPosts: boolean;
   heavyLabel:
     | 'Heavy Shown'
     | 'Some Heavy'

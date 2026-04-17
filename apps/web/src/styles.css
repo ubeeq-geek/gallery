@@ -119,6 +119,9 @@
     font-size: 0.72rem;
     font-weight: 700;
     white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.38rem;
   }
 
   .topbar-discovery-chip-interactive {
@@ -695,7 +698,7 @@
       border-radius: 9999px;
     }
 
-    .mobile-discovery-dock-btn {
+  .mobile-discovery-dock-btn {
       flex: 0.95;
       min-width: 0;
       text-align: center;
@@ -710,6 +713,10 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.3rem;
     }
 
     .mobile-creator-dock-btn {
@@ -1039,6 +1046,9 @@
     line-height: 1;
     box-shadow: 0 1px 0 rgb(255 255 255 / 0.85) inset;
     transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .discovery-pill-btn:hover {
@@ -1050,6 +1060,45 @@
     background: #0f1d42;
     border-color: #0f1d42;
     color: #ffffff;
+  }
+
+  .discovery-media-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.26rem;
+  }
+
+  .discovery-media-icon {
+    width: 0.92rem;
+    height: 0.92rem;
+    flex: 0 0 auto;
+    color: currentColor;
+  }
+
+  .discovery-media-toggle-btn {
+    min-width: 9.4rem;
+    justify-content: center;
+  }
+
+  .discovery-media-toggle-check {
+    width: 0.82rem;
+    height: 0.82rem;
+    border-radius: 0.18rem;
+    border: 1.5px solid currentColor;
+    flex: 0 0 auto;
+    position: relative;
+  }
+
+  .discovery-media-toggle-check.is-checked::after {
+    content: '';
+    position: absolute;
+    left: 0.2rem;
+    top: 0.04rem;
+    width: 0.24rem;
+    height: 0.46rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(40deg);
   }
 
   .discovery-filter-shell {
