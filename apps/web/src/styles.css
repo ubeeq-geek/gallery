@@ -2775,6 +2775,9 @@
     border-color: transparent;
     background: transparent;
     color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
   }
 
   .studio-nav-item-active {
@@ -2877,15 +2880,18 @@
     gap: 0.35rem;
   }
 
-  .studio-queue-item button {
+  .studio-queue-item button,
+  .studio-queue-item a {
     @apply justify-self-end rounded-full px-3 py-1 text-xs;
     margin: 0;
+    border: 1px solid var(--line);
+    background: var(--surface);
   }
 
-  .studio-queue-item.success button { background: #ecfdf3; color: #166534; }
-  .studio-queue-item.warning button { background: #fffbeb; color: #b45309; }
-  .studio-queue-item.danger button { background: #fff1f2; color: #be123c; }
-  .studio-queue-item.info button { background: #eff6ff; color: #1d4ed8; }
+  .studio-queue-item.success button, .studio-queue-item.success a { background: #ecfdf3; color: #166534; }
+  .studio-queue-item.warning button, .studio-queue-item.warning a { background: #fffbeb; color: #b45309; }
+  .studio-queue-item.danger button, .studio-queue-item.danger a { background: #fff1f2; color: #be123c; }
+  .studio-queue-item.info button, .studio-queue-item.info a { background: #eff6ff; color: #1d4ed8; }
 
   .studio-creator-list {
     @apply mt-3 grid gap-3;

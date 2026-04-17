@@ -7232,15 +7232,15 @@ function StudioDashboardPage({
   const creatorCount = studioMetrics?.creators || Math.max(0, managedArtists.length);
   const reviewCount = studioMetrics?.adminReviewItems || adminCount;
   const quickLinks = [
-    'Files & Media',
-    'Posts',
-    'Creator Groupings',
-    'Collections',
-    'Creators',
-    'Challenges',
-    'Entries',
-    'Users',
-    'Moderation'
+    { label: 'Files & Media', section: 'files-media' },
+    { label: 'Posts', section: 'posts' },
+    { label: 'Creator Groupings', section: 'creator-groupings' },
+    { label: 'Collections', section: 'collections' },
+    { label: 'Creators', section: 'creators' },
+    { label: 'Challenges', section: 'challenges' },
+    { label: 'Entries', section: 'entries' },
+    { label: 'Users', section: 'users' },
+    { label: 'Moderation', section: 'moderation' }
   ];
   const queueItems = [
     { title: 'Review approved challenge entries', detail: '12 items · promotes User to Beeker', tone: 'success' },
@@ -7323,8 +7323,18 @@ function StudioDashboardPage({
           <p>Visual name: {roleDisplayLabel('contributor')}.</p>
         </div>
         <nav className="studio-sidebar-nav">
-          <button className="studio-nav-item studio-nav-item-active" type="button">Dashboard</button>
-          {quickLinks.map((label) => <button key={label} className="studio-nav-item" type="button">{label}</button>)}
+          <Link className="studio-nav-item studio-nav-item-active no-underline" to="/studio">
+            <span>Dashboard</span><span aria-hidden="true">›</span>
+          </Link>
+          {quickLinks.map((link) => (
+            <Link
+              key={link.section}
+              className="studio-nav-item no-underline"
+              to={`/studio/workspace?section=${encodeURIComponent(link.section)}`}
+            >
+              <span>{link.label}</span><span aria-hidden="true">›</span>
+            </Link>
+          ))}
         </nav>
         <div className="studio-user-card">
           <strong>{user.displayName || user.username}</strong>
@@ -7347,8 +7357,8 @@ function StudioDashboardPage({
             </p>
           </div>
           <div className="studio-hero-actions">
-            <button type="button" className="auth-secondary-btn">Notifications</button>
-            <button type="button" className="auth-secondary-btn">Preferences</button>
+            <Link to="/settings#notifications" className="auth-secondary-btn no-underline">Notifications</Link>
+            <Link to="/settings#preferences" className="auth-secondary-btn no-underline">Preferences</Link>
             <Link to="/studio/workspace" className="auth-primary-btn no-underline">+ Quick create</Link>
           </div>
         </section>
@@ -7393,7 +7403,7 @@ function StudioDashboardPage({
                 <div key={item.title} className={`studio-queue-item ${item.tone}`}>
                   <strong>{item.title}</strong>
                   <span>{item.detail}</span>
-                  <button type="button">Open</button>
+                  <Link className="no-underline" to="/studio/workspace?section=entries">Open</Link>
                 </div>
               ))}
             </div>
