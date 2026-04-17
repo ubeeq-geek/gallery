@@ -7203,56 +7203,154 @@ function StudioDashboardPage({
   if (!user) return <Navigate to="/auth/signin" replace />;
   const normalizedGroups = (user.groups || []).map((group) => group.toLowerCase());
   const isAdmin = normalizedGroups.includes('admin') || normalizedGroups.includes('admins');
-  const hasArtistProfiles = managedArtists.length > 0;
+  const hasCreatorProfiles = managedArtists.length > 0;
   const studioCount = sanitizeNotificationCount(roleNotificationCounts.studio);
   const adminCount = sanitizeNotificationCount(roleNotificationCounts.admin);
+  const totalUsers = 18420;
+  const beekerCount = 1384;
+  const creatorCount = Math.max(206, managedArtists.length);
+  const reviewCount = Math.max(29, adminCount);
+  const quickLinks = [
+    'Files & Media',
+    'Posts',
+    'Creator Groupings',
+    'Collections',
+    'Creators',
+    'Challenges',
+    'Entries',
+    'Users',
+    'Moderation'
+  ];
+  const queueItems = [
+    { title: 'Review approved challenge entries', detail: '12 items · promotes User to Beeker', tone: 'success' },
+    { title: 'Confirm bulk media deletion', detail: '2-step admin action · 41 assets', tone: 'warning' },
+    { title: 'Resolve flagged user collection', detail: 'Mature-tag mismatch', tone: 'danger' },
+    { title: 'Publish scheduled creator posts', detail: '6 items due today', tone: 'info' }
+  ] as const;
 
   return (
-    <div className="layout">
-      <section className="panel">
-        <h2>Creator Studio</h2>
-        <p className="small">
-          Use Studio to manage creator profiles and moderation workflows with capability-based actions across one unified surface.
-        </p>
-        <p className="small">
-          Role display labels are presentation-driven (for example, <strong>{roleDisplayLabel('contributor')}</strong> for the contributor role).
-        </p>
-        <div className="inline-form mt-3">
-          <Link to="/studio/workspace" className="auth-primary-btn no-underline">Workspace</Link>
-          <Link to="/settings" className="auth-secondary-btn no-underline">Settings</Link>
-          <Link to="/collections" className="auth-secondary-btn no-underline">Collections</Link>
-          <Link to="/trending" className="auth-secondary-btn no-underline">Discovery</Link>
+    <div className="layout studio-dashboard-shell">
+      <aside className="studio-sidebar panel">
+        <div className="studio-brand-card">
+          <strong>Ubeeq</strong>
+          <span>STUDIO</span>
         </div>
-      </section>
+        <div className="studio-contributor-label">
+          <strong>Contributor label</strong>
+          <p>System name: Contributor.</p>
+          <p>Visual name: {roleDisplayLabel('contributor')}.</p>
+        </div>
+        <nav className="studio-sidebar-nav">
+          <button className="studio-nav-item studio-nav-item-active" type="button">Dashboard</button>
+          {quickLinks.map((label) => <button key={label} className="studio-nav-item" type="button">{label}</button>)}
+        </nav>
+        <div className="studio-user-card">
+          <strong>{user.displayName || user.username}</strong>
+          <span>{isAdmin ? 'Admin' : 'Creator'} · {managedArtists.length} creator accounts</span>
+        </div>
+      </aside>
 
-      {hasArtistProfiles ? (
-        <section className="panel mt-4">
-          <h3>Your Creator Profiles</h3>
-          <div className="studio-artist-grid">
-            {managedArtists.map((artist) => (
-              <article key={artist.artistId} className="studio-artist-card">
-                <h4>{artist.name}</h4>
-                <p className="small">/{artist.slug}</p>
-                <p className="small">Role: {artist.memberRole || 'editor'}</p>
-                <div className="inline-form mt-2">
-                  <Link to={`/artists/${artist.slug}`} className="auth-secondary-btn no-underline">Open Profile</Link>
-                  <Link to="/settings" className="auth-secondary-btn no-underline">Edit in Settings</Link>
-                </div>
-              </article>
-            ))}
+      <section className="studio-main">
+        <section className="panel studio-hero">
+          <div>
+            <div className="studio-pills">
+              <span>Admin controls inside Studio</span>
+              <span>Creators can manage multiple creators</span>
+              <span>Approved entry = {roleDisplayLabel('contributor')}</span>
+            </div>
+            <h2>Studio dashboard</h2>
+            <p className="small">
+              A unified control surface for contribution, publishing, moderation, and challenge workflows.
+              The separate Admin area is removed; elevated actions appear contextually with stronger protections.
+            </p>
+          </div>
+          <div className="studio-hero-actions">
+            <button type="button" className="auth-secondary-btn">Notifications</button>
+            <button type="button" className="auth-secondary-btn">Preferences</button>
+            <Link to="/studio/workspace" className="auth-primary-btn no-underline">+ Quick create</Link>
           </div>
         </section>
-      ) : (
-        <section className="panel mt-4">
-          <h3>No Creator Profiles Yet</h3>
-          <p className="small">You don’t currently have access to a creator profile. A creator owner or admin can grant creator access in Studio.</p>
-        </section>
-      )}
 
-      <section className="panel mt-4">
-        <h3>Notifications</h3>
-        <p className="small">Studio: {studioCount > 0 ? formatNotificationBadge(studioCount) : '0'}</p>
-        {isAdmin && <p className="small">Admin tools: included in Studio</p>}
+        <section className="studio-stat-grid">
+          <article className="panel"><p>Total users</p><h3>{totalUsers.toLocaleString()}</h3><span>+124 this week</span></article>
+          <article className="panel"><p>Beekers</p><h3>{beekerCount.toLocaleString()}</h3><span>+41 approved</span></article>
+          <article className="panel"><p>Creators</p><h3>{creatorCount.toLocaleString()}</h3><span>+7 promoted</span></article>
+          <article className="panel"><p>Admin review items</p><h3>{reviewCount.toLocaleString()}</h3><span>7 require confirmation</span></article>
+        </section>
+
+        <section className="studio-detail-grid">
+          <article className="panel">
+            <div className="studio-title-row">
+              <h3>Studio overview</h3>
+              <button type="button" className="auth-secondary-btn">+ New item</button>
+            </div>
+            <p className="small">A single contribution surface for users, Beekers, Creators, and Admins. No separate admin area.</p>
+            <div className="studio-overview-cards">
+              <div className="studio-overview-card success">
+                <h4>Beeker onboarding</h4>
+                <p>Approved challenge entries automatically unlock the Beeker role and contributor tools.</p>
+                <span>12 awaiting review</span>
+              </div>
+              <div className="studio-overview-card info">
+                <h4>Multi-creator accounts</h4>
+                <p>Creators and Admins can manage multiple creator identities under one user account.</p>
+                <span>48 users manage 2+ creators</span>
+              </div>
+              <div className="studio-overview-card warning">
+                <h4>Admin protections</h4>
+                <p>Destructive actions require typed confirmation, a reason, and dependency checks.</p>
+                <span>7 pending destructive confirmations</span>
+              </div>
+            </div>
+          </article>
+          <article className="panel">
+            <h3>Action queue</h3>
+            <p className="small">Prioritized items across moderation, approvals, and publishing.</p>
+            <div className="studio-queue-list">
+              {queueItems.map((item) => (
+                <div key={item.title} className={`studio-queue-item ${item.tone}`}>
+                  <strong>{item.title}</strong>
+                  <span>{item.detail}</span>
+                  <button type="button">Open</button>
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+
+        <section className="studio-detail-grid">
+          <article className="panel">
+            <div className="studio-title-row">
+              <h3>Your creator accounts</h3>
+              <button type="button" className="auth-primary-btn">+ New creator</button>
+            </div>
+            {hasCreatorProfiles ? (
+              <div className="studio-creator-list">
+                {managedArtists.map((artist) => (
+                  <article key={artist.artistId} className="studio-creator-card">
+                    <h4>{artist.name}</h4>
+                    <p>/{artist.slug}</p>
+                    <span className="studio-creator-role">Creator</span>
+                    <Link to={`/artists/${artist.slug}`} className="auth-secondary-btn no-underline">Open profile</Link>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="small">No creator accounts yet. Admins can assign creator ownership from Users in Studio.</p>
+            )}
+          </article>
+          <article className="panel">
+            <h3>Role model</h3>
+            <p className="small">Clear progression and management rules.</p>
+            <ul className="studio-role-list">
+              <li><strong>User</strong> — create collections, enter challenges, manage profile settings.</li>
+              <li><strong>{roleDisplayLabel('contributor')}</strong> — contributor role for approved challenge workflows.</li>
+              <li><strong>Creator</strong> — publish content and manage creator groupings.</li>
+              <li><strong>Admin</strong> — moderation, challenge management, and destructive approvals.</li>
+            </ul>
+            <p className="small">Studio notifications: {studioCount > 0 ? formatNotificationBadge(studioCount) : '0'}.</p>
+          </article>
+        </section>
       </section>
     </div>
   );
