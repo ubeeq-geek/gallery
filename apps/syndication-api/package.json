@@ -5,7 +5,7 @@
   "types": "dist/handler.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "dev": "ts-node-dev --respawn --transpile-only src/dev.ts",
+    "dev": "ts-node-dev --project tsconfig.json --respawn --transpile-only src/dev.ts",
     "test": "echo \"no tests\"",
     "lint": "echo \"no lint\""
   },

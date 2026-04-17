@@ -13,6 +13,7 @@
     "lint": "echo \"no lint\""
   },
   "dependencies": {
+    "@aws-sdk/client-cloudformation": "^3.515.0",
     "aws-cdk-lib": "^2.131.0",
     "constructs": "^10.3.0"
   },

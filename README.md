@@ -41,8 +41,16 @@ API local defaults to `http://localhost:4000`.
 Syndication local defaults:
 
 ```bash
-npx ts-node-dev --respawn --transpile-only apps/syndication-api/src/dev.ts
+npx ts-node-dev --project apps/syndication-api/tsconfig.json --respawn --transpile-only apps/syndication-api/src/dev.ts
 npx vite --config apps/syndication-web/vite.config.ts
+```
+
+Syndication web env vars:
+
+```bash
+VITE_COGNITO_REGION=ca-central-1
+VITE_COGNITO_CLIENT_ID=<GalleryStack UserPoolClientId>
+VITE_SYNDICATION_API_BASE_URL=<local or deployed syndication API base URL>
 ```
 
 The syndication UI/API shares Cognito `UserPool`/`UserPoolClient` with `GalleryStack`, but all syndication API endpoints require users in the `Admins` group.
@@ -88,6 +96,28 @@ npm --workspace @gallery/infra run deploy
 ```
 3. Configure web env var `VITE_API_BASE_URL` to deployed API URL.
 4. Configure Cognito social identity providers in AWS console/CDK extensions.
+
+### Deploy Syndication Into Existing Gallery Account
+
+If `GalleryStack` is already deployed in the target AWS account, you can deploy only the syndication stack and import the existing Cognito and `GalleryCore` resources from that stack's CloudFormation outputs:
+
+```bash
+npm --workspace @gallery/infra run deploy -- \
+  SyndicationSourceStack \
+  -c existingGalleryStackName=GalleryStack
+```
+
+With an explicit profile/region example:
+
+```bash
+AWS_PROFILE=cdk-ca npm --workspace @gallery/infra run deploy -- \
+  SyndicationSourceStack \
+  -c existingGalleryStackName=GalleryStack \
+  --region ca-central-1
+```
+
+You can also use `EXISTING_GALLERY_STACK_NAME=GalleryStack` instead of the CDK context flag.
+If you are importing an existing stack via the CDK app lookup, prefer setting `AWS_PROFILE` so the lookup uses the same credentials as the target deployment.
 
 ## GalleryCore Migration
 

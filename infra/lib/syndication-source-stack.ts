@@ -10,14 +10,34 @@ import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 
 export interface SyndicationSourceStackProps extends StackProps {
-  userPool: cognito.IUserPool;
-  userPoolClient: cognito.IUserPoolClient;
-  galleryCoreTable: dynamodb.ITable;
+  userPool?: cognito.IUserPool;
+  userPoolId?: string;
+  userPoolClient?: cognito.IUserPoolClient;
+  userPoolClientId?: string;
+  galleryCoreTable?: dynamodb.ITable;
+  galleryCoreTableName?: string;
 }
 
 export class SyndicationSourceStack extends Stack {
   constructor(scope: Construct, id: string, props: SyndicationSourceStackProps) {
     super(scope, id, props);
+
+    const userPool = props.userPool
+      ?? (props.userPoolId
+        ? cognito.UserPool.fromUserPoolId(this, 'ImportedGalleryUserPool', props.userPoolId)
+        : undefined);
+    const userPoolClient = props.userPoolClient
+      ?? (props.userPoolClientId
+        ? cognito.UserPoolClient.fromUserPoolClientId(this, 'ImportedGalleryUserPoolClient', props.userPoolClientId)
+        : undefined);
+    const galleryCoreTable = props.galleryCoreTable
+      ?? (props.galleryCoreTableName
+        ? dynamodb.Table.fromTableName(this, 'ImportedGalleryCoreTable', props.galleryCoreTableName)
+        : undefined);
+
+    if (!userPool || !userPoolClient || !galleryCoreTable) {
+      throw new Error('SyndicationSourceStack requires userPool/userPoolId, userPoolClient/userPoolClientId, and galleryCoreTable/galleryCoreTableName');
+    }
 
     const sourcesTable = new dynamodb.Table(this, 'SyndicationSourcesTable', {
       partitionKey: { name: 'sourceId', type: dynamodb.AttributeType.STRING },
@@ -46,16 +66,16 @@ export class SyndicationSourceStack extends Stack {
       environment: {
         SYNDICATION_SOURCES_TABLE: sourcesTable.tableName,
         SYNDICATION_USED_ASSETS_TABLE: usedAssetsTable.tableName,
-        GALLERY_CORE_TABLE: props.galleryCoreTable.tableName,
-        COGNITO_USER_POOL_ID: props.userPool.userPoolId,
-        COGNITO_CLIENT_ID: props.userPoolClient.userPoolClientId,
+        GALLERY_CORE_TABLE: galleryCoreTable.tableName,
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
         COGNITO_TOKEN_USE: 'id'
       }
     });
 
     sourcesTable.grantReadWriteData(apiFn);
     usedAssetsTable.grantReadWriteData(apiFn);
-    props.galleryCoreTable.grantReadWriteData(apiFn);
+    galleryCoreTable.grantReadWriteData(apiFn);
 
     const api = new apigw.LambdaRestApi(this, 'SyndicationSourceApi', {
       handler: apiFn,
