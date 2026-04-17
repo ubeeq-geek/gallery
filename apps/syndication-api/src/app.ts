@@ -14,6 +14,8 @@ const GALLERY_CORE_TABLE = process.env.GALLERY_CORE_TABLE || '';
 const COGNITO_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || '';
 const COGNITO_CLIENT_ID = process.env.COGNITO_CLIENT_ID || '';
 const COGNITO_TOKEN_USE = (process.env.COGNITO_TOKEN_USE || 'id') as 'id' | 'access';
+const OPENVERSE_API_BASE_URL = 'https://api.openverse.org/v1/images/';
+const OPENVERSE_TOKEN_URL = 'https://api.openverse.org/v1/auth_tokens/token/';
 
 interface SyndicationSource {
   sourceId: string;
@@ -26,6 +28,8 @@ interface SyndicationSource {
   createdAt: string;
   updatedAt: string;
   openverseTokenValidatedAt?: string;
+  openverseApiBaseUrl?: string;
+  openverseTokenUrl?: string;
 }
 
 interface OpenverseResult {
@@ -68,7 +72,7 @@ const getOpenverseAccessToken = async (clientId: string, clientSecret: string): 
   payload.set('client_id', clientId);
   payload.set('client_secret', clientSecret);
 
-  const response = await fetch('https://api.openverse.org/v1/auth_tokens/token/', {
+  const response = await fetch(OPENVERSE_TOKEN_URL, {
     method: 'POST',
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
@@ -89,7 +93,7 @@ const getOpenverseAccessToken = async (clientId: string, clientSecret: string): 
 };
 
 const searchOpenverse = async (query: string, accessToken: string): Promise<OpenverseResult[]> => {
-  const url = new URL('https://api.openverse.org/v1/images/');
+  const url = new URL(OPENVERSE_API_BASE_URL);
   url.searchParams.set('q', query);
   url.searchParams.set('source', 'nasa');
   url.searchParams.set('page_size', '25');
@@ -273,9 +277,18 @@ export const createApp = () => {
     const creatorSlug = String(req.body?.creatorSlug || '').trim();
     const clientId = String(req.body?.clientId || '').trim();
     const clientSecret = String(req.body?.clientSecret || '').trim();
+    const endpointUrl = String(req.body?.endpointUrl || OPENVERSE_API_BASE_URL).trim();
+    const tokenUrl = String(req.body?.tokenUrl || OPENVERSE_TOKEN_URL).trim();
+    const sourceType = String(req.body?.sourceType || 'openverse_api').trim();
 
     if (!name || !creatorUuid || !creatorSlug || !clientId || !clientSecret) {
       return res.status(400).json({ message: 'name, creatorUuid, creatorSlug, clientId, and clientSecret are required' });
+    }
+    if (sourceType !== 'openverse_api') {
+      return res.status(400).json({ message: 'Only Openverse API sources are supported in this phase' });
+    }
+    if (endpointUrl !== OPENVERSE_API_BASE_URL || tokenUrl !== OPENVERSE_TOKEN_URL) {
+      return res.status(400).json({ message: 'endpointUrl/tokenUrl must point to Openverse official API endpoints' });
     }
 
     const openverseAccessToken = await getOpenverseAccessToken(clientId, clientSecret);
@@ -295,7 +308,9 @@ export const createApp = () => {
       clientSecret,
       createdAt: now,
       updatedAt: now,
-      openverseTokenValidatedAt: now
+      openverseTokenValidatedAt: now,
+      openverseApiBaseUrl: OPENVERSE_API_BASE_URL,
+      openverseTokenUrl: OPENVERSE_TOKEN_URL
     };
 
     await ddb.send(new PutCommand({ TableName: SOURCES_TABLE, Item: item }));

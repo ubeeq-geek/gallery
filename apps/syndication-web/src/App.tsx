@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { getCurrentUser, getIdToken, signIn, signOut } from './cognitoAuth';
 
 const apiBase = import.meta.env.VITE_SYNDICATION_API_BASE_URL || '';
+const OPENVERSE_API_BASE_URL = 'https://api.openverse.org/v1/images/';
+const OPENVERSE_TOKEN_URL = 'https://api.openverse.org/v1/auth_tokens/token/';
 
 interface SourceItem {
   sourceId: string;
@@ -105,7 +107,16 @@ export const App = () => {
           try {
             await authFetch('/sources', {
               method: 'POST',
-              body: JSON.stringify({ name, creatorUuid, creatorSlug, clientId, clientSecret })
+              body: JSON.stringify({
+                sourceType: 'openverse_api',
+                endpointUrl: OPENVERSE_API_BASE_URL,
+                tokenUrl: OPENVERSE_TOKEN_URL,
+                name,
+                creatorUuid,
+                creatorSlug,
+                clientId,
+                clientSecret
+              })
             });
             setClientId('');
             setClientSecret('');
@@ -117,6 +128,9 @@ export const App = () => {
           <div><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" /></div>
           <div><input value={creatorUuid} onChange={(e) => setCreatorUuid(e.target.value)} placeholder="Creator UUID" /></div>
           <div><input value={creatorSlug} onChange={(e) => setCreatorSlug(e.target.value)} placeholder="Creator slug" /></div>
+          <div><input value="Openverse API" readOnly aria-label="Source Type" /></div>
+          <div><input value={OPENVERSE_API_BASE_URL} readOnly aria-label="Openverse Endpoint URL" /></div>
+          <div><input value={OPENVERSE_TOKEN_URL} readOnly aria-label="Openverse Token URL" /></div>
           <div><input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Openverse client_id" /></div>
           <div><input type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder="Openverse client_secret" /></div>
           <button type="submit">Register source</button>
