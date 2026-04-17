@@ -25,6 +25,7 @@ interface SyndicationSource {
   creatorSlug: string;
   clientId: string;
   clientSecret: string;
+  visibility?: 'public' | 'internal';
   createdAt: string;
   updatedAt: string;
   openverseTokenValidatedAt?: string;
@@ -280,6 +281,7 @@ export const createApp = () => {
     const endpointUrl = String(req.body?.endpointUrl || OPENVERSE_API_BASE_URL).trim();
     const tokenUrl = String(req.body?.tokenUrl || OPENVERSE_TOKEN_URL).trim();
     const sourceType = String(req.body?.sourceType || 'openverse_api').trim();
+    const visibility = req.body?.visibility === 'internal' ? 'internal' : 'public';
 
     if (!name || !creatorUuid || !creatorSlug || !clientId || !clientSecret) {
       return res.status(400).json({ message: 'name, creatorUuid, creatorSlug, clientId, and clientSecret are required' });
@@ -306,6 +308,7 @@ export const createApp = () => {
       creatorSlug,
       clientId,
       clientSecret,
+      visibility,
       createdAt: now,
       updatedAt: now,
       openverseTokenValidatedAt: now,

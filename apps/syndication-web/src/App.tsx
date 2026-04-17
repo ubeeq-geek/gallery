@@ -46,6 +46,7 @@ export const App = () => {
   const [creatorSlug, setCreatorSlug] = useState('daily-cosmos');
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
+  const [visibility, setVisibility] = useState<'public' | 'internal'>('public');
 
   const loadSources = async () => {
     setLoading(true);
@@ -115,7 +116,8 @@ export const App = () => {
                 creatorUuid,
                 creatorSlug,
                 clientId,
-                clientSecret
+                clientSecret,
+                visibility
               })
             });
             setClientId('');
@@ -125,14 +127,42 @@ export const App = () => {
             setError(err instanceof Error ? err.message : 'Failed to save');
           }
         }}>
-          <div><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" /></div>
-          <div><input value={creatorUuid} onChange={(e) => setCreatorUuid(e.target.value)} placeholder="Creator UUID" /></div>
-          <div><input value={creatorSlug} onChange={(e) => setCreatorSlug(e.target.value)} placeholder="Creator slug" /></div>
-          <div><input value="Openverse API" readOnly aria-label="Source Type" /></div>
-          <div><input value={OPENVERSE_API_BASE_URL} readOnly aria-label="Openverse Endpoint URL" /></div>
-          <div><input value={OPENVERSE_TOKEN_URL} readOnly aria-label="Openverse Token URL" /></div>
-          <div><input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Openverse client_id" /></div>
-          <div><input type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder="Openverse client_secret" /></div>
+          <label>Source Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" /></label>
+          <label>Slug<input value={creatorSlug} onChange={(e) => setCreatorSlug(e.target.value)} placeholder="Creator slug" /></label>
+          <label>Creator UUID<input value={creatorUuid} onChange={(e) => setCreatorUuid(e.target.value)} placeholder="Creator UUID" /></label>
+
+          <fieldset>
+            <legend>Source Type</legend>
+            <label><input type="radio" checked readOnly /> API (Openverse)</label>
+            <label><input type="radio" disabled /> RSS</label>
+            <label><input type="radio" disabled /> Manual</label>
+          </fieldset>
+
+          <label>Endpoint URL<input value={OPENVERSE_API_BASE_URL} readOnly aria-label="Openverse Endpoint URL" /></label>
+
+          <fieldset>
+            <legend>Auth Type</legend>
+            <label><input type="radio" checked readOnly /> OAuth2 client credentials</label>
+            <label><input type="radio" disabled /> API Key</label>
+            <label><input type="radio" disabled /> None</label>
+          </fieldset>
+
+          <label>Token URL<input value={OPENVERSE_TOKEN_URL} readOnly aria-label="Openverse Token URL" /></label>
+          <label>Openverse client_id<input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="Openverse client_id" /></label>
+          <label>Openverse client_secret<input type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder="Openverse client_secret" /></label>
+
+          <label>Sync Frequency<input value="Weekly (Saturday 08:00 UTC)" readOnly /></label>
+          <fieldset>
+            <legend>Content Types</legend>
+            <label><input type="checkbox" checked readOnly /> Images</label>
+            <label><input type="checkbox" disabled /> Video</label>
+            <label><input type="checkbox" disabled /> Text</label>
+          </fieldset>
+          <fieldset>
+            <legend>Visibility</legend>
+            <label><input type="radio" checked={visibility === 'public'} onChange={() => setVisibility('public')} /> Public</label>
+            <label><input type="radio" checked={visibility === 'internal'} onChange={() => setVisibility('internal')} /> Internal</label>
+          </fieldset>
           <button type="submit">Register source</button>
         </form>
       </section>
