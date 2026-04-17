@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getCurrentUser, getIdToken, signIn, signOut } from './cognitoAuth';
 
-const apiBase = import.meta.env.VITE_SYNDICATION_API_BASE_URL || '';
-const OPENVERSE_API_BASE_URL = 'https://api.openverse.org/v1/images/';
-const OPENVERSE_TOKEN_URL = 'https://api.openverse.org/v1/auth_tokens/token/';
+const syndicationApiBase = import.meta.env.VITE_SYNDICATION_API_BASE_URL || '';
+const galleryApiBase = import.meta.env.VITE_GALLERY_API_BASE_URL || '';
 
 interface SourceItem {
   sourceId: string;
@@ -11,14 +10,19 @@ interface SourceItem {
   creatorUuid: string;
   creatorSlug: string;
   provider: 'openverse';
-  visibility?: 'public' | 'internal';
   createdAt: string;
 }
 
-const authFetch = async (path: string, init?: RequestInit) => {
+interface CreatorOption {
+  artistId: string;
+  name: string;
+  slug: string;
+}
+
+const authFetch = async (baseUrl: string, path: string, init?: RequestInit) => {
   const token = getIdToken();
   if (!token) throw new Error('Not authenticated');
-  const response = await fetch(`${apiBase}${path}`, {
+  const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       'content-type': 'application/json',
@@ -36,6 +40,7 @@ const authFetch = async (path: string, init?: RequestInit) => {
 export const App = () => {
   const [user, setUser] = useState(() => getCurrentUser());
   const [sources, setSources] = useState<SourceItem[]>([]);
+  const [creators, setCreators] = useState<CreatorOption[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -46,20 +51,14 @@ export const App = () => {
   const [name, setName] = useState('Daily Cosmos / NASA');
   const [creatorUuid, setCreatorUuid] = useState('');
   const [creatorSlug, setCreatorSlug] = useState('daily-cosmos');
-  const [clientId, setClientId] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
-  const [visibility, setVisibility] = useState<'public' | 'internal'>('public');
 
-  const isFormValid = useMemo(
-    () => Boolean(name.trim() && creatorUuid.trim() && creatorSlug.trim() && clientId.trim() && clientSecret.trim()),
-    [name, creatorUuid, creatorSlug, clientId, clientSecret]
-  );
+  const isFormValid = useMemo(() => Boolean(name.trim() && creatorUuid.trim() && creatorSlug.trim()), [name, creatorUuid, creatorSlug]);
 
   const loadSources = async () => {
     setLoading(true);
     setError('');
     try {
-      const payload = await authFetch('/sources');
+      const payload = await authFetch(syndicationApiBase, '/sources');
       setSources(Array.isArray(payload.items) ? payload.items : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load sources');
@@ -68,8 +67,33 @@ export const App = () => {
     }
   };
 
+  const loadCreators = async () => {
+    if (!galleryApiBase) return;
+    try {
+      const payload = await authFetch(galleryApiBase, '/artists');
+      const items = Array.isArray(payload?.artists) ? payload.artists : Array.isArray(payload) ? payload : [];
+      const normalized = items
+        .map((item: any) => ({
+          artistId: String(item.artistId || '').trim(),
+          name: String(item.name || '').trim(),
+          slug: String(item.slug || '').trim()
+        }))
+        .filter((item: CreatorOption) => item.artistId && item.name && item.slug);
+      setCreators(normalized);
+      if (!creatorUuid && normalized.length > 0) {
+        setCreatorUuid(normalized[0].artistId);
+        setCreatorSlug(normalized[0].slug);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? `Unable to load creators: ${err.message}` : 'Unable to load creators');
+    }
+  };
+
   useEffect(() => {
-    if (user) void loadSources();
+    if (user) {
+      void loadSources();
+      void loadCreators();
+    }
   }, [user]);
 
   if (!user) {
@@ -78,27 +102,18 @@ export const App = () => {
         <section className="card auth-card">
           <h1 className="title">Syndication Source Admin</h1>
           <p className="muted">Sign in with an Admin account.</p>
-          <form
-            className="stack"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              setError('');
-              try {
-                await signIn(email, password);
-                setUser(getCurrentUser());
-              } catch (err) {
-                setError(err instanceof Error ? err.message : 'Sign in failed');
-              }
-            }}
-          >
-            <label className="field">
-              <span>Email</span>
-              <input value={email} onChange={(e) => setEmail(e.target.value)} />
-            </label>
-            <label className="field">
-              <span>Password</span>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            </label>
+          <form className="stack" onSubmit={async (event) => {
+            event.preventDefault();
+            setError('');
+            try {
+              await signIn(email, password);
+              setUser(getCurrentUser());
+            } catch (err) {
+              setError(err instanceof Error ? err.message : 'Sign in failed');
+            }
+          }}>
+            <label className="field"><span>Email</span><input value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+            <label className="field"><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
             <button className="btn btn--primary" type="submit">Sign in</button>
           </form>
           {error && <p className="error">{error}</p>}
@@ -115,89 +130,61 @@ export const App = () => {
           <h1 className="title">Syndication Source Admin</h1>
           <p className="muted">Signed in as <strong>{user.username}</strong></p>
         </div>
-        <button
-          className="btn btn--ghost"
-          onClick={async () => {
-            await signOut();
-            setUser(null);
-          }}
-        >
-          Sign out
-        </button>
+        <button className="btn btn--ghost" onClick={async () => { await signOut(); setUser(null); }}>Sign out</button>
       </header>
 
       <section className="card">
         <h2 className="section-title">Register source</h2>
-        <p className="muted">Openverse-only registration (API sources only for now).</p>
-        <form
-          className="stack"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            if (!isFormValid) return;
-            setSubmitting(true);
-            setError('');
-            try {
-              await authFetch('/sources', {
-                method: 'POST',
-                body: JSON.stringify({
-                  sourceType: 'openverse_api',
-                  endpointUrl: OPENVERSE_API_BASE_URL,
-                  tokenUrl: OPENVERSE_TOKEN_URL,
-                  name,
-                  creatorUuid,
-                  creatorSlug,
-                  clientId,
-                  clientSecret,
-                  visibility
-                })
-              });
-              setClientId('');
-              setClientSecret('');
-              await loadSources();
-            } catch (err) {
-              setError(err instanceof Error ? err.message : 'Failed to save');
-            } finally {
-              setSubmitting(false);
-            }
-          }}
-        >
+        <p className="muted">Openverse-only registration. Endpoint/auth/content settings are internal defaults.</p>
+        <form className="stack" onSubmit={async (event) => {
+          event.preventDefault();
+          if (!isFormValid) return;
+          setSubmitting(true);
+          setError('');
+          try {
+            await authFetch(syndicationApiBase, '/sources', {
+              method: 'POST',
+              body: JSON.stringify({
+                sourceType: 'openverse_api',
+                name,
+                creatorUuid,
+                creatorSlug
+              })
+            });
+            await loadSources();
+          } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to save');
+          } finally {
+            setSubmitting(false);
+          }
+        }}>
           <div className="grid grid--3">
             <label className="field"><span>Source Name</span><input value={name} onChange={(e) => setName(e.target.value)} /></label>
             <label className="field"><span>Slug</span><input value={creatorSlug} onChange={(e) => setCreatorSlug(e.target.value)} /></label>
-            <label className="field"><span>Creator UUID</span><input value={creatorUuid} onChange={(e) => setCreatorUuid(e.target.value)} /></label>
+            <label className="field">
+              <span>Creator UUID</span>
+              <select
+                value={creatorUuid}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setCreatorUuid(nextId);
+                  const creator = creators.find((item) => item.artistId === nextId);
+                  if (creator && !creatorSlug) {
+                    setCreatorSlug(creator.slug);
+                  }
+                }}
+              >
+                <option value="">Select a creator…</option>
+                {creators.map((creator) => (
+                  <option key={creator.artistId} value={creator.artistId}>{creator.name} ({creator.slug})</option>
+                ))}
+              </select>
+            </label>
           </div>
 
           <fieldset className="fieldset">
             <legend>Source Type</legend>
             <label><input type="radio" checked readOnly /> API (Openverse)</label>
-            <label><input type="radio" disabled /> RSS</label>
-            <label><input type="radio" disabled /> Manual</label>
-          </fieldset>
-
-          <div className="grid grid--2">
-            <label className="field"><span>Endpoint URL</span><input value={OPENVERSE_API_BASE_URL} readOnly /></label>
-            <label className="field"><span>Token URL</span><input value={OPENVERSE_TOKEN_URL} readOnly /></label>
-          </div>
-
-          <div className="grid grid--2">
-            <label className="field"><span>Openverse Client ID</span><input value={clientId} onChange={(e) => setClientId(e.target.value)} /></label>
-            <label className="field"><span>Openverse Client Secret</span><input type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} /></label>
-          </div>
-
-          <div className="grid grid--2">
-            <label className="field"><span>Sync Frequency</span><input value="Weekly (Saturday 08:00 UTC)" readOnly /></label>
-            <fieldset className="fieldset">
-              <legend>Visibility</legend>
-              <label><input type="radio" checked={visibility === 'public'} onChange={() => setVisibility('public')} /> Public</label>
-              <label><input type="radio" checked={visibility === 'internal'} onChange={() => setVisibility('internal')} /> Internal</label>
-            </fieldset>
-          </div>
-
-          <fieldset className="fieldset">
-            <legend>Content Types</legend>
-            <label><input type="checkbox" checked readOnly /> Images</label>
-            <label><input type="checkbox" disabled /> Video</label>
-            <label><input type="checkbox" disabled /> Text</label>
           </fieldset>
 
           <button className="btn btn--primary" type="submit" disabled={!isFormValid || submitting}>
@@ -214,24 +201,17 @@ export const App = () => {
               <li key={source.sourceId} className="source-row">
                 <div>
                   <strong>{source.name}</strong>
-                  <p className="muted muted--small">
-                    {source.provider} • {source.creatorSlug} • {source.visibility || 'public'}
-                  </p>
+                  <p className="muted muted--small">{source.provider} • {source.creatorSlug}</p>
                 </div>
-                <button
-                  className="btn"
-                  onClick={async () => {
-                    setError('');
-                    try {
-                      await authFetch(`/sources/${source.sourceId}/run`, { method: 'POST' });
-                      alert('Weekly run triggered.');
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : 'Run failed');
-                    }
-                  }}
-                >
-                  Run now
-                </button>
+                <button className="btn" onClick={async () => {
+                  setError('');
+                  try {
+                    await authFetch(syndicationApiBase, `/sources/${source.sourceId}/run`, { method: 'POST' });
+                    alert('Weekly run triggered.');
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Run failed');
+                  }
+                }}>Run now</button>
               </li>
             ))}
           </ul>

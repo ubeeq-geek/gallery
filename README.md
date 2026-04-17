@@ -45,7 +45,7 @@ npx ts-node-dev --respawn --transpile-only apps/syndication-api/src/dev.ts
 npx vite --config apps/syndication-web/vite.config.ts
 ```
 
-The syndication UI/API shares Cognito `UserPool`/`UserPoolClient` with `GalleryStack`, but all syndication API endpoints require users in the `Admins` group. Current source registration is intentionally Openverse-specific (API stream only, no RSS/manual mode yet).
+The syndication UI/API shares Cognito `UserPool`/`UserPoolClient` with `GalleryStack`, but all syndication API endpoints require users in the `Admins` group. Current source registration is intentionally Openverse-specific (API stream only; non-essential source settings are internal defaults). Configure internal Openverse credentials for the syndication API via `OPENVERSE_CLIENT_ID` and `OPENVERSE_CLIENT_SECRET`. Optionally set `VITE_GALLERY_API_BASE_URL` for creator dropdown lookup in the syndication UI.
 
 ## Build and Test
 

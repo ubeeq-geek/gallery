@@ -16,6 +16,8 @@ const COGNITO_CLIENT_ID = process.env.COGNITO_CLIENT_ID || '';
 const COGNITO_TOKEN_USE = (process.env.COGNITO_TOKEN_USE || 'id') as 'id' | 'access';
 const OPENVERSE_API_BASE_URL = 'https://api.openverse.org/v1/images/';
 const OPENVERSE_TOKEN_URL = 'https://api.openverse.org/v1/auth_tokens/token/';
+const OPENVERSE_CLIENT_ID = process.env.OPENVERSE_CLIENT_ID || '';
+const OPENVERSE_CLIENT_SECRET = process.env.OPENVERSE_CLIENT_SECRET || '';
 
 interface SyndicationSource {
   sourceId: string;
@@ -25,7 +27,6 @@ interface SyndicationSource {
   creatorSlug: string;
   clientId: string;
   clientSecret: string;
-  visibility?: 'public' | 'internal';
   createdAt: string;
   updatedAt: string;
   openverseTokenValidatedAt?: string;
@@ -198,7 +199,12 @@ const createScheduledPost = async (params: {
 export const syncSourceForUpcomingWeek = async (source: SyndicationSource) => {
   const { monday } = getDateRangeForUpcomingWeek(new Date());
   const summary: Array<{ day: string; topic: string; imageCount: number; created: boolean }> = [];
-  const accessToken = await getOpenverseAccessToken(source.clientId, source.clientSecret);
+  const effectiveClientId = source.clientId || OPENVERSE_CLIENT_ID;
+  const effectiveClientSecret = source.clientSecret || OPENVERSE_CLIENT_SECRET;
+  if (!effectiveClientId || !effectiveClientSecret) {
+    throw new Error('Openverse credentials are not configured');
+  }
+  const accessToken = await getOpenverseAccessToken(effectiveClientId, effectiveClientSecret);
 
   for (let i = 0; i < 7; i += 1) {
     const dayDate = new Date(Date.UTC(monday.getUTCFullYear(), monday.getUTCMonth(), monday.getUTCDate() + i));
@@ -276,15 +282,17 @@ export const createApp = () => {
     const name = String(req.body?.name || '').trim();
     const creatorUuid = String(req.body?.creatorUuid || '').trim();
     const creatorSlug = String(req.body?.creatorSlug || '').trim();
-    const clientId = String(req.body?.clientId || '').trim();
-    const clientSecret = String(req.body?.clientSecret || '').trim();
+    const clientId = String(req.body?.clientId || OPENVERSE_CLIENT_ID).trim();
+    const clientSecret = String(req.body?.clientSecret || OPENVERSE_CLIENT_SECRET).trim();
     const endpointUrl = String(req.body?.endpointUrl || OPENVERSE_API_BASE_URL).trim();
     const tokenUrl = String(req.body?.tokenUrl || OPENVERSE_TOKEN_URL).trim();
     const sourceType = String(req.body?.sourceType || 'openverse_api').trim();
-    const visibility = req.body?.visibility === 'internal' ? 'internal' : 'public';
 
-    if (!name || !creatorUuid || !creatorSlug || !clientId || !clientSecret) {
-      return res.status(400).json({ message: 'name, creatorUuid, creatorSlug, clientId, and clientSecret are required' });
+    if (!name || !creatorUuid || !creatorSlug) {
+      return res.status(400).json({ message: 'name, creatorUuid, and creatorSlug are required' });
+    }
+    if (!clientId || !clientSecret) {
+      return res.status(400).json({ message: 'Openverse credentials are not configured on the server' });
     }
     if (sourceType !== 'openverse_api') {
       return res.status(400).json({ message: 'Only Openverse API sources are supported in this phase' });
@@ -308,7 +316,6 @@ export const createApp = () => {
       creatorSlug,
       clientId,
       clientSecret,
-      visibility,
       createdAt: now,
       updatedAt: now,
       openverseTokenValidatedAt: now,

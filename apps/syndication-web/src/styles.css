@@ -33,12 +33,14 @@ body { margin: 0; }
 .grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .field { display: grid; gap: 6px; font-weight: 600; color: #1e293b; }
-.field input {
+.field input,
+.field select {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 1rem;
+  background: #fff;
 }
 .field input[readonly] { background: #f8fafc; color: #475569; }
 

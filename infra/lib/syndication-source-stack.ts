@@ -49,7 +49,9 @@ export class SyndicationSourceStack extends Stack {
         GALLERY_CORE_TABLE: props.galleryCoreTable.tableName,
         COGNITO_USER_POOL_ID: props.userPool.userPoolId,
         COGNITO_CLIENT_ID: props.userPoolClient.userPoolClientId,
-        COGNITO_TOKEN_USE: 'id'
+        COGNITO_TOKEN_USE: 'id',
+        OPENVERSE_CLIENT_ID: process.env.OPENVERSE_CLIENT_ID || '',
+        OPENVERSE_CLIENT_SECRET: process.env.OPENVERSE_CLIENT_SECRET || ''
       }
     });
 
