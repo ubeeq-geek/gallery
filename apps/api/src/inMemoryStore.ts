@@ -18,11 +18,50 @@ import type {
   AuditEvent,
   Post,
   TrendingFeedItem,
-  TrendingPeriod
+  TrendingPeriod,
+  UserIdentity,
+  UserExternalLink,
+  UserBadge,
+  ContributionContext,
+  ContextSubmission,
+  ContextUnlockThreshold,
+  ChallengePrize,
+  PrizeAward,
+  PlatformRole,
+  UserCapabilities
 } from './domain';
 import type { DataStore } from './store';
 
 export class InMemoryStore implements DataStore {
+  private static capabilitiesForRole(role: PlatformRole): UserCapabilities {
+    return {
+      canBrowse: true,
+      canComment: true,
+      canVote: true,
+      canSubmitToContexts: role === 'contributor' || role === 'creator' || role === 'admin',
+      canPublishPosts: role === 'creator' || role === 'admin',
+      canManageGroups: role === 'creator' || role === 'admin',
+      canModerate: role === 'admin',
+      canAwardPrizes: role === 'admin'
+    };
+  }
+
+  private getOrCreateIdentity(userId: string): UserIdentity {
+    const existing = this.userIdentities.find((item) => item.userId === userId);
+    if (existing) return existing;
+    const now = new Date().toISOString();
+    const created: UserIdentity = {
+      userId,
+      role: 'user',
+      isBeeker: false,
+      capabilities: InMemoryStore.capabilitiesForRole('user'),
+      createdAt: now,
+      updatedAt: now
+    };
+    this.userIdentities.push(created);
+    return created;
+  }
+
   siteSettings: SiteSettings = {
     settingId: 'SITE',
     siteName: 'Ubeeq',
@@ -44,6 +83,14 @@ export class InMemoryStore implements DataStore {
   collections: Collection[] = [];
   collectionImages: CollectionImage[] = [];
   follows: Follow[] = [];
+  userIdentities: UserIdentity[] = [];
+  userExternalLinks: UserExternalLink[] = [];
+  userBadges: UserBadge[] = [];
+  contributionContexts: ContributionContext[] = [];
+  contextSubmissions: ContextSubmission[] = [];
+  contextUnlockThresholds: ContextUnlockThreshold[] = [];
+  challengePrizes: ChallengePrize[] = [];
+  prizeAwards: PrizeAward[] = [];
   idempotency: IdempotencyRecord[] = [];
   auditEvents: AuditEvent[] = [];
   imageFavoriteCounts = new Map<string, number>();
@@ -542,6 +589,126 @@ export class InMemoryStore implements DataStore {
   async upsertUserProfile(profile: UserProfile): Promise<void> {
     this.userProfiles = this.userProfiles.filter((item) => item.userId !== profile.userId);
     this.userProfiles.push(profile);
+  }
+
+  async getUserIdentity(userId: string): Promise<UserIdentity | null> {
+    return this.userIdentities.find((item) => item.userId === userId) || null;
+  }
+
+  async upsertUserIdentity(identity: UserIdentity): Promise<void> {
+    this.userIdentities = this.userIdentities.filter((item) => item.userId !== identity.userId);
+    this.userIdentities.push(identity);
+  }
+
+  async setUserRole(userId: string, role: PlatformRole): Promise<UserIdentity> {
+    const existing = this.getOrCreateIdentity(userId);
+    const now = new Date().toISOString();
+    const next: UserIdentity = {
+      ...existing,
+      role,
+      capabilities: InMemoryStore.capabilitiesForRole(role),
+      updatedAt: now
+    };
+    this.userIdentities = this.userIdentities.filter((item) => item.userId !== userId);
+    this.userIdentities.push(next);
+    return next;
+  }
+
+  async listUserExternalLinks(userId: string): Promise<UserExternalLink[]> {
+    return this.userExternalLinks.filter((item) => item.userId === userId);
+  }
+
+  async upsertUserExternalLink(link: UserExternalLink): Promise<void> {
+    this.userExternalLinks = this.userExternalLinks.filter((item) => item.linkId !== link.linkId);
+    this.userExternalLinks.push(link);
+  }
+
+  async listUserBadges(userId: string): Promise<UserBadge[]> {
+    return this.userBadges.filter((item) => item.userId === userId);
+  }
+
+  async awardUserBadge(badge: UserBadge): Promise<void> {
+    this.userBadges = this.userBadges.filter((item) => item.badgeId !== badge.badgeId);
+    this.userBadges.push(badge);
+  }
+
+  async listContributionContexts(): Promise<ContributionContext[]> {
+    return [...this.contributionContexts].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async getContributionContextById(contextId: string): Promise<ContributionContext | null> {
+    return this.contributionContexts.find((item) => item.contextId === contextId) || null;
+  }
+
+  async getContributionContextBySlug(slug: string): Promise<ContributionContext | null> {
+    return this.contributionContexts.find((item) => item.slug === slug) || null;
+  }
+
+  async createContributionContext(context: ContributionContext): Promise<void> {
+    this.contributionContexts = this.contributionContexts.filter((item) => item.contextId !== context.contextId);
+    this.contributionContexts.push(context);
+  }
+
+  async updateContributionContext(context: ContributionContext): Promise<void> {
+    this.contributionContexts = this.contributionContexts.filter((item) => item.contextId !== context.contextId);
+    this.contributionContexts.push(context);
+  }
+
+  async listContextSubmissions(contextId: string): Promise<ContextSubmission[]> {
+    return this.contextSubmissions
+      .filter((item) => item.contextId === contextId)
+      .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+  }
+
+  async getContextSubmissionById(submissionId: string): Promise<ContextSubmission | null> {
+    return this.contextSubmissions.find((item) => item.submissionId === submissionId) || null;
+  }
+
+  async createContextSubmission(submission: ContextSubmission): Promise<void> {
+    this.contextSubmissions = this.contextSubmissions.filter((item) => item.submissionId !== submission.submissionId);
+    this.contextSubmissions.push(submission);
+  }
+
+  async updateContextSubmission(submission: ContextSubmission): Promise<void> {
+    this.contextSubmissions = this.contextSubmissions.filter((item) => item.submissionId !== submission.submissionId);
+    this.contextSubmissions.push(submission);
+  }
+
+  async listContextUnlockThresholds(contextId: string): Promise<ContextUnlockThreshold[]> {
+    return this.contextUnlockThresholds.filter((item) => item.contextId === contextId);
+  }
+
+  async createContextUnlockThreshold(threshold: ContextUnlockThreshold): Promise<void> {
+    this.contextUnlockThresholds = this.contextUnlockThresholds.filter((item) => item.unlockId !== threshold.unlockId);
+    this.contextUnlockThresholds.push(threshold);
+  }
+
+  async updateContextUnlockThreshold(threshold: ContextUnlockThreshold): Promise<void> {
+    this.contextUnlockThresholds = this.contextUnlockThresholds.filter((item) => item.unlockId !== threshold.unlockId);
+    this.contextUnlockThresholds.push(threshold);
+  }
+
+  async listChallengePrizes(contextId: string): Promise<ChallengePrize[]> {
+    return this.challengePrizes.filter((item) => item.contextId === contextId);
+  }
+
+  async createChallengePrize(prize: ChallengePrize): Promise<void> {
+    this.challengePrizes = this.challengePrizes.filter((item) => item.prizeId !== prize.prizeId);
+    this.challengePrizes.push(prize);
+  }
+
+  async updateChallengePrize(prize: ChallengePrize): Promise<void> {
+    this.challengePrizes = this.challengePrizes.filter((item) => item.prizeId !== prize.prizeId);
+    this.challengePrizes.push(prize);
+  }
+
+  async listPrizeAwards(contextId: string): Promise<PrizeAward[]> {
+    return this.prizeAwards.filter((item) => item.contextId === contextId);
+  }
+
+  async createPrizeAward(award: PrizeAward): Promise<void> {
+    this.prizeAwards = this.prizeAwards.filter((item) => item.prizeAwardId !== award.prizeAwardId);
+    this.prizeAwards.push(award);
   }
 
   async getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null> {
