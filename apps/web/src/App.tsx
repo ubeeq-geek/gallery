@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api';
-import { ArtistAreaWorkspace } from './ArtistAreaWorkspace';
+import { StudioWorkspace } from './StudioWorkspace';
 import { ForCreatorsPage } from './pages/ForCreatorsPage';
 import {
   changePassword,
@@ -7598,7 +7598,7 @@ export default function App() {
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
         <Route path="/settings" element={<SettingsPage user={user} onProfileChanged={setMyProfile} />} />
         <Route path="/studio" element={<StudioDashboardPage user={user} managedArtists={managedArtists} roleNotificationCounts={roleNotificationCounts} />} />
-        <Route path="/studio/workspace" element={user ? <ArtistAreaWorkspace /> : <Navigate to="/auth/signin" replace />} />
+        <Route path="/studio/workspace" element={user ? <StudioWorkspace /> : <Navigate to="/auth/signin" replace />} />
         <Route path="/admin" element={<Navigate to="/studio" replace />} />
         <Route path="/artist-area" element={<LegacyArtistAreaRedirect />} />
         <Route path="/artist-area/admin" element={<LegacyArtistAreaWorkspaceRedirect />} />
