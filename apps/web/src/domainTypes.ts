@@ -219,6 +219,72 @@ export type ManagedFavorite = {
   createdAt: string;
 };
 
+export type PostStatus = 'draft' | 'published' | 'archived';
+export type PostDiscoveryMode = 'primary' | 'all' | 'selected';
+export type PostBlockType =
+  | 'heading'
+  | 'paragraph'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'quote'
+  | 'divider'
+  | 'embed'
+  | 'file'
+  | 'link'
+  | 'gallery'
+  | 'carousel'
+  | 'pdf_preview'
+  | 'html_fragment';
+
+export type PostBlock = {
+  blockId: string;
+  type: PostBlockType;
+  text?: string;
+  level?: number;
+  mediaId?: string;
+  caption?: string;
+  quote?: string;
+  author?: string;
+  url?: string;
+  mimeType?: string;
+  title?: string;
+  html?: string;
+  payload?: Record<string, unknown>;
+};
+
+export type PostMediaRef = {
+  mediaId: string;
+  discoverable?: boolean;
+  sortOrder?: number;
+  caption?: string;
+};
+
+export type PostDestination = {
+  type: 'post' | 'pdf' | 'external' | 'internal';
+  url: string;
+};
+
+export type ManagedPost = {
+  postId: string;
+  artistId: string;
+  authorId?: string;
+  title: string;
+  slug: string;
+  slugHistory?: string[];
+  summary?: string;
+  status: PostStatus;
+  blocks: PostBlock[];
+  media: PostMediaRef[];
+  primaryMediaId?: string;
+  discovery: { mode: PostDiscoveryMode };
+  destination?: PostDestination | null;
+  metadata?: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+};
+
 export type ManagedCollection = {
   collectionId: string;
   title: string;

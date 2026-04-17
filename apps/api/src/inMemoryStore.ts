@@ -16,6 +16,7 @@ import type {
   CollectionImage,
   IdempotencyRecord,
   AuditEvent,
+  Post,
   TrendingFeedItem,
   TrendingPeriod
 } from './domain';
@@ -31,6 +32,7 @@ export class InMemoryStore implements DataStore {
   artists: Artist[] = [];
   galleries: Gallery[] = [];
   media: Media[] = [];
+  posts: Post[] = [];
   galleryMedia: GalleryMedia[] = [];
   comments: Comment[] = [];
   favorites: Favorite[] = [];
@@ -90,6 +92,28 @@ export class InMemoryStore implements DataStore {
 
   async listMediaByArtist(artistId: string): Promise<Media[]> {
     return this.media.filter((item) => item.artistId === artistId);
+  }
+
+  async listPostsByArtistSlug(artistSlug: string): Promise<Post[]> {
+    const artist = this.artists.find((item) => item.slug === artistSlug || (item.slugHistory || []).includes(artistSlug));
+    if (!artist) return [];
+    return this.posts.filter((item) => item.artistId === artist.artistId);
+  }
+
+  async listPostsByArtistId(artistId: string): Promise<Post[]> {
+    return this.posts.filter((item) => item.artistId === artistId);
+  }
+
+  async listAllPosts(): Promise<Post[]> {
+    return this.posts;
+  }
+
+  async getPostBySlug(slug: string): Promise<Post | null> {
+    return this.posts.find((item) => item.slug === slug || (item.slugHistory || []).includes(slug)) || null;
+  }
+
+  async getPostById(postId: string): Promise<Post | null> {
+    return this.posts.find((item) => item.postId === postId) || null;
   }
 
   async listMediaGalleryPlacements(mediaId: string): Promise<Array<{
@@ -179,6 +203,19 @@ export class InMemoryStore implements DataStore {
 
   async updateMedia(media: Media): Promise<void> {
     this.media = this.media.map((item) => (item.mediaId === media.mediaId ? media : item));
+  }
+
+  async createPost(post: Post): Promise<void> {
+    this.posts = this.posts.filter((item) => item.postId !== post.postId);
+    this.posts.push(post);
+  }
+
+  async updatePost(post: Post): Promise<void> {
+    this.posts = this.posts.map((item) => (item.postId === post.postId ? post : item));
+  }
+
+  async deletePost(postId: string): Promise<void> {
+    this.posts = this.posts.filter((item) => item.postId !== postId);
   }
 
   async moveMediaInGallery(galleryId: string, mediaId: string, position: number): Promise<void> {

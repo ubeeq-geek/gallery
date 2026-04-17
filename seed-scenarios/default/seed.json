@@ -133,6 +133,153 @@
           "posterFile": "anne-free-video-1-poster.png",
           "gallerySlug": "anne-smith-free"
         }
+      ],
+      "posts": [
+        {
+          "title": "Desert Light Collection",
+          "slug": "desert-light-collection",
+          "summary": "A grouped post anchored on Anne's free gallery images.",
+          "discoveryMode": "selected",
+          "primaryMedia": {
+            "file": "anne-1.png",
+            "gallerySlug": "anne-smith-free"
+          },
+          "media": [
+            {
+              "file": "anne-1.png",
+              "gallerySlug": "anne-smith-free",
+              "discoverable": true
+            },
+            {
+              "file": "anne-2.png",
+              "gallerySlug": "anne-smith-free",
+              "discoverable": true
+            },
+            {
+              "file": "anne-3.png",
+              "gallerySlug": "anne-smith-free",
+              "discoverable": false
+            }
+          ],
+          "blocks": [
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Desert Light Collection"
+            },
+            {
+              "type": "paragraph",
+              "text": "A small grouped release from Anne's free feed."
+            },
+            {
+              "type": "image",
+              "file": "anne-1.png",
+              "gallerySlug": "anne-smith-free",
+              "caption": "Entry one"
+            },
+            {
+              "type": "image",
+              "file": "anne-2.png",
+              "gallerySlug": "anne-smith-free",
+              "caption": "Entry two"
+            }
+          ],
+          "metadata": {
+            "template": "default",
+            "layout": "standard",
+            "kind": "collection"
+          }
+        },
+        {
+          "title": "Joshua Field Notes",
+          "slug": "joshua-field-notes",
+          "summary": "Longform post with inline media blocks and optional external destination.",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "anne-5.png",
+            "gallerySlug": "anne-smith-premium-preview"
+          },
+          "media": [
+            {
+              "file": "anne-5.png",
+              "gallerySlug": "anne-smith-premium-preview"
+            },
+            {
+              "file": "anne-6.png",
+              "gallerySlug": "anne-smith-premium-preview",
+              "discoverable": false
+            }
+          ],
+          "blocks": [
+            {
+              "type": "heading",
+              "level": 1,
+              "text": "Joshua Field Notes"
+            },
+            {
+              "type": "paragraph",
+              "text": "A longform entry using block composition with media and links."
+            },
+            {
+              "type": "image",
+              "file": "anne-5.png",
+              "gallerySlug": "anne-smith-premium-preview",
+              "caption": "Primary frame"
+            },
+            {
+              "type": "paragraph",
+              "text": "Preview and premium are modeled by gallery access while posts remain generic."
+            },
+            {
+              "type": "link",
+              "title": "Open premium gallery",
+              "url": "https://store.example.com/anne-smith-premium"
+            }
+          ],
+          "destination": {
+            "type": "external",
+            "url": "https://store.example.com/anne-smith-premium"
+          },
+          "metadata": {
+            "template": "reading",
+            "layout": "longform",
+            "kind": "story"
+          }
+        },
+        {
+          "title": "Boardwalk Clip",
+          "slug": "boardwalk-clip",
+          "summary": "Video-led post with cover and media-first discovery.",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "anne-free-video-1.mp4",
+            "gallerySlug": "anne-smith-free"
+          },
+          "media": [
+            {
+              "file": "anne-free-video-1.mp4",
+              "gallerySlug": "anne-smith-free",
+              "discoverable": true
+            }
+          ],
+          "blocks": [
+            {
+              "type": "video",
+              "file": "anne-free-video-1.mp4",
+              "gallerySlug": "anne-smith-free",
+              "caption": "Boardwalk walk-through"
+            },
+            {
+              "type": "paragraph",
+              "text": "A short video update published through the same generic post model."
+            }
+          ],
+          "metadata": {
+            "template": "default",
+            "layout": "standard",
+            "kind": "video"
+          }
+        }
       ]
     },
     {
@@ -392,6 +539,57 @@
           "title": "DC-012",
           "gallerySlug": "daily-cosmos-free"
         }
+      ],
+      "posts": [
+        {
+          "title": "Daily Cosmos Drop 001",
+          "slug": "daily-cosmos-drop-001",
+          "summary": "Image-first post with selected discovery items.",
+          "discoveryMode": "selected",
+          "primaryMedia": {
+            "file": "DC-001.png",
+            "gallerySlug": "daily-cosmos-free"
+          },
+          "media": [
+            {
+              "file": "DC-001.png",
+              "gallerySlug": "daily-cosmos-free",
+              "discoverable": true
+            },
+            {
+              "file": "DC-002.jpg",
+              "gallerySlug": "daily-cosmos-free",
+              "discoverable": true
+            },
+            {
+              "file": "DC-003.jpg",
+              "gallerySlug": "daily-cosmos-free",
+              "discoverable": false
+            }
+          ],
+          "blocks": [
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Daily Cosmos Drop 001"
+            },
+            {
+              "type": "image",
+              "file": "DC-001.png",
+              "gallerySlug": "daily-cosmos-free",
+              "caption": "Primary discovery frame"
+            },
+            {
+              "type": "paragraph",
+              "text": "This post demonstrates selected discovery mode in a generic post structure."
+            }
+          ],
+          "metadata": {
+            "template": "default",
+            "layout": "standard",
+            "kind": "image-first"
+          }
+        }
       ]
     },
     {
@@ -603,6 +801,53 @@
           "file": "PAST-0004-venice-1912.mp4",
           "title": "venice-1912",
           "gallerySlug": "livestreams-from-the-past-free-gallery"
+        }
+      ],
+      "posts": [
+        {
+          "title": "Livestream Archive Episode One",
+          "slug": "livestream-archive-episode-one",
+          "summary": "Video narrative post from the archive feed.",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "PAST-0001-france-1912.mp4",
+            "gallerySlug": "livestreams-from-the-past-free-gallery"
+          },
+          "media": [
+            {
+              "file": "PAST-0001-france-1912.mp4",
+              "gallerySlug": "livestreams-from-the-past-free-gallery",
+              "discoverable": true
+            },
+            {
+              "file": "PAST-0002-uk-1910.mp4",
+              "gallerySlug": "livestreams-from-the-past-free-gallery",
+              "discoverable": false
+            }
+          ],
+          "blocks": [
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Livestream Archive Episode One"
+            },
+            {
+              "type": "video",
+              "file": "PAST-0001-france-1912.mp4",
+              "gallerySlug": "livestreams-from-the-past-free-gallery",
+              "caption": "Featured stream excerpt"
+            },
+            {
+              "type": "paragraph",
+              "text": "Serialized video entries can use the same post structure with optional destination links."
+            }
+          ],
+          "metadata": {
+            "template": "default",
+            "layout": "standard",
+            "series": "archive-season-1",
+            "kind": "video-series"
+          }
         }
       ]
     }

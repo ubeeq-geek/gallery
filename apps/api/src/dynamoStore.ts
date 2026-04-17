@@ -27,6 +27,7 @@ import type {
   Follow,
   IdempotencyRecord,
   AuditEvent,
+  Post,
   TrendingFeedItem,
   TrendingPeriod
 } from './domain';
@@ -41,6 +42,7 @@ export class DynamoStore implements DataStore {
   private readonly localUserProfiles = new Map<string, UserProfile>();
   private readonly localArtistMembers = new Map<string, ArtistMember>();
   private readonly localCollections = new Map<string, Collection>();
+  private readonly localPosts = new Map<string, Post>();
   private readonly localCollectionImages = new Map<string, Array<{ imageId: string; sortOrder: number }>>();
   private readonly localFollows = new Map<string, Follow>();
   private readonly localIdempotency = new Map<string, IdempotencyRecord>();
@@ -194,6 +196,49 @@ export class DynamoStore implements DataStore {
     return [...byId.values()];
   }
 
+  async listPostsByArtistSlug(artistSlug: string): Promise<Post[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listPostsByArtistSlug(artistSlug);
+    }
+    const artists = await this.listArtists();
+    const artist = artists.find((item) => item.slug === artistSlug || (item.slugHistory || []).includes(artistSlug));
+    if (!artist) return [];
+    return this.listPostsByArtistId(artist.artistId);
+  }
+
+  async listPostsByArtistId(artistId: string): Promise<Post[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listPostsByArtistId(artistId);
+    }
+    return Array.from(this.localPosts.values()).filter((item) => item.artistId === artistId);
+  }
+
+  async listAllPosts(): Promise<Post[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listAllPosts();
+    }
+    return Array.from(this.localPosts.values());
+  }
+
+  async getPostBySlug(slug: string): Promise<Post | null> {
+    if (this.coreRepo) {
+      return this.coreRepo.getPostBySlug(slug);
+    }
+    for (const post of this.localPosts.values()) {
+      if (post.slug === slug || (post.slugHistory || []).includes(slug)) {
+        return post;
+      }
+    }
+    return null;
+  }
+
+  async getPostById(postId: string): Promise<Post | null> {
+    if (this.coreRepo) {
+      return this.coreRepo.getPostById(postId);
+    }
+    return this.localPosts.get(postId) || null;
+  }
+
   async listMediaGalleryPlacements(mediaId: string): Promise<Array<{
     galleryMediaId: string;
     galleryId: string;
@@ -337,6 +382,30 @@ export class DynamoStore implements DataStore {
         Item: { ...media, appearsInFeed: media.appearsInFeed !== false, imageId: media.mediaId }
       })
     );
+  }
+
+  async createPost(post: Post): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.createPost(post);
+      return;
+    }
+    this.localPosts.set(post.postId, post);
+  }
+
+  async updatePost(post: Post): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.updatePost(post);
+      return;
+    }
+    this.localPosts.set(post.postId, post);
+  }
+
+  async deletePost(postId: string): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.deletePost(postId);
+      return;
+    }
+    this.localPosts.delete(postId);
   }
 
   async moveMediaInGallery(galleryId: string, mediaId: string, position: number): Promise<void> {

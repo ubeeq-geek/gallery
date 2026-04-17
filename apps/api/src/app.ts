@@ -11,7 +11,7 @@ import { issueRememberAccessToken, issueUnlockToken, verifyPassword, verifyUnloc
 import type { AppConfig } from './config';
 import type { DataStore } from './store';
 import { hashPassword } from './unlock';
-import type { AiDisclosure, Artist, ArtistMember, Comment, ContentRating, Gallery, HeavyTopic, Media, SiteSettings, UserProfile } from './domain';
+import type { AiDisclosure, Artist, ArtistMember, Comment, ContentRating, Gallery, HeavyTopic, Media, Post, PostBlock, PostDiscoveryMode, SiteSettings, UserProfile } from './domain';
 import { generateImageRenditions, type SquareCropInput } from './renditions';
 import { refreshTrendingFeeds } from './trendingFeed';
 import {
@@ -135,6 +135,77 @@ const parseStringArray = (value: unknown): string[] => {
     result.push(normalized);
   }
   return result;
+};
+
+const POST_BLOCK_TYPES = new Set([
+  'heading',
+  'paragraph',
+  'image',
+  'video',
+  'audio',
+  'quote',
+  'divider',
+  'embed',
+  'file',
+  'link',
+  'gallery',
+  'carousel',
+  'pdf_preview',
+  'html_fragment'
+]);
+
+const parsePostBlocks = (value: unknown): PostBlock[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as Record<string, unknown>;
+      const type = typeof row.type === 'string' ? row.type.trim() : '';
+      if (!POST_BLOCK_TYPES.has(type)) return null;
+      const block: PostBlock = {
+        blockId: typeof row.blockId === 'string' && row.blockId.trim() ? row.blockId.trim() : `${type}-${index + 1}`,
+        type: type as PostBlock['type']
+      };
+      if (typeof row.text === 'string') block.text = row.text.slice(0, 20000);
+      if (typeof row.level === 'number' && Number.isFinite(row.level)) block.level = Math.max(1, Math.min(6, Math.floor(row.level)));
+      if (typeof row.mediaId === 'string' && row.mediaId.trim()) block.mediaId = row.mediaId.trim();
+      if (typeof row.caption === 'string') block.caption = row.caption.slice(0, 2000);
+      if (typeof row.quote === 'string') block.quote = row.quote.slice(0, 4000);
+      if (typeof row.author === 'string') block.author = row.author.slice(0, 200);
+      if (typeof row.url === 'string') block.url = row.url.slice(0, 2048);
+      if (typeof row.mimeType === 'string') block.mimeType = row.mimeType.slice(0, 255);
+      if (typeof row.title === 'string') block.title = row.title.slice(0, 300);
+      if (typeof row.html === 'string') block.html = row.html.slice(0, 50000);
+      if (row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)) {
+        block.payload = row.payload as Record<string, unknown>;
+      }
+      return block;
+    })
+    .filter((item): item is PostBlock => Boolean(item));
+};
+
+const parsePostMediaRefs = (value: unknown): Post['media'] => {
+  if (!Array.isArray(value)) return [];
+  const result: Post['media'] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const mediaId = typeof row.mediaId === 'string' ? row.mediaId.trim() : '';
+    if (!mediaId) continue;
+    const sortOrderRaw = Number(row.sortOrder);
+    result.push({
+      mediaId,
+      discoverable: row.discoverable === undefined ? true : Boolean(row.discoverable),
+      sortOrder: Number.isFinite(sortOrderRaw) ? Math.max(0, Math.floor(sortOrderRaw)) : undefined,
+      caption: typeof row.caption === 'string' ? row.caption.slice(0, 2000) : undefined
+    });
+  }
+  return result;
+};
+
+const parsePostDiscoveryMode = (value: unknown): PostDiscoveryMode => {
+  if (value === 'all' || value === 'selected') return value;
+  return 'primary';
 };
 
 const validateUsername = (value: string): { normalized: string; reasons: string[] } => {
@@ -768,7 +839,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
   const computeTrendingImages = async (
     _req: express.Request,
-    opts?: { period?: 'hourly' | 'daily'; cursor?: string; limit?: number; artistId?: string }
+    opts?: { period?: 'hourly' | 'daily'; cursor?: string; limit?: number; artistId?: string; source?: 'media' | 'post' | 'combined' }
   ): Promise<{
     period: 'hourly' | 'daily';
     items: Omit<TrendingImageItem, 'score'>[];
@@ -776,6 +847,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     metrics: { candidateCount: number; scoredCount: number; galleryCount: number };
   }> => {
     const period = opts?.period === 'hourly' ? 'hourly' : 'daily';
+    const source: 'media' | 'post' | 'combined' = opts?.source === 'media' || opts?.source === 'post' || opts?.source === 'combined'
+      ? opts.source
+      : 'combined';
     const limit = Math.max(1, Math.min(60, Number(opts?.limit || 24)));
     const candidateLimit = Math.max(
       120,
@@ -802,7 +876,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const artistById = new Map(allArtists.map((artist) => [artist.artistId, artist]));
     const activeArtistIds = new Set(allArtists.filter((artist) => artist.status === 'active').map((artist) => artist.artistId));
 
-    const galleries = (await store.listAllGalleries()).filter((gallery) => {
+    const allGalleries = (await store.listAllGalleries()).filter((gallery) => {
       if (opts?.artistId && gallery.artistId !== opts.artistId) return false;
       if (gallery.status !== 'published') return false;
       if (gallery.visibility === 'premium') return false;
@@ -811,10 +885,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       // Public discovery feed intentionally ignores follower/admin early-access windows.
       return canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, nowMs, false);
     });
-
-    const mediaByGallery = await Promise.all(
-      galleries.map(async (gallery) => ({ gallery, media: await store.getMediaByGallery(gallery.galleryId) }))
-    );
+    const galleryById = new Map(allGalleries.map((gallery) => [gallery.galleryId, gallery]));
     const candidates: Array<{
       imageId: string;
       assetType: 'image' | 'video';
@@ -822,6 +893,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       galleryId: string;
       gallerySlug: string;
       galleryVisibility: 'free' | 'preview';
+      postId?: string;
       discoverSquareCropEnabled: boolean;
       effectiveContentRating: ContentRating;
       effectiveAiDisclosure: AiDisclosure;
@@ -836,62 +908,169 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       height: number;
       aspectRatio: number;
     }> = [];
-    for (const { gallery, media } of mediaByGallery) {
-      for (const item of media) {
-        const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
-        if (isHiddenByVisibility(item.releaseVisibility)) continue;
-        if (!canViewBySchedule(item.publishAt || gallery.publishAt, item.publicReleaseAt || gallery.publicReleaseAt, nowMs, false)) {
-          continue;
+    if (source !== 'post') {
+      const mediaByGallery = await Promise.all(
+        allGalleries.map(async (gallery) => ({ gallery, media: await store.getMediaByGallery(gallery.galleryId) }))
+      );
+      for (const { gallery, media } of mediaByGallery) {
+        for (const item of media) {
+          const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
+          if (isHiddenByVisibility(item.releaseVisibility)) continue;
+          if (!canViewBySchedule(item.publishAt || gallery.publishAt, item.publicReleaseAt || gallery.publicReleaseAt, nowMs, false)) {
+            continue;
+          }
+          const createdAtMs = asTime(item.createdAt) || nowMs;
+          const discoverSquareCropEnabled =
+            (artistById.get(item.artistId)?.discoverSquareCropEnabled ?? true) &&
+            (gallery.discoverSquareCropEnabled ?? true) &&
+            (item.discoverSquareCropEnabled ?? true);
+          const artist = artistById.get(item.artistId);
+          const effectiveContentRating = getEffectiveContentRating(item);
+          const effectiveAiDisclosure = getEffectiveAiDisclosure(item, gallery, artist);
+          const effectiveHeavyTopics = getEffectiveHeavyTopics(item, gallery, artist);
+          if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) continue;
+          if (!passesDisclosureFilter(effectiveAiDisclosure, effectiveHeavyTopics, viewerPolicy.disclosurePolicy)) continue;
+          candidates.push({
+            imageId: item.mediaId,
+            assetType,
+            artistId: item.artistId,
+            galleryId: gallery.galleryId,
+            gallerySlug: gallery.slug,
+            galleryVisibility: gallery.visibility === 'preview' ? 'preview' : 'free',
+            discoverSquareCropEnabled,
+            effectiveContentRating,
+            effectiveAiDisclosure,
+            effectiveHeavyTopics,
+            title: item.title || gallery.title || 'Artwork',
+            createdAt: item.createdAt,
+            createdAtMs,
+            recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
+            ...resolveTrendingPreviewKeys(item),
+            width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
+            height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
+            aspectRatio: (
+              Number.isFinite(item.width) && item.width > 0
+              && Number.isFinite(item.height) && item.height > 0
+            )
+              ? Number((item.width / item.height).toFixed(5))
+              : 1
+          });
         }
-        const createdAtMs = asTime(item.createdAt) || nowMs;
-        const discoverSquareCropEnabled =
-          (artistById.get(item.artistId)?.discoverSquareCropEnabled ?? true) &&
-          (gallery.discoverSquareCropEnabled ?? true) &&
-          (item.discoverSquareCropEnabled ?? true);
-        const artist = artistById.get(item.artistId);
-        const effectiveContentRating = getEffectiveContentRating(item);
-        const effectiveAiDisclosure = getEffectiveAiDisclosure(item, gallery, artist);
-        const effectiveHeavyTopics = getEffectiveHeavyTopics(item, gallery, artist);
-        if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) {
-          continue;
+      }
+    }
+    if (source !== 'media') {
+      const targetArtists = opts?.artistId
+        ? allArtists.filter((artist) => artist.artistId === opts.artistId && artist.status === 'active')
+        : allArtists.filter((artist) => artist.status === 'active');
+      const perPostSurfaceLimit = 3;
+      for (const artist of targetArtists) {
+        const [posts, artistMedia] = await Promise.all([
+          store.listPostsByArtistId(artist.artistId),
+          store.listMediaByArtist(artist.artistId)
+        ]);
+        const mediaById = new Map(artistMedia.map((item) => [item.mediaId, item]));
+        const placementByMediaId = new Map<string, Array<{ galleryId: string; position: number }>>();
+        const candidateMediaIds = Array.from(new Set(
+          posts
+            .filter((post) => post.status === 'published')
+            .flatMap((post) => post.media.map((ref) => ref.mediaId))
+        ));
+        const placementRows = await Promise.all(candidateMediaIds.map(async (mediaId) => ({
+          mediaId,
+          rows: await store.listMediaGalleryPlacements(mediaId)
+        })));
+        for (const placement of placementRows) {
+          placementByMediaId.set(
+            placement.mediaId,
+            placement.rows
+              .filter((row) => galleryById.has(row.galleryId))
+              .sort((a, b) => a.position - b.position)
+              .map((row) => ({ galleryId: row.galleryId, position: row.position }))
+          );
         }
-        if (!passesDisclosureFilter(effectiveAiDisclosure, effectiveHeavyTopics, viewerPolicy.disclosurePolicy)) {
-          continue;
+
+        for (const post of posts) {
+          if (post.status !== 'published') continue;
+          const sortedRefs = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
+          const primaryRef = post.primaryMediaId
+            ? sortedRefs.find((ref) => ref.mediaId === post.primaryMediaId)
+            : undefined;
+          const selectedRefs = sortedRefs.filter((ref) => ref.discoverable !== false);
+          const refs = post.discovery.mode === 'all'
+            ? sortedRefs
+            : (post.discovery.mode === 'selected'
+              ? selectedRefs
+              : (primaryRef ? [primaryRef] : selectedRefs.slice(0, 1)));
+          const limitedRefs = refs.slice(0, perPostSurfaceLimit);
+          for (let refIndex = 0; refIndex < limitedRefs.length; refIndex += 1) {
+            const ref = limitedRefs[refIndex];
+            const item = mediaById.get(ref.mediaId);
+            if (!item) continue;
+            if (isHiddenByVisibility(item.releaseVisibility)) continue;
+            if (item.status && item.status !== 'published' && item.status !== 'scheduled') continue;
+
+            const placements = placementByMediaId.get(item.mediaId) || [];
+            const placedGallery = placements
+              .map((row) => galleryById.get(row.galleryId))
+              .find((gallery): gallery is Gallery => Boolean(gallery));
+            if (!placedGallery) continue;
+            if (!canViewBySchedule(item.publishAt || placedGallery.publishAt, item.publicReleaseAt || placedGallery.publicReleaseAt, nowMs, false)) {
+              continue;
+            }
+            const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
+            const createdAtMs = asTime(item.createdAt) || nowMs;
+            const discoverSquareCropEnabled =
+              (artist.discoverSquareCropEnabled ?? true) &&
+              (placedGallery.discoverSquareCropEnabled ?? true) &&
+              (item.discoverSquareCropEnabled ?? true);
+            const effectiveContentRating = getEffectiveContentRating(item);
+            const effectiveAiDisclosure = getEffectiveAiDisclosure(item, placedGallery, artist);
+            const effectiveHeavyTopics = getEffectiveHeavyTopics(item, placedGallery, artist);
+            if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) continue;
+            if (!passesDisclosureFilter(effectiveAiDisclosure, effectiveHeavyTopics, viewerPolicy.disclosurePolicy)) continue;
+            candidates.push({
+              imageId: item.mediaId,
+              assetType,
+              artistId: item.artistId,
+              galleryId: placedGallery.galleryId,
+              gallerySlug: placedGallery.slug,
+              galleryVisibility: placedGallery.visibility === 'preview' ? 'preview' : 'free',
+              postId: post.postId,
+              discoverSquareCropEnabled,
+              effectiveContentRating,
+              effectiveAiDisclosure,
+              effectiveHeavyTopics,
+              title: item.title || post.title || placedGallery.title || 'Artwork',
+              createdAt: item.createdAt,
+              createdAtMs,
+              recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
+              ...resolveTrendingPreviewKeys(item),
+              width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
+              height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
+              aspectRatio: (
+                Number.isFinite(item.width) && item.width > 0
+                && Number.isFinite(item.height) && item.height > 0
+              )
+                ? Number((item.width / item.height).toFixed(5))
+                : 1
+            });
+          }
         }
-        candidates.push({
-          imageId: item.mediaId,
-          assetType,
-          artistId: item.artistId,
-          galleryId: gallery.galleryId,
-          gallerySlug: gallery.slug,
-          galleryVisibility: gallery.visibility === 'preview' ? 'preview' : 'free',
-          discoverSquareCropEnabled,
-          effectiveContentRating,
-          effectiveAiDisclosure,
-          effectiveHeavyTopics,
-          title: item.title || gallery.title || 'Artwork',
-          createdAt: item.createdAt,
-          createdAtMs,
-          recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
-          ...resolveTrendingPreviewKeys(item),
-          width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
-          height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
-          aspectRatio: (
-            Number.isFinite(item.width) && item.width > 0
-            && Number.isFinite(item.height) && item.height > 0
-          )
-            ? Number((item.width / item.height).toFixed(5))
-            : 1
-        });
       }
     }
     candidates.sort((a, b) => b.createdAtMs - a.createdAtMs);
     const sampled = candidates.slice(0, candidateLimit);
     const favoriteCounts = await store.getImageFavoriteCounts(sampled.map((item) => item.imageId));
+    const postCounts = new Map<string, number>();
+    for (const item of sampled) {
+      if (!item.postId) continue;
+      postCounts.set(item.postId, (postCounts.get(item.postId) || 0) + 1);
+    }
     const flat = await Promise.all(sampled.map(async (item) => {
       const favoriteCount = Math.max(0, Number(favoriteCounts[item.imageId] || 0));
       const discoverSquareCropBonus = item.discoverSquareCropEnabled ? 1.25 : 0;
-      const score = favoriteCount * 2 + item.recencyBoost * 10 + discoverSquareCropBonus;
+      const overpostPenalty = item.postId ? Math.max(0, (postCounts.get(item.postId) || 1) - 1) * 1.8 : 0;
+      const score = favoriteCount * 2 + item.recencyBoost * 10 + discoverSquareCropBonus - overpostPenalty;
       const contentProjection = projectContentRating(item.effectiveContentRating, viewerPolicy);
       const disclosureProjection = projectDisclosures(item.effectiveAiDisclosure, item.effectiveHeavyTopics);
       return {
@@ -930,7 +1109,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const queue = [...flat];
     while (queue.length > 0) {
       const lastArtistId = diversified.length > 0 ? diversified[diversified.length - 1].artistId : undefined;
-      const nextIndex = queue.findIndex((item) => item.artistId !== lastArtistId);
+      const lastPostId = diversified.length > 0 ? sampled.find((s) => s.imageId === diversified[diversified.length - 1].imageId)?.postId : undefined;
+      const enforcePostDiversity = source !== 'media';
+      const nextIndex = queue.findIndex((item) => item.artistId !== lastArtistId && (!enforcePostDiversity || !lastPostId || sampled.find((s) => s.imageId === item.imageId)?.postId !== lastPostId));
       diversified.push(queue.splice(nextIndex >= 0 ? nextIndex : 0, 1)[0]);
     }
 
@@ -944,7 +1125,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       metrics: {
         candidateCount: candidates.length,
         scoredCount: sampled.length,
-        galleryCount: galleries.length
+        galleryCount: allGalleries.length
       }
     };
   };
@@ -1253,6 +1434,141 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     });
   });
 
+  app.get('/artists/:slug/posts', async (req, res) => {
+    const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
+    const artist = await resolveArtistFromSlug(requestedSlug);
+    if (!artist || artist.status !== 'active') {
+      return res.status(404).json({ message: 'Artist not found' });
+    }
+    if (artist.slug !== requestedSlug) {
+      return res.redirect(302, `/artists/${artist.slug}/posts`);
+    }
+
+    const includeDrafts = req.authUser?.userId
+      ? (isAdminRequest(req) || await store.hasArtistAccess(req.authUser.userId, artist.artistId))
+      : false;
+    const mediaById = new Map((await store.listMediaByArtist(artist.artistId)).map((item) => [item.mediaId, item]));
+    const posts = (await store.listPostsByArtistSlug(artist.slug))
+      .filter((post) => includeDrafts ? post.status !== 'archived' : post.status === 'published')
+      .sort((a, b) => (b.publishedAt || b.updatedAt || b.createdAt).localeCompare(a.publishedAt || a.updatedAt || a.createdAt));
+
+    const payload = await Promise.all(posts.map(async (post) => {
+      const sortedMediaRefs = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
+      const selectedRefs = sortedMediaRefs.filter((item) => item.discoverable !== false);
+      const discoveryRefs = post.discovery.mode === 'all'
+        ? sortedMediaRefs
+        : (post.discovery.mode === 'selected' ? selectedRefs : []);
+      const primaryMedia = post.primaryMediaId ? mediaById.get(post.primaryMediaId) : undefined;
+      const primaryRef = post.media.find((item) => item.mediaId === post.primaryMediaId) || post.media.find((item) => item.discoverable !== false);
+      const resolvedPrimary = primaryMedia || (primaryRef ? mediaById.get(primaryRef.mediaId) : undefined);
+      const discoveryMediaIds = post.discovery.mode === 'primary'
+        ? [resolvedPrimary?.mediaId].filter((item): item is string => Boolean(item))
+        : discoveryRefs.map((item) => item.mediaId);
+      const discoveryMedia = await Promise.all(
+        discoveryMediaIds.map(async (mediaId) => {
+          const source = mediaById.get(mediaId);
+          if (!source) return null;
+          return {
+            mediaId: source.mediaId,
+            assetType: (source.assetType || 'image') as 'image' | 'video',
+            previewUrl: await publicMediaUrl(source.previewKey),
+            previewPosterUrl: await publicMediaUrl(source.previewPosterKey),
+            width: source.width,
+            height: source.height
+          };
+        })
+      );
+      return {
+        postId: post.postId,
+        artistId: post.artistId,
+        title: post.title,
+        slug: post.slug,
+        slugHistory: post.slugHistory || [],
+        summary: post.summary,
+        status: post.status,
+        discovery: post.discovery,
+        metadata: post.metadata || {},
+        destination: post.destination || null,
+        primaryMediaId: post.primaryMediaId || primaryRef?.mediaId,
+        createdAt: post.createdAt,
+        updatedAt: post.updatedAt,
+        publishedAt: post.publishedAt,
+        mediaCount: post.media.length,
+        blockCount: post.blocks.length,
+        discoveryMediaIds,
+        discoveryMedia: discoveryMedia.filter((item): item is NonNullable<typeof item> => Boolean(item)),
+        primaryMedia: resolvedPrimary
+          ? {
+              mediaId: resolvedPrimary.mediaId,
+              assetType: (resolvedPrimary.assetType || 'image') as 'image' | 'video',
+              previewUrl: await publicMediaUrl(resolvedPrimary.previewKey),
+              previewPosterUrl: await publicMediaUrl(resolvedPrimary.previewPosterKey),
+              width: resolvedPrimary.width,
+              height: resolvedPrimary.height
+            }
+          : null
+      };
+    }));
+
+    return res.json({
+      artistId: artist.artistId,
+      artistSlug: artist.slug,
+      items: payload
+    });
+  });
+
+  app.get('/posts/:slug', async (req, res) => {
+    const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
+    const post = await store.getPostBySlug(requestedSlug);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+    if (post.slug !== requestedSlug) {
+      return res.redirect(302, `/posts/${post.slug}`);
+    }
+
+    const artist = (await store.listArtists()).find((item) => item.artistId === post.artistId);
+    if (!artist || artist.status !== 'active') {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    const canViewDraft = req.authUser?.userId
+      ? (isAdminRequest(req) || await store.hasArtistAccess(req.authUser.userId, post.artistId))
+      : false;
+    if (post.status !== 'published' && !canViewDraft) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    const mediaById = new Map((await store.listMediaByArtist(post.artistId)).map((item) => [item.mediaId, item]));
+    const media = await Promise.all(post.media.map(async (ref) => {
+      const source = mediaById.get(ref.mediaId);
+      if (!source) return null;
+      return {
+        mediaId: source.mediaId,
+        assetType: (source.assetType || 'image') as 'image' | 'video',
+        title: source.title || source.originalFilename || source.mediaId,
+        previewUrl: await publicMediaUrl(source.previewKey),
+        previewPosterUrl: await publicMediaUrl(source.previewPosterKey),
+        width: source.width,
+        height: source.height,
+        discoverable: ref.discoverable !== false,
+        sortOrder: ref.sortOrder ?? 0,
+        caption: ref.caption
+      };
+    }));
+
+    return res.json({
+      ...post,
+      slugHistory: post.slugHistory || [],
+      artist: {
+        artistId: artist.artistId,
+        name: artist.name,
+        slug: artist.slug
+      },
+      media: media.filter((item): item is NonNullable<typeof item> => Boolean(item))
+    });
+  });
+
   app.get('/site-settings', async (_req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120');
     const settings = await store.getSiteSettings();
@@ -1264,6 +1580,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   app.get('/discovery/trending-images', async (req, res) => {
     const startedAt = Date.now();
     const period: 'hourly' | 'daily' = req.query.period === 'hourly' ? 'hourly' : 'daily';
+    const source: 'media' | 'post' | 'combined' = req.query.source === 'post'
+      ? 'post'
+      : req.query.source === 'media'
+        ? 'media'
+        : 'combined';
     const limit = Math.max(1, Math.min(60, Number(req.query.limit || 24)));
     const cursorToken = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const decodedCursor = parsePassthroughCursor(cursorToken);
@@ -1274,7 +1595,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       `p:${viewerPolicy.disclosurePolicy.hidePoliticsPublicAffairs ? 1 : 0}`,
       `c:${viewerPolicy.disclosurePolicy.hideCrimeDisastersTragedy ? 1 : 0}`
     ].join(',');
-    const cacheKey = `viewer=${viewerPolicy.loggedIn ? 'auth' : 'anon'}:${viewerPolicy.matureEnabled ? 'm1' : 'm0'}:${viewerPolicy.maxAllowedContentRating}|${disclosureKey}|period=${period}|limit=${limit}|cursor=${decodedCursor || ''}`;
+    const cacheKey = `viewer=${viewerPolicy.loggedIn ? 'auth' : 'anon'}:${viewerPolicy.matureEnabled ? 'm1' : 'm0'}:${viewerPolicy.maxAllowedContentRating}|${disclosureKey}|period=${period}|source=${source}|limit=${limit}|cursor=${decodedCursor || ''}`;
     const cached = readTrendingResponseCache<{
       body: { period: 'hourly' | 'daily'; items: Omit<TrendingImageItem, 'score'>[]; nextCursor?: string };
       source: 'materialized' | 'fallback';
@@ -1292,13 +1613,18 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return res.json(cached.body);
     }
     try {
-      let feedPage = await store.listTrendingFeed(period, limit, decodedCursor);
-      if (!feedPage.items.length && !decodedCursor) {
-        // Warm feed on demand so first request after deploy can still switch to materialized quickly.
-        await triggerTrendingWarmup();
+      let feedPage: { items: Awaited<ReturnType<typeof store.listTrendingFeed>>['items']; nextCursor?: string } = {
+        items: []
+      };
+      if (source === 'media') {
         feedPage = await store.listTrendingFeed(period, limit, decodedCursor);
+        if (!feedPage.items.length && !decodedCursor) {
+          // Warm feed on demand so first request after deploy can still switch to materialized quickly.
+          await triggerTrendingWarmup();
+          feedPage = await store.listTrendingFeed(period, limit, decodedCursor);
+        }
       }
-      if (feedPage.items.length > 0) {
+      if (source === 'media' && feedPage.items.length > 0) {
         const filtered = feedPage.items.filter((item) => {
           const effective = normalizeContentRating(item.effectiveContentRating);
           const effectiveAi = normalizeAiDisclosure(item.effectiveAiDisclosure);
@@ -1351,6 +1677,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           galleries: 0
         });
         res.setHeader('x-trending-source', 'materialized');
+        res.setHeader('x-trending-mode', source);
         res.setHeader('x-trending-cache', 'MISS');
         res.setHeader('x-trending-ms', String(Date.now() - startedAt));
         res.setHeader('x-trending-candidates', String(feedPage.items.length));
@@ -1361,7 +1688,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       const fallback = await computeTrendingImages(req, {
         period,
         cursor: cursorToken,
-        limit
+        limit,
+        source
       });
       const payload = fallback as Awaited<ReturnType<typeof computeTrendingImages>>;
       const body = { period: payload.period, items: payload.items, nextCursor: payload.nextCursor };
@@ -1373,6 +1701,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         galleries: payload.metrics.galleryCount
       });
       res.setHeader('x-trending-source', 'fallback');
+      res.setHeader('x-trending-mode', source);
       res.setHeader('x-trending-cache', 'MISS');
       res.setHeader('x-trending-ms', String(Date.now() - startedAt));
       res.setHeader('x-trending-candidates', String(payload.metrics.candidateCount));
@@ -1382,6 +1711,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     } catch (error) {
       logServerError('GET /discovery/trending-images', error);
       res.setHeader('x-trending-source', 'error');
+      res.setHeader('x-trending-mode', source);
       res.setHeader('x-trending-cache', 'MISS');
       res.setHeader('x-api-fallback', 'trending-empty');
       res.setHeader('x-trending-ms', String(Date.now() - startedAt));
@@ -1412,13 +1742,20 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     if (!artist || artist.status !== 'active') {
       return res.status(404).json({ message: 'Artist not found' });
     }
-    const result = await getDiscoveryCached(req, `discovery:artist-trending:${artist.artistId}`, () => computeTrendingImages(req, {
+    const source: 'media' | 'post' | 'combined' = req.query.source === 'post'
+      ? 'post'
+      : req.query.source === 'media'
+        ? 'media'
+        : 'combined';
+    const result = await getDiscoveryCached(req, `discovery:artist-trending:${artist.artistId}:source=${source}`, () => computeTrendingImages(req, {
       period: req.query.period === 'hourly' ? 'hourly' : 'daily',
       cursor: typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
       limit: Number(req.query.limit || 24),
-      artistId: artist.artistId
+      artistId: artist.artistId,
+      source
     }));
     res.setHeader('x-discovery-cache', result.cacheStatus);
+    res.setHeader('x-trending-mode', source);
     const payload = result.payload as Awaited<ReturnType<typeof computeTrendingImages>>;
     res.setHeader('x-trending-ms', String(Date.now() - startedAt));
     res.setHeader('x-trending-candidates', String(payload.metrics.candidateCount));
@@ -2885,6 +3222,150 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const allowedArtistIds = new Set((await store.listArtistsByUserId(req.authUser!.userId)).map((artist) => artist.artistId));
     const scoped = galleries.filter((gallery) => allowedArtistIds.has(gallery.artistId));
     return res.json(scoped.map((gallery) => ({ ...gallery, premiumPasswordHash: undefined })));
+  });
+
+  app.get('/admin/posts', requireAuth, async (req, res) => {
+    const requestedArtistId = typeof req.query.artistId === 'string' ? req.query.artistId.trim() : '';
+    if (requestedArtistId) {
+      if (!(await ensureArtistContentAccess(req, res, requestedArtistId))) return;
+      const posts = await store.listPostsByArtistId(requestedArtistId);
+      return res.json(posts);
+    }
+    if (isAdminRequest(req)) {
+      const posts = await store.listAllPosts();
+      return res.json(posts);
+    }
+    const artists = await store.listArtistsByUserId(req.authUser!.userId);
+    const postLists = await Promise.all(artists.map((artist) => store.listPostsByArtistId(artist.artistId)));
+    return res.json(postLists.flat());
+  });
+
+  app.post('/admin/posts', requireAuth, async (req, res) => {
+    const artistId = typeof req.body?.artistId === 'string' ? req.body.artistId.trim() : '';
+    if (!artistId) return res.status(400).json({ message: 'artistId is required' });
+    if (!(await ensureArtistContentAccess(req, res, artistId))) return;
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    if (!title) return res.status(400).json({ message: 'title is required' });
+
+    const slug = slugify(typeof req.body?.slug === 'string' && req.body.slug.trim() ? req.body.slug : title);
+    const existing = await store.getPostBySlug(slug);
+    if (existing) return res.status(409).json({ message: 'Post slug already exists', slug });
+
+    const now = new Date().toISOString();
+    const status = req.body?.status === 'draft' || req.body?.status === 'archived' ? req.body.status : 'published';
+    const post: Post = {
+      postId: randomUUID(),
+      artistId,
+      authorId: req.authUser?.userId,
+      title,
+      slug,
+      slugHistory: uniqueSlugs([slug]),
+      summary: sanitizeOptional(req.body?.summary, 2000),
+      status,
+      blocks: parsePostBlocks(req.body?.blocks),
+      media: parsePostMediaRefs(req.body?.media),
+      primaryMediaId: sanitizeOptional(req.body?.primaryMediaId, 128),
+      discovery: {
+        mode: parsePostDiscoveryMode(req.body?.discoveryMode ?? req.body?.discovery?.mode)
+      },
+      destination: req.body?.destination && typeof req.body.destination === 'object'
+        ? {
+            type: req.body.destination.type === 'pdf' || req.body.destination.type === 'external' || req.body.destination.type === 'internal'
+              ? req.body.destination.type
+              : 'post',
+            url: typeof req.body.destination.url === 'string' ? req.body.destination.url.slice(0, 2048) : ''
+          }
+        : null,
+      metadata: req.body?.metadata && typeof req.body.metadata === 'object' && !Array.isArray(req.body.metadata)
+        ? Object.fromEntries(
+            Object.entries(req.body.metadata as Record<string, unknown>)
+              .filter(([key, value]) => typeof key === 'string' && typeof value === 'string')
+              .map(([key, value]) => [key.slice(0, 120), String(value).slice(0, 1000)])
+          )
+        : {},
+      createdAt: now,
+      updatedAt: now,
+      publishedAt: status === 'published' ? now : undefined
+    };
+    if (post.primaryMediaId && !post.media.some((item) => item.mediaId === post.primaryMediaId)) {
+      post.media.unshift({ mediaId: post.primaryMediaId, discoverable: true, sortOrder: 0 });
+    }
+    await store.createPost(post);
+    return res.status(201).json(post);
+  });
+
+  app.patch('/admin/posts/:postId', requireAuth, async (req, res) => {
+    const existing = await store.getPostById(req.params.postId);
+    if (!existing) return res.status(404).json({ message: 'Post not found' });
+    if (!(await ensureArtistContentAccess(req, res, existing.artistId))) return;
+
+    const nextTitle = typeof req.body?.title === 'string' && req.body.title.trim()
+      ? req.body.title.trim()
+      : existing.title;
+    const nextSlug = typeof req.body?.slug === 'string' && req.body.slug.trim()
+      ? slugify(req.body.slug)
+      : existing.slug;
+    const conflict = await store.getPostBySlug(nextSlug);
+    if (conflict && conflict.postId !== existing.postId) {
+      return res.status(409).json({ message: 'Post slug already exists', slug: nextSlug });
+    }
+    const nextStatus = req.body?.status === 'draft' || req.body?.status === 'published' || req.body?.status === 'archived'
+      ? req.body.status
+      : existing.status;
+    const updated: Post = {
+      ...existing,
+      title: nextTitle,
+      slug: nextSlug,
+      slugHistory: uniqueSlugs([...(existing.slugHistory || [existing.slug]), nextSlug]),
+      summary: req.body?.summary !== undefined ? sanitizeOptional(req.body.summary, 2000) : existing.summary,
+      status: nextStatus,
+      blocks: req.body?.blocks !== undefined ? parsePostBlocks(req.body.blocks) : existing.blocks,
+      media: req.body?.media !== undefined ? parsePostMediaRefs(req.body.media) : existing.media,
+      primaryMediaId: req.body?.primaryMediaId !== undefined ? sanitizeOptional(req.body.primaryMediaId, 128) : existing.primaryMediaId,
+      discovery: {
+        mode: req.body?.discoveryMode !== undefined || req.body?.discovery?.mode !== undefined
+          ? parsePostDiscoveryMode(req.body?.discoveryMode ?? req.body?.discovery?.mode)
+          : existing.discovery.mode
+      },
+      destination: req.body?.destination !== undefined
+        ? (
+            req.body.destination && typeof req.body.destination === 'object'
+              ? {
+                  type: req.body.destination.type === 'pdf' || req.body.destination.type === 'external' || req.body.destination.type === 'internal'
+                    ? req.body.destination.type
+                    : 'post',
+                  url: typeof req.body.destination.url === 'string' ? req.body.destination.url.slice(0, 2048) : ''
+                }
+              : null
+          )
+        : existing.destination,
+      metadata: req.body?.metadata !== undefined
+        ? (
+            req.body.metadata && typeof req.body.metadata === 'object' && !Array.isArray(req.body.metadata)
+              ? Object.fromEntries(
+                  Object.entries(req.body.metadata as Record<string, unknown>)
+                    .filter(([key, value]) => typeof key === 'string' && typeof value === 'string')
+                    .map(([key, value]) => [key.slice(0, 120), String(value).slice(0, 1000)])
+                )
+              : {}
+          )
+        : existing.metadata,
+      updatedAt: new Date().toISOString(),
+      publishedAt: nextStatus === 'published' ? (existing.publishedAt || new Date().toISOString()) : existing.publishedAt
+    };
+    if (updated.primaryMediaId && !updated.media.some((item) => item.mediaId === updated.primaryMediaId)) {
+      updated.media.unshift({ mediaId: updated.primaryMediaId, discoverable: true, sortOrder: 0 });
+    }
+    await store.updatePost(updated);
+    return res.json(updated);
+  });
+
+  app.delete('/admin/posts/:postId', requireAuth, async (req, res) => {
+    const existing = await store.getPostById(req.params.postId);
+    if (!existing) return res.status(404).json({ message: 'Post not found' });
+    if (!(await ensureArtistContentAccess(req, res, existing.artistId))) return;
+    await store.deletePost(existing.postId);
+    return res.status(204).send();
   });
 
   app.post('/admin/galleries', requireAuth, async (req, res) => {

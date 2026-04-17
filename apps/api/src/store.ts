@@ -13,6 +13,9 @@ import type {
   Follow,
   IdempotencyRecord,
   AuditEvent,
+  Post,
+  SourceFile,
+  CreatorGroup,
   TrendingFeedItem,
   TrendingPeriod
 } from './domain';
@@ -27,6 +30,14 @@ export interface DataStore {
   getGalleryBySlug(slug: string): Promise<Gallery | null>;
   getMediaByGallery(galleryId: string): Promise<GalleryMediaView[]>;
   listMediaByArtist(artistId: string): Promise<Media[]>;
+  listPostsByArtistSlug(artistSlug: string): Promise<Post[]>;
+  listPostsByArtistId(artistId: string): Promise<Post[]>;
+  listAllPosts(): Promise<Post[]>;
+  listCreatorGroupsByCreatorId?(creatorId: string): Promise<CreatorGroup[]>;
+  listSourceFilesByCreatorId?(creatorId: string): Promise<SourceFile[]>;
+  getPostBySlug(slug: string): Promise<Post | null>;
+  getPostById(postId: string): Promise<Post | null>;
+  getSourceFileById?(fileId: string): Promise<SourceFile | null>;
   listMediaGalleryPlacements(mediaId: string): Promise<Array<{
     galleryMediaId: string;
     galleryId: string;
@@ -60,6 +71,15 @@ export interface DataStore {
   updateArtist(artist: Artist): Promise<void>;
   updateGallery(gallery: Gallery): Promise<void>;
   updateMedia(media: Media): Promise<void>;
+  createPost(post: Post): Promise<void>;
+  createSourceFile?(file: SourceFile): Promise<void>;
+  createCreatorGroup?(group: CreatorGroup): Promise<void>;
+  updatePost(post: Post): Promise<void>;
+  updateSourceFile?(file: SourceFile): Promise<void>;
+  updateCreatorGroup?(group: CreatorGroup): Promise<void>;
+  deletePost(postId: string): Promise<void>;
+  deleteSourceFile?(fileId: string): Promise<void>;
+  deleteCreatorGroup?(groupId: string): Promise<void>;
   moveMediaInGallery(galleryId: string, mediaId: string, position: number): Promise<void>;
   deleteArtist(artistId: string): Promise<void>;
   deleteGallery(galleryId: string): Promise<void>;

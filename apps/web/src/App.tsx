@@ -190,6 +190,104 @@ type TrendingImage = {
   createdAt: string;
 };
 
+type PostBlockType =
+  | 'heading'
+  | 'paragraph'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'quote'
+  | 'divider'
+  | 'embed'
+  | 'file'
+  | 'link'
+  | 'gallery'
+  | 'carousel'
+  | 'pdf_preview'
+  | 'html_fragment';
+
+type PostBlock = {
+  blockId: string;
+  type: PostBlockType;
+  text?: string;
+  level?: number;
+  mediaId?: string;
+  caption?: string;
+  quote?: string;
+  author?: string;
+  url?: string;
+  mimeType?: string;
+  title?: string;
+  html?: string;
+  payload?: Record<string, unknown>;
+};
+
+type ArtistPostSummary = {
+  postId: string;
+  artistId: string;
+  title: string;
+  slug: string;
+  summary?: string;
+  status: 'draft' | 'published' | 'archived';
+  discovery: { mode: 'primary' | 'all' | 'selected' };
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+  mediaCount: number;
+  blockCount: number;
+  primaryMediaId?: string;
+  discoveryMediaIds?: string[];
+  primaryMedia?: {
+    mediaId: string;
+    assetType: 'image' | 'video';
+    previewUrl: string;
+    previewPosterUrl?: string;
+    width?: number;
+    height?: number;
+  } | null;
+  discoveryMedia?: Array<{
+    mediaId: string;
+    assetType: 'image' | 'video';
+    previewUrl: string;
+    previewPosterUrl?: string;
+    width?: number;
+    height?: number;
+  }>;
+};
+
+type PostDetailPayload = {
+  postId: string;
+  artistId: string;
+  title: string;
+  slug: string;
+  summary?: string;
+  status: 'draft' | 'published' | 'archived';
+  discovery: { mode: 'primary' | 'all' | 'selected' };
+  destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
+  metadata?: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+  blocks: PostBlock[];
+  media: Array<{
+    mediaId: string;
+    assetType: 'image' | 'video';
+    title?: string;
+    previewUrl: string;
+    previewPosterUrl?: string;
+    width?: number;
+    height?: number;
+    discoverable?: boolean;
+    sortOrder?: number;
+    caption?: string;
+  }>;
+  artist: {
+    artistId: string;
+    name: string;
+    slug: string;
+  };
+};
+
 const isLikelyImageUrl = (url?: string): boolean => {
   if (!url) return false;
   return /\.(avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)(\?|#|$)/i.test(url);
@@ -5242,6 +5340,7 @@ function ArtistProfilePage({
 }) {
   const { slug = '' } = useParams();
   const [profile, setProfile] = useState<ArtistProfilePayload | null>(null);
+  const [artistPosts, setArtistPosts] = useState<ArtistPostSummary[]>([]);
   const [artistTab, setArtistTab] = useState<'feed' | 'galleries'>('feed');
   const [feedItems, setFeedItems] = useState<TrendingImage[]>([]);
   const [feedCursor, setFeedCursor] = useState<string | undefined>(undefined);
@@ -5282,6 +5381,17 @@ function ArtistProfilePage({
   const discoverySearchInputRef = useRef<HTMLInputElement | null>(null);
   const compactSearchInputRef = useRef<HTMLInputElement | null>(null);
   const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
+  const artistPostByMediaId = artistPosts.reduce<Record<string, { slug: string; title: string }>>((acc, post) => {
+    const ids = [
+      ...(post.discoveryMediaIds || []),
+      ...(post.primaryMediaId ? [post.primaryMediaId] : [])
+    ];
+    for (const mediaId of ids) {
+      if (!mediaId || acc[mediaId]) continue;
+      acc[mediaId] = { slug: post.slug, title: post.title };
+    }
+    return acc;
+  }, {});
 
   const densityLabel: Record<FeedDensity, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
   const densityOptions: FeedDensity[] = ['small', 'medium', 'large'];
@@ -5355,6 +5465,15 @@ function ArtistProfilePage({
     }
   };
 
+  const loadArtistPosts = async () => {
+    try {
+      const response = await api.getArtistPosts(slug) as { items?: ArtistPostSummary[] };
+      setArtistPosts(response.items || []);
+    } catch {
+      setArtistPosts([]);
+    }
+  };
+
   const loadFeed = async (append = false) => {
     try {
       setFeedLoading(true);
@@ -5401,6 +5520,7 @@ function ArtistProfilePage({
     setFeedItems([]);
     setFeedCursor(undefined);
     void loadProfile();
+    void loadArtistPosts();
   }, [slug]);
 
   useEffect(() => {
@@ -5781,6 +5901,7 @@ function ArtistProfilePage({
       : item.galleryVisibility === 'premium'
         ? 'Premium'
         : null;
+    const linkedPost = artistPostByMediaId[item.imageId];
     return (
       <article key={item.imageId} className="discovery-feature-card gallery-discovery-card" style={{ '--media-aspect': cardAspect.toFixed(3) } as any}>
         <button
@@ -5816,7 +5937,9 @@ function ArtistProfilePage({
         </button>
         <div className="discovery-feature-footer">
           <div className="discovery-feature-text">
-            <h3 className="discovery-feature-title">{item.title || item.imageId}</h3>
+            <h3 className="discovery-feature-title">
+              {linkedPost ? <Link to={`/posts/${linkedPost.slug}`} className="no-underline">{item.title || item.imageId}</Link> : (item.title || item.imageId)}
+            </h3>
             <p className="discovery-feature-subtitle">by {item.artistName || profile.name}</p>
             {disclosureLine && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
           </div>
@@ -6261,6 +6384,56 @@ function ArtistProfilePage({
 
       <section className="discovery-editorial-section">
         <div className="discovery-section-header">
+          <h2>Posts</h2>
+        </div>
+        <div className="discovery-latest-grid">
+          {artistPosts.length > 0 ? artistPosts.map((post, idx) => {
+            const preview = post.primaryMedia || post.discoveryMedia?.[0];
+            return (
+              <article key={post.postId} className="discovery-latest-item">
+                <Link to={`/posts/${post.slug}`} className="no-underline">
+                  <div className="discovery-feature-media" style={{ aspectRatio: `${cardAspect} / 1` }}>
+                    {preview ? (
+                      preview.assetType === 'video'
+                        ? (
+                          <img
+                            src={preview.previewPosterUrl || preview.previewUrl}
+                            alt={post.title}
+                            loading={idx < 2 ? 'eager' : 'lazy'}
+                            fetchPriority={idx < 2 ? 'high' : 'low'}
+                            decoding="async"
+                            style={{ objectPosition: 'center center' }}
+                          />
+                        )
+                        : (
+                          <img
+                            src={preview.previewUrl}
+                            alt={post.title}
+                            loading={idx < 2 ? 'eager' : 'lazy'}
+                            fetchPriority={idx < 2 ? 'high' : 'low'}
+                            decoding="async"
+                            style={{ objectPosition: 'center center' }}
+                          />
+                        )
+                    ) : <div className="discovery-swatch" style={{ backgroundColor: swatches[idx % swatches.length] }} />}
+                    <span className="discovery-chip">{post.discovery.mode}</span>
+                  </div>
+                  <div className="discovery-latest-meta">
+                    <div className="discovery-card-title">{post.title}</div>
+                    <div className="discovery-card-subtitle">{post.mediaCount} media • {post.blockCount} blocks</div>
+                    {post.summary && <p className="small">{post.summary}</p>}
+                  </div>
+                </Link>
+              </article>
+            );
+          }) : (
+            <div className="panel"><p className="small">No published posts yet.</p></div>
+          )}
+        </div>
+      </section>
+
+      <section className="discovery-editorial-section">
+        <div className="discovery-section-header">
           <h2>Public Favorites</h2>
         </div>
         <div className="panel artist-public-grid">
@@ -6408,6 +6581,191 @@ function ArtistProfilePage({
       )}
 
       {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+function PostPage() {
+  const { slug = '' } = useParams();
+  const [post, setPost] = useState<PostDetailPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError('');
+        const response = await api.getPostBySlug(slug) as PostDetailPayload;
+        if (cancelled) return;
+        setPost(response);
+      } catch (e) {
+        if (cancelled) return;
+        setError((e as Error).message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
+  if (loading && !post) return <div className="layout">Loading...</div>;
+  if (!post) return <div className="layout">{error || 'Post not found'}</div>;
+
+  const mediaById = new Map(post.media.map((item) => [item.mediaId, item]));
+  const orderedMedia = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
+  const destinationLabel = post.destination?.type === 'pdf'
+    ? 'Open PDF'
+    : post.destination?.type === 'external'
+      ? 'Open external link'
+      : post.destination?.type === 'internal'
+        ? 'Open internal destination'
+        : 'Open destination';
+
+  const renderMediaPreview = (mediaId?: string, title?: string, caption?: string) => {
+    if (!mediaId) return null;
+    const media = mediaById.get(mediaId);
+    if (!media) return null;
+    return (
+      <figure className="panel">
+        {media.assetType === 'video'
+          ? (
+            <video controls playsInline poster={media.previewPosterUrl} style={{ width: '100%', borderRadius: '1rem' }}>
+              <source src={media.previewUrl} />
+            </video>
+          )
+          : <img src={media.previewUrl} alt={title || media.title || media.mediaId} style={{ width: '100%', borderRadius: '1rem' }} />}
+        {(caption || media.caption) && <figcaption className="small mt-2">{caption || media.caption}</figcaption>}
+      </figure>
+    );
+  };
+
+  const renderBlock = (block: PostBlock, index: number) => {
+    switch (block.type) {
+      case 'heading': {
+        const level = Math.max(1, Math.min(6, block.level || 2));
+        if (level === 1) return <h1 key={block.blockId || index}>{block.text || ''}</h1>;
+        if (level === 2) return <h2 key={block.blockId || index}>{block.text || ''}</h2>;
+        if (level === 3) return <h3 key={block.blockId || index}>{block.text || ''}</h3>;
+        if (level === 4) return <h4 key={block.blockId || index}>{block.text || ''}</h4>;
+        if (level === 5) return <h5 key={block.blockId || index}>{block.text || ''}</h5>;
+        return <h6 key={block.blockId || index}>{block.text || ''}</h6>;
+      }
+      case 'paragraph':
+        return <p key={block.blockId || index}>{block.text || ''}</p>;
+      case 'quote':
+        return (
+          <blockquote key={block.blockId || index} className="panel">
+            <p>{block.quote || block.text || ''}</p>
+            {block.author && <footer className="small">— {block.author}</footer>}
+          </blockquote>
+        );
+      case 'divider':
+        return <hr key={block.blockId || index} />;
+      case 'image':
+      case 'video':
+        return (
+          <div key={block.blockId || index}>
+            {renderMediaPreview(block.mediaId, block.title || block.text, block.caption)}
+          </div>
+        );
+      case 'audio': {
+        const audio = block.mediaId ? mediaById.get(block.mediaId) : undefined;
+        return (
+          <div key={block.blockId || index} className="panel">
+            {audio ? (
+              <audio controls style={{ width: '100%' }}>
+                <source src={audio.previewUrl} />
+              </audio>
+            ) : <p className="small">Audio media not found.</p>}
+          </div>
+        );
+      }
+      case 'link':
+      case 'embed':
+      case 'file':
+      case 'pdf_preview':
+        return (
+          <div key={block.blockId || index} className="panel">
+            <a href={block.url || '#'} target="_blank" rel="noreferrer" className="no-underline">
+              {block.title || block.url || 'Open link'}
+            </a>
+            {block.text && <p className="small mt-2">{block.text}</p>}
+          </div>
+        );
+      case 'html_fragment':
+        return (
+          <pre key={block.blockId || index} className="panel small" style={{ overflowX: 'auto' }}>
+            {block.html || ''}
+          </pre>
+        );
+      case 'gallery':
+      case 'carousel':
+      default:
+        return (
+          <div key={block.blockId || index} className="panel">
+            <p>{block.text || block.title || `Block: ${block.type}`}</p>
+          </div>
+        );
+    }
+  };
+
+  return (
+    <div className="layout">
+      <section className="panel">
+        <h1>{post.title}</h1>
+        <p className="small">
+          By <Link to={`/artists/${post.artist.slug}`} className="no-underline">{post.artist.name}</Link>
+          {' · '}
+          {post.status}
+          {' · '}
+          {post.discovery.mode}
+        </p>
+        {post.summary && <p>{post.summary}</p>}
+        {post.destination?.url && (
+          <p className="mt-3">
+            <a className="auth-primary-btn no-underline" href={post.destination.url} target="_blank" rel="noreferrer">
+              {destinationLabel}
+            </a>
+          </p>
+        )}
+      </section>
+
+      {orderedMedia.length > 0 && (
+        <section className="panel mt-4">
+          <h2>Media</h2>
+          <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': 2 } as any}>
+            {orderedMedia.map((media) => (
+              <article key={media.mediaId} className="discovery-feature-card gallery-discovery-card">
+                <div className="discovery-feature-media" style={{ aspectRatio: '1.15 / 1' }}>
+                  {media.assetType === 'video'
+                    ? <img src={media.previewPosterUrl || media.previewUrl} alt={media.title || media.mediaId} />
+                    : <img src={media.previewUrl} alt={media.title || media.mediaId} />}
+                </div>
+                <div className="discovery-feature-footer">
+                  <div className="discovery-feature-text">
+                    <h3 className="discovery-feature-title">{media.title || media.mediaId}</h3>
+                    {media.caption && <p className="discovery-feature-subtitle">{media.caption}</p>}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {post.blocks.length > 0 && (
+        <section className="panel mt-4">
+          <h2>Post Content</h2>
+          <div className="mt-3" style={{ display: 'grid', gap: '1rem' }}>
+            {post.blocks.map((block, idx) => renderBlock(block, idx))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -6609,6 +6967,7 @@ export default function App() {
         <Route path="/trending" element={<TrendingPage viewerProfile={myProfile} />} />
         <Route path="/artists/:slug" element={<ArtistProfilePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/gallery/:slug" element={<GalleryPage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/posts/:slug" element={<PostPage />} />
         <Route path="/collections" element={<CollectionsPage />} />
         <Route path="/collections/:collectionId" element={<CollectionDetailPage />} />
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />

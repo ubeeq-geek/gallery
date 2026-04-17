@@ -33,6 +33,46 @@
           "status": "published",
           "premiumPassword": "anne-premium-password"
         }
+      ],
+      "posts": [
+        {
+          "title": "Anne Sample Post",
+          "slug": "anne-sample-post",
+          "summary": "Generic post with blocks and media references.",
+          "discoveryMode": "selected",
+          "primaryMedia": {
+            "file": "anne-0001.jpg",
+            "gallerySlug": "anne-free"
+          },
+          "media": [
+            {
+              "file": "anne-0001.jpg",
+              "gallerySlug": "anne-free",
+              "discoverable": true
+            }
+          ],
+          "blocks": [
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Anne Sample Post"
+            },
+            {
+              "type": "image",
+              "file": "anne-0001.jpg",
+              "gallerySlug": "anne-free",
+              "caption": "Primary image block"
+            },
+            {
+              "type": "paragraph",
+              "text": "This post uses the generic blocks + media model."
+            }
+          ],
+          "metadata": {
+            "template": "default",
+            "layout": "standard"
+          }
+        }
       ]
     },
     {

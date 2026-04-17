@@ -126,10 +126,16 @@ export const api = {
     });
     return handleJson(response);
   },
-  async getTrendingImages(period: 'hourly' | 'daily' = 'daily', cursor?: string, limit = 24) {
+  async getTrendingImages(
+    period: 'hourly' | 'daily' = 'daily',
+    cursor?: string,
+    limit = 24,
+    source: 'combined' | 'media' | 'post' = 'combined'
+  ) {
     const qs = new URLSearchParams();
     qs.set('period', period);
     qs.set('limit', String(limit));
+    qs.set('source', source);
     if (cursor) qs.set('cursor', cursor);
     const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-images?${qs.toString()}`));
     return handleJson(response);
@@ -143,11 +149,13 @@ export const api = {
       hideHeavyTopics?: boolean;
       hidePoliticsPublicAffairs?: boolean;
       hideCrimeDisastersTragedy?: boolean;
-    }
+    },
+    source: 'combined' | 'media' | 'post' = 'combined'
   ) {
     const qs = new URLSearchParams();
     qs.set('period', period);
     qs.set('limit', String(limit));
+    qs.set('source', source);
     if (cursor) qs.set('cursor', cursor);
     if (filters?.aiFilter) qs.set('aiFilter', filters.aiFilter);
     if (filters?.hideHeavyTopics !== undefined) qs.set('hideHeavyTopics', String(Boolean(filters.hideHeavyTopics)));
@@ -171,10 +179,17 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/featured`);
     return handleJson(response);
   },
-  async getArtistTrendingImages(slug: string, period: 'hourly' | 'daily' = 'daily', cursor?: string, limit = 24) {
+  async getArtistTrendingImages(
+    slug: string,
+    period: 'hourly' | 'daily' = 'daily',
+    cursor?: string,
+    limit = 24,
+    source: 'combined' | 'media' | 'post' = 'combined'
+  ) {
     const qs = new URLSearchParams();
     qs.set('period', period);
     qs.set('limit', String(limit));
+    qs.set('source', source);
     if (cursor) qs.set('cursor', cursor);
     const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/trending-images?${qs.toString()}`);
     return handleJson(response);
@@ -392,6 +407,67 @@ export const api = {
   },
   async getMyArtists() {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/me/artists`);
+    return handleJson(response);
+  },
+  async getArtistPosts(artistSlug: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${encodeURIComponent(artistSlug)}/posts`);
+    return handleJson(response);
+  },
+  async getPostBySlug(slug: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/posts/${encodeURIComponent(slug)}`);
+    return handleJson(response);
+  },
+  async adminListPosts(artistId?: string) {
+    const qs = new URLSearchParams();
+    if (artistId) qs.set('artistId', artistId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/posts${suffix}`);
+    return handleJson(response);
+  },
+  async adminCreatePost(payload: {
+    artistId: string;
+    title: string;
+    slug?: string;
+    summary?: string;
+    status?: 'draft' | 'published' | 'archived';
+    blocks?: Array<Record<string, unknown>>;
+    media?: Array<{ mediaId: string; discoverable?: boolean; sortOrder?: number; caption?: string }>;
+    primaryMediaId?: string;
+    discoveryMode?: 'primary' | 'all' | 'selected';
+    destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
+    metadata?: Record<string, string>;
+  }) {
+    const response = await fetch(`${API_BASE}/admin/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async adminUpdatePost(postId: string, payload: {
+    title?: string;
+    slug?: string;
+    summary?: string;
+    status?: 'draft' | 'published' | 'archived';
+    blocks?: Array<Record<string, unknown>>;
+    media?: Array<{ mediaId: string; discoverable?: boolean; sortOrder?: number; caption?: string }>;
+    primaryMediaId?: string;
+    discoveryMode?: 'primary' | 'all' | 'selected';
+    destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
+    metadata?: Record<string, string>;
+  }) {
+    const response = await fetch(`${API_BASE}/admin/posts/${encodeURIComponent(postId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async adminDeletePost(postId: string) {
+    const response = await fetch(`${API_BASE}/admin/posts/${encodeURIComponent(postId)}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
     return handleJson(response);
   },
   async adminListArtistMembers(artistId: string) {

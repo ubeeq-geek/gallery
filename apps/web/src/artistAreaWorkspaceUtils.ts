@@ -1,4 +1,4 @@
-export type ArtistAreaPanel = 'overview' | 'artists' | 'galleries' | 'media' | 'operations';
+export type ArtistAreaPanel = 'overview' | 'artists' | 'galleries' | 'media' | 'posts' | 'operations';
 
 export type StoredWorkspace = {
   activePanel?: ArtistAreaPanel;

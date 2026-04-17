@@ -3,6 +3,79 @@ export type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fe
 export type AiDisclosure = 'none' | 'ai-assisted' | 'ai-generated';
 export type HeavyTopic = 'politics-public-affairs' | 'crime-disasters-tragedy';
 export type AiFilterPreference = 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
+export type PostStatus = 'draft' | 'published' | 'archived';
+export type PostDiscoveryMode = 'primary' | 'all' | 'selected';
+export type CreatorGroupDisplayType = 'series' | 'gallery' | 'set';
+export type MediaType = 'image' | 'video' | 'audio';
+export type SourceFileKind = 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
+export type PostBlockType =
+  | 'heading'
+  | 'paragraph'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'quote'
+  | 'divider'
+  | 'embed'
+  | 'file'
+  | 'link'
+  | 'gallery'
+  | 'carousel'
+  | 'pdf_preview'
+  | 'html_fragment';
+
+export interface PostBlock {
+  blockId: string;
+  type: PostBlockType;
+  text?: string;
+  level?: number;
+  mediaId?: string;
+  fileId?: string;
+  caption?: string;
+  quote?: string;
+  author?: string;
+  url?: string;
+  mimeType?: string;
+  title?: string;
+  html?: string;
+  payload?: Record<string, unknown>;
+}
+
+export interface PostMediaRef {
+  mediaId: string;
+  discoverable?: boolean;
+  sortOrder?: number;
+  caption?: string;
+}
+
+export interface PostDestination {
+  type: 'post' | 'pdf' | 'external' | 'internal';
+  url: string;
+}
+
+export interface Post {
+  postId: string;
+  artistId: string;
+  creatorId?: string;
+  groupId?: string;
+  authorId?: string;
+  title: string;
+  slug: string;
+  slugHistory?: string[];
+  summary?: string;
+  status: PostStatus;
+  blocks: PostBlock[];
+  media: PostMediaRef[];
+  primaryMediaId?: string;
+  discovery: {
+    mode: PostDiscoveryMode;
+  };
+  destination?: PostDestination | null;
+  metadata?: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+}
 
 export interface Artist {
   artistId: string;
@@ -21,6 +94,38 @@ export interface Artist {
   imageCount?: number;
   galleryCount?: number;
   createdAt: string;
+}
+
+export type Creator = Artist;
+
+export interface CreatorGroup {
+  groupId: string;
+  creatorId: string;
+  title: string;
+  slug: string;
+  description?: string;
+  displayType: CreatorGroupDisplayType;
+  coverMediaId?: string;
+  status: 'draft' | 'published' | 'archived';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SourceFile {
+  fileId: string;
+  creatorId: string;
+  sourceKind: SourceFileKind;
+  mimeType: string;
+  storageKey: string;
+  originalFilename?: string;
+  sizeBytes?: number;
+  checksumSha256?: string;
+  metadata?: Record<string, string | number | boolean | null>;
+  downloadable?: boolean;
+  premium?: boolean;
+  restricted?: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Gallery {
@@ -49,6 +154,9 @@ export interface Gallery {
 export interface Media {
   mediaId: string;
   artistId: string;
+  creatorId?: string;
+  sourceFileId?: string;
+  mediaType?: MediaType;
   appearsInFeed?: boolean;
   discoverSquareCropEnabled?: boolean;
   contentRating?: ContentRating;
@@ -57,7 +165,7 @@ export interface Media {
   moderatorAiDisclosure?: AiDisclosure;
   heavyTopics?: HeavyTopic[];
   moderatorHeavyTopics?: HeavyTopic[];
-  assetType?: 'image' | 'video';
+  assetType?: 'image' | 'video' | 'audio';
   status?: 'draft' | 'scheduled' | 'published' | 'archived';
   releaseVisibility?: 'public' | 'hidden' | 'removed';
   publishAt?: string;
@@ -240,10 +348,14 @@ export interface ImageStats {
 export interface TrendingFeedItem {
   period: TrendingPeriod;
   rank: number;
+  surfaceType?: 'media_surface' | 'post_surface';
   imageId: string;
-  assetType: 'image' | 'video';
+  assetType: 'image' | 'video' | 'audio';
   artistId: string;
+  creatorId?: string;
   artistName: string;
+  creatorName?: string;
+  postId?: string;
   galleryId: string;
   gallerySlug: string;
   galleryVisibility: 'free' | 'preview';

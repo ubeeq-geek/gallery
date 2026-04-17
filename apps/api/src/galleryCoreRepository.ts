@@ -1,6 +1,6 @@
 import { BatchGetCommand, DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'crypto';
-import type { Artist, ArtistMember, AuditEvent, Collection, Follow, Gallery, IdempotencyRecord, Media, GalleryMediaView, UserProfile } from './domain';
+import type { Artist, ArtistMember, AuditEvent, Collection, Follow, Gallery, IdempotencyRecord, Media, GalleryMediaView, Post, UserProfile } from './domain';
 
 const stripEntityFields = <T>(item: Record<string, unknown>): T => {
   const clean = { ...item };
@@ -336,6 +336,19 @@ export class GalleryCoreRepository {
     return (response.Items || []).map((item) => stripEntityFields<Gallery>(item));
   }
 
+  async listAllPosts(): Promise<Post[]> {
+    const response = await this.client.send(
+      new ScanCommand({
+        TableName: this.tableName,
+        FilterExpression: 'entityType = :entityType',
+        ExpressionAttributeValues: {
+          ':entityType': 'POST'
+        }
+      })
+    );
+    return (response.Items || []).map((item) => stripEntityFields<Post>(item));
+  }
+
   async getArtistBySlug(slug: string): Promise<Artist | null> {
     const response = await this.client.send(
       new QueryCommand({
@@ -381,6 +394,29 @@ export class GalleryCoreRepository {
     return (response.Items || []).map((item) => stripEntityFields<Gallery>(item));
   }
 
+  async listPostsByArtistSlug(artistSlug: string): Promise<Post[]> {
+    const artist = await this.getArtistBySlug(artistSlug);
+    if (!artist) {
+      return [];
+    }
+    return this.listPostsByArtistId(artist.artistId);
+  }
+
+  async listPostsByArtistId(artistId: string): Promise<Post[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `ARTIST#${artistId}`,
+          ':prefix': 'POST#'
+        }
+      })
+    );
+    return (response.Items || []).map((item) => stripEntityFields<Post>(item));
+  }
+
   async getGalleryBySlug(slug: string): Promise<Gallery | null> {
     const response = await this.client.send(
       new QueryCommand({
@@ -404,6 +440,43 @@ export class GalleryCoreRepository {
       return profile;
     }
     return null;
+  }
+
+  async getPostBySlug(slug: string): Promise<Post | null> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI1',
+        KeyConditionExpression: 'GSI1PK = :slugPk',
+        ExpressionAttributeValues: {
+          ':slugPk': `POST_SLUG#${slug}`
+        },
+        Limit: 1
+      })
+    );
+
+    const item = response.Items?.[0];
+    if (!item) return null;
+    if (item.entityType === 'POST') {
+      return stripEntityFields<Post>(item);
+    }
+    if (item.entityType === 'POST_SLUG' && typeof item.postId === 'string') {
+      return this.getPostById(item.postId);
+    }
+    return null;
+  }
+
+  async getPostById(postId: string): Promise<Post | null> {
+    const response = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: {
+          PK: `POST#${postId}`,
+          SK: 'PROFILE'
+        }
+      })
+    );
+    return response.Item ? stripEntityFields<Post>(response.Item) : null;
   }
 
   async getMediaByGalleryId(galleryId: string): Promise<GalleryMediaView[]> {
@@ -616,6 +689,50 @@ export class GalleryCoreRepository {
     for (const slug of slugHistory) {
       await this.putGallerySlugAlias(gallery.galleryId, slug);
     }
+  }
+
+  private async putPostSlugAlias(postId: string, slug: string): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `POST#${postId}`,
+          SK: `SLUG#${slug}`,
+          GSI1PK: `POST_SLUG#${slug}`,
+          GSI1SK: `POST#${postId}`,
+          entityType: 'POST_SLUG',
+          postId,
+          slug
+        }
+      })
+    );
+  }
+
+  async createPost(post: Post): Promise<void> {
+    const slugHistory = uniqueValues([...(post.slugHistory || []), post.slug]);
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `POST#${post.postId}`,
+          SK: 'PROFILE',
+          GSI1PK: `POST_SLUG#${post.slug}`,
+          GSI1SK: `POST#${post.postId}`,
+          GSI2PK: `ARTIST#${post.artistId}`,
+          GSI2SK: `POST#${post.createdAt}#${post.postId}`,
+          entityType: 'POST',
+          ...post,
+          slugHistory
+        }
+      })
+    );
+    for (const slug of slugHistory) {
+      await this.putPostSlugAlias(post.postId, slug);
+    }
+  }
+
+  async updatePost(post: Post): Promise<void> {
+    await this.createPost(post);
   }
 
   private async putGalleryPlacement(
@@ -1054,6 +1171,30 @@ export class GalleryCoreRepository {
         TableName: this.tableName,
         Key: {
           PK: `GALLERY#${galleryId}`,
+          SK: 'PROFILE'
+        }
+      })
+    );
+  }
+
+  async deletePost(postId: string): Promise<void> {
+    const post = await this.getPostById(postId);
+    for (const slug of post?.slugHistory || (post?.slug ? [post.slug] : [])) {
+      await this.client.send(
+        new DeleteCommand({
+          TableName: this.tableName,
+          Key: {
+            PK: `POST#${postId}`,
+            SK: `SLUG#${slug}`
+          }
+        })
+      );
+    }
+    await this.client.send(
+      new DeleteCommand({
+        TableName: this.tableName,
+        Key: {
+          PK: `POST#${postId}`,
           SK: 'PROFILE'
         }
       })

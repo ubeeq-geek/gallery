@@ -91,16 +91,192 @@ type ManagedMedia = {
   moderatorContentRating?: 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
 };
 
+type ManagedPost = {
+  postId: string;
+  artistId: string;
+  authorId?: string;
+  title: string;
+  slug: string;
+  slugHistory?: string[];
+  summary?: string;
+  status: 'draft' | 'published' | 'archived';
+  blocks: Array<Record<string, unknown>>;
+  media: Array<{ mediaId: string; discoverable?: boolean; sortOrder?: number; caption?: string }>;
+  primaryMediaId?: string;
+  discovery?: { mode?: 'primary' | 'all' | 'selected' };
+  destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
+  metadata?: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+};
+
+type PostTemplate = 'image' | 'collection' | 'longform' | 'comic' | 'pdf' | 'audio';
+type PostFormState = {
+  artistId: string;
+  title: string;
+  slug: string;
+  summary: string;
+  status: ManagedPost['status'];
+  primaryMediaId: string;
+  discoveryMode: 'primary' | 'all' | 'selected';
+  destinationType: 'post' | 'pdf' | 'external' | 'internal';
+  destinationUrl: string;
+  mediaJson: string;
+  blocksJson: string;
+  metadataJson: string;
+};
+
+const postTemplateOptions: Array<{ value: PostTemplate; label: string }> = [
+  { value: 'image', label: 'Image post' },
+  { value: 'collection', label: 'Collection post' },
+  { value: 'longform', label: 'Longform post' },
+  { value: 'comic', label: 'Comic episode' },
+  { value: 'pdf', label: 'PDF-backed post' },
+  { value: 'audio', label: 'Audio post' }
+];
+
+const createEmptyPostForm = (): PostFormState => ({
+  artistId: '',
+  title: '',
+  slug: '',
+  summary: '',
+  status: 'published',
+  primaryMediaId: '',
+  discoveryMode: 'primary',
+  destinationType: 'post',
+  destinationUrl: '',
+  mediaJson: '[]',
+  blocksJson: '[]',
+  metadataJson: '{}'
+});
+
+const buildTemplatedPostForm = (current: PostFormState, template: PostTemplate): PostFormState => {
+  const primaryMediaId = current.primaryMediaId.trim();
+  const media = primaryMediaId
+    ? [{ mediaId: primaryMediaId, discoverable: true, sortOrder: 0 }]
+    : [];
+  const shared = {
+    ...current,
+    mediaJson: JSON.stringify(media, null, 2)
+  };
+  switch (template) {
+    case 'image':
+      return {
+        ...shared,
+        discoveryMode: 'primary',
+        destinationType: 'post',
+        blocksJson: JSON.stringify(primaryMediaId ? [{ blockId: `image-${Date.now()}`, type: 'image', mediaId: primaryMediaId }] : [], null, 2),
+        metadataJson: JSON.stringify({ template: 'default', layout: 'standard' }, null, 2)
+      };
+    case 'collection':
+      return {
+        ...shared,
+        discoveryMode: 'selected',
+        destinationType: 'post',
+        blocksJson: JSON.stringify(
+          [
+            { blockId: `heading-${Date.now()}`, type: 'heading', level: 2, text: current.title || 'Collection title' },
+            { blockId: `paragraph-${Date.now() + 1}`, type: 'paragraph', text: current.summary || 'Collection description' }
+          ],
+          null,
+          2
+        ),
+        metadataJson: JSON.stringify({ template: 'collection', layout: 'grid' }, null, 2)
+      };
+    case 'longform':
+      return {
+        ...shared,
+        discoveryMode: 'selected',
+        destinationType: 'post',
+        blocksJson: JSON.stringify(
+          [
+            { blockId: `heading-${Date.now()}`, type: 'heading', level: 1, text: current.title || 'Longform title' },
+            { blockId: `paragraph-${Date.now() + 1}`, type: 'paragraph', text: current.summary || 'Intro paragraph...' },
+            { blockId: `quote-${Date.now() + 2}`, type: 'quote', text: 'Pull quote', cite: '' },
+            { blockId: `divider-${Date.now() + 3}`, type: 'divider' },
+            { blockId: `paragraph-${Date.now() + 4}`, type: 'paragraph', text: 'Continue writing...' }
+          ],
+          null,
+          2
+        ),
+        metadataJson: JSON.stringify({ template: 'reading', layout: 'longform' }, null, 2)
+      };
+    case 'comic':
+      return {
+        ...shared,
+        discoveryMode: 'selected',
+        destinationType: 'post',
+        blocksJson: JSON.stringify(
+          [
+            { blockId: `heading-${Date.now()}`, type: 'heading', level: 2, text: current.title || 'Episode title' },
+            { blockId: `paragraph-${Date.now() + 1}`, type: 'paragraph', text: current.summary || 'Episode description' },
+            ...(primaryMediaId ? [{ blockId: `panel-${Date.now() + 2}`, type: 'image', mediaId: primaryMediaId }] : [])
+          ],
+          null,
+          2
+        ),
+        metadataJson: JSON.stringify({ template: 'comic', layout: 'vertical-scroll' }, null, 2)
+      };
+    case 'pdf':
+      return {
+        ...shared,
+        discoveryMode: 'primary',
+        destinationType: 'pdf',
+        destinationUrl: current.destinationUrl || 'https://example.com/doc.pdf',
+        blocksJson: JSON.stringify(
+          [
+            { blockId: `paragraph-${Date.now()}`, type: 'paragraph', text: current.summary || 'Document summary' },
+            { blockId: `pdf-${Date.now() + 1}`, type: 'pdf_preview', url: current.destinationUrl || 'https://example.com/doc.pdf' }
+          ],
+          null,
+          2
+        ),
+        metadataJson: JSON.stringify({ template: 'document', layout: 'standard' }, null, 2)
+      };
+    case 'audio':
+      return {
+        ...shared,
+        discoveryMode: 'primary',
+        destinationType: 'post',
+        blocksJson: JSON.stringify(
+          [
+            ...(primaryMediaId ? [{ blockId: `audio-${Date.now()}`, type: 'audio', mediaId: primaryMediaId }] : []),
+            { blockId: `paragraph-${Date.now() + 1}`, type: 'paragraph', text: current.summary || 'Episode notes...' }
+          ],
+          null,
+          2
+        ),
+        metadataJson: JSON.stringify({ template: 'audio', layout: 'standard' }, null, 2)
+      };
+    default:
+      return shared;
+  }
+};
+
+const inferTemplateFromMetadata = (metadata?: Record<string, string> | null): PostTemplate => {
+  const template = (metadata?.template || '').toLowerCase();
+  if (template === 'collection') return 'collection';
+  if (template === 'reading') return 'longform';
+  if (template === 'comic') return 'comic';
+  if (template === 'document') return 'pdf';
+  if (template === 'audio') return 'audio';
+  return 'image';
+};
+
 export function ArtistAreaWorkspace() {
   const [artists, setArtists] = useState<ManagedArtist[]>([]);
   const [galleries, setGalleries] = useState<ManagedGallery[]>([]);
   const [myArtists, setMyArtists] = useState<Array<{ artistId: string; name: string; memberRole?: string }>>([]);
   const [media, setMedia] = useState<ManagedMedia[]>([]);
+  const [posts, setPosts] = useState<ManagedPost[]>([]);
   const [mediaGalleryId, setMediaGalleryId] = useState(() => readStoredWorkspace().mediaGalleryId || '');
   const [artistQuery, setArtistQuery] = useState('');
   const [galleryQuery, setGalleryQuery] = useState('');
   const [galleryArtistFilter, setGalleryArtistFilter] = useState(() => readStoredWorkspace().galleryArtistFilter || 'all');
   const [mediaQuery, setMediaQuery] = useState('');
+  const [postQuery, setPostQuery] = useState('');
+  const [postArtistFilter, setPostArtistFilter] = useState('all');
   const [mediaTypeFilter, setMediaTypeFilter] = useState<'all' | 'image' | 'video'>(() => readStoredWorkspace().mediaTypeFilter || 'all');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -189,6 +365,11 @@ export function ArtistAreaWorkspace() {
   const [auditNextCursor, setAuditNextCursor] = useState('');
   const [auditActionFilter, setAuditActionFilter] = useState('');
   const [auditActorFilter, setAuditActorFilter] = useState('');
+  const [postTemplate, setPostTemplate] = useState<PostTemplate>('image');
+  const [postForm, setPostForm] = useState<PostFormState>(createEmptyPostForm);
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
+  const [postEditTemplate, setPostEditTemplate] = useState<PostTemplate>('image');
+  const [postEditForm, setPostEditForm] = useState<PostFormState>(createEmptyPostForm);
   const currentUser = useMemo(() => getCurrentUser(), []);
   const isAdmin = Boolean(currentUser?.groups.includes('Admins'));
   const isArtist = Boolean(currentUser?.groups.includes('Artists'));
@@ -244,7 +425,7 @@ export function ArtistAreaWorkspace() {
   const availablePanels = useMemo<ArtistAreaPanel[]>(() => {
     const panels: ArtistAreaPanel[] = ['overview'];
     if (isAdmin) panels.push('artists');
-    if (canManageContent) panels.push('galleries', 'media');
+    if (canManageContent) panels.push('galleries', 'media', 'posts');
     if (isAdmin) panels.push('operations');
     return panels;
   }, [canManageContent, isAdmin]);
@@ -271,18 +452,21 @@ export function ArtistAreaWorkspace() {
   const load = async () => {
     setLoading(true);
     try {
-      const [managed, allArtists, allGalleries, settings] = await Promise.all([
+      const [managed, allArtists, allGalleries, allPosts, settings] = await Promise.all([
         api.getMyArtists(),
         api.adminListArtists(),
         api.adminListGalleries(),
+        api.adminListPosts(),
         api.getSiteSettings()
       ]);
       setMyArtists((managed || []) as Array<{ artistId: string; name: string; memberRole?: string }>);
       setArtists((allArtists || []) as ManagedArtist[]);
       setGalleries((allGalleries || []) as ManagedGallery[]);
+      setPosts((allPosts || []) as ManagedPost[]);
       const firstArtistId = (allArtists as ManagedArtist[])[0]?.artistId || '';
       const firstGalleryId = (allGalleries as ManagedGallery[])[0]?.galleryId || '';
       setGalleryForm((prev) => ({ ...prev, artistId: prev.artistId || firstArtistId, artistSlug: prev.artistSlug || ((allArtists as ManagedArtist[]).find((a) => a.artistId === (prev.artistId || firstArtistId))?.slug || '') }));
+      setPostForm((prev) => ({ ...prev, artistId: prev.artistId || firstArtistId }));
       setMediaGalleryId((prev) => prev || firstGalleryId);
       setMediaForm((prev) => ({ ...prev, galleryId: prev.galleryId || firstGalleryId }));
       setCoverGalleryId((prev) => prev || firstGalleryId);
@@ -388,6 +572,44 @@ export function ArtistAreaWorkspace() {
         || item.previewKey.toLowerCase().includes(q);
     }), [media, mediaQuery, mediaTypeFilter]);
 
+  const visiblePosts = useMemo(() => posts
+    .filter((post) => {
+      if (postArtistFilter !== 'all' && post.artistId !== postArtistFilter) return false;
+      const q = postQuery.trim().toLowerCase();
+      if (!q) return true;
+      return post.title.toLowerCase().includes(q) || post.slug.toLowerCase().includes(q);
+    })
+    .sort((a, b) => (b.publishedAt || b.updatedAt || b.createdAt).localeCompare(a.publishedAt || a.updatedAt || a.createdAt))
+  , [posts, postArtistFilter, postQuery]);
+
+  const parseJsonInput = <T,>(value: string, fallback: T): T => {
+    if (!value.trim()) return fallback;
+    return JSON.parse(value) as T;
+  };
+
+  const appendPostMediaRefJson = (
+    currentJson: string,
+    mediaId: string,
+    setJson: (next: string) => void
+  ) => {
+    const trimmedMediaId = mediaId.trim();
+    if (!trimmedMediaId) return;
+    const current = parseJsonInput<Array<{ mediaId: string; discoverable?: boolean; sortOrder?: number; caption?: string }>>(currentJson, []);
+    if (current.some((item) => item.mediaId === trimmedMediaId)) return;
+    const next = [...current, { mediaId: trimmedMediaId, discoverable: true, sortOrder: current.length }];
+    setJson(JSON.stringify(next, null, 2));
+  };
+
+  const appendPostBlockJson = (
+    currentJson: string,
+    block: Record<string, unknown>,
+    setJson: (next: string) => void
+  ) => {
+    const current = parseJsonInput<Array<Record<string, unknown>>>(currentJson, []);
+    const next = [...current, block];
+    setJson(JSON.stringify(next, null, 2));
+  };
+
   const startEditArtist = (artist: ManagedArtist) => {
     setEditingArtistId(artist.artistId);
     setArtistEditForm({ name: artist.name, slug: artist.slug, status: artist.status, sortOrder: artist.sortOrder, discoverSquareCropEnabled: artist.discoverSquareCropEnabled !== false, defaultAiDisclosure: artist.defaultAiDisclosure || 'none', defaultHeavyTopics: artist.defaultHeavyTopics || [] });
@@ -485,6 +707,25 @@ export function ArtistAreaWorkspace() {
   const startEditMedia = (item: ManagedMedia) => {
     setEditingMediaId(item.imageId);
     applyMediaToEditForm(item);
+  };
+
+  const startEditPost = (post: ManagedPost) => {
+    setEditingPostId(post.postId);
+    setPostEditTemplate(inferTemplateFromMetadata(post.metadata));
+    setPostEditForm({
+      artistId: post.artistId,
+      title: post.title,
+      slug: post.slug,
+      summary: post.summary || '',
+      status: post.status,
+      primaryMediaId: post.primaryMediaId || '',
+      discoveryMode: post.discovery?.mode || 'primary',
+      destinationType: post.destination?.type || 'post',
+      destinationUrl: post.destination?.url || '',
+      mediaJson: JSON.stringify(post.media || [], null, 2),
+      blocksJson: JSON.stringify(post.blocks || [], null, 2),
+      metadataJson: JSON.stringify(post.metadata || {}, null, 2)
+    });
   };
 
   const hydrateMediaEditFromGallery = () => withFeedback(async () => {
@@ -696,6 +937,66 @@ export function ArtistAreaWorkspace() {
     await loadMedia(item.galleryId);
   });
 
+  const createPost = () => withFeedback(async () => {
+    if (!postForm.artistId || !postForm.title.trim()) throw new Error('Artist and title are required');
+    const rawSlug = slugify(postForm.slug || postForm.title);
+    if (!rawSlug) throw new Error('A valid slug is required');
+    const mediaPayload = parseJsonInput<Array<{ mediaId: string; discoverable?: boolean; sortOrder?: number; caption?: string }>>(postForm.mediaJson, []);
+    const blocksPayload = parseJsonInput<Array<Record<string, unknown>>>(postForm.blocksJson, []);
+    const metadataPayload = parseJsonInput<Record<string, string>>(postForm.metadataJson, {});
+    await api.adminCreatePost({
+      artistId: postForm.artistId,
+      title: postForm.title.trim(),
+      slug: rawSlug,
+      summary: postForm.summary.trim() || undefined,
+      status: postForm.status,
+      media: mediaPayload,
+      blocks: blocksPayload,
+      metadata: metadataPayload,
+      primaryMediaId: postForm.primaryMediaId.trim() || undefined,
+      discoveryMode: postForm.discoveryMode,
+      destination: postForm.destinationUrl.trim()
+        ? { type: postForm.destinationType, url: postForm.destinationUrl.trim() }
+        : null
+    });
+    setPostForm((prev) => ({ ...createEmptyPostForm(), artistId: prev.artistId }));
+    setPostTemplate('image');
+    setMessage('Post created.');
+    await load();
+  });
+
+  const savePostEdit = () => withFeedback(async () => {
+    if (!editingPostId) return;
+    const mediaPayload = parseJsonInput<Array<{ mediaId: string; discoverable?: boolean; sortOrder?: number; caption?: string }>>(postEditForm.mediaJson, []);
+    const blocksPayload = parseJsonInput<Array<Record<string, unknown>>>(postEditForm.blocksJson, []);
+    const metadataPayload = parseJsonInput<Record<string, string>>(postEditForm.metadataJson, {});
+    await api.adminUpdatePost(editingPostId, {
+      title: postEditForm.title.trim(),
+      slug: slugify(postEditForm.slug || postEditForm.title),
+      summary: postEditForm.summary.trim() || undefined,
+      status: postEditForm.status,
+      media: mediaPayload,
+      blocks: blocksPayload,
+      metadata: metadataPayload,
+      primaryMediaId: postEditForm.primaryMediaId.trim() || undefined,
+      discoveryMode: postEditForm.discoveryMode,
+      destination: postEditForm.destinationUrl.trim()
+        ? { type: postEditForm.destinationType, url: postEditForm.destinationUrl.trim() }
+        : null
+    });
+    setEditingPostId(null);
+    setMessage('Post updated.');
+    await load();
+  });
+
+  const deletePost = (post: ManagedPost) => withFeedback(async () => {
+    if (!dangerMode) throw new Error('Enable Danger Mode to delete records.');
+    if (!window.confirm(`Delete post "${post.title}"?`)) return;
+    await api.adminDeletePost(post.postId);
+    setMessage('Post deleted.');
+    await load();
+  });
+
   const saveSiteSettings = () => withFeedback(async () => {
     const updated = await api.adminUpdateSiteSettings(siteSettings);
     setSiteSettings(updated as SiteSettings);
@@ -798,6 +1099,7 @@ export function ArtistAreaWorkspace() {
           {availablePanels.includes('artists') && <button onClick={() => setActivePanel('artists')} className={activePanel === 'artists' ? 'auth-primary-btn' : 'auth-secondary-btn'}>Artists</button>}
           {availablePanels.includes('galleries') && <button onClick={() => setActivePanel('galleries')} className={activePanel === 'galleries' ? 'auth-primary-btn' : 'auth-secondary-btn'}>Galleries</button>}
           {availablePanels.includes('media') && <button onClick={() => setActivePanel('media')} className={activePanel === 'media' ? 'auth-primary-btn' : 'auth-secondary-btn'}>Media</button>}
+          {availablePanels.includes('posts') && <button onClick={() => setActivePanel('posts')} className={activePanel === 'posts' ? 'auth-primary-btn' : 'auth-secondary-btn'}>Posts</button>}
           {availablePanels.includes('operations') && <button onClick={() => setActivePanel('operations')} className={activePanel === 'operations' ? 'auth-primary-btn' : 'auth-secondary-btn'}>Operations</button>}
         </div>
       </section>
@@ -1185,6 +1487,398 @@ export function ArtistAreaWorkspace() {
             <ul>{auditEvents.slice(0, 20).map((event) => <li key={event.auditId}>{event.time} · {event.action} · {event.actorUserId || 'system'}</li>)}{!auditEvents.length && <li className="small">No audit events loaded.</li>}</ul>
           </article>
         </section>
+      )}
+
+      {activePanel === 'posts' && canManageContent && (
+        <>
+          <section className="panel artist-public-grid">
+            <article>
+              <h3>Create post</h3>
+              <div className="inline-form">
+                <select value={postTemplate} onChange={(e) => setPostTemplate(e.target.value as PostTemplate)}>
+                  {postTemplateOptions.map((option) => (
+                    <option key={`post-template-${option.value}`} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setPostForm((prev) => buildTemplatedPostForm(prev, postTemplate))}
+                  disabled={submitting}
+                >
+                  Apply template
+                </button>
+              </div>
+              <div className="inline-form">
+                <select value={postForm.artistId} onChange={(e) => setPostForm({ ...postForm, artistId: e.target.value })}>
+                  <option value="">Select artist</option>
+                  {artists.map((artist) => <option key={`post-create-${artist.artistId}`} value={artist.artistId}>{artist.name}</option>)}
+                </select>
+              </div>
+              <div className="inline-form"><input placeholder="Title" value={postForm.title} onChange={(e) => setPostForm({ ...postForm, title: e.target.value, slug: postForm.slug || slugify(e.target.value) })} /></div>
+              <div className="inline-form"><input placeholder="Slug" value={postForm.slug} onChange={(e) => setPostForm({ ...postForm, slug: slugify(e.target.value) })} /></div>
+              <div className="inline-form"><textarea placeholder="Summary (optional)" value={postForm.summary} onChange={(e) => setPostForm({ ...postForm, summary: e.target.value })} rows={3} /></div>
+              <div className="inline-form">
+                <select value={postForm.status} onChange={(e) => setPostForm({ ...postForm, status: e.target.value as ManagedPost['status'] })}>
+                  <option value="draft">Draft</option>
+                  <option value="published">Published</option>
+                  <option value="archived">Archived</option>
+                </select>
+                <select value={postForm.discoveryMode} onChange={(e) => setPostForm({ ...postForm, discoveryMode: e.target.value as 'primary' | 'all' | 'selected' })}>
+                  <option value="primary">Discovery: primary</option>
+                  <option value="all">Discovery: all</option>
+                  <option value="selected">Discovery: selected</option>
+                </select>
+              </div>
+              <div className="inline-form"><input placeholder="Primary media ID (optional)" value={postForm.primaryMediaId} onChange={(e) => setPostForm({ ...postForm, primaryMediaId: e.target.value })} /></div>
+              <div className="inline-form">
+                <select value={postForm.destinationType} onChange={(e) => setPostForm({ ...postForm, destinationType: e.target.value as 'post' | 'pdf' | 'external' | 'internal' })}>
+                  <option value="post">Destination: post</option>
+                  <option value="pdf">Destination: pdf</option>
+                  <option value="external">Destination: external</option>
+                  <option value="internal">Destination: internal</option>
+                </select>
+                <input placeholder="Destination URL (optional)" value={postForm.destinationUrl} onChange={(e) => setPostForm({ ...postForm, destinationUrl: e.target.value })} />
+              </div>
+              <div className="inline-form"><textarea placeholder='Media refs JSON (e.g. [{"mediaId":"...","discoverable":true}])' value={postForm.mediaJson} onChange={(e) => setPostForm({ ...postForm, mediaJson: e.target.value })} rows={4} /></div>
+              <div className="inline-form" style={{ gap: 8 }}>
+                <button
+                  onClick={() => appendPostMediaRefJson(postForm.mediaJson, postForm.primaryMediaId, (next) => setPostForm({ ...postForm, mediaJson: next }))}
+                  disabled={submitting}
+                >
+                  Add primary media ref
+                </button>
+              </div>
+              <div className="inline-form"><textarea placeholder='Blocks JSON (e.g. [{"blockId":"b1","type":"paragraph","text":"..."}])' value={postForm.blocksJson} onChange={(e) => setPostForm({ ...postForm, blocksJson: e.target.value })} rows={5} /></div>
+              <div className="inline-form" style={{ gap: 8 }}>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `heading-${Date.now()}`, type: 'heading', level: 2, text: postForm.title || 'Heading' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add heading block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `paragraph-${Date.now()}`, type: 'paragraph', text: postForm.summary || 'Write your paragraph here.' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add paragraph block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `image-${Date.now()}`, type: 'image', mediaId: postForm.primaryMediaId.trim() || '' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add image block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `video-${Date.now()}`, type: 'video', mediaId: postForm.primaryMediaId.trim() || '' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add video block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `audio-${Date.now()}`, type: 'audio', mediaId: postForm.primaryMediaId.trim() || '' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add audio block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `quote-${Date.now()}`, type: 'quote', text: 'Add a quote...', cite: '' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add quote block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `divider-${Date.now()}`, type: 'divider' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add divider block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `link-${Date.now()}`, type: 'link', url: postForm.destinationUrl || 'https://example.com', label: 'Open link' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add link block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `embed-${Date.now()}`, type: 'embed', url: postForm.destinationUrl || 'https://example.com/embed' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add embed block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `file-${Date.now()}`, type: 'file', url: postForm.destinationUrl || 'https://example.com/file.pdf', label: 'Attached file' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add file block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postForm.blocksJson,
+                    { blockId: `pdf-preview-${Date.now()}`, type: 'pdf_preview', url: postForm.destinationUrl || 'https://example.com/doc.pdf' },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add PDF preview block
+                </button>
+              </div>
+              <div className="inline-form"><textarea placeholder='Metadata JSON (e.g. {"template":"reading"})' value={postForm.metadataJson} onChange={(e) => setPostForm({ ...postForm, metadataJson: e.target.value })} rows={3} /></div>
+              <div className="inline-form" style={{ gap: 8 }}>
+                <button onClick={() => void createPost()} disabled={submitting}>Create post</button>
+                <button
+                  onClick={() =>
+                    setPostForm((prev) => ({ ...createEmptyPostForm(), artistId: prev.artistId }))
+                  }
+                  disabled={submitting}
+                >
+                  Reset
+                </button>
+              </div>
+            </article>
+            <article>
+              <h3>Filter posts</h3>
+              <div className="inline-form"><input placeholder="Search posts" value={postQuery} onChange={(e) => setPostQuery(e.target.value)} /></div>
+              <div className="inline-form">
+                <select value={postArtistFilter} onChange={(e) => setPostArtistFilter(e.target.value)}>
+                  <option value="all">All artists</option>
+                  {artists.map((artist) => <option key={`post-filter-${artist.artistId}`} value={artist.artistId}>{artist.name}</option>)}
+                </select>
+              </div>
+              <button onClick={() => { setPostQuery(''); setPostArtistFilter('all'); }}>Clear filters</button>
+            </article>
+          </section>
+
+          <section className="panel">
+            <h2>Posts ({visiblePosts.length})</h2>
+            <ul>
+              {visiblePosts.map((post) => (
+                <li key={post.postId}>
+                  <strong>{post.title}</strong> ({post.slug}) · {post.status} · discovery: {post.discovery?.mode || 'primary'} · media: {post.media?.length || 0} · blocks: {post.blocks?.length || 0}
+                  <button style={{ marginLeft: 8 }} onClick={() => startEditPost(post)} disabled={submitting}>Edit</button>
+                  <button style={{ marginLeft: 8 }} onClick={() => void deletePost(post)} disabled={submitting}>Delete</button>
+                </li>
+              ))}
+              {!visiblePosts.length && <li className="small">No posts found for the current filter.</li>}
+            </ul>
+          </section>
+
+          {editingPostId && (
+            <section className="panel">
+              <h3>Edit post</h3>
+              <div className="inline-form">
+                <select value={postEditTemplate} onChange={(e) => setPostEditTemplate(e.target.value as PostTemplate)}>
+                  {postTemplateOptions.map((option) => (
+                    <option key={`post-edit-template-${option.value}`} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setPostEditForm((prev) => buildTemplatedPostForm(prev, postEditTemplate))}
+                  disabled={submitting}
+                >
+                  Apply template
+                </button>
+              </div>
+              <div className="inline-form">
+                <select value={postEditForm.artistId} onChange={(e) => setPostEditForm({ ...postEditForm, artistId: e.target.value })}>
+                  <option value="">Select artist</option>
+                  {artists.map((artist) => <option key={`post-edit-${artist.artistId}`} value={artist.artistId}>{artist.name}</option>)}
+                </select>
+              </div>
+              <div className="inline-form"><input placeholder="Title" value={postEditForm.title} onChange={(e) => setPostEditForm({ ...postEditForm, title: e.target.value })} /></div>
+              <div className="inline-form"><input placeholder="Slug" value={postEditForm.slug} onChange={(e) => setPostEditForm({ ...postEditForm, slug: slugify(e.target.value) })} /></div>
+              <div className="inline-form"><textarea placeholder="Summary (optional)" value={postEditForm.summary} onChange={(e) => setPostEditForm({ ...postEditForm, summary: e.target.value })} rows={3} /></div>
+              <div className="inline-form">
+                <select value={postEditForm.status} onChange={(e) => setPostEditForm({ ...postEditForm, status: e.target.value as ManagedPost['status'] })}>
+                  <option value="draft">Draft</option>
+                  <option value="published">Published</option>
+                  <option value="archived">Archived</option>
+                </select>
+                <select value={postEditForm.discoveryMode} onChange={(e) => setPostEditForm({ ...postEditForm, discoveryMode: e.target.value as 'primary' | 'all' | 'selected' })}>
+                  <option value="primary">Discovery: primary</option>
+                  <option value="all">Discovery: all</option>
+                  <option value="selected">Discovery: selected</option>
+                </select>
+              </div>
+              <div className="inline-form"><input placeholder="Primary media ID (optional)" value={postEditForm.primaryMediaId} onChange={(e) => setPostEditForm({ ...postEditForm, primaryMediaId: e.target.value })} /></div>
+              <div className="inline-form">
+                <select value={postEditForm.destinationType} onChange={(e) => setPostEditForm({ ...postEditForm, destinationType: e.target.value as 'post' | 'pdf' | 'external' | 'internal' })}>
+                  <option value="post">Destination: post</option>
+                  <option value="pdf">Destination: pdf</option>
+                  <option value="external">Destination: external</option>
+                  <option value="internal">Destination: internal</option>
+                </select>
+                <input placeholder="Destination URL (optional)" value={postEditForm.destinationUrl} onChange={(e) => setPostEditForm({ ...postEditForm, destinationUrl: e.target.value })} />
+              </div>
+              <div className="inline-form"><textarea placeholder="Media refs JSON" value={postEditForm.mediaJson} onChange={(e) => setPostEditForm({ ...postEditForm, mediaJson: e.target.value })} rows={4} /></div>
+              <div className="inline-form" style={{ gap: 8 }}>
+                <button
+                  onClick={() => appendPostMediaRefJson(postEditForm.mediaJson, postEditForm.primaryMediaId, (next) => setPostEditForm({ ...postEditForm, mediaJson: next }))}
+                  disabled={submitting}
+                >
+                  Add primary media ref
+                </button>
+              </div>
+              <div className="inline-form"><textarea placeholder="Blocks JSON" value={postEditForm.blocksJson} onChange={(e) => setPostEditForm({ ...postEditForm, blocksJson: e.target.value })} rows={5} /></div>
+              <div className="inline-form" style={{ gap: 8 }}>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `heading-${Date.now()}`, type: 'heading', level: 2, text: postEditForm.title || 'Heading' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add heading block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `paragraph-${Date.now()}`, type: 'paragraph', text: postEditForm.summary || 'Write your paragraph here.' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add paragraph block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `image-${Date.now()}`, type: 'image', mediaId: postEditForm.primaryMediaId.trim() || '' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add image block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `video-${Date.now()}`, type: 'video', mediaId: postEditForm.primaryMediaId.trim() || '' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add video block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `audio-${Date.now()}`, type: 'audio', mediaId: postEditForm.primaryMediaId.trim() || '' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add audio block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `quote-${Date.now()}`, type: 'quote', text: 'Add a quote...', cite: '' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add quote block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `divider-${Date.now()}`, type: 'divider' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add divider block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `link-${Date.now()}`, type: 'link', url: postEditForm.destinationUrl || 'https://example.com', label: 'Open link' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add link block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `embed-${Date.now()}`, type: 'embed', url: postEditForm.destinationUrl || 'https://example.com/embed' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add embed block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `file-${Date.now()}`, type: 'file', url: postEditForm.destinationUrl || 'https://example.com/file.pdf', label: 'Attached file' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add file block
+                </button>
+                <button
+                  onClick={() => appendPostBlockJson(
+                    postEditForm.blocksJson,
+                    { blockId: `pdf-preview-${Date.now()}`, type: 'pdf_preview', url: postEditForm.destinationUrl || 'https://example.com/doc.pdf' },
+                    (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                  )}
+                  disabled={submitting}
+                >
+                  Add PDF preview block
+                </button>
+              </div>
+              <div className="inline-form"><textarea placeholder="Metadata JSON" value={postEditForm.metadataJson} onChange={(e) => setPostEditForm({ ...postEditForm, metadataJson: e.target.value })} rows={3} /></div>
+              <div className="inline-form" style={{ gap: 8 }}>
+                <button onClick={() => void savePostEdit()} disabled={submitting}>Save post</button>
+                <button onClick={() => setEditingPostId(null)} disabled={submitting}>Cancel</button>
+              </div>
+            </section>
+          )}
+        </>
       )}
 
       {message && <p>{message}</p>}

@@ -9,7 +9,19 @@ import { Jimp } from 'jimp';
 import { hashPassword } from '../unlock';
 import { loadConfig } from '../config';
 import { GalleryCoreRepository } from '../galleryCoreRepository';
-import type { AiDisclosure, Artist, ContentRating, Gallery, HeavyTopic, Media, SiteSettings } from '../domain';
+import type {
+  AiDisclosure,
+  Artist,
+  ContentRating,
+  Gallery,
+  HeavyTopic,
+  Media,
+  Post,
+  PostBlock,
+  PostDestination,
+  PostDiscoveryMode,
+  SiteSettings
+} from '../domain';
 import { generateImageRenditions } from '../renditions';
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -111,6 +123,53 @@ type ArtistMediaSeed = {
   posterFile?: string;
   durationSeconds?: number;
 };
+type ScenarioPostMediaRefSeed = {
+  mediaId?: string;
+  file?: string;
+  gallerySlug?: string;
+  discoverable?: boolean;
+  sortOrder?: number;
+  caption?: string;
+};
+type ScenarioPostDestinationSeed = {
+  type?: 'post' | 'pdf' | 'external' | 'internal';
+  url?: string;
+};
+type ScenarioPostPrimaryMediaSeed = {
+  mediaId?: string;
+  file?: string;
+  gallerySlug?: string;
+};
+type ScenarioPostBlockSeed = {
+  blockId?: string;
+  type: string;
+  text?: string;
+  level?: number;
+  mediaId?: string;
+  file?: string;
+  gallerySlug?: string;
+  caption?: string;
+  quote?: string;
+  author?: string;
+  url?: string;
+  mimeType?: string;
+  title?: string;
+  html?: string;
+  payload?: Record<string, unknown>;
+};
+type ScenarioPostSeed = {
+  title: string;
+  slug?: string;
+  summary?: string;
+  status?: 'draft' | 'published' | 'archived';
+  discoveryMode?: PostDiscoveryMode;
+  media?: ScenarioPostMediaRefSeed[];
+  blocks?: ScenarioPostBlockSeed[];
+  primaryMediaId?: string;
+  primaryMedia?: ScenarioPostPrimaryMediaSeed;
+  destination?: ScenarioPostDestinationSeed | null;
+  metadata?: Record<string, string>;
+};
 type ArtistSeed = {
   name: string;
   slug: string;
@@ -136,6 +195,7 @@ type ArtistSeed = {
   premiumGalleryDefaultPreviewMaxWidth?: number;
   premiumPassword?: string;
   purchaseUrl?: string;
+  posts?: ScenarioPostSeed[];
 };
 
 type ScenarioGallerySeed = {
@@ -159,6 +219,7 @@ type ScenarioArtistSeed = {
   heavyTopics?: HeavyTopic[];
   discoverSquareCropEnabled?: boolean;
   galleries: ScenarioGallerySeed[];
+  posts?: ScenarioPostSeed[];
 };
 
 type ScenarioSiteSettings = {
@@ -217,6 +278,88 @@ const assertUniqueArtistSeedSlugs = (seeds: ArtistSeed[]): void => {
   }
 };
 
+const normalizePostStatus = (value: ScenarioPostSeed['status']): Post['status'] => {
+  if (value === 'draft' || value === 'archived' || value === 'published') return value;
+  return 'published';
+};
+
+const normalizeDiscoveryMode = (value: ScenarioPostSeed['discoveryMode']): PostDiscoveryMode => {
+  if (value === 'all' || value === 'selected') return value;
+  return 'primary';
+};
+
+const sanitizeOptional = (value: string | undefined, maxLength: number): string | undefined => {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+};
+
+const composeMediaLookupKey = (file: string, gallerySlug: string): string =>
+  `${normalize(file)}::${slugify(gallerySlug)}`;
+
+const resolveScenarioMediaId = (
+  ref: { mediaId?: string; file?: string; gallerySlug?: string } | undefined,
+  label: string,
+  mediaIdByComposite: Map<string, string>,
+  mediaIdsByFile: Map<string, string[]>
+): string | undefined => {
+  if (!ref) return undefined;
+  const explicitMediaId = sanitizeOptional(ref.mediaId, 128);
+  if (explicitMediaId) return explicitMediaId;
+  const file = sanitizeOptional(ref.file, 512);
+  if (!file) {
+    throw new Error(`Scenario ${label} must include mediaId or file`);
+  }
+  const fileNorm = normalize(file);
+  if (ref.gallerySlug) {
+    const direct = mediaIdByComposite.get(composeMediaLookupKey(fileNorm, ref.gallerySlug));
+    if (!direct) {
+      throw new Error(`Scenario ${label} references unknown media "${file}" for gallerySlug "${ref.gallerySlug}"`);
+    }
+    return direct;
+  }
+  const candidates = mediaIdsByFile.get(fileNorm) || [];
+  if (candidates.length === 0) {
+    throw new Error(`Scenario ${label} references unknown media file "${file}"`);
+  }
+  if (candidates.length > 1) {
+    throw new Error(`Scenario ${label} references ambiguous media file "${file}". Add gallerySlug.`);
+  }
+  return candidates[0];
+};
+
+const toSeedPostBlocks = (
+  blocks: ScenarioPostBlockSeed[] | undefined,
+  mediaIdByComposite: Map<string, string>,
+  mediaIdsByFile: Map<string, string[]>,
+  postKey: string
+): PostBlock[] => {
+  if (!blocks?.length) return [];
+  return blocks.map((block, index) => {
+    const mediaId = resolveScenarioMediaId(
+      { mediaId: block.mediaId, file: block.file, gallerySlug: block.gallerySlug },
+      `${postKey}.blocks[${index}]`,
+      mediaIdByComposite,
+      mediaIdsByFile
+    );
+    return {
+      blockId: sanitizeOptional(block.blockId, 128) || `${block.type}-${index + 1}`,
+      type: block.type as PostBlock['type'],
+      text: sanitizeOptional(block.text, 20000),
+      level: typeof block.level === 'number' ? Math.max(1, Math.min(6, Math.floor(block.level))) : undefined,
+      mediaId,
+      caption: sanitizeOptional(block.caption, 2000),
+      quote: sanitizeOptional(block.quote, 4000),
+      author: sanitizeOptional(block.author, 200),
+      url: sanitizeOptional(block.url, 2048),
+      mimeType: sanitizeOptional(block.mimeType, 255),
+      title: sanitizeOptional(block.title, 300),
+      html: sanitizeOptional(block.html, 50000),
+      payload: block.payload
+    };
+  });
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -245,6 +388,22 @@ const parseOptionalStringArray = (value: unknown, fieldName: string): string[] |
 const CONTENT_RATINGS: ContentRating[] = ['general', 'suggestive', 'mature', 'sexual', 'fetish', 'graphic'];
 const AI_DISCLOSURES: AiDisclosure[] = ['none', 'ai-assisted', 'ai-generated'];
 const HEAVY_TOPICS: HeavyTopic[] = ['politics-public-affairs', 'crime-disasters-tragedy'];
+const POST_BLOCK_TYPES = new Set([
+  'heading',
+  'paragraph',
+  'image',
+  'video',
+  'audio',
+  'quote',
+  'divider',
+  'embed',
+  'file',
+  'link',
+  'gallery',
+  'carousel',
+  'pdf_preview',
+  'html_fragment'
+]);
 
 const parseOptionalContentRating = (value: unknown, fieldName: string): ContentRating | undefined => {
   const raw = asOptionalString(value);
@@ -273,6 +432,171 @@ const parseOptionalHeavyTopics = (value: unknown, fieldName: string): HeavyTopic
     }
   }
   return raw as HeavyTopic[];
+};
+
+const parseScenarioPostMediaRef = (value: unknown, fieldName: string): ScenarioPostMediaRefSeed => {
+  if (!isRecord(value)) {
+    throw new Error(`Scenario field "${fieldName}" must be an object`);
+  }
+  const mediaId = asOptionalString(value.mediaId);
+  const file = asOptionalString(value.file);
+  const gallerySlugRaw = asOptionalString(value.gallerySlug);
+  if (!mediaId && !file) {
+    throw new Error(`Scenario field "${fieldName}" must include mediaId or file`);
+  }
+  const sortOrderRaw = value.sortOrder;
+  const sortOrder =
+    typeof sortOrderRaw === 'number' && Number.isFinite(sortOrderRaw) && sortOrderRaw >= 0
+      ? Math.floor(sortOrderRaw)
+      : undefined;
+  if (sortOrderRaw !== undefined && sortOrder === undefined) {
+    throw new Error(`Scenario field "${fieldName}.sortOrder" must be a number >= 0`);
+  }
+  return {
+    mediaId,
+    file,
+    gallerySlug: gallerySlugRaw ? slugify(gallerySlugRaw) : undefined,
+    discoverable: asOptionalBoolean(value.discoverable),
+    sortOrder,
+    caption: asOptionalString(value.caption)
+  };
+};
+
+const parseScenarioPostBlock = (value: unknown, fieldName: string): ScenarioPostBlockSeed => {
+  if (!isRecord(value)) {
+    throw new Error(`Scenario field "${fieldName}" must be an object`);
+  }
+  const type = asString(value.type, `${fieldName}.type`);
+  if (!POST_BLOCK_TYPES.has(type)) {
+    throw new Error(`Scenario field "${fieldName}.type" is invalid`);
+  }
+  const levelRaw = value.level;
+  const level = typeof levelRaw === 'number' && Number.isFinite(levelRaw)
+    ? Math.max(1, Math.min(6, Math.floor(levelRaw)))
+    : undefined;
+  if (levelRaw !== undefined && level === undefined) {
+    throw new Error(`Scenario field "${fieldName}.level" must be a number`);
+  }
+  const payload = value.payload;
+  if (payload !== undefined && (!isRecord(payload))) {
+    throw new Error(`Scenario field "${fieldName}.payload" must be an object`);
+  }
+  return {
+    blockId: asOptionalString(value.blockId),
+    type,
+    text: asOptionalString(value.text),
+    level,
+    mediaId: asOptionalString(value.mediaId),
+    file: asOptionalString(value.file),
+    gallerySlug: asOptionalString(value.gallerySlug),
+    caption: asOptionalString(value.caption),
+    quote: asOptionalString(value.quote),
+    author: asOptionalString(value.author),
+    url: asOptionalString(value.url),
+    mimeType: asOptionalString(value.mimeType),
+    title: asOptionalString(value.title),
+    html: asOptionalString(value.html),
+    payload: payload as Record<string, unknown> | undefined
+  };
+};
+
+const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed => {
+  if (!isRecord(value)) {
+    throw new Error(`Scenario field "${fieldName}" must be an object`);
+  }
+  const title = asString(value.title, `${fieldName}.title`);
+  const slug = asOptionalString(value.slug);
+  const summary = asOptionalString(value.summary);
+  const statusRaw = asOptionalString(value.status);
+  if (statusRaw && statusRaw !== 'draft' && statusRaw !== 'published' && statusRaw !== 'archived') {
+    throw new Error(`Scenario field "${fieldName}.status" must be draft, published, or archived`);
+  }
+  const discoveryModeRaw = asOptionalString(value.discoveryMode);
+  if (discoveryModeRaw && discoveryModeRaw !== 'primary' && discoveryModeRaw !== 'all' && discoveryModeRaw !== 'selected') {
+    throw new Error(`Scenario field "${fieldName}.discoveryMode" must be primary, all, or selected`);
+  }
+
+  const mediaRaw = value.media;
+  const media = Array.isArray(mediaRaw)
+    ? mediaRaw.map((item, idx) => parseScenarioPostMediaRef(item, `${fieldName}.media[${idx}]`))
+    : undefined;
+  if (mediaRaw !== undefined && !Array.isArray(mediaRaw)) {
+    throw new Error(`Scenario field "${fieldName}.media" must be an array`);
+  }
+
+  const blocksRaw = value.blocks;
+  const blocks = Array.isArray(blocksRaw)
+    ? blocksRaw.map((item, idx) => parseScenarioPostBlock(item, `${fieldName}.blocks[${idx}]`))
+    : undefined;
+  if (blocksRaw !== undefined && !Array.isArray(blocksRaw)) {
+    throw new Error(`Scenario field "${fieldName}.blocks" must be an array`);
+  }
+
+  const primaryMediaId = asOptionalString(value.primaryMediaId);
+  const primaryMediaRaw = value.primaryMedia;
+  let primaryMedia: ScenarioPostPrimaryMediaSeed | undefined;
+  if (primaryMediaRaw !== undefined) {
+    if (!isRecord(primaryMediaRaw)) {
+      throw new Error(`Scenario field "${fieldName}.primaryMedia" must be an object`);
+    }
+    const mediaId = asOptionalString(primaryMediaRaw.mediaId);
+    const file = asOptionalString(primaryMediaRaw.file);
+    const gallerySlugRaw = asOptionalString(primaryMediaRaw.gallerySlug);
+    if (!mediaId && !file) {
+      throw new Error(`Scenario field "${fieldName}.primaryMedia" must include mediaId or file`);
+    }
+    primaryMedia = {
+      mediaId,
+      file,
+      gallerySlug: gallerySlugRaw ? slugify(gallerySlugRaw) : undefined
+    };
+  }
+
+  const destinationRaw = value.destination;
+  let destination: ScenarioPostDestinationSeed | null | undefined;
+  if (destinationRaw === null) {
+    destination = null;
+  } else if (destinationRaw !== undefined) {
+    if (!isRecord(destinationRaw)) {
+      throw new Error(`Scenario field "${fieldName}.destination" must be an object or null`);
+    }
+    const type = asOptionalString(destinationRaw.type);
+    if (type && type !== 'post' && type !== 'pdf' && type !== 'external' && type !== 'internal') {
+      throw new Error(`Scenario field "${fieldName}.destination.type" is invalid`);
+    }
+    destination = {
+      type: type as ScenarioPostDestinationSeed['type'] | undefined,
+      url: asOptionalString(destinationRaw.url)
+    };
+  }
+
+  const metadataRaw = value.metadata;
+  let metadata: Record<string, string> | undefined;
+  if (metadataRaw !== undefined) {
+    if (!isRecord(metadataRaw)) {
+      throw new Error(`Scenario field "${fieldName}.metadata" must be an object`);
+    }
+    metadata = {};
+    for (const [key, itemValue] of Object.entries(metadataRaw)) {
+      if (typeof itemValue === 'string') {
+        metadata[key.slice(0, 120)] = itemValue.slice(0, 1000);
+      }
+    }
+  }
+
+  return {
+    title,
+    slug,
+    summary,
+    status: statusRaw as 'draft' | 'published' | 'archived' | undefined,
+    discoveryMode: discoveryModeRaw as PostDiscoveryMode | undefined,
+    media,
+    blocks,
+    primaryMediaId,
+    primaryMedia,
+    destination,
+    metadata
+  };
 };
 
 const parseScenarioArtistMedia = (value: unknown, fieldName: string): ArtistMediaSeed => {
@@ -381,8 +705,15 @@ const parseScenarioArtist = (
   const media = Array.isArray(mediaRaw)
     ? mediaRaw.map((item, idx) => parseScenarioArtistMedia(item, `${fieldName}.media[${idx}]`))
     : undefined;
+  const postsRaw = value.posts;
+  const posts = Array.isArray(postsRaw)
+    ? postsRaw.map((item, idx) => parseScenarioPost(item, `${fieldName}.posts[${idx}]`))
+    : undefined;
   if (!filePrefix && (!media || media.length === 0)) {
     throw new Error(`Scenario field "${fieldName}.filePrefix" is required when "${fieldName}.media" is not provided`);
+  }
+  if (postsRaw !== undefined && !Array.isArray(postsRaw)) {
+    throw new Error(`Scenario field "${fieldName}.posts" must be an array`);
   }
   const discoverSquareCropEnabled = asOptionalBoolean(value.discoverSquareCropEnabled);
   const galleriesRaw = value.galleries;
@@ -430,7 +761,8 @@ const parseScenarioArtist = (
     premiumGalleryStatus: premiumGallery?.status,
     premiumGalleryDefaultPreviewMaxWidth: premiumGallery?.defaultPreviewMaxWidth,
     premiumPassword: premiumGallery?.premiumPassword,
-    purchaseUrl: previewGallery?.purchaseUrl
+    purchaseUrl: previewGallery?.purchaseUrl,
+    posts
   };
 };
 
@@ -732,6 +1064,7 @@ const main = async () => {
 
   const artists: Artist[] = [];
   const galleries: Gallery[] = [];
+  const posts: Post[] = [];
   const media: Array<{
     media: Media;
     galleryId: string;
@@ -840,6 +1173,8 @@ const main = async () => {
       preview: previewGallery?.galleryId,
       premium: premiumGallery?.galleryId
     };
+    const mediaIdByComposite = new Map<string, string>();
+    const mediaIdsByFile = new Map<string, string[]>();
     const galleryBySlug = new Map<string, Gallery>();
     for (const gallery of galleries) {
       galleryBySlug.set(gallery.slug, gallery);
@@ -864,6 +1199,13 @@ const main = async () => {
         position,
         placement
       });
+    };
+    const registerMediaLookup = (file: string, gallerySlug: string, mediaId: string) => {
+      const fileNorm = normalize(file);
+      mediaIdByComposite.set(composeMediaLookupKey(fileNorm, gallerySlug), mediaId);
+      const fileList = mediaIdsByFile.get(fileNorm) || [];
+      fileList.push(mediaId);
+      mediaIdsByFile.set(fileNorm, fileList);
     };
     const pushMediaToKind = (
       kind: GallerySeedKind,
@@ -965,6 +1307,7 @@ const main = async () => {
             previewMaxWidth: mediaSeed.previewMaxWidth
           });
           queueUpload(objectKey, file);
+          registerMediaLookup(file.filename, gallery.slug, mediaId);
           continue;
         }
 
@@ -1004,95 +1347,64 @@ const main = async () => {
         if (poster && posterKey) {
           queueUpload(posterKey, poster);
         }
+        registerMediaLookup(file.filename, gallery.slug, mediaId);
       }
-      continue;
-    }
-
-    const filePrefix = seed.filePrefix;
-    if (!filePrefix) {
-      throw new Error(`Artist ${seed.name} is missing filePrefix and has no explicit media list`);
-    }
-
-    const artistFiles = mediaFiles.filter((file) => normalize(file.filename).startsWith(normalize(filePrefix)));
-    const selectedArtistFiles = seed.includePrefixes?.length
-      ? artistFiles.filter((file) => seed.includePrefixes!.some((prefix) => normalize(file.filename).startsWith(normalize(prefix))))
-      : artistFiles;
-
-    if (seed.includePrefixes?.length) {
-      const missingPrefixes = seed.includePrefixes.filter(
-        (prefix) => !selectedArtistFiles.some((file) => normalize(file.filename).startsWith(normalize(prefix)))
-      );
-      if (missingPrefixes.length > 0) {
-        throw new Error(`Missing media files for ${seed.name}: ${missingPrefixes.join(', ')}`);
+    } else {
+      const filePrefix = seed.filePrefix;
+      if (!filePrefix) {
+        throw new Error(`Artist ${seed.name} is missing filePrefix and has no explicit media list`);
       }
-    }
 
-    const imageFiles = selectedArtistFiles
-      .filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && !isPoster(file.filename))
-      .sort((a, b) => extractSequence(a.filename) - extractSequence(b.filename));
+      const artistFiles = mediaFiles.filter((file) => normalize(file.filename).startsWith(normalize(filePrefix)));
+      const selectedArtistFiles = seed.includePrefixes?.length
+        ? artistFiles.filter((file) => seed.includePrefixes!.some((prefix) => normalize(file.filename).startsWith(normalize(prefix))))
+        : artistFiles;
 
-    const videoFiles = selectedArtistFiles
-      .filter((file) => VIDEO_EXT.has(path.extname(file.filename).toLowerCase()))
-      .sort((a, b) => extractSequence(a.filename) - extractSequence(b.filename));
-
-    const posterFiles = selectedArtistFiles.filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && isPoster(file.filename));
-
-    const hasPremiumTier = Boolean(previewGallery || premiumGallery);
-    const imageSplit = hasPremiumTier
-      ? splitByAccess(imageFiles)
-      : { free: imageFiles, premium: [] as AssetFile[] };
-    const videoSplit = hasPremiumTier
-      ? splitByAccess(videoFiles)
-      : { free: videoFiles, premium: [] as AssetFile[] };
-    const freeImages = freeGallery ? imageSplit.free : [];
-    const previewImages = previewGallery ? (freeGallery ? imageSplit.premium : imageSplit.free) : [];
-    const premiumImages = premiumGallery ? imageSplit.premium : [];
-    const freeVideos = freeGallery ? videoSplit.free : [];
-    const previewVideos = previewGallery ? (freeGallery ? videoSplit.premium : videoSplit.free) : [];
-    const premiumVideos = premiumGallery ? videoSplit.premium : [];
-
-    let freeOrder = 1;
-    let previewOrder = 1;
-    let premiumOrder = 1;
-
-    for (const file of freeImages) {
-      const dimensions = await getImageDimensions(file);
-      const mediaId = seedId('media', seed.slug, 'free', file.filename);
-      const title = titleFromFilename(file.filename);
-      const slug = slugify(title);
-      const previewKey = `${artistId}/${mediaId}`;
-      if (freeGallery) {
-        pushMedia(freeGallery.galleryId, freeOrder, {
-        mediaId,
-        artistId,
-        assetType: 'image',
-        discoverSquareCropEnabled,
-        contentRating,
-        aiDisclosure,
-        heavyTopics,
-        title,
-        slug,
-        slugHistory: [slug],
-        originalFilename: file.filename,
-        previewKey,
-        width: dimensions.width,
-        height: dimensions.height,
-        altText: `${seed.name} free image ${freeOrder}`,
-        createdAt
-      });
+      if (seed.includePrefixes?.length) {
+        const missingPrefixes = seed.includePrefixes.filter(
+          (prefix) => !selectedArtistFiles.some((file) => normalize(file.filename).startsWith(normalize(prefix)))
+        );
+        if (missingPrefixes.length > 0) {
+          throw new Error(`Missing media files for ${seed.name}: ${missingPrefixes.join(', ')}`);
+        }
       }
-      queueUpload(previewKey, file);
-      freeOrder += 1;
-    }
 
-    for (const file of previewImages) {
-      const dimensions = await getImageDimensions(file);
-      const mediaId = seedId('media', seed.slug, 'preview', file.filename);
-      const title = titleFromFilename(file.filename);
-      const slug = slugify(title);
-      const previewKey = `${artistId}/${mediaId}`;
-      if (previewGallery) {
-        pushMedia(previewGallery.galleryId, previewOrder, {
+      const imageFiles = selectedArtistFiles
+        .filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && !isPoster(file.filename))
+        .sort((a, b) => extractSequence(a.filename) - extractSequence(b.filename));
+
+      const videoFiles = selectedArtistFiles
+        .filter((file) => VIDEO_EXT.has(path.extname(file.filename).toLowerCase()))
+        .sort((a, b) => extractSequence(a.filename) - extractSequence(b.filename));
+
+      const posterFiles = selectedArtistFiles.filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && isPoster(file.filename));
+
+      const hasPremiumTier = Boolean(previewGallery || premiumGallery);
+      const imageSplit = hasPremiumTier
+        ? splitByAccess(imageFiles)
+        : { free: imageFiles, premium: [] as AssetFile[] };
+      const videoSplit = hasPremiumTier
+        ? splitByAccess(videoFiles)
+        : { free: videoFiles, premium: [] as AssetFile[] };
+      const freeImages = freeGallery ? imageSplit.free : [];
+      const previewImages = previewGallery ? (freeGallery ? imageSplit.premium : imageSplit.free) : [];
+      const premiumImages = premiumGallery ? imageSplit.premium : [];
+      const freeVideos = freeGallery ? videoSplit.free : [];
+      const previewVideos = previewGallery ? (freeGallery ? videoSplit.premium : videoSplit.free) : [];
+      const premiumVideos = premiumGallery ? videoSplit.premium : [];
+
+      let freeOrder = 1;
+      let previewOrder = 1;
+      let premiumOrder = 1;
+
+      for (const file of freeImages) {
+        const dimensions = await getImageDimensions(file);
+        const mediaId = seedId('media', seed.slug, 'free', file.filename);
+        const title = titleFromFilename(file.filename);
+        const slug = slugify(title);
+        const previewKey = `${artistId}/${mediaId}`;
+        if (freeGallery) {
+          pushMedia(freeGallery.galleryId, freeOrder, {
           mediaId,
           artistId,
           assetType: 'image',
@@ -1107,100 +1419,98 @@ const main = async () => {
           previewKey,
           width: dimensions.width,
           height: dimensions.height,
-          altText: `${seed.name} preview image ${previewOrder}`,
+          altText: `${seed.name} free image ${freeOrder}`,
           createdAt
         });
-        previewOrder += 1;
+        }
+        queueUpload(previewKey, file);
+        if (freeGallery) registerMediaLookup(file.filename, freeGallery.slug, mediaId);
+        freeOrder += 1;
       }
-      queueUpload(previewKey, file);
-    }
 
-    for (const file of premiumImages) {
-      const dimensions = await getImageDimensions(file);
-      const mediaId = seedId('media', seed.slug, 'premium', file.filename);
-      const title = titleFromFilename(file.filename);
-      const slug = slugify(title);
-      const objectKey = `${artistId}/${mediaId}`;
-      if (premiumGallery) {
-        pushMedia(premiumGallery.galleryId, premiumOrder, {
-        mediaId,
-        artistId,
-        assetType: 'image',
-        discoverSquareCropEnabled,
-        contentRating,
-        aiDisclosure,
-        heavyTopics,
-        title,
-        slug,
-        slugHistory: [slug],
-        originalFilename: file.filename,
-        previewKey: objectKey,
-        premiumKey: objectKey,
-        width: dimensions.width,
-        height: dimensions.height,
-        altText: `${seed.name} premium image ${premiumOrder}`,
-        createdAt
-      });
+      for (const file of previewImages) {
+        const dimensions = await getImageDimensions(file);
+        const mediaId = seedId('media', seed.slug, 'preview', file.filename);
+        const title = titleFromFilename(file.filename);
+        const slug = slugify(title);
+        const previewKey = `${artistId}/${mediaId}`;
+        if (previewGallery) {
+          pushMedia(previewGallery.galleryId, previewOrder, {
+            mediaId,
+            artistId,
+            assetType: 'image',
+            discoverSquareCropEnabled,
+            contentRating,
+            aiDisclosure,
+            heavyTopics,
+            title,
+            slug,
+            slugHistory: [slug],
+            originalFilename: file.filename,
+            previewKey,
+            width: dimensions.width,
+            height: dimensions.height,
+            altText: `${seed.name} preview image ${previewOrder}`,
+            createdAt
+          });
+          previewOrder += 1;
+        }
+        queueUpload(previewKey, file);
+        if (previewGallery) registerMediaLookup(file.filename, previewGallery.slug, mediaId);
       }
-      queueUpload(objectKey, file);
-      premiumOrder += 1;
-    }
 
-    const findPosterForVideo = (videoFile: AssetFile): AssetFile | undefined => {
-      const base = normalize(videoFile.filename).replace(path.extname(videoFile.filename).toLowerCase(), '');
-      return posterFiles.find((poster) => {
-        const p = normalize(poster.filename);
-        return p.includes(base) || p.includes(base.replace('-video', ''));
-      });
-    };
-
-    for (const file of freeVideos) {
-      const mediaId = seedId('media', seed.slug, 'free', file.filename);
-      const title = titleFromFilename(file.filename);
-      const slug = slugify(title);
-      const previewKey = `${artistId}/${mediaId}`;
-      const poster = findPosterForVideo(file);
-      const previewPosterKey = poster
-        ? `${artistId}/${seedId('poster', seed.slug, 'free', file.filename)}`
-        : undefined;
-
-      if (freeGallery) {
-        pushMedia(freeGallery.galleryId, freeOrder, {
-        mediaId,
-        artistId,
-        assetType: 'video',
-        discoverSquareCropEnabled,
-        contentRating,
-        aiDisclosure,
-        heavyTopics,
-        title,
-        slug,
-        slugHistory: [slug],
-        originalFilename: file.filename,
-        previewKey,
-        previewPosterKey,
-        width: 1920,
-        height: 1080,
-        durationSeconds: 20,
-        createdAt
-      });
+      for (const file of premiumImages) {
+        const dimensions = await getImageDimensions(file);
+        const mediaId = seedId('media', seed.slug, 'premium', file.filename);
+        const title = titleFromFilename(file.filename);
+        const slug = slugify(title);
+        const objectKey = `${artistId}/${mediaId}`;
+        if (premiumGallery) {
+          pushMedia(premiumGallery.galleryId, premiumOrder, {
+          mediaId,
+          artistId,
+          assetType: 'image',
+          discoverSquareCropEnabled,
+          contentRating,
+          aiDisclosure,
+          heavyTopics,
+          title,
+          slug,
+          slugHistory: [slug],
+          originalFilename: file.filename,
+          previewKey: objectKey,
+          premiumKey: objectKey,
+          width: dimensions.width,
+          height: dimensions.height,
+          altText: `${seed.name} premium image ${premiumOrder}`,
+          createdAt
+        });
+        }
+        queueUpload(objectKey, file);
+        if (premiumGallery) registerMediaLookup(file.filename, premiumGallery.slug, mediaId);
+        premiumOrder += 1;
       }
-      queueUpload(previewKey, file);
-      if (poster) queueUpload(previewPosterKey, poster);
-      freeOrder += 1;
-    }
 
-    for (const file of previewVideos) {
-      const mediaId = seedId('media', seed.slug, 'preview', file.filename);
-      const title = titleFromFilename(file.filename);
-      const slug = slugify(title);
-      const previewKey = `${artistId}/${mediaId}`;
-      const poster = findPosterForVideo(file);
-      const previewPosterKey = poster
-        ? `${artistId}/${seedId('poster', seed.slug, 'preview', file.filename)}`
-        : undefined;
-      if (previewGallery) {
-        pushMedia(previewGallery.galleryId, previewOrder, {
+      const findPosterForVideo = (videoFile: AssetFile): AssetFile | undefined => {
+        const base = normalize(videoFile.filename).replace(path.extname(videoFile.filename).toLowerCase(), '');
+        return posterFiles.find((poster) => {
+          const p = normalize(poster.filename);
+          return p.includes(base) || p.includes(base.replace('-video', ''));
+        });
+      };
+
+      for (const file of freeVideos) {
+        const mediaId = seedId('media', seed.slug, 'free', file.filename);
+        const title = titleFromFilename(file.filename);
+        const slug = slugify(title);
+        const previewKey = `${artistId}/${mediaId}`;
+        const poster = findPosterForVideo(file);
+        const previewPosterKey = poster
+          ? `${artistId}/${seedId('poster', seed.slug, 'free', file.filename)}`
+          : undefined;
+
+        if (freeGallery) {
+          pushMedia(freeGallery.galleryId, freeOrder, {
           mediaId,
           artistId,
           assetType: 'video',
@@ -1219,53 +1529,166 @@ const main = async () => {
           durationSeconds: 20,
           createdAt
         });
-        previewOrder += 1;
+        }
+        queueUpload(previewKey, file);
+        if (poster) queueUpload(previewPosterKey, poster);
+        if (freeGallery) registerMediaLookup(file.filename, freeGallery.slug, mediaId);
+        freeOrder += 1;
       }
-      queueUpload(previewKey, file);
-      if (poster) queueUpload(previewPosterKey, poster);
+
+      for (const file of previewVideos) {
+        const mediaId = seedId('media', seed.slug, 'preview', file.filename);
+        const title = titleFromFilename(file.filename);
+        const slug = slugify(title);
+        const previewKey = `${artistId}/${mediaId}`;
+        const poster = findPosterForVideo(file);
+        const previewPosterKey = poster
+          ? `${artistId}/${seedId('poster', seed.slug, 'preview', file.filename)}`
+          : undefined;
+        if (previewGallery) {
+          pushMedia(previewGallery.galleryId, previewOrder, {
+            mediaId,
+            artistId,
+            assetType: 'video',
+            discoverSquareCropEnabled,
+            contentRating,
+            aiDisclosure,
+            heavyTopics,
+            title,
+            slug,
+            slugHistory: [slug],
+            originalFilename: file.filename,
+            previewKey,
+            previewPosterKey,
+            width: 1920,
+            height: 1080,
+            durationSeconds: 20,
+            createdAt
+          });
+          previewOrder += 1;
+        }
+        queueUpload(previewKey, file);
+        if (poster) queueUpload(previewPosterKey, poster);
+        if (previewGallery) registerMediaLookup(file.filename, previewGallery.slug, mediaId);
+      }
+
+      for (const file of premiumVideos) {
+        const mediaId = seedId('media', seed.slug, 'premium', file.filename);
+        const title = titleFromFilename(file.filename);
+        const slug = slugify(title);
+        const objectKey = `${artistId}/${mediaId}`;
+        const poster = findPosterForVideo(file);
+        const previewPosterKey = poster
+          ? `${artistId}/${seedId('poster', seed.slug, 'premium', file.filename)}`
+          : undefined;
+        const premiumPosterKey = poster
+          ? previewPosterKey
+          : undefined;
+
+        if (premiumGallery) {
+          pushMedia(premiumGallery.galleryId, premiumOrder, {
+          mediaId,
+          artistId,
+          assetType: 'video',
+          discoverSquareCropEnabled,
+          contentRating,
+          aiDisclosure,
+          heavyTopics,
+          title,
+          slug,
+          slugHistory: [slug],
+          originalFilename: file.filename,
+          previewKey: objectKey,
+          premiumKey: objectKey,
+          previewPosterKey,
+          premiumPosterKey,
+          width: 1920,
+          height: 1080,
+          durationSeconds: 24,
+          createdAt
+        });
+        }
+        queueUpload(objectKey, file);
+        if (poster) {
+          queueUpload(previewPosterKey, poster);
+        }
+        if (premiumGallery) registerMediaLookup(file.filename, premiumGallery.slug, mediaId);
+        premiumOrder += 1;
+      }
     }
 
-    for (const file of premiumVideos) {
-      const mediaId = seedId('media', seed.slug, 'premium', file.filename);
-      const title = titleFromFilename(file.filename);
-      const slug = slugify(title);
-      const objectKey = `${artistId}/${mediaId}`;
-      const poster = findPosterForVideo(file);
-      const previewPosterKey = poster
-        ? `${artistId}/${seedId('poster', seed.slug, 'premium', file.filename)}`
-        : undefined;
-      const premiumPosterKey = poster
-        ? previewPosterKey
-        : undefined;
+    for (const [fileKey, ids] of mediaIdsByFile.entries()) {
+      mediaIdsByFile.set(fileKey, Array.from(new Set(ids)));
+    }
+    if (seed.posts?.length) {
+      for (let postIndex = 0; postIndex < seed.posts.length; postIndex += 1) {
+        const postSeed = seed.posts[postIndex];
+        const status = normalizePostStatus(postSeed.status);
+        const slug = slugify(postSeed.slug || postSeed.title);
+        const postMedia: Post['media'] = (postSeed.media || []).map((ref, mediaIndex) => ({
+          mediaId: resolveScenarioMediaId(
+            { mediaId: ref.mediaId, file: ref.file, gallerySlug: ref.gallerySlug },
+            `artists[${idx}].posts[${postIndex}].media[${mediaIndex}]`,
+            mediaIdByComposite,
+            mediaIdsByFile
+          ) as string,
+          discoverable: ref.discoverable ?? true,
+          sortOrder: ref.sortOrder ?? mediaIndex,
+          caption: sanitizeOptional(ref.caption, 2000)
+        }));
+        const primaryMediaId =
+          resolveScenarioMediaId(
+            postSeed.primaryMedia
+              ? {
+                  mediaId: postSeed.primaryMedia.mediaId,
+                  file: postSeed.primaryMedia.file,
+                  gallerySlug: postSeed.primaryMedia.gallerySlug
+                }
+              : (postSeed.primaryMediaId ? { mediaId: postSeed.primaryMediaId } : undefined),
+            `artists[${idx}].posts[${postIndex}].primaryMedia`,
+            mediaIdByComposite,
+            mediaIdsByFile
+          ) || postMedia[0]?.mediaId;
+        if (primaryMediaId && !postMedia.some((item) => item.mediaId === primaryMediaId)) {
+          postMedia.unshift({ mediaId: primaryMediaId, discoverable: true, sortOrder: 0 });
+        }
+        const blocks = toSeedPostBlocks(
+          postSeed.blocks,
+          mediaIdByComposite,
+          mediaIdsByFile,
+          `artists[${idx}].posts[${postIndex}]`
+        );
+        const destination: PostDestination | null | undefined =
+          postSeed.destination === null
+            ? null
+            : postSeed.destination
+              ? {
+                  type: postSeed.destination.type || 'post',
+                  url: sanitizeOptional(postSeed.destination.url, 2048) || ''
+                }
+              : undefined;
 
-      if (premiumGallery) {
-        pushMedia(premiumGallery.galleryId, premiumOrder, {
-        mediaId,
-        artistId,
-        assetType: 'video',
-        discoverSquareCropEnabled,
-        contentRating,
-        aiDisclosure,
-        heavyTopics,
-        title,
-        slug,
-        slugHistory: [slug],
-        originalFilename: file.filename,
-        previewKey: objectKey,
-        premiumKey: objectKey,
-        previewPosterKey,
-        premiumPosterKey,
-        width: 1920,
-        height: 1080,
-        durationSeconds: 24,
-        createdAt
-      });
+        posts.push({
+          postId: seedId('post', seed.slug, slug),
+          artistId,
+          title: postSeed.title.trim().slice(0, 300),
+          slug,
+          slugHistory: [slug],
+          summary: sanitizeOptional(postSeed.summary, 2000),
+          status,
+          blocks,
+          media: postMedia,
+          primaryMediaId,
+          discovery: {
+            mode: normalizeDiscoveryMode(postSeed.discoveryMode)
+          },
+          destination,
+          metadata: postSeed.metadata || {},
+          createdAt,
+          updatedAt: createdAt,
+          publishedAt: status === 'published' ? createdAt : undefined
+        });
       }
-      queueUpload(objectKey, file);
-      if (poster) {
-        queueUpload(previewPosterKey, poster);
-      }
-      premiumOrder += 1;
     }
   }
 
@@ -1283,7 +1706,7 @@ const main = async () => {
   if (scenarioInputs) {
     console.log(`[seed:core] scenarioFile=${scenarioInputs.sourceFile} mediaDir=${mediaDir}`);
   }
-  console.log(`[seed:core] artists=${artists.length} galleries=${galleries.length} media=${media.length}`);
+  console.log(`[seed:core] artists=${artists.length} galleries=${galleries.length} media=${media.length} posts=${posts.length}`);
   console.log(`[seed:core] siteName=${siteSettings.siteName} theme=${siteSettings.theme} logoKey=${siteSettings.logoKey || 'none'}`);
   console.log(`[seed:core] uploadJobs=${uploadJobs.size} (mediaUpload=${shouldUploadMedia} logoUpload=${shouldUploadLogo} renditions=${shouldGenerateRenditions})`);
 
@@ -1347,6 +1770,9 @@ const main = async () => {
   }
   for (const item of media) {
     await repo.createMedia(item.media, item.galleryId, item.position, item.placement);
+  }
+  for (const post of posts) {
+    await repo.createPost(post);
   }
 
   await client.send(new PutCommand({ TableName: siteSettingsTable, Item: siteSettings }));
