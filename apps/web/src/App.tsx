@@ -43,7 +43,6 @@ type DiscoveryDockSummary = {
   searchActive: boolean;
 };
 const DISCOVERY_FILTER_EVENT_NAME = 'ubeeq:discovery-filters';
-const ADMIN_AREA_URL = (import.meta.env.VITE_ADMIN_APP_URL || '/admin').trim() || '/admin';
 const OTP_TRUST_DAYS = 30;
 const otpTrustStorageKey = (email: string) => `ubeeq.otpTrust.${email.trim().toLowerCase()}`;
 const hasValidOtpTrust = (email: string): boolean => {
@@ -63,6 +62,11 @@ const rememberOtpTrust = (email: string) => {
   localStorage.setItem(otpTrustStorageKey(email), String(expiresAt));
 };
 type RoleNotificationCounts = { studio: number; admin: number };
+type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
+const ROLE_DISPLAY_LABELS: Partial<Record<PlatformRole, string>> = {
+  contributor: 'Beeker'
+};
+const roleDisplayLabel = (role: PlatformRole): string => ROLE_DISPLAY_LABELS[role] || role[0].toUpperCase() + role.slice(1);
 const ROLE_NOTIFICATION_STORAGE_KEY = 'ubeeq.roleNotifications';
 const sanitizeNotificationCount = (value: unknown): number => {
   const normalized = Number(value);
@@ -674,15 +678,15 @@ function HeaderAuth({
   const adminCount = sanitizeNotificationCount(roleNotificationCounts?.admin);
   const artistProfileHref = primaryManagedArtist?.slug ? `/artists/${primaryManagedArtist.slug}` : '/settings';
   const studioHref = '/studio';
-  const adminHref = ADMIN_AREA_URL;
-  const isExternalAdminHref = /^https?:\/\//i.test(adminHref);
-  const compactNavLabel = canAccessStudio ? 'Artist' : 'Admin';
-  const compactNavHref = canAccessStudio ? studioHref : adminHref;
-  const isExternalCompactNavHref = /^https?:\/\//i.test(compactNavHref);
-  const compactNavCount = canAccessStudio ? studioCount : adminCount;
+  const adminHref = studioHref;
+  const isExternalAdminHref = false;
+  const compactNavLabel = canAccessStudio ? 'Creator' : 'Studio';
+  const compactNavHref = studioHref;
+  const isExternalCompactNavHref = false;
+  const compactNavCount = studioCount;
   const isArtistNavActive = location.pathname.startsWith('/artists/');
   const isStudioNavActive = location.pathname.startsWith('/studio');
-  const isAdminNavActive = !isExternalAdminHref && location.pathname.startsWith('/admin');
+  const isAdminNavActive = false;
   const showMobileDiscoveryButton = discoveryDock?.viewport === 'mobile';
   const openDiscoveryFilters = (section: DiscoveryFilterSection = 'period') => {
     if (typeof window === 'undefined') return;
@@ -775,7 +779,7 @@ function HeaderAuth({
                     >
                       {canAccessStudio && (
                         <span className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-white">
-                          Artist
+                          Creator
                         </span>
                       )}
                       {canAccessStudio && (
@@ -799,7 +803,7 @@ function HeaderAuth({
                           )}
                         </Link>
                       )}
-                      {isAdmin && (
+                      {false && isAdmin && (
                         isExternalAdminHref ? (
                           <a
                             href={adminHref}
@@ -878,7 +882,7 @@ function HeaderAuth({
                         Studio{studioCount > 0 ? ` (${formatNotificationBadge(studioCount)})` : ''}
                       </Link>
                     )}
-                    {isAdmin && (isExternalAdminHref ? (
+                    {false && isAdmin && (isExternalAdminHref ? (
                       <a href={adminHref} onClick={closeUserMenus}>
                         Admin{adminCount > 0 ? ` (${formatNotificationBadge(adminCount)})` : ''}
                       </a>
@@ -7202,31 +7206,28 @@ function StudioDashboardPage({
   const hasArtistProfiles = managedArtists.length > 0;
   const studioCount = sanitizeNotificationCount(roleNotificationCounts.studio);
   const adminCount = sanitizeNotificationCount(roleNotificationCounts.admin);
-  const externalAdminUrl = /^https?:\/\//i.test(ADMIN_AREA_URL) ? ADMIN_AREA_URL : '';
 
   return (
     <div className="layout">
       <section className="panel">
-        <h2>Artist Studio</h2>
+        <h2>Creator Studio</h2>
         <p className="small">
-          Use Studio to manage artist profiles, jump into public artist pages, and access admin tools when you have admin rights.
+          Use Studio to manage creator profiles and moderation workflows with capability-based actions across one unified surface.
+        </p>
+        <p className="small">
+          Role display labels are presentation-driven (for example, <strong>{roleDisplayLabel('contributor')}</strong> for the contributor role).
         </p>
         <div className="inline-form mt-3">
           <Link to="/studio/workspace" className="auth-primary-btn no-underline">Workspace</Link>
           <Link to="/settings" className="auth-secondary-btn no-underline">Settings</Link>
           <Link to="/collections" className="auth-secondary-btn no-underline">Collections</Link>
           <Link to="/trending" className="auth-secondary-btn no-underline">Discovery</Link>
-          {isAdmin && (
-            externalAdminUrl
-              ? <a href={externalAdminUrl} className="auth-primary-btn no-underline">Admin</a>
-              : <Link to="/admin" className="auth-primary-btn no-underline">Admin</Link>
-          )}
         </div>
       </section>
 
       {hasArtistProfiles ? (
         <section className="panel mt-4">
-          <h3>Your Artist Profiles</h3>
+          <h3>Your Creator Profiles</h3>
           <div className="studio-artist-grid">
             {managedArtists.map((artist) => (
               <article key={artist.artistId} className="studio-artist-card">
@@ -7243,51 +7244,16 @@ function StudioDashboardPage({
         </section>
       ) : (
         <section className="panel mt-4">
-          <h3>No Artist Profiles Yet</h3>
-          <p className="small">You don’t currently have access to an artist profile. An admin can add you to an artist account from the admin area.</p>
+          <h3>No Creator Profiles Yet</h3>
+          <p className="small">You don’t currently have access to a creator profile. A creator owner or admin can grant creator access in Studio.</p>
         </section>
       )}
 
       <section className="panel mt-4">
         <h3>Notifications</h3>
         <p className="small">Studio: {studioCount > 0 ? formatNotificationBadge(studioCount) : '0'}</p>
-        {isAdmin && <p className="small">Admin: {adminCount > 0 ? formatNotificationBadge(adminCount) : '0'}</p>}
+        {isAdmin && <p className="small">Admin tools: included in Studio</p>}
       </section>
-    </div>
-  );
-}
-
-function AdminLandingPage({ user }: { user: CurrentUser }) {
-  if (!user) return <Navigate to="/auth/signin" replace />;
-  const normalizedGroups = (user.groups || []).map((group) => group.toLowerCase());
-  const isAdmin = normalizedGroups.includes('admin') || normalizedGroups.includes('admins');
-  if (!isAdmin) {
-    return (
-      <div className="layout">
-        <div className="panel">
-          <h2>Admin Area</h2>
-          <p className="small">You do not have admin access.</p>
-        </div>
-      </div>
-    );
-  }
-  const externalAdminUrl = /^https?:\/\//i.test(ADMIN_AREA_URL) ? ADMIN_AREA_URL : '';
-  return (
-    <div className="layout">
-      <div className="panel">
-        <h2>Admin Area</h2>
-        {externalAdminUrl ? (
-          <>
-            <p className="small">Open the dedicated admin workspace.</p>
-            <p><a className="auth-primary-btn no-underline" href={externalAdminUrl}>Open Admin</a></p>
-          </>
-        ) : (
-          <>
-            <p className="small">Use the integrated workspace for admin operations.</p>
-            <p><Link className="auth-primary-btn no-underline" to="/studio/workspace">Open Admin Workspace</Link></p>
-          </>
-        )}
-      </div>
     </div>
   );
 }
@@ -7392,7 +7358,7 @@ export default function App() {
         <Route path="/settings" element={<SettingsPage user={user} onProfileChanged={setMyProfile} />} />
         <Route path="/studio" element={<StudioDashboardPage user={user} managedArtists={managedArtists} roleNotificationCounts={roleNotificationCounts} />} />
         <Route path="/studio/workspace" element={user ? <ArtistAreaWorkspace /> : <Navigate to="/auth/signin" replace />} />
-        <Route path="/admin" element={<AdminLandingPage user={user} />} />
+        <Route path="/admin" element={<Navigate to="/studio" replace />} />
         <Route path="/artist-area" element={<LegacyArtistAreaRedirect />} />
         <Route path="/artist-area/admin" element={<LegacyArtistAreaWorkspaceRedirect />} />
       </Routes>

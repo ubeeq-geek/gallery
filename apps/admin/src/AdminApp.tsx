@@ -10,7 +10,12 @@ import {
   type CurrentUser
 } from './cognitoAuth';
 
-type View = 'artists' | 'galleries' | 'media' | 'posts' | 'settings' | 'moderation' | 'users';
+type View = 'creators' | 'galleries' | 'media' | 'posts' | 'settings' | 'moderation' | 'users';
+type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
+const ROLE_DISPLAY_LABELS: Partial<Record<PlatformRole, string>> = {
+  contributor: 'Beeker'
+};
+const roleDisplayLabel = (role: PlatformRole): string => ROLE_DISPLAY_LABELS[role] || role[0].toUpperCase() + role.slice(1);
 type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
 type AiDisclosure = 'none' | 'ai-assisted' | 'ai-generated';
 type HeavyTopic = 'politics-public-affairs' | 'crime-disasters-tragedy';
@@ -122,7 +127,7 @@ const request = async (path: string, method = 'GET', body?: unknown) => {
 };
 
 const views: Array<{ id: View; label: string }> = [
-  { id: 'artists', label: 'Artists' },
+  { id: 'creators', label: 'Creators' },
   { id: 'galleries', label: 'Galleries' },
   { id: 'media', label: 'Media' },
   { id: 'posts', label: 'Posts' },
@@ -268,8 +273,8 @@ const inferTemplateFromMetadata = (metadata?: Record<string, string> | null): Po
   return 'image';
 };
 
-export function AdminApp() {
-  const [view, setView] = useState<View>('artists');
+export function StudioApp() {
+  const [view, setView] = useState<View>('creators');
   const [artists, setArtists] = useState<Artist[]>([]);
   const [galleries, setGalleries] = useState<Gallery[]>([]);
   const [media, setMedia] = useState<Media[]>([]);
@@ -404,8 +409,8 @@ export function AdminApp() {
 
   const artistById = useMemo(() => new Map(artists.map((a) => [a.artistId, a])), [artists]);
   const isAdmin = user?.groups.includes('Admins');
-  const isArtist = user?.groups.includes('Artists') || false;
-  const canManageContent = Boolean(isAdmin || isArtist);
+  const isCreator = Boolean(user?.groups.includes('Creators') || user?.groups.includes('Artists'));
+  const canManageContent = Boolean(isAdmin || isCreator);
   const visibleViews = useMemo(
     () => views.filter((item) => {
       if (item.id === 'settings') return Boolean(isAdmin);
@@ -515,12 +520,12 @@ export function AdminApp() {
       defaultHeavyTopics: []
     });
     await loadArtists();
-  }, 'Artist created');
+  }, 'Creator created');
 
   const deleteArtist = (artistId: string) => withFeedback(async () => {
     await request(`/admin/artists/${artistId}`, 'DELETE');
     await loadArtists();
-  }, 'Artist deleted');
+  }, 'Creator deleted');
 
   const startEditArtist = (artist: Artist) => {
     setEditingArtistId(artist.artistId);
@@ -539,7 +544,7 @@ export function AdminApp() {
     await request(`/admin/artists/${artistId}`, 'PATCH', artistEditForm);
     setEditingArtistId(null);
     await loadArtists();
-  }, 'Artist updated');
+  }, 'Creator updated');
 
   const createGallery = () => withFeedback(async () => {
     await request('/admin/galleries', 'POST', {
@@ -701,7 +706,7 @@ export function AdminApp() {
   };
 
   const createPost = () => withFeedback(async () => {
-    if (!postForm.artistId || !postForm.title.trim()) throw new Error('Artist and title are required');
+    if (!postForm.artistId || !postForm.title.trim()) throw new Error('Creator and title are required');
     const payload = {
       artistId: postForm.artistId,
       title: postForm.title.trim(),
@@ -821,7 +826,7 @@ export function AdminApp() {
   });
 
   return (
-    <main className="admin-shell">
+    <main className="studio-shell">
       <aside className="sidebar">
         <h1>Orchestration</h1>
         <div className="auth-card">
@@ -877,11 +882,11 @@ export function AdminApp() {
 
       <section className="content">
         {!user && <p>Sign in to continue.</p>}
-        {user && !canManageContent && <p className="error">You are signed in but not in the Cognito `Artists` or `Admins` groups.</p>}
+        {user && !canManageContent && <p className="error">You are signed in but not in the Cognito `Creators`/`Artists` or `Admins` groups.</p>}
 
-        {user && isAdmin && view === 'artists' && (
+        {user && isAdmin && view === 'creators' && (
           <>
-            <h2>Artists</h2>
+            <h2>Creators</h2>
             <div className="list">
               {artists.map((artist) => (
                 <div className="list-row" key={artist.artistId}>
@@ -895,7 +900,7 @@ export function AdminApp() {
             </div>
             {editingArtistId && (
               <>
-                <h3>Edit Artist</h3>
+                <h3>Edit Creator</h3>
                 <input placeholder="Name" value={artistEditForm.name} onChange={(e) => setArtistEditForm({ ...artistEditForm, name: e.target.value })} />
                 <input placeholder="Slug" value={artistEditForm.slug} onChange={(e) => setArtistEditForm({ ...artistEditForm, slug: e.target.value })} />
                 <select value={artistEditForm.status} onChange={(e) => setArtistEditForm({ ...artistEditForm, status: e.target.value })}>
@@ -932,11 +937,11 @@ export function AdminApp() {
                     <span>{topic.label}</span>
                   </label>
                 ))}
-                <button onClick={() => saveEditArtist(editingArtistId)}>Save Artist</button>
+                <button onClick={() => saveEditArtist(editingArtistId)}>Save Creator</button>
                 <button onClick={() => setEditingArtistId(null)}>Cancel</button>
               </>
             )}
-            <h3>Create Artist</h3>
+            <h3>Create Creator</h3>
             <input placeholder="Name" value={artistForm.name} onChange={(e) => setArtistForm({ ...artistForm, name: e.target.value })} />
             <input placeholder="Slug" value={artistForm.slug} onChange={(e) => setArtistForm({ ...artistForm, slug: e.target.value })} />
             <input type="number" placeholder="Sort order" value={artistForm.sortOrder} onChange={(e) => setArtistForm({ ...artistForm, sortOrder: Number(e.target.value || 1) })} />
@@ -995,8 +1000,8 @@ export function AdminApp() {
             {isAdmin && editingGalleryId && (
               <>
                 <h3>Edit Gallery</h3>
-                <input placeholder="Artist ID" value={galleryEditForm.artistId} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, artistId: e.target.value })} />
-                <input placeholder="Artist Slug" value={galleryEditForm.artistSlug} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, artistSlug: e.target.value })} />
+                <input placeholder="Creator ID" value={galleryEditForm.artistId} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, artistId: e.target.value })} />
+                <input placeholder="Creator Slug" value={galleryEditForm.artistSlug} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, artistSlug: e.target.value })} />
                 <input placeholder="Title" value={galleryEditForm.title} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, title: e.target.value })} />
                 <input placeholder="Slug" value={galleryEditForm.slug} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, slug: e.target.value })} />
                 <input placeholder="Cover Image ID (optional)" value={galleryEditForm.coverImageId} onChange={(e) => setGalleryEditForm({ ...galleryEditForm, coverImageId: e.target.value })} />
@@ -1052,8 +1057,8 @@ export function AdminApp() {
               </>
             )}
             <h3>Create Gallery</h3>
-            <input placeholder="Artist ID" value={galleryForm.artistId} onChange={(e) => setGalleryForm({ ...galleryForm, artistId: e.target.value })} />
-            <input placeholder="Artist Slug" value={galleryForm.artistSlug} onChange={(e) => setGalleryForm({ ...galleryForm, artistSlug: e.target.value })} />
+            <input placeholder="Creator ID" value={galleryForm.artistId} onChange={(e) => setGalleryForm({ ...galleryForm, artistId: e.target.value })} />
+            <input placeholder="Creator Slug" value={galleryForm.artistSlug} onChange={(e) => setGalleryForm({ ...galleryForm, artistSlug: e.target.value })} />
             <input placeholder="Title" value={galleryForm.title} onChange={(e) => setGalleryForm({ ...galleryForm, title: e.target.value })} />
             <input placeholder="Slug" value={galleryForm.slug} onChange={(e) => setGalleryForm({ ...galleryForm, slug: e.target.value })} />
             <input placeholder="Cover Image ID (optional)" value={galleryForm.coverImageId} onChange={(e) => setGalleryForm({ ...galleryForm, coverImageId: e.target.value })} />
@@ -1358,7 +1363,7 @@ export function AdminApp() {
                   </button>
                 </div>
                 <select value={postEditForm.artistId} onChange={(e) => setPostEditForm({ ...postEditForm, artistId: e.target.value })}>
-                  <option value="">Select artist</option>
+                  <option value="">Select creator</option>
                   {artists.map((artist) => <option key={`post-edit-artist-${artist.artistId}`} value={artist.artistId}>{artist.name}</option>)}
                 </select>
                 <input placeholder="Title" value={postEditForm.title} onChange={(e) => setPostEditForm({ ...postEditForm, title: e.target.value })} />
@@ -1547,7 +1552,7 @@ export function AdminApp() {
               </button>
             </div>
             <select value={postForm.artistId} onChange={(e) => setPostForm({ ...postForm, artistId: e.target.value })}>
-              <option value="">Select artist</option>
+              <option value="">Select creator</option>
               {artists.map((artist) => <option key={`post-create-artist-${artist.artistId}`} value={artist.artistId}>{artist.name}</option>)}
             </select>
             <input placeholder="Title" value={postForm.title} onChange={(e) => setPostForm({ ...postForm, title: e.target.value })} />
@@ -1736,6 +1741,7 @@ export function AdminApp() {
         {user && isAdmin && view === 'users' && (
           <>
             <h2>User Controls</h2>
+            <p className="muted">{roleDisplayLabel('contributor')} is the UI label for contributor role accounts.</p>
             <input placeholder="User ID" value={blockUserId} onChange={(e) => setBlockUserId(e.target.value)} />
             <button onClick={blockUser}>Block User</button>
             <button onClick={unblockUser}>Unblock User</button>
@@ -1777,3 +1783,6 @@ export function AdminApp() {
     </main>
   );
 }
+
+
+export const AdminApp = StudioApp;
