@@ -2912,6 +2912,29 @@
     color: var(--muted);
   }
 
+  .studio-crud-grid {
+    @apply mt-3 grid gap-3;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .studio-crud-card {
+    @apply rounded-2xl border p-3;
+    border-color: var(--line);
+    background: #fff;
+    display: grid;
+    gap: 0.5rem;
+    align-content: start;
+  }
+
+  .studio-crud-card h4 {
+    @apply m-0;
+  }
+
+  .studio-crud-card ul {
+    @apply m-0 pl-5 text-sm;
+    color: var(--muted);
+  }
+
   @media (max-width: 1200px) {
     .studio-dashboard-shell,
     .studio-detail-grid {
@@ -2919,7 +2942,8 @@
     }
     .studio-stat-grid,
     .studio-overview-cards,
-    .studio-creator-list {
+    .studio-creator-list,
+    .studio-crud-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
@@ -2927,7 +2951,8 @@
   @media (max-width: 760px) {
     .studio-stat-grid,
     .studio-overview-cards,
-    .studio-creator-list {
+    .studio-creator-list,
+    .studio-crud-grid {
       grid-template-columns: 1fr;
     }
   }

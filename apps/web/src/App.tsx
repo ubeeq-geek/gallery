@@ -7206,10 +7206,31 @@ function StudioDashboardPage({
   const hasCreatorProfiles = managedArtists.length > 0;
   const studioCount = sanitizeNotificationCount(roleNotificationCounts.studio);
   const adminCount = sanitizeNotificationCount(roleNotificationCounts.admin);
-  const totalUsers = 18420;
-  const beekerCount = 1384;
-  const creatorCount = Math.max(206, managedArtists.length);
-  const reviewCount = Math.max(29, adminCount);
+  const [studioMetrics, setStudioMetrics] = useState<{
+    totalUsers: number;
+    creators: number;
+    posts: number;
+    files: number;
+    mediaItems: number;
+    pendingEntries: number;
+    adminReviewItems: number;
+    contributors: number;
+  } | null>(null);
+  const [crudCreators, setCrudCreators] = useState<Array<{ artistId: string; creatorId?: string; name: string; slug: string }>>([]);
+  const [crudPosts, setCrudPosts] = useState<Array<{ postId: string; title: string; status: string; artistId: string }>>([]);
+  const [crudGalleries, setCrudGalleries] = useState<Array<{ galleryId: string; title: string; artistId: string }>>([]);
+  const [crudFiles, setCrudFiles] = useState<Array<{ fileId: string; creatorId: string; sourceKind: string; originalFilename?: string; storageKey: string }>>([]);
+  const [crudError, setCrudError] = useState<string>('');
+  const [newCreatorName, setNewCreatorName] = useState('');
+  const [newCreatorSlug, setNewCreatorSlug] = useState('');
+  const [newFileCreatorId, setNewFileCreatorId] = useState('');
+  const [newFileName, setNewFileName] = useState('');
+  const [newFileMimeType, setNewFileMimeType] = useState('image/jpeg');
+  const [selectedGalleryId, setSelectedGalleryId] = useState('');
+  const totalUsers = studioMetrics?.totalUsers || 0;
+  const beekerCount = studioMetrics?.contributors || 0;
+  const creatorCount = studioMetrics?.creators || Math.max(0, managedArtists.length);
+  const reviewCount = studioMetrics?.adminReviewItems || adminCount;
   const quickLinks = [
     'Files & Media',
     'Posts',
@@ -7227,6 +7248,67 @@ function StudioDashboardPage({
     { title: 'Resolve flagged user collection', detail: 'Mature-tag mismatch', tone: 'danger' },
     { title: 'Publish scheduled creator posts', detail: '6 items due today', tone: 'info' }
   ] as const;
+  const loadCrudData = async () => {
+    try {
+      setCrudError('');
+      const [metrics, creators, posts, galleries, files] = await Promise.all([
+        api.studioMetrics(),
+        api.adminListCreators(),
+        api.adminListPosts(),
+        api.adminListGalleries(),
+        api.adminListFiles()
+      ]);
+      setStudioMetrics(metrics as any);
+      setCrudCreators((creators as any[]) || []);
+      setCrudPosts((posts as any[]) || []);
+      setCrudGalleries((galleries as any[]) || []);
+      setCrudFiles((files as any[]) || []);
+      if (!newFileCreatorId && Array.isArray(creators) && creators[0]?.artistId) {
+        setNewFileCreatorId(creators[0].artistId);
+      }
+      if (!selectedGalleryId && Array.isArray(galleries) && galleries[0]?.galleryId) {
+        setSelectedGalleryId(galleries[0].galleryId);
+      }
+    } catch (error) {
+      setCrudError(error instanceof Error ? error.message : 'Failed to load Studio resources');
+    }
+  };
+
+  useEffect(() => {
+    void loadCrudData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const createCreator = async () => {
+    if (!newCreatorName.trim()) return;
+    try {
+      await api.adminCreateArtist({
+        name: newCreatorName.trim(),
+        slug: newCreatorSlug.trim() || newCreatorName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      });
+      setNewCreatorName('');
+      setNewCreatorSlug('');
+      await loadCrudData();
+    } catch (error) {
+      setCrudError(error instanceof Error ? error.message : 'Failed to create creator');
+    }
+  };
+
+  const createFile = async () => {
+    if (!newFileCreatorId.trim() || !newFileName.trim()) return;
+    try {
+      await api.adminCreateFile({
+        creatorId: newFileCreatorId,
+        originalFilename: newFileName.trim(),
+        mimeType: newFileMimeType,
+        storageKey: `uploads/${newFileName.trim().replace(/\s+/g, '-').toLowerCase()}`
+      });
+      setNewFileName('');
+      await loadCrudData();
+    } catch (error) {
+      setCrudError(error instanceof Error ? error.message : 'Failed to create file');
+    }
+  };
 
   return (
     <div className="layout studio-dashboard-shell">
@@ -7272,10 +7354,10 @@ function StudioDashboardPage({
         </section>
 
         <section className="studio-stat-grid">
-          <article className="panel"><p>Total users</p><h3>{totalUsers.toLocaleString()}</h3><span>+124 this week</span></article>
-          <article className="panel"><p>Beekers</p><h3>{beekerCount.toLocaleString()}</h3><span>+41 approved</span></article>
-          <article className="panel"><p>Creators</p><h3>{creatorCount.toLocaleString()}</h3><span>+7 promoted</span></article>
-          <article className="panel"><p>Admin review items</p><h3>{reviewCount.toLocaleString()}</h3><span>7 require confirmation</span></article>
+          <article className="panel"><p>Total users</p><h3>{totalUsers.toLocaleString()}</h3><span>live from `/studio/metrics`</span></article>
+          <article className="panel"><p>Beekers</p><h3>{beekerCount.toLocaleString()}</h3><span>contributor role count</span></article>
+          <article className="panel"><p>Creators</p><h3>{creatorCount.toLocaleString()}</h3><span>live creator accounts</span></article>
+          <article className="panel"><p>Admin review items</p><h3>{reviewCount.toLocaleString()}</h3><span>entries + moderation queue</span></article>
         </section>
 
         <section className="studio-detail-grid">
@@ -7350,6 +7432,57 @@ function StudioDashboardPage({
             </ul>
             <p className="small">Studio notifications: {studioCount > 0 ? formatNotificationBadge(studioCount) : '0'}.</p>
           </article>
+        </section>
+
+        <section className="panel">
+          <div className="studio-title-row">
+            <h3>Resource CRUD workbench</h3>
+            <button type="button" className="auth-secondary-btn" onClick={() => void loadCrudData()}>Refresh data</button>
+          </div>
+          <p className="small">This mirrors the prototype resource model with live API-backed forms for Creators, Files, Posts, and Media Items.</p>
+          {crudError && <p className="error">{crudError}</p>}
+          <div className="studio-crud-grid">
+            <article className="studio-crud-card">
+              <h4>Creators</h4>
+              <input placeholder="Creator name" value={newCreatorName} onChange={(e) => setNewCreatorName(e.target.value)} />
+              <input placeholder="creator-slug" value={newCreatorSlug} onChange={(e) => setNewCreatorSlug(e.target.value)} />
+              <button type="button" className="auth-primary-btn" onClick={() => void createCreator()}>Create creator</button>
+              <ul>
+                {crudCreators.slice(0, 6).map((creator) => <li key={creator.artistId}>{creator.name} / {creator.slug}</li>)}
+              </ul>
+            </article>
+            <article className="studio-crud-card">
+              <h4>Files</h4>
+              <select value={newFileCreatorId} onChange={(e) => setNewFileCreatorId(e.target.value)}>
+                <option value="">Select creator</option>
+                {crudCreators.map((creator) => <option key={`file-creator-${creator.artistId}`} value={creator.artistId}>{creator.name}</option>)}
+              </select>
+              <input placeholder="original-filename.jpg" value={newFileName} onChange={(e) => setNewFileName(e.target.value)} />
+              <input placeholder="mime type" value={newFileMimeType} onChange={(e) => setNewFileMimeType(e.target.value)} />
+              <button type="button" className="auth-primary-btn" onClick={() => void createFile()}>Create file</button>
+              <ul>
+                {crudFiles.slice(0, 6).map((file) => <li key={file.fileId}>{file.originalFilename || file.fileId} ({file.sourceKind})</li>)}
+              </ul>
+            </article>
+            <article className="studio-crud-card">
+              <h4>Posts</h4>
+              <p className="small">{crudPosts.length} posts loaded via `/admin/posts`.</p>
+              <ul>
+                {crudPosts.slice(0, 6).map((post) => <li key={post.postId}>{post.title} ({post.status})</li>)}
+              </ul>
+            </article>
+            <article className="studio-crud-card">
+              <h4>Media items</h4>
+              <select value={selectedGalleryId} onChange={(e) => setSelectedGalleryId(e.target.value)}>
+                <option value="">Select gallery</option>
+                {crudGalleries.map((gallery) => <option key={`gallery-${gallery.galleryId}`} value={gallery.galleryId}>{gallery.title}</option>)}
+              </select>
+              <p className="small">
+                Media CRUD is powered by `/admin/images` endpoints and requires a gallery context.
+                Selected gallery: {selectedGalleryId || 'none'}.
+              </p>
+            </article>
+          </div>
         </section>
       </section>
     </div>

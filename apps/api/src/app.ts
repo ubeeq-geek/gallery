@@ -28,6 +28,7 @@ import type {
   PostBlock,
   PostDiscoveryMode,
   SiteSettings,
+  SourceFile,
   UserCapabilities,
   UserProfile
 } from './domain';
@@ -354,6 +355,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   };
   const discoveryCache = new Map<string, DiscoveryCacheEntry>();
   const trendingResponseCache = new Map<string, { payload: unknown; expiresAt: number }>();
+  const localSourceFiles = new Map<string, SourceFile>();
   let trendingWarmupInFlight: Promise<void> | null = null;
 
   const buildDiscoveryCacheKey = (req: express.Request, scope: string): string | null => {
@@ -1320,6 +1322,24 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       res.setHeader('x-discovery-cache', 'BYPASS');
       res.setHeader('x-api-fallback', 'artists-empty');
       res.json([]);
+    }
+  });
+
+  app.get('/creators', async (req, res) => {
+    try {
+      const artists = await store.listArtists();
+      return res.json(
+        artists
+          .filter((artist) => artist.status === 'active')
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((artist) => ({
+            ...artist,
+            creatorId: artist.artistId
+          }))
+      );
+    } catch (error) {
+      logServerError('GET /creators', error);
+      return res.status(500).json({ message: 'Failed to load creators' });
     }
   });
 
@@ -2649,6 +2669,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
   });
 
+  app.get('/me/creators', requireAuth, async (req, res) => {
+    const creators = await store.listArtistsByUserId(req.authUser!.userId);
+    return res.json(creators.map((creator) => ({ ...creator, creatorId: creator.artistId })));
+  });
+
   app.put('/me/profile', requireAuth, async (req, res) => {
     const existing = await ensureUserProfile(req);
     const matureContentEnabled = typeof req.body?.matureContentEnabled === 'boolean'
@@ -3244,11 +3269,88 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.status(201).json(prize);
   });
 
+  app.get('/studio/metrics', requireAuth, async (req, res) => {
+    const artists = await store.listArtists();
+    const galleries = await store.listAllGalleries();
+    const posts = await store.listAllPosts();
+    const contexts = store.listContributionContexts ? await store.listContributionContexts() : [];
+    const submissions = store.listContextSubmissions
+      ? (await Promise.all(contexts.map((context) => store.listContextSubmissions!(context.contextId)))).flat()
+      : [];
+    const sourceFiles = Array.from(localSourceFiles.values());
+    const dynamicStore = store as unknown as {
+      userProfiles?: Array<unknown>;
+      userIdentities?: Array<{ role?: string }>;
+    };
+    const profileCount = Array.isArray(dynamicStore.userProfiles) ? dynamicStore.userProfiles.length : 0;
+    const contributorCount = Array.isArray(dynamicStore.userIdentities)
+      ? dynamicStore.userIdentities.filter((item) => item.role === 'contributor').length
+      : 0;
+    const dynamicFns = store as unknown as {
+      listAllMedia?: () => Promise<Media[]>;
+      listModerationQueue?: () => Promise<Array<unknown>>;
+    };
+    const allMedia = dynamicFns.listAllMedia ? await dynamicFns.listAllMedia() : [];
+    const moderationQueue = dynamicFns.listModerationQueue ? await dynamicFns.listModerationQueue() : [];
+    return res.json({
+      totalUsers: profileCount,
+      creators: artists.length,
+      galleries: galleries.length,
+      posts: posts.length,
+      files: sourceFiles.length,
+      mediaItems: allMedia.length,
+      pendingEntries: submissions.filter((item) => item.status === 'pending').length,
+      adminReviewItems: submissions.filter((item) => item.status === 'pending').length + moderationQueue.length,
+      contributors: contributorCount
+    });
+  });
+
   app.get('/admin/artists', requireAuth, async (req, res) => {
     const artists = isAdminRequest(req)
       ? await store.listArtists()
       : await store.listArtistsByUserId(req.authUser!.userId);
     return res.json(artists);
+  });
+
+  app.get('/admin/creators', requireAuth, async (req, res) => {
+    const creators = isAdminRequest(req)
+      ? await store.listArtists()
+      : await store.listArtistsByUserId(req.authUser!.userId);
+    return res.json(creators.map((creator) => ({ ...creator, creatorId: creator.artistId })));
+  });
+
+  app.get('/admin/files', requireAuth, async (_req, res) => {
+    return res.json(Array.from(localSourceFiles.values()));
+  });
+
+  app.post('/admin/files', requireAuth, async (req, res) => {
+    const creatorId = typeof req.body?.creatorId === 'string'
+      ? req.body.creatorId
+      : (typeof req.body?.artistId === 'string' ? req.body.artistId : '');
+    if (!creatorId) return res.status(400).json({ message: 'creatorId is required' });
+    if (!(await ensureArtistContentAccess(req, res, creatorId))) return;
+    const now = new Date().toISOString();
+    const file: SourceFile = {
+      fileId: randomUUID(),
+      creatorId,
+      sourceKind: req.body?.sourceKind === 'video' || req.body?.sourceKind === 'audio' || req.body?.sourceKind === 'document' || req.body?.sourceKind === 'archive'
+        ? req.body.sourceKind
+        : 'image',
+      mimeType: typeof req.body?.mimeType === 'string' && req.body.mimeType.trim() ? req.body.mimeType.trim() : 'application/octet-stream',
+      storageKey: typeof req.body?.storageKey === 'string' && req.body.storageKey.trim() ? req.body.storageKey.trim() : `uploads/${randomUUID()}`,
+      originalFilename: sanitizeOptional(req.body?.originalFilename, 255),
+      sizeBytes: Number.isFinite(Number(req.body?.sizeBytes)) ? Math.max(0, Number(req.body.sizeBytes)) : undefined,
+      metadata: req.body?.metadata && typeof req.body.metadata === 'object' && !Array.isArray(req.body.metadata)
+        ? req.body.metadata as Record<string, string | number | boolean | null>
+        : undefined,
+      downloadable: req.body?.downloadable === undefined ? true : Boolean(req.body.downloadable),
+      premium: Boolean(req.body?.premium),
+      restricted: Boolean(req.body?.restricted),
+      createdAt: now,
+      updatedAt: now
+    };
+    localSourceFiles.set(file.fileId, file);
+    return res.status(201).json(file);
   });
 
   app.get('/admin/audit', requireAdmin, async (req, res) => {

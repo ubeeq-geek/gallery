@@ -64,6 +64,10 @@ export const api = {
     const response = await fetch(withDevCacheBypass(`${API_BASE}/artists`));
     return handleJson(response);
   },
+  async getCreators() {
+    const response = await fetch(withDevCacheBypass(`${API_BASE}/creators`));
+    return handleJson(response);
+  },
   async getLatestGalleries(limit = 12) {
     const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/latest-galleries?limit=${encodeURIComponent(String(limit))}`));
     return handleJson(response);
@@ -507,6 +511,33 @@ export const api = {
   },
   async adminListArtists() {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/artists`);
+    return handleJson(response);
+  },
+  async adminListCreators() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/creators`);
+    return handleJson(response);
+  },
+  async studioMetrics() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/metrics`);
+    return handleJson(response);
+  },
+  async adminListFiles() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/files`);
+    return handleJson(response);
+  },
+  async adminCreateFile(payload: {
+    creatorId: string;
+    sourceKind?: 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
+    mimeType?: string;
+    storageKey?: string;
+    originalFilename?: string;
+    sizeBytes?: number;
+  }) {
+    const response = await fetch(`${API_BASE}/admin/files`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
     return handleJson(response);
   },
   async adminListGalleries() {
