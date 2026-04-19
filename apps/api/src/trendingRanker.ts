@@ -58,8 +58,8 @@ const discoverTableName = async (client: DynamoDBClient, preferred: string, mark
   }
 
   return matches.sort((a, b) => {
-    const aScore = a.startsWith('GalleryStack-') ? 0 : 1;
-    const bScore = b.startsWith('GalleryStack-') ? 0 : 1;
+    const aScore = a.startsWith('StudioStack-') ? 0 : 1;
+    const bScore = b.startsWith('StudioStack-') ? 0 : 1;
     if (aScore !== bScore) return aScore - bScore;
     return a.localeCompare(b);
   })[0];
@@ -74,9 +74,9 @@ const prepareCliConfig = async (): Promise<void> => {
   const region = process.env.AWS_REGION || 'ca-central-1';
   const lowLevel = new DynamoDBClient({ region });
 
-  const galleryCoreTable = getArgValue('--gallery-core-table')
-    || process.env.GALLERY_CORE_TABLE
-    || 'gallery-core';
+  const groupingCoreTable = getArgValue('--grouping-core-table')
+    || process.env.GROUPING_CORE_TABLE
+    || 'grouping-core';
   const imageStatsTable = getArgValue('--image-stats-table')
     || process.env.IMAGE_STATS_TABLE
     || 'image-stats';
@@ -84,13 +84,13 @@ const prepareCliConfig = async (): Promise<void> => {
     || process.env.TRENDING_FEED_TABLE
     || 'trending-feed';
 
-  process.env.GALLERY_CORE_TABLE = await discoverTableName(lowLevel, galleryCoreTable, 'GalleryCoreTable');
+  process.env.GROUPING_CORE_TABLE = await discoverTableName(lowLevel, groupingCoreTable, 'GroupingCoreTable');
   process.env.IMAGE_STATS_TABLE = await discoverTableName(lowLevel, imageStatsTable, 'ImageStatsTable');
   process.env.TRENDING_FEED_TABLE = await discoverTableName(lowLevel, trendingFeedTable, 'TrendingFeedTable');
-  process.env.USE_GALLERY_CORE_TABLE = 'true';
+  process.env.USE_GROUPING_CORE_TABLE = 'true';
 
   console.log(
-    `[trending-ranker] resolved tables: core=${process.env.GALLERY_CORE_TABLE} imageStats=${process.env.IMAGE_STATS_TABLE} trendingFeed=${process.env.TRENDING_FEED_TABLE} region=${region}`
+    `[trending-ranker] resolved tables: core=${process.env.GROUPING_CORE_TABLE} imageStats=${process.env.IMAGE_STATS_TABLE} trendingFeed=${process.env.TRENDING_FEED_TABLE} region=${region}`
   );
 };
 

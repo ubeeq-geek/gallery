@@ -6,12 +6,12 @@
     "logoKey": "branding/ubeeq-logo.svg",
     "logoFile": "media/ubeeq-logo.svg"
   },
-  "artists": [
+  "creators": [
     {
       "name": "Anne Smith",
       "slug": "anne-smith",
       "filePrefix": "anne-",
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
           "slug": "anne-smith-free"
@@ -30,134 +30,134 @@
         {
           "file": "anne-1.png",
           "title": "anne-1",
-          "gallerySlug": "anne-smith-free"
+          "groupingSlug": "anne-smith-free"
         },
         {
           "file": "anne-2.png",
           "title": "anne-2",
-          "gallerySlug": "anne-smith-free"
+          "groupingSlug": "anne-smith-free"
         },
         {
           "file": "anne-3.png",
           "title": "anne-3",
-          "gallerySlug": "anne-smith-free"
+          "groupingSlug": "anne-smith-free"
         },
         {
           "file": "anne-4.png",
           "title": "anne-4",
-          "gallerySlug": "anne-smith-free"
+          "groupingSlug": "anne-smith-free"
         },
         {
           "file": "anne-5.png",
           "title": "anne-5",
-          "gallerySlug": "anne-smith-premium-preview"
+          "groupingSlug": "anne-smith-premium-preview"
         },
         {
           "file": "anne-6.png",
           "title": "anne-6",
-          "gallerySlug": "anne-smith-premium-preview"
+          "groupingSlug": "anne-smith-premium-preview"
         },
         {
           "file": "anne-7.png",
           "title": "anne-7",
-          "gallerySlug": "anne-smith-premium-preview"
+          "groupingSlug": "anne-smith-premium-preview"
         },
         {
           "file": "anne-8.png",
           "title": "anne-8",
-          "gallerySlug": "anne-smith-premium-preview"
+          "groupingSlug": "anne-smith-premium-preview"
         },
         {
           "file": "anne-9.png",
           "title": "anne-9",
-          "gallerySlug": "anne-smith-premium-preview"
+          "groupingSlug": "anne-smith-premium-preview"
         },
         {
           "file": "anne-10.png",
           "title": "anne-10",
-          "gallerySlug": "anne-smith-premium-preview"
+          "groupingSlug": "anne-smith-premium-preview"
         },
         {
           "file": "anne-11.png",
           "title": "anne-11",
-          "gallerySlug": "anne-smith-premium-preview"
+          "groupingSlug": "anne-smith-premium-preview"
         },
         {
           "file": "anne-12.png",
           "title": "anne-12",
-          "gallerySlug": "anne-smith-premium-preview"
+          "groupingSlug": "anne-smith-premium-preview"
         },
         {
           "file": "anne-5.png",
           "title": "anne-5",
-          "gallerySlug": "anne-smith-premium"
+          "groupingSlug": "anne-smith-premium"
         },
         {
           "file": "anne-6.png",
           "title": "anne-6",
-          "gallerySlug": "anne-smith-premium"
+          "groupingSlug": "anne-smith-premium"
         },
         {
           "file": "anne-7.png",
           "title": "anne-7",
-          "gallerySlug": "anne-smith-premium"
+          "groupingSlug": "anne-smith-premium"
         },
         {
           "file": "anne-8.png",
           "title": "anne-8",
-          "gallerySlug": "anne-smith-premium"
+          "groupingSlug": "anne-smith-premium"
         },
         {
           "file": "anne-9.png",
           "title": "anne-9",
-          "gallerySlug": "anne-smith-premium"
+          "groupingSlug": "anne-smith-premium"
         },
         {
           "file": "anne-10.png",
           "title": "anne-10",
-          "gallerySlug": "anne-smith-premium"
+          "groupingSlug": "anne-smith-premium"
         },
         {
           "file": "anne-11.png",
           "title": "anne-11",
-          "gallerySlug": "anne-smith-premium"
+          "groupingSlug": "anne-smith-premium"
         },
         {
           "file": "anne-12.png",
           "title": "anne-12",
-          "gallerySlug": "anne-smith-premium"
+          "groupingSlug": "anne-smith-premium"
         },
         {
           "file": "anne-free-video-1.mp4",
           "title": "anne-free-video-1",
           "posterFile": "anne-free-video-1-poster.png",
-          "gallerySlug": "anne-smith-free"
+          "groupingSlug": "anne-smith-free"
         }
       ],
       "posts": [
         {
           "title": "Desert Light Collection",
           "slug": "desert-light-collection",
-          "summary": "A grouped post anchored on Anne's free gallery images.",
+          "summary": "A grouped post anchored on Anne's free grouping images.",
           "discoveryMode": "selected",
           "primaryMedia": {
             "file": "anne-1.png",
-            "gallerySlug": "anne-smith-free"
+            "groupingSlug": "anne-smith-free"
           },
           "media": [
             {
               "file": "anne-1.png",
-              "gallerySlug": "anne-smith-free",
+              "groupingSlug": "anne-smith-free",
               "discoverable": true
             },
             {
               "file": "anne-2.png",
-              "gallerySlug": "anne-smith-free",
+              "groupingSlug": "anne-smith-free",
               "discoverable": true
             },
             {
               "file": "anne-3.png",
-              "gallerySlug": "anne-smith-free",
+              "groupingSlug": "anne-smith-free",
               "discoverable": false
             }
           ],
@@ -174,13 +174,13 @@
             {
               "type": "image",
               "file": "anne-1.png",
-              "gallerySlug": "anne-smith-free",
+              "groupingSlug": "anne-smith-free",
               "caption": "Entry one"
             },
             {
               "type": "image",
               "file": "anne-2.png",
-              "gallerySlug": "anne-smith-free",
+              "groupingSlug": "anne-smith-free",
               "caption": "Entry two"
             }
           ],
@@ -197,16 +197,16 @@
           "discoveryMode": "primary",
           "primaryMedia": {
             "file": "anne-5.png",
-            "gallerySlug": "anne-smith-premium-preview"
+            "groupingSlug": "anne-smith-premium-preview"
           },
           "media": [
             {
               "file": "anne-5.png",
-              "gallerySlug": "anne-smith-premium-preview"
+              "groupingSlug": "anne-smith-premium-preview"
             },
             {
               "file": "anne-6.png",
-              "gallerySlug": "anne-smith-premium-preview",
+              "groupingSlug": "anne-smith-premium-preview",
               "discoverable": false
             }
           ],
@@ -223,16 +223,16 @@
             {
               "type": "image",
               "file": "anne-5.png",
-              "gallerySlug": "anne-smith-premium-preview",
+              "groupingSlug": "anne-smith-premium-preview",
               "caption": "Primary frame"
             },
             {
               "type": "paragraph",
-              "text": "Preview and premium are modeled by gallery access while posts remain generic."
+              "text": "Preview and premium are modeled by grouping access while posts remain generic."
             },
             {
               "type": "link",
-              "title": "Open premium gallery",
+              "title": "Open premium grouping",
               "url": "https://store.example.com/anne-smith-premium"
             }
           ],
@@ -253,12 +253,12 @@
           "discoveryMode": "primary",
           "primaryMedia": {
             "file": "anne-free-video-1.mp4",
-            "gallerySlug": "anne-smith-free"
+            "groupingSlug": "anne-smith-free"
           },
           "media": [
             {
               "file": "anne-free-video-1.mp4",
-              "gallerySlug": "anne-smith-free",
+              "groupingSlug": "anne-smith-free",
               "discoverable": true
             }
           ],
@@ -266,7 +266,7 @@
             {
               "type": "video",
               "file": "anne-free-video-1.mp4",
-              "gallerySlug": "anne-smith-free",
+              "groupingSlug": "anne-smith-free",
               "caption": "Boardwalk walk-through"
             },
             {
@@ -286,7 +286,7 @@
       "name": "Samuel Jones",
       "slug": "samuel-jones",
       "filePrefix": "samuel-",
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
           "slug": "samuel-jones-free"
@@ -296,42 +296,42 @@
         {
           "file": "samuel-1.png",
           "title": "samuel-1",
-          "gallerySlug": "samuel-jones-free"
+          "groupingSlug": "samuel-jones-free"
         },
         {
           "file": "samuel-2.png",
           "title": "samuel-2",
-          "gallerySlug": "samuel-jones-free"
+          "groupingSlug": "samuel-jones-free"
         },
         {
           "file": "samuel-3.png",
           "title": "samuel-3",
-          "gallerySlug": "samuel-jones-free"
+          "groupingSlug": "samuel-jones-free"
         },
         {
           "file": "samuel-4.png",
           "title": "samuel-4",
-          "gallerySlug": "samuel-jones-free"
+          "groupingSlug": "samuel-jones-free"
         },
         {
           "file": "samuel-5.png",
           "title": "samuel-5",
-          "gallerySlug": "samuel-jones-free"
+          "groupingSlug": "samuel-jones-free"
         },
         {
           "file": "samuel-6.png",
           "title": "samuel-6",
-          "gallerySlug": "samuel-jones-free"
+          "groupingSlug": "samuel-jones-free"
         },
         {
           "file": "samuel-7.png",
           "title": "samuel-7",
-          "gallerySlug": "samuel-jones-free"
+          "groupingSlug": "samuel-jones-free"
         },
         {
           "file": "samuel-8.png",
           "title": "samuel-8",
-          "gallerySlug": "samuel-jones-free"
+          "groupingSlug": "samuel-jones-free"
         }
       ]
     },
@@ -341,7 +341,7 @@
       "filePrefix": "ubeeq-girl-",
       "contentRating": "fetish",
       "discoverSquareCropEnabled": false,
-      "galleries": [
+      "groupings": [
         {
           "kind": "preview",
           "slug": "ubeeq-girl-premium-preview",
@@ -356,68 +356,68 @@
         {
           "file": "ubeeq-girl-1.png",
           "title": "ubeeq-girl-1",
-          "gallerySlug": "ubeeq-girl-premium-preview"
+          "groupingSlug": "ubeeq-girl-premium-preview"
         },
         {
           "file": "ubeeq-girl-2.png",
           "title": "ubeeq-girl-2",
-          "gallerySlug": "ubeeq-girl-premium-preview"
+          "groupingSlug": "ubeeq-girl-premium-preview"
         },
         {
           "file": "ubeeq-girl-3.png",
           "title": "ubeeq-girl-3",
-          "gallerySlug": "ubeeq-girl-premium-preview"
+          "groupingSlug": "ubeeq-girl-premium-preview"
         },
         {
           "file": "ubeeq-girl-4.png",
           "title": "ubeeq-girl-4",
-          "gallerySlug": "ubeeq-girl-premium-preview"
+          "groupingSlug": "ubeeq-girl-premium-preview"
         },
         {
           "file": "ubeeq-girl-5.png",
           "title": "ubeeq-girl-5",
-          "gallerySlug": "ubeeq-girl-premium"
+          "groupingSlug": "ubeeq-girl-premium"
         },
         {
           "file": "ubeeq-girl-6.png",
           "title": "ubeeq-girl-6",
-          "gallerySlug": "ubeeq-girl-premium"
+          "groupingSlug": "ubeeq-girl-premium"
         },
         {
           "file": "ubeeq-girl-7.png",
           "title": "ubeeq-girl-7",
-          "gallerySlug": "ubeeq-girl-premium"
+          "groupingSlug": "ubeeq-girl-premium"
         },
         {
           "file": "ubeeq-girl-8.png",
           "title": "ubeeq-girl-8",
-          "gallerySlug": "ubeeq-girl-premium"
+          "groupingSlug": "ubeeq-girl-premium"
         },
         {
           "file": "ubeeq-girl-9.png",
           "title": "ubeeq-girl-9",
-          "gallerySlug": "ubeeq-girl-premium"
+          "groupingSlug": "ubeeq-girl-premium"
         },
         {
           "file": "ubeeq-girl-10.png",
           "title": "ubeeq-girl-10",
-          "gallerySlug": "ubeeq-girl-premium"
+          "groupingSlug": "ubeeq-girl-premium"
         },
         {
           "file": "ubeeq-girl-11.png",
           "title": "ubeeq-girl-11",
-          "gallerySlug": "ubeeq-girl-premium"
+          "groupingSlug": "ubeeq-girl-premium"
         },
         {
           "file": "ubeeq-girl-12.png",
           "title": "ubeeq-girl-12",
-          "gallerySlug": "ubeeq-girl-premium"
+          "groupingSlug": "ubeeq-girl-premium"
         },
         {
           "file": "ubeeq-girl-premium-video-1.mp4",
           "title": "ubeeq-girl-premium-video-1",
           "posterFile": "ubeeq-girl-premium-video-1-poster.png",
-          "gallerySlug": "ubeeq-girl-premium"
+          "groupingSlug": "ubeeq-girl-premium"
         }
       ]
     },
@@ -433,7 +433,7 @@
         "alp-0005"
       ],
       "discoverSquareCropEnabled": false,
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
           "title": "Atlas of Lost Occupations",
@@ -444,27 +444,27 @@
         {
           "file": "ALP-0001 - Airship Car Ferry Loading Officer.png",
           "title": "Airship Car Ferry Loading Officer",
-          "gallerySlug": "atlas-of-lost-occupations"
+          "groupingSlug": "atlas-of-lost-occupations"
         },
         {
           "file": "ALP-0002 - Snowfall Grid Analyst.png",
           "title": "Snowfall Grid Analyst",
-          "gallerySlug": "atlas-of-lost-occupations"
+          "groupingSlug": "atlas-of-lost-occupations"
         },
         {
           "file": "ALP-0003 - Fish Ladder Flow Monitor.png",
           "title": "Fish Ladder Flow Monitor",
-          "gallerySlug": "atlas-of-lost-occupations"
+          "groupingSlug": "atlas-of-lost-occupations"
         },
         {
           "file": "ALP-0004 - Library Whisper Compliance Officer.png",
           "title": "Library Whisper Compliance Officer",
-          "gallerySlug": "atlas-of-lost-occupations"
+          "groupingSlug": "atlas-of-lost-occupations"
         },
         {
           "file": "ALP-0005 - Beach Umbrella Registrar.png",
           "title": "Beach Umbrella Registrar",
-          "gallerySlug": "atlas-of-lost-occupations"
+          "groupingSlug": "atlas-of-lost-occupations"
         }
       ]
     },
@@ -472,7 +472,7 @@
       "name": "Daily Cosmos",
       "slug": "daily-cosmos",
       "filePrefix": "dc-",
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
           "slug": "daily-cosmos-free"
@@ -482,62 +482,62 @@
         {
           "file": "DC-001.png",
           "title": "DC-001",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-002.jpg",
           "title": "DC-002",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-003.jpg",
           "title": "DC-003",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-004.jpg",
           "title": "DC-004",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-005.jpg",
           "title": "DC-005",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-006.jpg",
           "title": "DC-006",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-007.jpg",
           "title": "DC-007",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-008.jpg",
           "title": "DC-008",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-009.jpg",
           "title": "DC-009",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-010.jpg",
           "title": "DC-010",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-011.jpg",
           "title": "DC-011",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         },
         {
           "file": "DC-012.jpg",
           "title": "DC-012",
-          "gallerySlug": "daily-cosmos-free"
+          "groupingSlug": "daily-cosmos-free"
         }
       ],
       "posts": [
@@ -548,22 +548,22 @@
           "discoveryMode": "selected",
           "primaryMedia": {
             "file": "DC-001.png",
-            "gallerySlug": "daily-cosmos-free"
+            "groupingSlug": "daily-cosmos-free"
           },
           "media": [
             {
               "file": "DC-001.png",
-              "gallerySlug": "daily-cosmos-free",
+              "groupingSlug": "daily-cosmos-free",
               "discoverable": true
             },
             {
               "file": "DC-002.jpg",
-              "gallerySlug": "daily-cosmos-free",
+              "groupingSlug": "daily-cosmos-free",
               "discoverable": true
             },
             {
               "file": "DC-003.jpg",
-              "gallerySlug": "daily-cosmos-free",
+              "groupingSlug": "daily-cosmos-free",
               "discoverable": false
             }
           ],
@@ -576,7 +576,7 @@
             {
               "type": "image",
               "file": "DC-001.png",
-              "gallerySlug": "daily-cosmos-free",
+              "groupingSlug": "daily-cosmos-free",
               "caption": "Primary discovery frame"
             },
             {
@@ -596,113 +596,113 @@
       "name": "Nearly Natural Vistas",
       "slug": "nearly-natural-vistas",
       "filePrefix": "vista-",
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
-          "title": "Nearly Natural Vistas Free Gallery",
-          "slug": "nearly-natural-vistas-free-gallery"
+          "title": "Nearly Natural Vistas Free Grouping",
+          "slug": "nearly-natural-vistas-free-grouping"
         }
       ],
       "media": [
         {
           "file": "VISTA-1.png",
           "title": "VISTA-1",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-2.png",
           "title": "VISTA-2",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-3.png",
           "title": "VISTA-3",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-4.png",
           "title": "VISTA-4",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-5.png",
           "title": "VISTA-5",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-6.png",
           "title": "VISTA-6",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-7.png",
           "title": "VISTA-7",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-8.png",
           "title": "VISTA-8",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-9.png",
           "title": "VISTA-9",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-10.png",
           "title": "VISTA-10",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-11.png",
           "title": "VISTA-11",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-12.png",
           "title": "VISTA-12",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-13.png",
           "title": "VISTA-13",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-14.png",
           "title": "VISTA-14",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-15.png",
           "title": "VISTA-15",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-16.png",
           "title": "VISTA-16",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-17.png",
           "title": "VISTA-17",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-18.png",
           "title": "VISTA-18",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-19.png",
           "title": "VISTA-19",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         },
         {
           "file": "VISTA-20.png",
           "title": "VISTA-20",
-          "gallerySlug": "nearly-natural-vistas-free-gallery"
+          "groupingSlug": "nearly-natural-vistas-free-grouping"
         }
       ]
     },
@@ -710,58 +710,58 @@
       "name": "Roadside America",
       "slug": "roadside-america",
       "filePrefix": "road-000",
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
-          "title": "Roadside America Free Gallery",
-          "slug": "roadside-america-free-gallery"
+          "title": "Roadside America Free Grouping",
+          "slug": "roadside-america-free-grouping"
         }
       ],
       "media": [
         {
           "file": "ROAD-0001.jpg",
           "title": "ROAD-0001",
-          "gallerySlug": "roadside-america-free-gallery"
+          "groupingSlug": "roadside-america-free-grouping"
         },
         {
           "file": "ROAD-0002.jpg",
           "title": "ROAD-0002",
-          "gallerySlug": "roadside-america-free-gallery"
+          "groupingSlug": "roadside-america-free-grouping"
         },
         {
           "file": "ROAD-0003.jpg",
           "title": "ROAD-0003",
-          "gallerySlug": "roadside-america-free-gallery"
+          "groupingSlug": "roadside-america-free-grouping"
         },
         {
           "file": "ROAD-0004.jpg",
           "title": "ROAD-0004",
-          "gallerySlug": "roadside-america-free-gallery"
+          "groupingSlug": "roadside-america-free-grouping"
         },
         {
           "file": "ROAD-0005.jpg",
           "title": "ROAD-0005",
-          "gallerySlug": "roadside-america-free-gallery"
+          "groupingSlug": "roadside-america-free-grouping"
         },
         {
           "file": "ROAD-0006.jpg",
           "title": "ROAD-0006",
-          "gallerySlug": "roadside-america-free-gallery"
+          "groupingSlug": "roadside-america-free-grouping"
         },
         {
           "file": "ROAD-0007.jpg",
           "title": "ROAD-0007",
-          "gallerySlug": "roadside-america-free-gallery"
+          "groupingSlug": "roadside-america-free-grouping"
         },
         {
           "file": "ROAD-0008.jpg",
           "title": "ROAD-0008",
-          "gallerySlug": "roadside-america-free-gallery"
+          "groupingSlug": "roadside-america-free-grouping"
         },
         {
           "file": "ROAD-0009.jpg",
           "title": "ROAD-0009",
-          "gallerySlug": "roadside-america-free-gallery"
+          "groupingSlug": "roadside-america-free-grouping"
         }
       ]
     },
@@ -769,38 +769,38 @@
       "name": "Livestreams From the Past",
       "slug": "livestreams-from-the-past",
       "filePrefix": "past-",
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
-          "title": "Livestreams From the Past Free Gallery",
-          "slug": "livestreams-from-the-past-free-gallery"
+          "title": "Livestreams From the Past Free Grouping",
+          "slug": "livestreams-from-the-past-free-grouping"
         }
       ],
       "media": [
         {
           "file": "PAST-0001-france-1912.mp4",
           "title": "france-1912",
-          "gallerySlug": "livestreams-from-the-past-free-gallery"
+          "groupingSlug": "livestreams-from-the-past-free-grouping"
         },
         {
           "file": "PAST-0002-uk-1910.mp4",
           "title": "uk-1910",
-          "gallerySlug": "livestreams-from-the-past-free-gallery"
+          "groupingSlug": "livestreams-from-the-past-free-grouping"
         },
         {
           "file": "PAST-0003-venice-1912.mp4",
           "title": "venice-1912",
-          "gallerySlug": "livestreams-from-the-past-free-gallery"
+          "groupingSlug": "livestreams-from-the-past-free-grouping"
         },
         {
           "file": "PAST-0004-greece-1912.mp4",
           "title": "greece-1912",
-          "gallerySlug": "livestreams-from-the-past-free-gallery"
+          "groupingSlug": "livestreams-from-the-past-free-grouping"
         },
         {
           "file": "PAST-0004-venice-1912.mp4",
           "title": "venice-1912",
-          "gallerySlug": "livestreams-from-the-past-free-gallery"
+          "groupingSlug": "livestreams-from-the-past-free-grouping"
         }
       ],
       "posts": [
@@ -811,17 +811,17 @@
           "discoveryMode": "primary",
           "primaryMedia": {
             "file": "PAST-0001-france-1912.mp4",
-            "gallerySlug": "livestreams-from-the-past-free-gallery"
+            "groupingSlug": "livestreams-from-the-past-free-grouping"
           },
           "media": [
             {
               "file": "PAST-0001-france-1912.mp4",
-              "gallerySlug": "livestreams-from-the-past-free-gallery",
+              "groupingSlug": "livestreams-from-the-past-free-grouping",
               "discoverable": true
             },
             {
               "file": "PAST-0002-uk-1910.mp4",
-              "gallerySlug": "livestreams-from-the-past-free-gallery",
+              "groupingSlug": "livestreams-from-the-past-free-grouping",
               "discoverable": false
             }
           ],
@@ -834,7 +834,7 @@
             {
               "type": "video",
               "file": "PAST-0001-france-1912.mp4",
-              "gallerySlug": "livestreams-from-the-past-free-gallery",
+              "groupingSlug": "livestreams-from-the-past-free-grouping",
               "caption": "Featured stream excerpt"
             },
             {

@@ -2,17 +2,17 @@
   "mediaDir": "media",
   "siteSettings": {
     "stackName": "GalleryStackDevScenarioA",
-    "siteName": "Scenario A Gallery",
+    "siteName": "Scenario A Studio",
     "theme": "ubeeq",
     "logoKey": "branding/scenario-a-logo.svg",
     "logoFile": "media/scenario-a-logo.svg"
   },
-  "artists": [
+  "creators": [
     {
       "name": "Anne Smith",
       "slug": "anne-smith",
       "filePrefix": "anne-",
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
           "title": "Anne Free",
@@ -42,12 +42,12 @@
           "discoveryMode": "selected",
           "primaryMedia": {
             "file": "anne-0001.jpg",
-            "gallerySlug": "anne-free"
+            "groupingSlug": "anne-free"
           },
           "media": [
             {
               "file": "anne-0001.jpg",
-              "gallerySlug": "anne-free",
+              "groupingSlug": "anne-free",
               "discoverable": true
             }
           ],
@@ -60,7 +60,7 @@
             {
               "type": "image",
               "file": "anne-0001.jpg",
-              "gallerySlug": "anne-free",
+              "groupingSlug": "anne-free",
               "caption": "Primary image block"
             },
             {
@@ -80,7 +80,7 @@
       "slug": "samuel-jones",
       "filePrefix": "samuel-",
       "includePrefixes": ["samuel-0001", "samuel-0002", "samuel-0003"],
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
           "title": "Samuel Free",

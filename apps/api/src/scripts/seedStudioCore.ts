@@ -8,12 +8,12 @@ import path from 'path';
 import { Jimp } from 'jimp';
 import { hashPassword } from '../unlock';
 import { loadConfig } from '../config';
-import { GalleryCoreRepository } from '../galleryCoreRepository';
+import { GroupingCoreRepository } from '../groupingCoreRepository';
 import type {
   AiDisclosure,
-  Artist,
+  Creator as CreatorRecord,
   ContentRating,
-  Gallery,
+  Grouping as GroupingRecord,
   HeavyTopic,
   Media,
   Post,
@@ -106,10 +106,10 @@ const seedId = (entity: string, ...parts: string[]): string => {
 };
 
 type AssetFile = { filename: string; absolutePath: string };
-type GallerySeedKind = 'free' | 'preview' | 'premium';
-type ArtistMediaSeed = {
+type GroupingSeedKind = 'free' | 'preview' | 'premium';
+type CreatorMediaSeed = {
   file: string;
-  gallerySlug: string;
+  groupingSlug: string;
   isPreview?: boolean;
   previewMaxWidth?: number;
   title?: string;
@@ -126,7 +126,7 @@ type ArtistMediaSeed = {
 type ScenarioPostMediaRefSeed = {
   mediaId?: string;
   file?: string;
-  gallerySlug?: string;
+  groupingSlug?: string;
   discoverable?: boolean;
   sortOrder?: number;
   caption?: string;
@@ -138,7 +138,7 @@ type ScenarioPostDestinationSeed = {
 type ScenarioPostPrimaryMediaSeed = {
   mediaId?: string;
   file?: string;
-  gallerySlug?: string;
+  groupingSlug?: string;
 };
 type ScenarioPostBlockSeed = {
   blockId?: string;
@@ -147,7 +147,7 @@ type ScenarioPostBlockSeed = {
   level?: number;
   mediaId?: string;
   file?: string;
-  gallerySlug?: string;
+  groupingSlug?: string;
   caption?: string;
   quote?: string;
   author?: string;
@@ -170,36 +170,36 @@ type ScenarioPostSeed = {
   destination?: ScenarioPostDestinationSeed | null;
   metadata?: Record<string, string>;
 };
-type ArtistSeed = {
+type CreatorSeed = {
   name: string;
   slug: string;
   filePrefix?: string;
   includePrefixes?: string[];
-  media?: ArtistMediaSeed[];
+  media?: CreatorMediaSeed[];
   contentRating?: ContentRating;
   aiDisclosure?: AiDisclosure;
   heavyTopics?: HeavyTopic[];
   discoverSquareCropEnabled?: boolean;
-  galleries: Array<GallerySeedKind>;
-  freeGalleryTitle?: string;
-  freeGallerySlug?: string;
-  freeGalleryStatus?: 'draft' | 'published';
-  freeGalleryDefaultPreviewMaxWidth?: number;
-  previewGalleryTitle?: string;
-  previewGallerySlug?: string;
-  previewGalleryStatus?: 'draft' | 'published';
-  previewGalleryDefaultPreviewMaxWidth?: number;
-  premiumGalleryTitle?: string;
-  premiumGallerySlug?: string;
-  premiumGalleryStatus?: 'draft' | 'published';
-  premiumGalleryDefaultPreviewMaxWidth?: number;
+  groupings: Array<GroupingSeedKind>;
+  freeGroupingTitle?: string;
+  freeGroupingSlug?: string;
+  freeGroupingStatus?: 'draft' | 'published';
+  freeGroupingDefaultPreviewMaxWidth?: number;
+  previewGroupingTitle?: string;
+  previewGroupingSlug?: string;
+  previewGroupingStatus?: 'draft' | 'published';
+  previewGroupingDefaultPreviewMaxWidth?: number;
+  premiumGroupingTitle?: string;
+  premiumGroupingSlug?: string;
+  premiumGroupingStatus?: 'draft' | 'published';
+  premiumGroupingDefaultPreviewMaxWidth?: number;
   premiumPassword?: string;
   purchaseUrl?: string;
   posts?: ScenarioPostSeed[];
 };
 
-type ScenarioGallerySeed = {
-  kind: GallerySeedKind;
+type ScenarioGroupingSeed = {
+  kind: GroupingSeedKind;
   title?: string;
   slug?: string;
   status?: 'draft' | 'published';
@@ -208,17 +208,17 @@ type ScenarioGallerySeed = {
   premiumPassword?: string;
 };
 
-type ScenarioArtistSeed = {
+type ScenarioCreatorSeed = {
   name: string;
   slug: string;
   filePrefix?: string;
   includePrefixes?: string[];
-  media?: ArtistMediaSeed[];
+  media?: CreatorMediaSeed[];
   contentRating?: ContentRating;
   aiDisclosure?: AiDisclosure;
   heavyTopics?: HeavyTopic[];
   discoverSquareCropEnabled?: boolean;
-  galleries: ScenarioGallerySeed[];
+  groupings: ScenarioGroupingSeed[];
   posts?: ScenarioPostSeed[];
 };
 
@@ -233,11 +233,11 @@ type ScenarioSiteSettings = {
 type SeedScenarioFile = {
   mediaDir?: string;
   siteSettings?: ScenarioSiteSettings;
-  artists: ScenarioArtistSeed[];
+  creators: ScenarioCreatorSeed[];
 };
 
 type SeedScenarioInputs = {
-  artistSeeds: ArtistSeed[];
+  creatorSeeds: CreatorSeed[];
   mediaDir: string;
   stackName?: string;
   siteName?: string;
@@ -248,7 +248,7 @@ type SeedScenarioInputs = {
 };
 
 type StackTargets = {
-  galleryCoreTable?: string;
+  groupingCoreTable?: string;
   siteSettingsTable?: string;
   mediaBucket?: string;
 };
@@ -267,12 +267,12 @@ const splitByAccess = (files: AssetFile[]): { free: AssetFile[]; premium: AssetF
   return { free, premium };
 };
 
-const assertUniqueArtistSeedSlugs = (seeds: ArtistSeed[]): void => {
+const assertUniqueCreatorSeedSlugs = (seeds: CreatorSeed[]): void => {
   const seen = new Set<string>();
   for (const seed of seeds) {
     const normalized = slugify(seed.slug);
     if (seen.has(normalized)) {
-      throw new Error(`Duplicate artist slug in seed data: ${normalized}`);
+      throw new Error(`Duplicate creator slug in seed data: ${normalized}`);
     }
     seen.add(normalized);
   }
@@ -294,11 +294,11 @@ const sanitizeOptional = (value: string | undefined, maxLength: number): string 
   return trimmed ? trimmed.slice(0, maxLength) : undefined;
 };
 
-const composeMediaLookupKey = (file: string, gallerySlug: string): string =>
-  `${normalize(file)}::${slugify(gallerySlug)}`;
+const composeMediaLookupKey = (file: string, groupingSlug: string): string =>
+  `${normalize(file)}::${slugify(groupingSlug)}`;
 
 const resolveScenarioMediaId = (
-  ref: { mediaId?: string; file?: string; gallerySlug?: string } | undefined,
+  ref: { mediaId?: string; file?: string; groupingSlug?: string } | undefined,
   label: string,
   mediaIdByComposite: Map<string, string>,
   mediaIdsByFile: Map<string, string[]>
@@ -311,10 +311,10 @@ const resolveScenarioMediaId = (
     throw new Error(`Scenario ${label} must include mediaId or file`);
   }
   const fileNorm = normalize(file);
-  if (ref.gallerySlug) {
-    const direct = mediaIdByComposite.get(composeMediaLookupKey(fileNorm, ref.gallerySlug));
+  if (ref.groupingSlug) {
+    const direct = mediaIdByComposite.get(composeMediaLookupKey(fileNorm, ref.groupingSlug));
     if (!direct) {
-      throw new Error(`Scenario ${label} references unknown media "${file}" for gallerySlug "${ref.gallerySlug}"`);
+      throw new Error(`Scenario ${label} references unknown media "${file}" for groupingSlug "${ref.groupingSlug}"`);
     }
     return direct;
   }
@@ -323,7 +323,7 @@ const resolveScenarioMediaId = (
     throw new Error(`Scenario ${label} references unknown media file "${file}"`);
   }
   if (candidates.length > 1) {
-    throw new Error(`Scenario ${label} references ambiguous media file "${file}". Add gallerySlug.`);
+    throw new Error(`Scenario ${label} references ambiguous media file "${file}". Add groupingSlug.`);
   }
   return candidates[0];
 };
@@ -345,7 +345,7 @@ const toSeedPostBlocks = (
     }
     const mediaId = hasMediaRef
       ? resolveScenarioMediaId(
-        { mediaId: block.mediaId, file: block.file, gallerySlug: block.gallerySlug },
+        { mediaId: block.mediaId, file: block.file, groupingSlug: block.groupingSlug },
         `${postKey}.blocks[${index}]`,
         mediaIdByComposite,
         mediaIdsByFile
@@ -409,7 +409,7 @@ const POST_BLOCK_TYPES = new Set([
   'embed',
   'file',
   'link',
-  'gallery',
+  'grouping',
   'carousel',
   'pdf_preview',
   'html_fragment'
@@ -450,7 +450,7 @@ const parseScenarioPostMediaRef = (value: unknown, fieldName: string): ScenarioP
   }
   const mediaId = asOptionalString(value.mediaId);
   const file = asOptionalString(value.file);
-  const gallerySlugRaw = asOptionalString(value.gallerySlug);
+  const groupingSlugRaw = asOptionalString(value.groupingSlug);
   if (!mediaId && !file) {
     throw new Error(`Scenario field "${fieldName}" must include mediaId or file`);
   }
@@ -465,7 +465,7 @@ const parseScenarioPostMediaRef = (value: unknown, fieldName: string): ScenarioP
   return {
     mediaId,
     file,
-    gallerySlug: gallerySlugRaw ? slugify(gallerySlugRaw) : undefined,
+    groupingSlug: groupingSlugRaw ? slugify(groupingSlugRaw) : undefined,
     discoverable: asOptionalBoolean(value.discoverable),
     sortOrder,
     caption: asOptionalString(value.caption)
@@ -498,7 +498,7 @@ const parseScenarioPostBlock = (value: unknown, fieldName: string): ScenarioPost
     level,
     mediaId: asOptionalString(value.mediaId),
     file: asOptionalString(value.file),
-    gallerySlug: asOptionalString(value.gallerySlug),
+    groupingSlug: asOptionalString(value.groupingSlug),
     caption: asOptionalString(value.caption),
     quote: asOptionalString(value.quote),
     author: asOptionalString(value.author),
@@ -551,14 +551,14 @@ const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed 
     }
     const mediaId = asOptionalString(primaryMediaRaw.mediaId);
     const file = asOptionalString(primaryMediaRaw.file);
-    const gallerySlugRaw = asOptionalString(primaryMediaRaw.gallerySlug);
+    const groupingSlugRaw = asOptionalString(primaryMediaRaw.groupingSlug);
     if (!mediaId && !file) {
       throw new Error(`Scenario field "${fieldName}.primaryMedia" must include mediaId or file`);
     }
     primaryMedia = {
       mediaId,
       file,
-      gallerySlug: gallerySlugRaw ? slugify(gallerySlugRaw) : undefined
+      groupingSlug: groupingSlugRaw ? slugify(groupingSlugRaw) : undefined
     };
   }
 
@@ -609,12 +609,12 @@ const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed 
   };
 };
 
-const parseScenarioArtistMedia = (value: unknown, fieldName: string): ArtistMediaSeed => {
+const parseScenarioCreatorMedia = (value: unknown, fieldName: string): CreatorMediaSeed => {
   if (!isRecord(value)) {
     throw new Error(`Scenario field "${fieldName}" must be an object`);
   }
   const file = asString(value.file, `${fieldName}.file`);
-  const gallerySlug = slugify(asString(value.gallerySlug, `${fieldName}.gallerySlug`));
+  const groupingSlug = slugify(asString(value.groupingSlug, `${fieldName}.groupingSlug`));
   const assetType = asOptionalString(value.assetType);
   if (assetType && assetType !== 'image' && assetType !== 'video') {
     throw new Error(`Scenario field "${fieldName}.assetType" must be image or video`);
@@ -638,7 +638,7 @@ const parseScenarioArtistMedia = (value: unknown, fieldName: string): ArtistMedi
 
   return {
     file,
-    gallerySlug,
+    groupingSlug,
     isPreview: asOptionalBoolean(value.isPreview),
     previewMaxWidth,
     title: asOptionalString(value.title),
@@ -666,10 +666,10 @@ const resolveScenarioChildPath = (scenarioRootDir: string, relativePathValue: st
   return resolved;
 };
 
-const parseScenarioGallery = (
+const parseScenarioGrouping = (
   value: unknown,
   fieldName: string
-): ScenarioGallerySeed => {
+): ScenarioGroupingSeed => {
   if (!isRecord(value)) {
     throw new Error(`Scenario field "${fieldName}" must be an object`);
   }
@@ -700,10 +700,10 @@ const parseScenarioGallery = (
   };
 };
 
-const parseScenarioArtist = (
+const parseScenarioCreator = (
   value: unknown,
   fieldName: string
-): ArtistSeed => {
+): CreatorSeed => {
   if (!isRecord(value)) {
     throw new Error(`Scenario field "${fieldName}" must be an object`);
   }
@@ -713,7 +713,7 @@ const parseScenarioArtist = (
   const includePrefixes = parseOptionalStringArray(value.includePrefixes, `${fieldName}.includePrefixes`);
   const mediaRaw = value.media;
   const media = Array.isArray(mediaRaw)
-    ? mediaRaw.map((item, idx) => parseScenarioArtistMedia(item, `${fieldName}.media[${idx}]`))
+    ? mediaRaw.map((item, idx) => parseScenarioCreatorMedia(item, `${fieldName}.media[${idx}]`))
     : undefined;
   const postsRaw = value.posts;
   const posts = Array.isArray(postsRaw)
@@ -726,26 +726,26 @@ const parseScenarioArtist = (
     throw new Error(`Scenario field "${fieldName}.posts" must be an array`);
   }
   const discoverSquareCropEnabled = asOptionalBoolean(value.discoverSquareCropEnabled);
-  const galleriesRaw = value.galleries;
-  if (!Array.isArray(galleriesRaw) || galleriesRaw.length === 0) {
-    throw new Error(`Scenario field "${fieldName}.galleries" must be a non-empty array`);
+  const groupingsRaw = value.groupings;
+  if (!Array.isArray(groupingsRaw) || groupingsRaw.length === 0) {
+    throw new Error(`Scenario field "${fieldName}.groupings" must be a non-empty array`);
   }
-  const galleries = galleriesRaw.map((item, idx) => parseScenarioGallery(item, `${fieldName}.galleries[${idx}]`));
-  const galleryByKind = new Map<GallerySeedKind, ScenarioGallerySeed>();
-  for (const gallery of galleries) {
-    if (galleryByKind.has(gallery.kind)) {
-      throw new Error(`Scenario field "${fieldName}.galleries" has duplicate kind "${gallery.kind}"`);
+  const groupings = groupingsRaw.map((item, idx) => parseScenarioGrouping(item, `${fieldName}.groupings[${idx}]`));
+  const groupingByKind = new Map<GroupingSeedKind, ScenarioGroupingSeed>();
+  for (const grouping of groupings) {
+    if (groupingByKind.has(grouping.kind)) {
+      throw new Error(`Scenario field "${fieldName}.groupings" has duplicate kind "${grouping.kind}"`);
     }
-    galleryByKind.set(gallery.kind, gallery);
+    groupingByKind.set(grouping.kind, grouping);
   }
 
   const contentRating = parseOptionalContentRating(value.contentRating, `${fieldName}.contentRating`);
   const aiDisclosure = parseOptionalAiDisclosure(value.aiDisclosure, `${fieldName}.aiDisclosure`);
   const heavyTopicsRaw = parseOptionalHeavyTopics(value.heavyTopics, `${fieldName}.heavyTopics`);
 
-  const freeGallery = galleryByKind.get('free');
-  const previewGallery = galleryByKind.get('preview');
-  const premiumGallery = galleryByKind.get('premium');
+  const freeGrouping = groupingByKind.get('free');
+  const previewGrouping = groupingByKind.get('preview');
+  const premiumGrouping = groupingByKind.get('premium');
 
   return {
     name,
@@ -757,21 +757,21 @@ const parseScenarioArtist = (
     aiDisclosure,
     heavyTopics: heavyTopicsRaw as HeavyTopic[] | undefined,
     discoverSquareCropEnabled,
-    galleries: Array.from(galleryByKind.keys()),
-    freeGalleryTitle: freeGallery?.title,
-    freeGallerySlug: freeGallery?.slug,
-    freeGalleryStatus: freeGallery?.status,
-    freeGalleryDefaultPreviewMaxWidth: freeGallery?.defaultPreviewMaxWidth,
-    previewGalleryTitle: previewGallery?.title,
-    previewGallerySlug: previewGallery?.slug,
-    previewGalleryStatus: previewGallery?.status,
-    previewGalleryDefaultPreviewMaxWidth: previewGallery?.defaultPreviewMaxWidth,
-    premiumGalleryTitle: premiumGallery?.title,
-    premiumGallerySlug: premiumGallery?.slug,
-    premiumGalleryStatus: premiumGallery?.status,
-    premiumGalleryDefaultPreviewMaxWidth: premiumGallery?.defaultPreviewMaxWidth,
-    premiumPassword: premiumGallery?.premiumPassword,
-    purchaseUrl: previewGallery?.purchaseUrl,
+    groupings: Array.from(groupingByKind.keys()),
+    freeGroupingTitle: freeGrouping?.title,
+    freeGroupingSlug: freeGrouping?.slug,
+    freeGroupingStatus: freeGrouping?.status,
+    freeGroupingDefaultPreviewMaxWidth: freeGrouping?.defaultPreviewMaxWidth,
+    previewGroupingTitle: previewGrouping?.title,
+    previewGroupingSlug: previewGrouping?.slug,
+    previewGroupingStatus: previewGrouping?.status,
+    previewGroupingDefaultPreviewMaxWidth: previewGrouping?.defaultPreviewMaxWidth,
+    premiumGroupingTitle: premiumGrouping?.title,
+    premiumGroupingSlug: premiumGrouping?.slug,
+    premiumGroupingStatus: premiumGrouping?.status,
+    premiumGroupingDefaultPreviewMaxWidth: premiumGrouping?.defaultPreviewMaxWidth,
+    premiumPassword: premiumGrouping?.premiumPassword,
+    purchaseUrl: previewGrouping?.purchaseUrl,
     posts
   };
 };
@@ -795,11 +795,11 @@ const loadScenarioInputs = (scenarioFilePath: string): SeedScenarioInputs => {
   }
   const siteSettings = isRecord(scenario.siteSettings) ? scenario.siteSettings : {};
 
-  const artistsRaw = (scenario as Record<string, unknown>).artists;
-  if (!Array.isArray(artistsRaw) || artistsRaw.length === 0) {
-    throw new Error('Scenario field "artists" must be a non-empty array');
+  const creatorsRaw = (scenario as Record<string, unknown>).creators;
+  if (!Array.isArray(creatorsRaw) || creatorsRaw.length === 0) {
+    throw new Error('Scenario field "creators" must be a non-empty array');
   }
-  const parsedArtists = artistsRaw.map((item, idx) => parseScenarioArtist(item, `artists[${idx}]`));
+  const parsedCreators = creatorsRaw.map((item, idx) => parseScenarioCreator(item, `creators[${idx}]`));
 
   const stackName = asOptionalString(siteSettings.stackName);
   const siteName = asOptionalString(siteSettings.siteName);
@@ -814,7 +814,7 @@ const loadScenarioInputs = (scenarioFilePath: string): SeedScenarioInputs => {
     : undefined;
 
   return {
-    artistSeeds: parsedArtists,
+    creatorSeeds: parsedCreators,
     mediaDir,
     stackName,
     siteName,
@@ -839,7 +839,7 @@ const readStackTargets = async (client: CloudFormationClient, stackName: string)
     }
   }
   return {
-    galleryCoreTable: outputByKey.get('GalleryCoreTableName'),
+    groupingCoreTable: outputByKey.get('GroupingCoreTableName'),
     siteSettingsTable: outputByKey.get('SiteSettingsTableName'),
     mediaBucket: outputByKey.get('MediaBucketName')
   };
@@ -889,8 +889,8 @@ const discoverTableName = async (client: DynamoDBClient, preferred: string, mark
   }
 
   const prioritized = found.sort((a, b) => {
-    const aScore = a.startsWith('GalleryStack-') ? 0 : 1;
-    const bScore = b.startsWith('GalleryStack-') ? 0 : 1;
+    const aScore = a.startsWith('StudioStack-') ? 0 : 1;
+    const bScore = b.startsWith('StudioStack-') ? 0 : 1;
     if (aScore !== bScore) return aScore - bScore;
     return a.localeCompare(b);
   });
@@ -915,8 +915,8 @@ const discoverMediaBucket = async (s3: S3Client, preferred: string): Promise<str
     throw new Error('Could not discover media bucket (expected name containing "mediabucket")');
   }
   const prioritized = candidates.sort((a, b) => {
-    const aScore = a.startsWith('gallerystack-') ? 0 : 1;
-    const bScore = b.startsWith('gallerystack-') ? 0 : 1;
+    const aScore = a.startsWith('studiostack-') ? 0 : 1;
+    const bScore = b.startsWith('studiostack-') ? 0 : 1;
     if (aScore !== bScore) return aScore - bScore;
     return a.localeCompare(b);
   });
@@ -1010,7 +1010,7 @@ const main = async () => {
   const scenarioFileArg = getArgValue('--scenario-file') || defaultScenarioFile;
   const scenarioInputs = loadScenarioInputs(scenarioFileArg);
 
-  const galleryCoreTableArg = getArgValue('--gallery-core-table');
+  const groupingCoreTableArg = getArgValue('--grouping-core-table');
   const siteSettingsTableArg = getArgValue('--site-settings-table');
   const mediaBucketArg = getArgValue('--media-bucket');
   const stackNameArg = getArgValue('--stack-name');
@@ -1021,8 +1021,8 @@ const main = async () => {
     );
   }
 
-  const galleryCoreTableRequested =
-    galleryCoreTableArg || (stackName ? undefined : config.galleryCoreTable);
+  const groupingCoreTableRequested =
+    groupingCoreTableArg || (stackName ? undefined : config.groupingCoreTable);
   const siteSettingsTableRequested =
     siteSettingsTableArg || (stackName ? undefined : config.siteSettingsTable);
   const premiumPassword = getArgValue('--premium-password') || 'replace-me';
@@ -1040,9 +1040,9 @@ const main = async () => {
 
   const mediaDir = getArgValue('--media-dir') || scenarioInputs.mediaDir;
   const logoFile = getArgValue('--logo-file') || scenarioInputs.logoFile || path.join(mediaDir, 'ubeeq-logo.svg');
-  const activeArtistSeeds = scenarioInputs.artistSeeds;
+  const activeCreatorSeeds = scenarioInputs.creatorSeeds;
 
-  assertUniqueArtistSeedSlugs(activeArtistSeeds);
+  assertUniqueCreatorSeedSlugs(activeCreatorSeeds);
 
   if (!existsSync(mediaDir)) {
     throw new Error(`Media directory not found: ${mediaDir}`);
@@ -1057,10 +1057,10 @@ const main = async () => {
   const cloudFormation = new CloudFormationClient({ region: config.awsRegion });
   const s3 = new S3Client({ region: config.awsRegion });
   const stackTargets = stackName ? await readStackTargets(cloudFormation, stackName) : {};
-  const galleryCoreTable = await discoverTableName(
+  const groupingCoreTable = await discoverTableName(
     lowLevel,
-    galleryCoreTableRequested || stackTargets.galleryCoreTable || '',
-    'GalleryCoreTable'
+    groupingCoreTableRequested || stackTargets.groupingCoreTable || '',
+    'GroupingCoreTable'
   );
   const siteSettingsTable = await discoverTableName(
     lowLevel,
@@ -1070,14 +1070,14 @@ const main = async () => {
   const mediaBucket = await discoverMediaBucket(s3, mediaBucketArg || stackTargets.mediaBucket || config.mediaBucket);
 
   const client = DynamoDBDocumentClient.from(lowLevel);
-  const repo = new GalleryCoreRepository(client, galleryCoreTable);
+  const repo = new GroupingCoreRepository(client, groupingCoreTable);
 
-  const artists: Artist[] = [];
-  const galleries: Gallery[] = [];
+  const creators: CreatorRecord[] = [];
+  const groupings: GroupingRecord[] = [];
   const posts: Post[] = [];
   const media: Array<{
     media: Media;
-    galleryId: string;
+    groupingId: string;
     position: number;
     placement?: {
       isPreview?: boolean;
@@ -1093,18 +1093,18 @@ const main = async () => {
     }
   };
 
-  for (let idx = 0; idx < activeArtistSeeds.length; idx += 1) {
-    const seed = activeArtistSeeds[idx];
+  for (let idx = 0; idx < activeCreatorSeeds.length; idx += 1) {
+    const seed = activeCreatorSeeds[idx];
     const createdAt = nowIso();
-    const artistId = seedId('artist', seed.slug);
+    const creatorId = seedId('creator', seed.slug);
     const contentRating: ContentRating = seed.contentRating || 'general';
     const aiDisclosure: AiDisclosure = seed.aiDisclosure || 'none';
     const heavyTopics: HeavyTopic[] = seed.heavyTopics || [];
     const discoverSquareCropEnabled = seed.discoverSquareCropEnabled ?? true;
     const premiumPasswordHash = await hashPassword(seed.premiumPassword || premiumPassword);
 
-    const artist: Artist = {
-      artistId,
+    const creator: CreatorRecord = {
+      creatorId: creatorId,
       name: seed.name,
       slug: seed.slug,
       defaultProfileTab: 'feed',
@@ -1115,84 +1115,84 @@ const main = async () => {
       sortOrder: idx + 1,
       createdAt
     };
-    artists.push(artist);
+    creators.push(creator);
 
-    const freeGallery = seed.galleries.includes('free')
+    const freeGrouping = seed.groupings.includes('free')
       ? {
-          galleryId: seedId('gallery', seed.slug, 'free'),
-          artistId,
-          artistSlug: seed.slug,
-          title: seed.freeGalleryTitle || `${seed.name} Free Gallery`,
-          slug: seed.freeGallerySlug || `${seed.slug}-free`,
-          slugHistory: [seed.freeGallerySlug || `${seed.slug}-free`],
+          groupingId: seedId('grouping', seed.slug, 'free'),
+          creatorId: creatorId,
+          creatorSlug: seed.slug,
+          title: seed.freeGroupingTitle || `${seed.name} Free Grouping`,
+          slug: seed.freeGroupingSlug || `${seed.slug}-free`,
+          slugHistory: [seed.freeGroupingSlug || `${seed.slug}-free`],
           discoverSquareCropEnabled,
           defaultAiDisclosure: aiDisclosure,
           defaultHeavyTopics: heavyTopics,
           visibility: 'free' as const,
-          defaultPreviewMaxWidth: seed.freeGalleryDefaultPreviewMaxWidth,
-          status: seed.freeGalleryStatus || 'published',
+          defaultPreviewMaxWidth: seed.freeGroupingDefaultPreviewMaxWidth,
+          status: seed.freeGroupingStatus || 'published',
           createdAt
         }
       : undefined;
 
-    const premiumGallery = seed.galleries.includes('premium')
+    const premiumGrouping = seed.groupings.includes('premium')
       ? {
-          galleryId: seedId('gallery', seed.slug, 'premium'),
-          artistId,
-          artistSlug: seed.slug,
-          title: seed.premiumGalleryTitle || `${seed.name} Premium Gallery`,
-          slug: seed.premiumGallerySlug || `${seed.slug}-premium`,
-          slugHistory: [seed.premiumGallerySlug || `${seed.slug}-premium`],
+          groupingId: seedId('grouping', seed.slug, 'premium'),
+          creatorId: creatorId,
+          creatorSlug: seed.slug,
+          title: seed.premiumGroupingTitle || `${seed.name} Premium Grouping`,
+          slug: seed.premiumGroupingSlug || `${seed.slug}-premium`,
+          slugHistory: [seed.premiumGroupingSlug || `${seed.slug}-premium`],
           discoverSquareCropEnabled,
           defaultAiDisclosure: aiDisclosure,
           defaultHeavyTopics: heavyTopics,
           visibility: 'premium' as const,
-          defaultPreviewMaxWidth: seed.premiumGalleryDefaultPreviewMaxWidth,
-          status: seed.premiumGalleryStatus || 'published',
+          defaultPreviewMaxWidth: seed.premiumGroupingDefaultPreviewMaxWidth,
+          status: seed.premiumGroupingStatus || 'published',
           premiumPasswordHash,
           createdAt
         }
       : undefined;
 
-    const previewGallery = seed.galleries.includes('preview')
+    const previewGrouping = seed.groupings.includes('preview')
       ? {
-          galleryId: seedId('gallery', seed.slug, 'preview'),
-          artistId,
-          artistSlug: seed.slug,
-          title: seed.previewGalleryTitle || `${seed.name} Premium Gallery (Preview)`,
-          slug: seed.previewGallerySlug || `${seed.slug}-premium-preview`,
-          slugHistory: [seed.previewGallerySlug || `${seed.slug}-premium-preview`],
+          groupingId: seedId('grouping', seed.slug, 'preview'),
+          creatorId: creatorId,
+          creatorSlug: seed.slug,
+          title: seed.previewGroupingTitle || `${seed.name} Premium Grouping (Preview)`,
+          slug: seed.previewGroupingSlug || `${seed.slug}-premium-preview`,
+          slugHistory: [seed.previewGroupingSlug || `${seed.slug}-premium-preview`],
           discoverSquareCropEnabled,
           defaultAiDisclosure: aiDisclosure,
           defaultHeavyTopics: heavyTopics,
           visibility: 'preview' as const,
-          pairedPremiumGalleryId: premiumGallery?.galleryId,
+          pairedPremiumGroupingId: premiumGrouping?.groupingId,
           purchaseUrl: seed.purchaseUrl,
-          defaultPreviewMaxWidth: seed.previewGalleryDefaultPreviewMaxWidth,
-          status: seed.previewGalleryStatus || 'published',
+          defaultPreviewMaxWidth: seed.previewGroupingDefaultPreviewMaxWidth,
+          status: seed.previewGroupingStatus || 'published',
           createdAt
         }
       : undefined;
 
-    if (freeGallery) galleries.push(freeGallery);
-    if (previewGallery) galleries.push(previewGallery);
-    if (premiumGallery) galleries.push(premiumGallery);
+    if (freeGrouping) groupings.push(freeGrouping);
+    if (previewGrouping) groupings.push(previewGrouping);
+    if (premiumGrouping) groupings.push(premiumGrouping);
 
-    const galleryIdByKind: Partial<Record<GallerySeedKind, string>> = {
-      free: freeGallery?.galleryId,
-      preview: previewGallery?.galleryId,
-      premium: premiumGallery?.galleryId
+    const groupingIdByKind: Partial<Record<GroupingSeedKind, string>> = {
+      free: freeGrouping?.groupingId,
+      preview: previewGrouping?.groupingId,
+      premium: premiumGrouping?.groupingId
     };
     const mediaIdByComposite = new Map<string, string>();
     const mediaIdsByFile = new Map<string, string[]>();
-    const galleryBySlug = new Map<string, Gallery>();
-    for (const gallery of galleries) {
-      galleryBySlug.set(gallery.slug, gallery);
+    const groupingBySlug = new Map<string, GroupingRecord>();
+    for (const grouping of groupings) {
+      groupingBySlug.set(grouping.slug, grouping);
     }
-    const nextPositionByKind: Record<GallerySeedKind, number> = { free: 1, preview: 1, premium: 1 };
-    const nextPositionByGallerySlug = new Map<string, number>();
+    const nextPositionByKind: Record<GroupingSeedKind, number> = { free: 1, preview: 1, premium: 1 };
+    const nextPositionByGroupingSlug = new Map<string, number>();
     const pushMedia = (
-      targetGalleryId: string,
+      targetGroupingId: string,
       position: number,
       payload: Media,
       placement?: {
@@ -1205,50 +1205,50 @@ const main = async () => {
           ...payload,
           appearsInFeed: payload.appearsInFeed !== false
         },
-        galleryId: targetGalleryId,
+        groupingId: targetGroupingId,
         position,
         placement
       });
     };
-    const registerMediaLookup = (file: string, gallerySlug: string, mediaId: string) => {
+    const registerMediaLookup = (file: string, groupingSlug: string, mediaId: string) => {
       const fileNorm = normalize(file);
-      mediaIdByComposite.set(composeMediaLookupKey(fileNorm, gallerySlug), mediaId);
+      mediaIdByComposite.set(composeMediaLookupKey(fileNorm, groupingSlug), mediaId);
       const fileList = mediaIdsByFile.get(fileNorm) || [];
       fileList.push(mediaId);
       mediaIdsByFile.set(fileNorm, fileList);
     };
     const pushMediaToKind = (
-      kind: GallerySeedKind,
+      kind: GroupingSeedKind,
       payload: Media,
       placement?: {
         isPreview?: boolean;
         previewMaxWidth?: number;
       }
     ) => {
-      const galleryId = galleryIdByKind[kind];
-      if (!galleryId) {
-        throw new Error(`Artist ${seed.name} media references "${kind}" gallery, but that gallery kind is not configured`);
+      const groupingId = groupingIdByKind[kind];
+      if (!groupingId) {
+        throw new Error(`Creator ${seed.name} media references "${kind}" grouping, but that grouping kind is not configured`);
       }
       const position = nextPositionByKind[kind];
       nextPositionByKind[kind] += 1;
-      pushMedia(galleryId, position, payload, placement);
+      pushMedia(groupingId, position, payload, placement);
     };
-    const pushMediaToGallerySlug = (
-      gallerySlug: string,
+    const pushMediaToGroupingSlug = (
+      groupingSlug: string,
       payload: Media,
       placement?: {
         isPreview?: boolean;
         previewMaxWidth?: number;
       }
     ) => {
-      const gallery = galleryBySlug.get(gallerySlug);
-      if (!gallery) {
-        throw new Error(`Artist ${seed.name} media references unknown gallerySlug "${gallerySlug}"`);
+      const grouping = groupingBySlug.get(groupingSlug);
+      if (!grouping) {
+        throw new Error(`Creator ${seed.name} media references unknown groupingSlug "${groupingSlug}"`);
       }
-      const nextPosition = (nextPositionByGallerySlug.get(gallerySlug) ?? 1);
-      nextPositionByGallerySlug.set(gallerySlug, nextPosition + 1);
-      pushMedia(gallery.galleryId, nextPosition, payload, placement);
-      return gallery;
+      const nextPosition = (nextPositionByGroupingSlug.get(groupingSlug) ?? 1);
+      nextPositionByGroupingSlug.set(groupingSlug, nextPosition + 1);
+      pushMedia(grouping.groupingId, nextPosition, payload, placement);
+      return grouping;
     };
 
     if (seed.media?.length) {
@@ -1278,24 +1278,24 @@ const main = async () => {
 
         const title = mediaSeed.title || titleFromFilename(file.filename);
         const slug = slugify(title);
-        const mediaId = seedId('media', seed.slug, mediaSeed.gallerySlug, file.filename);
-        const objectKey = `${artistId}/${mediaId}`;
+        const mediaId = seedId('media', seed.slug, mediaSeed.groupingSlug, file.filename);
+        const objectKey = `${creatorId}/${mediaId}`;
         const effectiveContentRating = mediaSeed.contentRating || contentRating;
         const effectiveAiDisclosure = mediaSeed.aiDisclosure || aiDisclosure;
         const effectiveHeavyTopics = mediaSeed.heavyTopics || heavyTopics;
         const effectiveSquareCrop = mediaSeed.discoverSquareCropEnabled ?? discoverSquareCropEnabled;
         const appearsInFeed = mediaSeed.appearsInFeed ?? true;
-        const gallery = galleryBySlug.get(mediaSeed.gallerySlug);
-        if (!gallery) {
-          throw new Error(`Artist ${seed.name} media references unknown gallerySlug "${mediaSeed.gallerySlug}"`);
+        const grouping = groupingBySlug.get(mediaSeed.groupingSlug);
+        if (!grouping) {
+          throw new Error(`Creator ${seed.name} media references unknown groupingSlug "${mediaSeed.groupingSlug}"`);
         }
-        const isPremiumGallery = gallery.visibility === 'premium';
+        const isPremiumGrouping = grouping.visibility === 'premium';
 
         if (assetType === 'image') {
           const dimensions = await getImageDimensions(file);
-          pushMediaToGallerySlug(mediaSeed.gallerySlug, {
+          pushMediaToGroupingSlug(mediaSeed.groupingSlug, {
             mediaId,
-            artistId,
+            creatorId: creatorId,
             assetType: 'image',
             discoverSquareCropEnabled: effectiveSquareCrop,
             contentRating: effectiveContentRating,
@@ -1307,7 +1307,7 @@ const main = async () => {
             slugHistory: [slug],
             originalFilename: file.filename,
             previewKey: objectKey,
-            premiumKey: isPremiumGallery ? objectKey : undefined,
+            premiumKey: isPremiumGrouping ? objectKey : undefined,
             width: dimensions.width,
             height: dimensions.height,
             altText: mediaSeed.altText,
@@ -1317,7 +1317,7 @@ const main = async () => {
             previewMaxWidth: mediaSeed.previewMaxWidth
           });
           queueUpload(objectKey, file);
-          registerMediaLookup(file.filename, gallery.slug, mediaId);
+          registerMediaLookup(file.filename, grouping.slug, mediaId);
           continue;
         }
 
@@ -1326,10 +1326,10 @@ const main = async () => {
           throw new Error(`Poster file not found for ${seed.name}: ${mediaSeed.posterFile}`);
         }
         const poster = explicitPoster || findPosterForVideo(file);
-        const posterKey = poster ? `${artistId}/${seedId('poster', seed.slug, mediaSeed.gallerySlug, file.filename)}` : undefined;
-        pushMediaToGallerySlug(mediaSeed.gallerySlug, {
+        const posterKey = poster ? `${creatorId}/${seedId('poster', seed.slug, mediaSeed.groupingSlug, file.filename)}` : undefined;
+        pushMediaToGroupingSlug(mediaSeed.groupingSlug, {
           mediaId,
-          artistId,
+          creatorId: creatorId,
           assetType: 'video',
           discoverSquareCropEnabled: effectiveSquareCrop,
           contentRating: effectiveContentRating,
@@ -1341,12 +1341,12 @@ const main = async () => {
           slugHistory: [slug],
           originalFilename: file.filename,
           previewKey: objectKey,
-          premiumKey: isPremiumGallery ? objectKey : undefined,
+          premiumKey: isPremiumGrouping ? objectKey : undefined,
           previewPosterKey: posterKey,
-          premiumPosterKey: isPremiumGallery ? posterKey : undefined,
+          premiumPosterKey: isPremiumGrouping ? posterKey : undefined,
           width: 1920,
           height: 1080,
-          durationSeconds: mediaSeed.durationSeconds ?? (isPremiumGallery ? 24 : 20),
+          durationSeconds: mediaSeed.durationSeconds ?? (isPremiumGrouping ? 24 : 20),
           altText: mediaSeed.altText,
           createdAt
         }, {
@@ -1357,51 +1357,51 @@ const main = async () => {
         if (poster && posterKey) {
           queueUpload(posterKey, poster);
         }
-        registerMediaLookup(file.filename, gallery.slug, mediaId);
+        registerMediaLookup(file.filename, grouping.slug, mediaId);
       }
     } else {
       const filePrefix = seed.filePrefix;
       if (!filePrefix) {
-        throw new Error(`Artist ${seed.name} is missing filePrefix and has no explicit media list`);
+        throw new Error(`Creator ${seed.name} is missing filePrefix and has no explicit media list`);
       }
 
-      const artistFiles = mediaFiles.filter((file) => normalize(file.filename).startsWith(normalize(filePrefix)));
-      const selectedArtistFiles = seed.includePrefixes?.length
-        ? artistFiles.filter((file) => seed.includePrefixes!.some((prefix) => normalize(file.filename).startsWith(normalize(prefix))))
-        : artistFiles;
+      const creatorFiles = mediaFiles.filter((file) => normalize(file.filename).startsWith(normalize(filePrefix)));
+      const selectedCreatorFiles = seed.includePrefixes?.length
+        ? creatorFiles.filter((file) => seed.includePrefixes!.some((prefix) => normalize(file.filename).startsWith(normalize(prefix))))
+        : creatorFiles;
 
       if (seed.includePrefixes?.length) {
         const missingPrefixes = seed.includePrefixes.filter(
-          (prefix) => !selectedArtistFiles.some((file) => normalize(file.filename).startsWith(normalize(prefix)))
+          (prefix) => !selectedCreatorFiles.some((file) => normalize(file.filename).startsWith(normalize(prefix)))
         );
         if (missingPrefixes.length > 0) {
           throw new Error(`Missing media files for ${seed.name}: ${missingPrefixes.join(', ')}`);
         }
       }
 
-      const imageFiles = selectedArtistFiles
+      const imageFiles = selectedCreatorFiles
         .filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && !isPoster(file.filename))
         .sort((a, b) => extractSequence(a.filename) - extractSequence(b.filename));
 
-      const videoFiles = selectedArtistFiles
+      const videoFiles = selectedCreatorFiles
         .filter((file) => VIDEO_EXT.has(path.extname(file.filename).toLowerCase()))
         .sort((a, b) => extractSequence(a.filename) - extractSequence(b.filename));
 
-      const posterFiles = selectedArtistFiles.filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && isPoster(file.filename));
+      const posterFiles = selectedCreatorFiles.filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && isPoster(file.filename));
 
-      const hasPremiumTier = Boolean(previewGallery || premiumGallery);
+      const hasPremiumTier = Boolean(previewGrouping || premiumGrouping);
       const imageSplit = hasPremiumTier
         ? splitByAccess(imageFiles)
         : { free: imageFiles, premium: [] as AssetFile[] };
       const videoSplit = hasPremiumTier
         ? splitByAccess(videoFiles)
         : { free: videoFiles, premium: [] as AssetFile[] };
-      const freeImages = freeGallery ? imageSplit.free : [];
-      const previewImages = previewGallery ? (freeGallery ? imageSplit.premium : imageSplit.free) : [];
-      const premiumImages = premiumGallery ? imageSplit.premium : [];
-      const freeVideos = freeGallery ? videoSplit.free : [];
-      const previewVideos = previewGallery ? (freeGallery ? videoSplit.premium : videoSplit.free) : [];
-      const premiumVideos = premiumGallery ? videoSplit.premium : [];
+      const freeImages = freeGrouping ? imageSplit.free : [];
+      const previewImages = previewGrouping ? (freeGrouping ? imageSplit.premium : imageSplit.free) : [];
+      const premiumImages = premiumGrouping ? imageSplit.premium : [];
+      const freeVideos = freeGrouping ? videoSplit.free : [];
+      const previewVideos = previewGrouping ? (freeGrouping ? videoSplit.premium : videoSplit.free) : [];
+      const premiumVideos = premiumGrouping ? videoSplit.premium : [];
 
       let freeOrder = 1;
       let previewOrder = 1;
@@ -1412,11 +1412,11 @@ const main = async () => {
         const mediaId = seedId('media', seed.slug, 'free', file.filename);
         const title = titleFromFilename(file.filename);
         const slug = slugify(title);
-        const previewKey = `${artistId}/${mediaId}`;
-        if (freeGallery) {
-          pushMedia(freeGallery.galleryId, freeOrder, {
+        const previewKey = `${creatorId}/${mediaId}`;
+        if (freeGrouping) {
+          pushMedia(freeGrouping.groupingId, freeOrder, {
           mediaId,
-          artistId,
+          creatorId: creatorId,
           assetType: 'image',
           discoverSquareCropEnabled,
           contentRating,
@@ -1434,7 +1434,7 @@ const main = async () => {
         });
         }
         queueUpload(previewKey, file);
-        if (freeGallery) registerMediaLookup(file.filename, freeGallery.slug, mediaId);
+        if (freeGrouping) registerMediaLookup(file.filename, freeGrouping.slug, mediaId);
         freeOrder += 1;
       }
 
@@ -1443,11 +1443,11 @@ const main = async () => {
         const mediaId = seedId('media', seed.slug, 'preview', file.filename);
         const title = titleFromFilename(file.filename);
         const slug = slugify(title);
-        const previewKey = `${artistId}/${mediaId}`;
-        if (previewGallery) {
-          pushMedia(previewGallery.galleryId, previewOrder, {
+        const previewKey = `${creatorId}/${mediaId}`;
+        if (previewGrouping) {
+          pushMedia(previewGrouping.groupingId, previewOrder, {
             mediaId,
-            artistId,
+            creatorId: creatorId,
             assetType: 'image',
             discoverSquareCropEnabled,
             contentRating,
@@ -1466,7 +1466,7 @@ const main = async () => {
           previewOrder += 1;
         }
         queueUpload(previewKey, file);
-        if (previewGallery) registerMediaLookup(file.filename, previewGallery.slug, mediaId);
+        if (previewGrouping) registerMediaLookup(file.filename, previewGrouping.slug, mediaId);
       }
 
       for (const file of premiumImages) {
@@ -1474,11 +1474,11 @@ const main = async () => {
         const mediaId = seedId('media', seed.slug, 'premium', file.filename);
         const title = titleFromFilename(file.filename);
         const slug = slugify(title);
-        const objectKey = `${artistId}/${mediaId}`;
-        if (premiumGallery) {
-          pushMedia(premiumGallery.galleryId, premiumOrder, {
+        const objectKey = `${creatorId}/${mediaId}`;
+        if (premiumGrouping) {
+          pushMedia(premiumGrouping.groupingId, premiumOrder, {
           mediaId,
-          artistId,
+          creatorId: creatorId,
           assetType: 'image',
           discoverSquareCropEnabled,
           contentRating,
@@ -1497,7 +1497,7 @@ const main = async () => {
         });
         }
         queueUpload(objectKey, file);
-        if (premiumGallery) registerMediaLookup(file.filename, premiumGallery.slug, mediaId);
+        if (premiumGrouping) registerMediaLookup(file.filename, premiumGrouping.slug, mediaId);
         premiumOrder += 1;
       }
 
@@ -1513,16 +1513,16 @@ const main = async () => {
         const mediaId = seedId('media', seed.slug, 'free', file.filename);
         const title = titleFromFilename(file.filename);
         const slug = slugify(title);
-        const previewKey = `${artistId}/${mediaId}`;
+        const previewKey = `${creatorId}/${mediaId}`;
         const poster = findPosterForVideo(file);
         const previewPosterKey = poster
-          ? `${artistId}/${seedId('poster', seed.slug, 'free', file.filename)}`
+          ? `${creatorId}/${seedId('poster', seed.slug, 'free', file.filename)}`
           : undefined;
 
-        if (freeGallery) {
-          pushMedia(freeGallery.galleryId, freeOrder, {
+        if (freeGrouping) {
+          pushMedia(freeGrouping.groupingId, freeOrder, {
           mediaId,
-          artistId,
+          creatorId: creatorId,
           assetType: 'video',
           discoverSquareCropEnabled,
           contentRating,
@@ -1542,7 +1542,7 @@ const main = async () => {
         }
         queueUpload(previewKey, file);
         if (poster) queueUpload(previewPosterKey, poster);
-        if (freeGallery) registerMediaLookup(file.filename, freeGallery.slug, mediaId);
+        if (freeGrouping) registerMediaLookup(file.filename, freeGrouping.slug, mediaId);
         freeOrder += 1;
       }
 
@@ -1550,15 +1550,15 @@ const main = async () => {
         const mediaId = seedId('media', seed.slug, 'preview', file.filename);
         const title = titleFromFilename(file.filename);
         const slug = slugify(title);
-        const previewKey = `${artistId}/${mediaId}`;
+        const previewKey = `${creatorId}/${mediaId}`;
         const poster = findPosterForVideo(file);
         const previewPosterKey = poster
-          ? `${artistId}/${seedId('poster', seed.slug, 'preview', file.filename)}`
+          ? `${creatorId}/${seedId('poster', seed.slug, 'preview', file.filename)}`
           : undefined;
-        if (previewGallery) {
-          pushMedia(previewGallery.galleryId, previewOrder, {
+        if (previewGrouping) {
+          pushMedia(previewGrouping.groupingId, previewOrder, {
             mediaId,
-            artistId,
+            creatorId: creatorId,
             assetType: 'video',
             discoverSquareCropEnabled,
             contentRating,
@@ -1579,26 +1579,26 @@ const main = async () => {
         }
         queueUpload(previewKey, file);
         if (poster) queueUpload(previewPosterKey, poster);
-        if (previewGallery) registerMediaLookup(file.filename, previewGallery.slug, mediaId);
+        if (previewGrouping) registerMediaLookup(file.filename, previewGrouping.slug, mediaId);
       }
 
       for (const file of premiumVideos) {
         const mediaId = seedId('media', seed.slug, 'premium', file.filename);
         const title = titleFromFilename(file.filename);
         const slug = slugify(title);
-        const objectKey = `${artistId}/${mediaId}`;
+        const objectKey = `${creatorId}/${mediaId}`;
         const poster = findPosterForVideo(file);
         const previewPosterKey = poster
-          ? `${artistId}/${seedId('poster', seed.slug, 'premium', file.filename)}`
+          ? `${creatorId}/${seedId('poster', seed.slug, 'premium', file.filename)}`
           : undefined;
         const premiumPosterKey = poster
           ? previewPosterKey
           : undefined;
 
-        if (premiumGallery) {
-          pushMedia(premiumGallery.galleryId, premiumOrder, {
+        if (premiumGrouping) {
+          pushMedia(premiumGrouping.groupingId, premiumOrder, {
           mediaId,
-          artistId,
+          creatorId: creatorId,
           assetType: 'video',
           discoverSquareCropEnabled,
           contentRating,
@@ -1622,7 +1622,7 @@ const main = async () => {
         if (poster) {
           queueUpload(previewPosterKey, poster);
         }
-        if (premiumGallery) registerMediaLookup(file.filename, premiumGallery.slug, mediaId);
+        if (premiumGrouping) registerMediaLookup(file.filename, premiumGrouping.slug, mediaId);
         premiumOrder += 1;
       }
     }
@@ -1637,8 +1637,8 @@ const main = async () => {
         const slug = slugify(postSeed.slug || postSeed.title);
         const postMedia: Post['media'] = (postSeed.media || []).map((ref, mediaIndex) => ({
           mediaId: resolveScenarioMediaId(
-            { mediaId: ref.mediaId, file: ref.file, gallerySlug: ref.gallerySlug },
-            `artists[${idx}].posts[${postIndex}].media[${mediaIndex}]`,
+            { mediaId: ref.mediaId, file: ref.file, groupingSlug: ref.groupingSlug },
+            `creators[${idx}].posts[${postIndex}].media[${mediaIndex}]`,
             mediaIdByComposite,
             mediaIdsByFile
           ) as string,
@@ -1652,10 +1652,10 @@ const main = async () => {
               ? {
                   mediaId: postSeed.primaryMedia.mediaId,
                   file: postSeed.primaryMedia.file,
-                  gallerySlug: postSeed.primaryMedia.gallerySlug
+                  groupingSlug: postSeed.primaryMedia.groupingSlug
                 }
               : (postSeed.primaryMediaId ? { mediaId: postSeed.primaryMediaId } : undefined),
-            `artists[${idx}].posts[${postIndex}].primaryMedia`,
+            `creators[${idx}].posts[${postIndex}].primaryMedia`,
             mediaIdByComposite,
             mediaIdsByFile
           ) || postMedia[0]?.mediaId;
@@ -1666,7 +1666,7 @@ const main = async () => {
           postSeed.blocks,
           mediaIdByComposite,
           mediaIdsByFile,
-          `artists[${idx}].posts[${postIndex}]`
+          `creators[${idx}].posts[${postIndex}]`
         );
         const destination: PostDestination | null | undefined =
           postSeed.destination === null
@@ -1680,7 +1680,7 @@ const main = async () => {
 
         const post: Post = {
           postId: seedId('post', seed.slug, slug),
-          artistId,
+          creatorId: creatorId,
           title: postSeed.title.trim().slice(0, 300),
           slug,
           slugHistory: [slug],
@@ -1712,19 +1712,19 @@ const main = async () => {
   };
 
   console.log(
-    `[seed:core] table=${galleryCoreTable} siteSettingsTable=${siteSettingsTable} bucket=${mediaBucket} region=${config.awsRegion} dryRun=${dryRun} reset=${reset} preserveMedia=${preserveMedia} stack=${stackName || 'auto'}`
+    `[seed:core] table=${groupingCoreTable} siteSettingsTable=${siteSettingsTable} bucket=${mediaBucket} region=${config.awsRegion} dryRun=${dryRun} reset=${reset} preserveMedia=${preserveMedia} stack=${stackName || 'auto'}`
   );
   if (scenarioInputs) {
     console.log(`[seed:core] scenarioFile=${scenarioInputs.sourceFile} mediaDir=${mediaDir}`);
   }
-  console.log(`[seed:core] artists=${artists.length} galleries=${galleries.length} media=${media.length} posts=${posts.length}`);
+  console.log(`[seed:core] creators=${creators.length} groupings=${groupings.length} media=${media.length} posts=${posts.length}`);
   console.log(`[seed:core] siteName=${siteSettings.siteName} theme=${siteSettings.theme} logoKey=${siteSettings.logoKey || 'none'}`);
   console.log(`[seed:core] uploadJobs=${uploadJobs.size} (mediaUpload=${shouldUploadMedia} logoUpload=${shouldUploadLogo} renditions=${shouldGenerateRenditions})`);
 
   if (dryRun) return;
 
   if (reset) {
-    const deletedCore = await wipeTable(client, galleryCoreTable, ['PK', 'SK']);
+    const deletedCore = await wipeTable(client, groupingCoreTable, ['PK', 'SK']);
     const deletedSettings = await wipeTable(client, siteSettingsTable, ['settingId']);
     const deletedObjects = preserveMedia ? 0 : await wipeBucketPrefixes(s3, mediaBucket, ['']);
     console.log(`[seed:core] reset deleted coreItems=${deletedCore} siteSettingsItems=${deletedSettings} s3Objects=${deletedObjects}`);
@@ -1732,11 +1732,6 @@ const main = async () => {
       console.log('[seed:core] reset skipped S3 object deletion due to --preserve-media');
     }
   }
-
-  // Remove legacy placeholder seed records from earlier versions.
-  await repo.deleteGallery('gallery-free-001');
-  await repo.deleteGallery('gallery-premium-001');
-  await repo.deleteArtist('artist-featured-001');
 
   if (shouldUploadMedia) {
     for (const [key, job] of uploadJobs.entries()) {
@@ -1758,12 +1753,12 @@ const main = async () => {
     for (const item of media) {
       if ((item.media.assetType || 'image') !== 'image') continue;
       const sourceKey = item.media.previewKey;
-      const artistId = sourceKey.split('/')[0];
+      const creatorKeyPrefix = sourceKey.split('/')[0];
       const generated = await generateImageRenditions({
         s3,
         bucket: mediaBucket,
         sourceKey,
-        targetPrefix: `${artistId}/${item.media.mediaId}`
+        targetPrefix: `${creatorKeyPrefix}/${item.media.mediaId}`
       });
       item.media.thumbnailKeys = generated.keys;
       item.media.squareCrop = generated.squareCrop;
@@ -1773,14 +1768,14 @@ const main = async () => {
     console.log('[seed:core] generated image renditions');
   }
 
-  for (const artist of artists) {
-    await repo.createArtist(artist);
+  for (const creatorRecord of creators) {
+    await repo.createCreator(creatorRecord);
   }
-  for (const gallery of galleries) {
-    await repo.createGallery(gallery);
+  for (const groupingRecord of groupings) {
+    await repo.createGrouping(groupingRecord);
   }
   for (const item of media) {
-    await repo.createMedia(item.media, item.galleryId, item.position, item.placement);
+    await repo.createMedia(item.media, item.groupingId, item.position, item.placement);
   }
   for (const post of posts) {
     await repo.createPost(post);

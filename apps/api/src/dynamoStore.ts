@@ -11,13 +11,13 @@ import {
   UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import type { AppConfig } from './config';
-import type { DataStore } from './store';
+import type { DataStore, TrendingFeedQueryOptions } from './store';
 import type {
-  Artist,
-  ArtistMember,
-  Gallery,
+  Creator,
+  CreatorMember,
+  Grouping,
   Media,
-  GalleryMediaView,
+  GroupingMediaView,
   Comment,
   Favorite,
   BlockedUser,
@@ -28,19 +28,28 @@ import type {
   IdempotencyRecord,
   AuditEvent,
   Post,
+  SourceFile,
+  CreatorGroup,
   TrendingFeedItem,
-  TrendingPeriod
+  TrendingPeriod,
+  UserIdentity,
+  ContributionContext,
+  ContextSubmission,
+  ContextUnlockThreshold,
+  ChallengePrize,
+  PrizeAward,
+  PlatformRole
 } from './domain';
-import { GalleryCoreRepository } from './galleryCoreRepository';
+import { GroupingCoreRepository } from './groupingCoreRepository';
 import { normalizeContentRating } from './contentRating';
 import { normalizeAiDisclosure, normalizeHeavyTopics } from './disclosures';
 
 export class DynamoStore implements DataStore {
   private readonly client: DynamoDBDocumentClient;
-  private readonly coreRepo?: GalleryCoreRepository;
+  private readonly coreRepo?: GroupingCoreRepository;
   private readonly localUsernameReservations = new Map<string, { username: string; email: string }>();
   private readonly localUserProfiles = new Map<string, UserProfile>();
-  private readonly localArtistMembers = new Map<string, ArtistMember>();
+  private readonly localCreatorMembers = new Map<string, CreatorMember>();
   private readonly localCollections = new Map<string, Collection>();
   private readonly localPosts = new Map<string, Post>();
   private readonly localCollectionImages = new Map<string, Array<{ imageId: string; sortOrder: number }>>();
@@ -51,12 +60,12 @@ export class DynamoStore implements DataStore {
   constructor(private readonly config: AppConfig) {
     const lowLevel = new DynamoDBClient({ region: config.awsRegion });
     this.client = DynamoDBDocumentClient.from(lowLevel);
-    if (config.useGalleryCoreTable) {
-      this.coreRepo = new GalleryCoreRepository(this.client, config.galleryCoreTable);
+    if (config.useGroupingCoreTable) {
+      this.coreRepo = new GroupingCoreRepository(this.client, config.groupingCoreTable);
     }
   }
 
-  private profileUserKey(profileType: 'user' | 'artist', profileId: string): string {
+  private profileUserKey(profileType: 'user' | 'creator', profileId: string): string {
     return `PROFILE#${profileType}#${profileId}`;
   }
 
@@ -87,84 +96,84 @@ export class DynamoStore implements DataStore {
     );
   }
 
-  async listArtists(): Promise<Artist[]> {
+  async listCreators(): Promise<Creator[]> {
     if (this.coreRepo) {
-      return this.coreRepo.listArtists();
+      return this.coreRepo.listCreators();
     }
 
     const response = await this.client.send(
       new QueryCommand({
-        TableName: this.config.artistsTable,
+        TableName: this.config.creators,
         KeyConditionExpression: 'pk = :pk',
-        ExpressionAttributeValues: { ':pk': 'ARTIST' }
+        ExpressionAttributeValues: { ':pk': 'CREATOR' }
       })
     );
-    return (response.Items || []) as Artist[];
+    return (response.Items || []) as Creator[];
   }
 
-  async listAllGalleries(): Promise<Gallery[]> {
+  async listAllGroupings(): Promise<Grouping[]> {
     if (this.coreRepo) {
-      return this.coreRepo.listAllGalleries();
+      return this.coreRepo.listAllGroupings();
     }
 
     const response = await this.client.send(
       new ScanCommand({
-        TableName: this.config.galleriesTable
+        TableName: this.config.groupingsTable
       })
     );
-    return (response.Items || []) as Gallery[];
+    return (response.Items || []) as Grouping[];
   }
 
-  async listGalleriesByArtistSlug(artistSlug: string): Promise<Gallery[]> {
+  async listGroupingsByCreatorSlug(creator: string): Promise<Grouping[]> {
     if (this.coreRepo) {
-      return this.coreRepo.listGalleriesByArtistSlug(artistSlug);
+      return this.coreRepo.listGroupingsByCreatorSlug(creator);
     }
 
     const response = await this.client.send(
       new QueryCommand({
-        TableName: this.config.galleriesTable,
-        IndexName: 'artistSlugIndex',
-        KeyConditionExpression: 'artistSlug = :artistSlug',
-        ExpressionAttributeValues: { ':artistSlug': artistSlug }
+        TableName: this.config.groupingsTable,
+        IndexName: 'creator',
+        KeyConditionExpression: 'creator = :creator',
+        ExpressionAttributeValues: { ':creator': creator }
       })
     );
-    return (response.Items || []) as Gallery[];
+    return (response.Items || []) as Grouping[];
   }
 
-  async getGalleryBySlug(slug: string): Promise<Gallery | null> {
+  async getGroupingBySlug(slug: string): Promise<Grouping | null> {
     if (this.coreRepo) {
-      return this.coreRepo.getGalleryBySlug(slug);
+      return this.coreRepo.getGroupingBySlug(slug);
     }
 
     const response = await this.client.send(
       new QueryCommand({
-        TableName: this.config.galleriesTable,
+        TableName: this.config.groupingsTable,
         IndexName: 'slugIndex',
         KeyConditionExpression: 'slug = :slug',
         ExpressionAttributeValues: { ':slug': slug },
         Limit: 1
       })
     );
-    return ((response.Items || [])[0] as Gallery) || null;
+    return ((response.Items || [])[0] as Grouping) || null;
   }
 
-  async getMediaByGallery(galleryId: string): Promise<GalleryMediaView[]> {
+  async getMediaByGrouping(groupingId: string): Promise<GroupingMediaView[]> {
     if (this.coreRepo) {
-      return this.coreRepo.getMediaByGalleryId(galleryId);
+      return this.coreRepo.getMediaByGroupingId(groupingId);
     }
 
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.config.imagesTable,
-        KeyConditionExpression: 'galleryId = :galleryId',
-        ExpressionAttributeValues: { ':galleryId': galleryId }
+        KeyConditionExpression: 'groupingId = :groupingId',
+        ExpressionAttributeValues: { ':groupingId': groupingId }
       })
     );
-    return ((response.Items || []) as Array<Media & { galleryId: string; sortOrder: number; imageId?: string }>)
+    return ((response.Items || []) as Array<Media & { groupingId: string; sortOrder: number; imageId?: string }>)
       .map((item) => ({
         ...item,
         mediaId: item.mediaId || item.imageId || '',
-        galleryMediaId: `${item.galleryId}:${item.mediaId || item.imageId || ''}`,
+        groupingMediaId: `${item.groupingId}:${item.mediaId || item.imageId || ''}`,
         position: item.sortOrder || 0,
         isPreview: (item as { isPreview?: boolean }).isPreview,
         previewMaxWidth: (item as { previewMaxWidth?: number }).previewMaxWidth
@@ -172,15 +181,15 @@ export class DynamoStore implements DataStore {
       .filter((item) => Boolean(item.mediaId));
   }
 
-  async listMediaByArtist(artistId: string): Promise<Media[]> {
+  async listMediaByCreator(creator: string): Promise<Media[]> {
     if (this.coreRepo) {
-      return this.coreRepo.listMediaByArtist(artistId);
+      return this.coreRepo.listMediaByCreator(creator);
     }
     const response = await this.client.send(
       new ScanCommand({
         TableName: this.config.imagesTable,
-        FilterExpression: 'artistId = :artistId',
-        ExpressionAttributeValues: { ':artistId': artistId }
+        FilterExpression: 'creator = :creator',
+        ExpressionAttributeValues: { ':creator': creator }
       })
     );
     const byId = new Map<string, Media>();
@@ -196,21 +205,21 @@ export class DynamoStore implements DataStore {
     return [...byId.values()];
   }
 
-  async listPostsByArtistSlug(artistSlug: string): Promise<Post[]> {
+  async listPostsByCreatorSlug(creator: string): Promise<Post[]> {
     if (this.coreRepo) {
-      return this.coreRepo.listPostsByArtistSlug(artistSlug);
+      return this.coreRepo.listPostsByCreatorSlug(creator);
     }
-    const artists = await this.listArtists();
-    const artist = artists.find((item) => item.slug === artistSlug || (item.slugHistory || []).includes(artistSlug));
-    if (!artist) return [];
-    return this.listPostsByArtistId(artist.artistId);
+    const creators = await this.listCreators();
+    const creatorProfile = creators.find((item) => item.slug === creator || (item.slugHistory || []).includes(creator));
+    if (!creatorProfile) return [];
+    return this.listPostsByCreatorId(creatorProfile.creatorId);
   }
 
-  async listPostsByArtistId(artistId: string): Promise<Post[]> {
+  async listPostsByCreatorId(creator: string): Promise<Post[]> {
     if (this.coreRepo) {
-      return this.coreRepo.listPostsByArtistId(artistId);
+      return this.coreRepo.listPostsByCreatorId(creator);
     }
-    return Array.from(this.localPosts.values()).filter((item) => item.artistId === artistId);
+    return Array.from(this.localPosts.values()).filter((item) => item.creatorId === creator);
   }
 
   async listAllPosts(): Promise<Post[]> {
@@ -218,6 +227,34 @@ export class DynamoStore implements DataStore {
       return this.coreRepo.listAllPosts();
     }
     return Array.from(this.localPosts.values());
+  }
+
+  async listAllSourceFiles(): Promise<SourceFile[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listAllSourceFiles();
+    }
+    return [];
+  }
+
+  async listAllCreatorGroups(): Promise<CreatorGroup[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listAllCreatorGroups();
+    }
+    return [];
+  }
+
+  async listCreatorGroupsByCreatorId(creatorId: string): Promise<CreatorGroup[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listCreatorGroupsByCreatorId(creatorId);
+    }
+    return [];
+  }
+
+  async listSourceFilesByCreatorId(creatorId: string): Promise<SourceFile[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listSourceFilesByCreatorId(creatorId);
+    }
+    return [];
   }
 
   async getPostBySlug(slug: string): Promise<Post | null> {
@@ -239,9 +276,16 @@ export class DynamoStore implements DataStore {
     return this.localPosts.get(postId) || null;
   }
 
-  async listMediaGalleryPlacements(mediaId: string): Promise<Array<{
-    galleryMediaId: string;
-    galleryId: string;
+  async getSourceFileById(fileId: string): Promise<SourceFile | null> {
+    if (this.coreRepo) {
+      return this.coreRepo.getSourceFileById(fileId);
+    }
+    return null;
+  }
+
+  async listMediaGroupingPlacements(mediaId: string): Promise<Array<{
+    groupingMediaId: string;
+    groupingId: string;
     mediaId: string;
     position: number;
     isPreview?: boolean;
@@ -249,7 +293,7 @@ export class DynamoStore implements DataStore {
     createdAt: string;
   }>> {
     if (this.coreRepo) {
-      return this.coreRepo.listMediaGalleryPlacements(mediaId);
+      return this.coreRepo.listMediaGroupingPlacements(mediaId);
     }
     const response = await this.client.send(
       new ScanCommand({
@@ -261,11 +305,11 @@ export class DynamoStore implements DataStore {
         }
       })
     );
-    return ((response.Items || []) as Array<{ galleryId: string; sortOrder?: number; createdAt?: string; imageId?: string; mediaId?: string; isPreview?: boolean; previewMaxWidth?: number }>)
-      .filter((item) => Boolean(item.galleryId))
+    return ((response.Items || []) as Array<{ groupingId: string; sortOrder?: number; createdAt?: string; imageId?: string; mediaId?: string; isPreview?: boolean; previewMaxWidth?: number }>)
+      .filter((item) => Boolean(item.groupingId))
       .map((item, index) => ({
-        galleryMediaId: `${item.galleryId}:${mediaId}:${index}`,
-        galleryId: item.galleryId,
+        groupingMediaId: `${item.groupingId}:${mediaId}:${index}`,
+        groupingId: item.groupingId,
         mediaId,
         position: Number(item.sortOrder || 0),
         isPreview: item.isPreview,
@@ -275,23 +319,23 @@ export class DynamoStore implements DataStore {
       .sort((a, b) => a.position - b.position);
   }
 
-  async createArtist(artist: Artist): Promise<void> {
+  async createCreator(creator: Creator): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.createArtist(artist);
+      await this.coreRepo.createCreator(creator);
     }
-    await this.client.send(new PutCommand({ TableName: this.config.artistsTable, Item: { ...artist, pk: 'ARTIST', sk: artist.artistId } }));
+    await this.client.send(new PutCommand({ TableName: this.config.creators, Item: { ...creator, pk: 'CREATOR', sk: creator.creatorId } }));
   }
 
-  async createGallery(gallery: Gallery): Promise<void> {
+  async createGrouping(grouping: Grouping): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.createGallery(gallery);
+      await this.coreRepo.createGrouping(grouping);
     }
-    await this.client.send(new PutCommand({ TableName: this.config.galleriesTable, Item: gallery }));
+    await this.client.send(new PutCommand({ TableName: this.config.groupingsTable, Item: grouping }));
   }
 
   async createMedia(
     media: Media,
-    galleryId?: string,
+    groupingId?: string,
     position = 0,
     placement?: {
       isPreview?: boolean;
@@ -299,10 +343,10 @@ export class DynamoStore implements DataStore {
     }
   ): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.createMedia(media, galleryId, position, placement);
+      await this.coreRepo.createMedia(media, groupingId, position, placement);
       return;
     }
-    const resolvedGalleryId = galleryId || `FEED#${media.artistId}`;
+    const resolvedGroupingId = groupingId || `FEED#${media.creatorId}`;
     await this.client.send(
       new PutCommand({
         TableName: this.config.imagesTable,
@@ -310,15 +354,15 @@ export class DynamoStore implements DataStore {
           ...media,
           appearsInFeed: media.appearsInFeed !== false,
           imageId: media.mediaId,
-          galleryId: resolvedGalleryId,
+          groupingId: resolvedGroupingId,
           sortOrder: position
         }
       })
     );
   }
 
-  async addMediaToGallery(
-    galleryId: string,
+  async addMediaToGrouping(
+    groupingId: string,
     mediaId: string,
     position: number,
     placement?: {
@@ -327,7 +371,7 @@ export class DynamoStore implements DataStore {
     }
   ): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.addMediaToGallery(galleryId, mediaId, position, placement);
+      await this.coreRepo.addMediaToGrouping(groupingId, mediaId, position, placement);
       return;
     }
     const response = await this.client.send(
@@ -350,25 +394,25 @@ export class DynamoStore implements DataStore {
           ...base,
           mediaId,
           imageId: mediaId,
-          galleryId,
+          groupingId,
           sortOrder: position
         }
       })
     );
   }
 
-  async updateArtist(artist: Artist): Promise<void> {
+  async updateCreator(creator: Creator): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.updateArtist(artist);
+      await this.coreRepo.updateCreator(creator);
     }
-    await this.client.send(new PutCommand({ TableName: this.config.artistsTable, Item: { ...artist, pk: 'ARTIST', sk: artist.artistId } }));
+    await this.client.send(new PutCommand({ TableName: this.config.creators, Item: { ...creator, pk: 'CREATOR', sk: creator.creatorId } }));
   }
 
-  async updateGallery(gallery: Gallery): Promise<void> {
+  async updateGrouping(grouping: Grouping): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.updateGallery(gallery);
+      await this.coreRepo.updateGrouping(grouping);
     }
-    await this.client.send(new PutCommand({ TableName: this.config.galleriesTable, Item: gallery }));
+    await this.client.send(new PutCommand({ TableName: this.config.groupingsTable, Item: grouping }));
   }
 
   async updateMedia(media: Media): Promise<void> {
@@ -392,12 +436,40 @@ export class DynamoStore implements DataStore {
     this.localPosts.set(post.postId, post);
   }
 
+  async createSourceFile(file: SourceFile): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.createSourceFile(file);
+      return;
+    }
+  }
+
+  async createCreatorGroup(group: CreatorGroup): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.createCreatorGroup(group);
+      return;
+    }
+  }
+
   async updatePost(post: Post): Promise<void> {
     if (this.coreRepo) {
       await this.coreRepo.updatePost(post);
       return;
     }
     this.localPosts.set(post.postId, post);
+  }
+
+  async updateSourceFile(file: SourceFile): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.updateSourceFile(file);
+      return;
+    }
+  }
+
+  async updateCreatorGroup(group: CreatorGroup): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.updateCreatorGroup(group);
+      return;
+    }
   }
 
   async deletePost(postId: string): Promise<void> {
@@ -408,13 +480,27 @@ export class DynamoStore implements DataStore {
     this.localPosts.delete(postId);
   }
 
-  async moveMediaInGallery(galleryId: string, mediaId: string, position: number): Promise<void> {
+  async deleteSourceFile(fileId: string): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.moveMediaInGallery(galleryId, mediaId, position);
+      await this.coreRepo.deleteSourceFile(fileId);
+      return;
+    }
+  }
+
+  async deleteCreatorGroup(groupId: string): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.deleteCreatorGroup(groupId);
+      return;
+    }
+  }
+
+  async moveMediaInGrouping(groupingId: string, mediaId: string, position: number): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.moveMediaInGrouping(groupingId, mediaId, position);
       return;
     }
 
-    const items = await this.getMediaByGallery(galleryId);
+    const items = await this.getMediaByGrouping(groupingId);
     const existing = items.find((item) => item.mediaId === mediaId);
     if (!existing) return;
 
@@ -425,74 +511,74 @@ export class DynamoStore implements DataStore {
           ...existing,
           imageId: existing.mediaId,
           sortOrder: position,
-          galleryId
+          groupingId
         }
       })
     );
   }
 
-  async deleteArtist(artistId: string): Promise<void> {
+  async deleteCreator(creator: string): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.deleteArtist(artistId);
+      await this.coreRepo.deleteCreator(creator);
     }
-    await this.client.send(new DeleteCommand({ TableName: this.config.artistsTable, Key: { pk: 'ARTIST', sk: artistId } }));
+    await this.client.send(new DeleteCommand({ TableName: this.config.creators, Key: { pk: 'CREATOR', sk: creator } }));
   }
 
-  async deleteGallery(galleryId: string): Promise<void> {
+  async deleteGrouping(groupingId: string): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.deleteGallery(galleryId);
+      await this.coreRepo.deleteGrouping(groupingId);
     }
-    await this.client.send(new DeleteCommand({ TableName: this.config.galleriesTable, Key: { galleryId } }));
+    await this.client.send(new DeleteCommand({ TableName: this.config.groupingsTable, Key: { groupingId } }));
   }
 
-  async deleteMediaFromGallery(galleryId: string, mediaId: string): Promise<void> {
+  async deleteMediaFromGrouping(groupingId: string, mediaId: string): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.deleteMediaFromGallery(galleryId, mediaId);
+      await this.coreRepo.deleteMediaFromGrouping(groupingId, mediaId);
       return;
     }
-    await this.client.send(new DeleteCommand({ TableName: this.config.imagesTable, Key: { galleryId, imageId: mediaId } }));
+    await this.client.send(new DeleteCommand({ TableName: this.config.imagesTable, Key: { groupingId, imageId: mediaId } }));
   }
 
-  async addArtistMember(member: ArtistMember): Promise<void> {
+  async addCreatorMember(member: CreatorMember): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.addArtistMember(member);
+      await this.coreRepo.addCreatorMember(member);
       return;
     }
-    this.localArtistMembers.set(`${member.artistId}:${member.userId}`, member);
+    this.localCreatorMembers.set(`${member.creatorId}:${member.userId}`, member);
   }
 
-  async removeArtistMember(artistId: string, userId: string): Promise<void> {
+  async removeCreatorMember(creatorId: string, userId: string): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.removeArtistMember(artistId, userId);
+      await this.coreRepo.removeCreatorMember(creatorId, userId);
       return;
     }
-    this.localArtistMembers.delete(`${artistId}:${userId}`);
+    this.localCreatorMembers.delete(`${creatorId}:${userId}`);
   }
 
-  async listArtistMembers(artistId: string): Promise<ArtistMember[]> {
+  async listCreatorMembers(creatorId: string): Promise<CreatorMember[]> {
     if (this.coreRepo) {
-      return this.coreRepo.listArtistMembers(artistId);
+      return this.coreRepo.listCreatorMembers(creatorId);
     }
-    return Array.from(this.localArtistMembers.values()).filter((item) => item.artistId === artistId);
+    return Array.from(this.localCreatorMembers.values()).filter((item) => item.creatorId === creatorId);
   }
 
-  async listArtistsByUserId(userId: string): Promise<Artist[]> {
+  async listCreatorsByUserId(userId: string): Promise<Creator[]> {
     if (this.coreRepo) {
-      return this.coreRepo.listArtistsByUserId(userId);
+      return this.coreRepo.listCreatorsByUserId(userId);
     }
     const allowedIds = new Set(
-      Array.from(this.localArtistMembers.values())
+      Array.from(this.localCreatorMembers.values())
         .filter((item) => item.userId === userId)
-        .map((item) => item.artistId)
+        .map((item) => item.creatorId)
     );
-    return (await this.listArtists()).filter((artist) => allowedIds.has(artist.artistId));
+    return (await this.listCreators()).filter((creator) => allowedIds.has(creator.creatorId));
   }
 
-  async hasArtistAccess(userId: string, artistId: string): Promise<boolean> {
+  async hasCreatorAccess(userId: string, creator: string): Promise<boolean> {
     if (this.coreRepo) {
-      return this.coreRepo.hasArtistAccess(userId, artistId);
+      return this.coreRepo.hasCreatorAccess(userId, creator);
     }
-    return this.localArtistMembers.has(`${artistId}:${userId}`);
+    return this.localCreatorMembers.has(`${creator}:${userId}`);
   }
 
   async listPublicCollections(limit = 24, cursor?: string): Promise<{ items: Collection[]; nextCursor?: string }> {
@@ -508,7 +594,7 @@ export class DynamoStore implements DataStore {
     return { items, nextCursor };
   }
 
-  async listPublicCollectionsByProfile(profileType: 'user' | 'artist', profileId: string, limit = 24): Promise<Collection[]> {
+  async listPublicCollectionsByProfile(profileType: 'user' | 'creator', profileId: string, limit = 24): Promise<Collection[]> {
     if (this.coreRepo) {
       return this.coreRepo.listPublicCollectionsByProfile(profileType, profileId, limit);
     }
@@ -529,7 +615,7 @@ export class DynamoStore implements DataStore {
       .sort((a, b) => b.updatedDate.localeCompare(a.updatedDate));
   }
 
-  async listCollectionsByProfile(profileType: 'user' | 'artist', profileId: string): Promise<Collection[]> {
+  async listCollectionsByProfile(profileType: 'user' | 'creator', profileId: string): Promise<Collection[]> {
     if (this.coreRepo) {
       return this.coreRepo.listCollectionsByProfile(profileType, profileId);
     }
@@ -600,20 +686,20 @@ export class DynamoStore implements DataStore {
       .map((item) => item.imageId);
   }
 
-  async followArtist(follow: Follow): Promise<void> {
+  async followCreator(follow: Follow): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.followArtist(follow);
+      await this.coreRepo.followCreator(follow);
       return;
     }
-    this.localFollows.set(`${follow.followerUserId}:${follow.artistId}`, follow);
+    this.localFollows.set(`${follow.followerUserId}:${follow.creatorId}`, follow);
   }
 
-  async unfollowArtist(followerUserId: string, artistId: string): Promise<void> {
+  async unfollowCreator(followerUserId: string, creator: string): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.unfollowArtist(followerUserId, artistId);
+      await this.coreRepo.unfollowCreator(followerUserId, creator);
       return;
     }
-    this.localFollows.delete(`${followerUserId}:${artistId}`);
+    this.localFollows.delete(`${followerUserId}:${creator}`);
   }
 
   async listFollowsByUser(followerUserId: string): Promise<Follow[]> {
@@ -623,21 +709,21 @@ export class DynamoStore implements DataStore {
     return Array.from(this.localFollows.values()).filter((item) => item.followerUserId === followerUserId);
   }
 
-  async isFollowingArtist(followerUserId: string, artistId: string): Promise<boolean> {
+  async isFollowingCreator(followerUserId: string, creator: string): Promise<boolean> {
     if (this.coreRepo) {
-      return this.coreRepo.isFollowingArtist(followerUserId, artistId);
+      return this.coreRepo.isFollowingCreator(followerUserId, creator);
     }
-    return this.localFollows.has(`${followerUserId}:${artistId}`);
+    return this.localFollows.has(`${followerUserId}:${creator}`);
   }
 
-  async countFollowersByArtist(artistId: string): Promise<number> {
+  async countFollowersByCreator(creator: string): Promise<number> {
     if (this.coreRepo) {
-      return this.coreRepo.countFollowersByArtist(artistId);
+      return this.coreRepo.countFollowersByCreator(creator);
     }
-    return Array.from(this.localFollows.values()).filter((item) => item.artistId === artistId).length;
+    return Array.from(this.localFollows.values()).filter((item) => item.creatorId === creator).length;
   }
 
-  async listComments(targetType: 'gallery' | 'image', targetId: string): Promise<Comment[]> {
+  async listComments(targetType: 'grouping' | 'image', targetId: string): Promise<Comment[]> {
     const targetKey = `${targetType}#${targetId}`;
     const response = await this.client.send(
       new QueryCommand({
@@ -740,9 +826,9 @@ export class DynamoStore implements DataStore {
 
   async removeFavorite(
     userId: string,
-    targetType: 'gallery' | 'image' | 'collection',
+    targetType: 'grouping' | 'image' | 'collection',
     targetId: string,
-    ownerProfileType: 'user' | 'artist' = 'user',
+    ownerProfileType: 'user' | 'creator' = 'user',
     ownerProfileId?: string
   ): Promise<void> {
     const resolvedProfileId = ownerProfileId || userId;
@@ -803,7 +889,7 @@ export class DynamoStore implements DataStore {
       .filter((item) => (item.ownerProfileId || item.userId) === userId);
   }
 
-  async listFavoritesByProfile(profileType: 'user' | 'artist', profileId: string): Promise<Favorite[]> {
+  async listFavoritesByProfile(profileType: 'user' | 'creator', profileId: string): Promise<Favorite[]> {
     const responses: Favorite[][] = [((await this.client.send(
       new QueryCommand({
         TableName: this.config.favoritesTable,
@@ -828,7 +914,7 @@ export class DynamoStore implements DataStore {
     }));
   }
 
-  async listPublicFavoritesByProfile(profileType: 'user' | 'artist', profileId: string): Promise<Favorite[]> {
+  async listPublicFavoritesByProfile(profileType: 'user' | 'creator', profileId: string): Promise<Favorite[]> {
     const items = await this.listFavoritesByProfile(profileType, profileId);
     return items
       .filter((item) => (item.visibility || 'public') === 'public')
@@ -836,7 +922,7 @@ export class DynamoStore implements DataStore {
       .filter((item) => (item.ownerProfileId || item.userId) === profileId);
   }
 
-  async countFavorites(targetType: 'gallery' | 'image' | 'collection', targetId: string): Promise<number> {
+  async countFavorites(targetType: 'grouping' | 'image' | 'collection', targetId: string): Promise<number> {
     try {
       const response = await this.client.send(
         new QueryCommand({
@@ -921,32 +1007,61 @@ export class DynamoStore implements DataStore {
     );
   }
 
-  async listTrendingFeed(period: TrendingPeriod, limit = 24, cursor?: string): Promise<{ items: TrendingFeedItem[]; nextCursor?: string }> {
+  async listTrendingFeed(
+    period: TrendingPeriod,
+    limit = 24,
+    cursor?: string,
+    options?: TrendingFeedQueryOptions
+  ): Promise<{ items: TrendingFeedItem[]; nextCursor?: string }> {
+    const source = options?.source || 'combined';
+    const itemTypes = options?.itemTypes || { image: true, video: true, post: true };
+    if (source === 'post' && !itemTypes.post) {
+      return { items: [] };
+    }
+    if (source === 'media' && !itemTypes.image && !itemTypes.video) {
+      return { items: [] };
+    }
+    const itemMatchesFilter = (row: Record<string, unknown>): boolean => {
+      const isPostSurface = row.surfaceType === 'post_surface' || Boolean(row.postId);
+      if (source === 'post' && !isPostSurface) return false;
+      if (source === 'media' && isPostSurface) return false;
+      if (isPostSurface) return itemTypes.post;
+      const assetType = row.assetType === 'video' ? 'video' : 'image';
+      if (assetType === 'video') return itemTypes.video;
+      return itemTypes.image;
+    };
+    const resolveSingleSurface = (): 'image' | 'video' | 'post' | null => {
+      if (source === 'post') return 'post';
+      if (source === 'media') {
+        if (itemTypes.image && !itemTypes.video) return 'image';
+        if (itemTypes.video && !itemTypes.image) return 'video';
+        return null;
+      }
+      const selected: Array<'image' | 'video' | 'post'> = [];
+      if (itemTypes.image) selected.push('image');
+      if (itemTypes.video) selected.push('video');
+      if (itemTypes.post) selected.push('post');
+      return selected.length === 1 ? selected[0] : null;
+    };
     const decodedCursor = cursor
       ? JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'))
       : undefined;
-    const response = await this.client.send(
-      new QueryCommand({
-        TableName: this.config.trendingFeedTable,
-        KeyConditionExpression: '#period = :period',
-        ExpressionAttributeNames: { '#period': 'period' },
-        ExpressionAttributeValues: { ':period': `PERIOD#${period}` },
-        Limit: limit,
-        ExclusiveStartKey: decodedCursor
-      })
-    );
-    const items = (response.Items || []).map((item) => {
+    const singleSurface = resolveSingleSurface();
+    const partitionKey = `PERIOD#${period}`;
+    const toItem = (item: unknown): TrendingFeedItem => {
       const row = item as Record<string, unknown>;
       return {
         period,
         rank: Number(row.rank || 0),
+        surfaceType: row.surfaceType === 'post_surface' ? 'post_surface' : 'media_surface',
         imageId: String(row.imageId || ''),
-        assetType: row.assetType === 'video' ? 'video' : 'image',
-        artistId: String(row.artistId || ''),
-        artistName: String(row.artistName || ''),
-        galleryId: String(row.galleryId || ''),
-        gallerySlug: String(row.gallerySlug || ''),
-        galleryVisibility: row.galleryVisibility === 'preview' ? 'preview' : 'free',
+        assetType: row.assetType === 'video' ? 'video' : row.assetType === 'audio' ? 'audio' : 'image',
+        creatorId: String(row.creatorId || ''),
+        creatorName: String(row.creatorName || ''),
+        postId: row.postId ? String(row.postId) : undefined,
+        groupingId: String(row.groupingId || ''),
+        groupingSlug: String(row.groupingSlug || ''),
+        groupingVisibility: row.groupingVisibility === 'preview' ? 'preview' : 'free',
         discoverSquareCropEnabled: row.discoverSquareCropEnabled !== false,
         effectiveContentRating: normalizeContentRating(row.effectiveContentRating),
         effectiveAiDisclosure: normalizeAiDisclosure(row.effectiveAiDisclosure),
@@ -962,9 +1077,42 @@ export class DynamoStore implements DataStore {
         score: Number(row.score || 0),
         updatedAt: String(row.updatedAt || '')
       } satisfies TrendingFeedItem;
-    });
-    const nextCursor = response.LastEvaluatedKey
-      ? Buffer.from(JSON.stringify(response.LastEvaluatedKey), 'utf8').toString('base64')
+    };
+
+    let scanned: unknown[] = [];
+    let cursorKey = decodedCursor as Record<string, unknown> | undefined;
+    let lastEvaluatedKey: Record<string, unknown> | undefined;
+    if (singleSurface) {
+      const response = await this.client.send(
+        new QueryCommand({
+          TableName: this.config.trendingFeedTable,
+          IndexName: 'PeriodSurfaceRank',
+          KeyConditionExpression: '#periodSurface = :periodSurface',
+          ExpressionAttributeNames: { '#periodSurface': 'periodSurface' },
+          ExpressionAttributeValues: { ':periodSurface': `PERIOD#${period}#SURFACE#${singleSurface}` },
+          Limit: limit,
+          ExclusiveStartKey: cursorKey
+        })
+      );
+      scanned = response.Items || [];
+      lastEvaluatedKey = response.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } else {
+      const response = await this.client.send(
+        new QueryCommand({
+          TableName: this.config.trendingFeedTable,
+          KeyConditionExpression: '#period = :period',
+          ExpressionAttributeNames: { '#period': 'period' },
+          ExpressionAttributeValues: { ':period': partitionKey },
+          Limit: limit,
+          ExclusiveStartKey: cursorKey
+        })
+      );
+      scanned = (response.Items || []).filter((row) => itemMatchesFilter(row as Record<string, unknown>));
+      lastEvaluatedKey = response.LastEvaluatedKey as Record<string, unknown> | undefined;
+    }
+    const items = scanned.map((item) => toItem(item));
+    const nextCursor = lastEvaluatedKey
+      ? Buffer.from(JSON.stringify(lastEvaluatedKey), 'utf8').toString('base64')
       : undefined;
     return { items, nextCursor };
   }
@@ -1013,6 +1161,7 @@ export class DynamoStore implements DataStore {
                     ...item,
                     period: partitionKey,
                     rankKey: `RANK#${rank.toString().padStart(8, '0')}#IMAGE#${item.imageId}`,
+                    periodSurface: `PERIOD#${period}#SURFACE#${item.surfaceType === 'post_surface' || item.postId ? 'post' : item.assetType === 'video' ? 'video' : 'image'}`,
                     rank,
                     updatedAt: item.updatedAt || nowIso
                   }
@@ -1038,15 +1187,15 @@ export class DynamoStore implements DataStore {
     return Boolean(response.Item);
   }
 
-  async grantGalleryAccess(userId: string, galleryId: string): Promise<void> {
+  async grantGroupingAccess(userId: string, groupingId: string): Promise<void> {
     if (this.coreRepo) {
-      await this.coreRepo.grantGalleryAccess(userId, galleryId);
+      await this.coreRepo.grantGroupingAccess(userId, groupingId);
     }
   }
 
-  async hasGalleryAccess(userId: string, galleryId: string): Promise<boolean> {
+  async hasGroupingAccess(userId: string, groupingId: string): Promise<boolean> {
     if (this.coreRepo) {
-      return this.coreRepo.hasGalleryAccess(userId, galleryId);
+      return this.coreRepo.hasGroupingAccess(userId, groupingId);
     }
     return false;
   }
@@ -1084,6 +1233,13 @@ export class DynamoStore implements DataStore {
     return this.localUserProfiles.get(userId) || null;
   }
 
+  async listUserProfiles(): Promise<UserProfile[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listUserProfiles();
+    }
+    return Array.from(this.localUserProfiles.values());
+  }
+
   async getUserProfileBySlug(slug: string): Promise<UserProfile | null> {
     if (this.coreRepo) {
       return this.coreRepo.getUserProfileBySlug(slug);
@@ -1102,6 +1258,153 @@ export class DynamoStore implements DataStore {
       return;
     }
     this.localUserProfiles.set(profile.userId, profile);
+  }
+
+  async getUserIdentity(userId: string): Promise<UserIdentity | null> {
+    if (this.coreRepo) {
+      return this.coreRepo.getUserIdentity(userId);
+    }
+    return null;
+  }
+
+  async listUserIdentities(): Promise<UserIdentity[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listUserIdentities();
+    }
+    return [];
+  }
+
+  async upsertUserIdentity(identity: UserIdentity): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.upsertUserIdentity(identity);
+      return;
+    }
+  }
+
+  async setUserRole(userId: string, role: PlatformRole): Promise<UserIdentity> {
+    if (this.coreRepo) {
+      return this.coreRepo.setUserRole(userId, role);
+    }
+    throw new Error('User identity persistence is unavailable.');
+  }
+
+  async listContributionContexts(): Promise<ContributionContext[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listContributionContexts();
+    }
+    return [];
+  }
+
+  async getContributionContextById(contextId: string): Promise<ContributionContext | null> {
+    if (this.coreRepo) {
+      return this.coreRepo.getContributionContextById(contextId);
+    }
+    return null;
+  }
+
+  async getContributionContextBySlug(slug: string): Promise<ContributionContext | null> {
+    if (this.coreRepo) {
+      return this.coreRepo.getContributionContextBySlug(slug);
+    }
+    return null;
+  }
+
+  async createContributionContext(context: ContributionContext): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.createContributionContext(context);
+      return;
+    }
+  }
+
+  async updateContributionContext(context: ContributionContext): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.updateContributionContext(context);
+      return;
+    }
+  }
+
+  async listContextSubmissions(contextId: string): Promise<ContextSubmission[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listContextSubmissions(contextId);
+    }
+    return [];
+  }
+
+  async getContextSubmissionById(submissionId: string): Promise<ContextSubmission | null> {
+    if (this.coreRepo) {
+      return this.coreRepo.getContextSubmissionById(submissionId);
+    }
+    return null;
+  }
+
+  async createContextSubmission(submission: ContextSubmission): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.createContextSubmission(submission);
+      return;
+    }
+  }
+
+  async updateContextSubmission(submission: ContextSubmission): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.updateContextSubmission(submission);
+      return;
+    }
+  }
+
+  async listContextUnlockThresholds(contextId: string): Promise<ContextUnlockThreshold[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listContextUnlockThresholds(contextId);
+    }
+    return [];
+  }
+
+  async createContextUnlockThreshold(threshold: ContextUnlockThreshold): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.createContextUnlockThreshold(threshold);
+      return;
+    }
+  }
+
+  async updateContextUnlockThreshold(threshold: ContextUnlockThreshold): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.updateContextUnlockThreshold(threshold);
+      return;
+    }
+  }
+
+  async listChallengePrizes(contextId: string): Promise<ChallengePrize[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listChallengePrizes(contextId);
+    }
+    return [];
+  }
+
+  async createChallengePrize(prize: ChallengePrize): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.createChallengePrize(prize);
+      return;
+    }
+  }
+
+  async updateChallengePrize(prize: ChallengePrize): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.updateChallengePrize(prize);
+      return;
+    }
+  }
+
+  async listPrizeAwards(contextId: string): Promise<PrizeAward[]> {
+    if (this.coreRepo) {
+      return this.coreRepo.listPrizeAwards(contextId);
+    }
+    return [];
+  }
+
+  async createPrizeAward(award: PrizeAward): Promise<void> {
+    if (this.coreRepo) {
+      await this.coreRepo.createPrizeAward(award);
+      return;
+    }
   }
 
   async getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null> {

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import type { Gallery, GalleryAsset, TrendingImage } from '../domainTypes';
+import type { Grouping, GroupingAsset, TrendingImage } from '../domainTypes';
 
-const toFocusedAsset = (item: TrendingImage): GalleryAsset => ({
+const toFocusedAsset = (item: TrendingImage): GroupingAsset => ({
   imageId: item.imageId,
   assetType: item.assetType === 'video' ? 'video' : 'image',
   effectiveContentRating: item.effectiveContentRating,
@@ -19,9 +19,9 @@ const toFocusedAsset = (item: TrendingImage): GalleryAsset => ({
 
 export default function useFocusedViewer() {
   const [focusedDiscoveryOpen, setFocusedDiscoveryOpen] = useState(false);
-  const [focusedDiscoveryGallerySlug, setFocusedDiscoveryGallerySlug] = useState('');
-  const [focusedDiscoveryGalleryTitle, setFocusedDiscoveryGalleryTitle] = useState('');
-  const [focusedDiscoveryItems, setFocusedDiscoveryItems] = useState<GalleryAsset[]>([]);
+  const [focusedDiscoveryGroupingSlug, setFocusedDiscoveryGroupingSlug] = useState('');
+  const [focusedDiscoveryGroupingTitle, setFocusedDiscoveryGroupingTitle] = useState('');
+  const [focusedDiscoveryItems, setFocusedDiscoveryItems] = useState<GroupingAsset[]>([]);
   const [focusedDiscoveryIndex, setFocusedDiscoveryIndex] = useState(0);
   const [focusedDiscoveryLoading, setFocusedDiscoveryLoading] = useState(false);
   const [focusedDiscoveryError, setFocusedDiscoveryError] = useState('');
@@ -45,12 +45,12 @@ export default function useFocusedViewer() {
   const openFocusedDiscovery = useCallback(async (item: TrendingImage) => {
     const fallback = toFocusedAsset(item);
     setFocusedDiscoveryOpen(true);
-    setFocusedDiscoveryGallerySlug(item.gallerySlug || '');
-    setFocusedDiscoveryGalleryTitle(item.title || 'Artwork');
+    setFocusedDiscoveryGroupingSlug(item.groupingSlug || '');
+    setFocusedDiscoveryGroupingTitle(item.title || 'Artwork');
     setFocusedDiscoveryItems([fallback]);
     setFocusedDiscoveryIndex(0);
     setFocusedDiscoveryError('');
-    if (!item.gallerySlug) {
+    if (!item.groupingSlug) {
       setFocusedDiscoveryLoading(false);
       return;
     }
@@ -58,18 +58,18 @@ export default function useFocusedViewer() {
     focusedDiscoveryRequestRef.current = requestId;
     setFocusedDiscoveryLoading(true);
     try {
-      const response = await api.getGallery(item.gallerySlug) as Gallery;
+      const response = await api.getGrouping(item.groupingSlug) as Grouping;
       if (focusedDiscoveryRequestRef.current !== requestId) return;
       const media = (response.media || []).filter((asset) => Boolean(asset.previewUrl));
       const nextItems = media.length > 0 ? media : [fallback];
       const focusedIndex = Math.max(0, nextItems.findIndex((asset) => asset.imageId === item.imageId));
-      setFocusedDiscoveryGalleryTitle(response.title || item.title || 'Artwork');
+      setFocusedDiscoveryGroupingTitle(response.title || item.title || 'Artwork');
       setFocusedDiscoveryItems(nextItems);
       setFocusedDiscoveryIndex(focusedIndex);
       setFocusedDiscoveryError('');
     } catch (e) {
       if (focusedDiscoveryRequestRef.current !== requestId) return;
-      setFocusedDiscoveryError((e as Error).message || 'Could not load gallery media');
+      setFocusedDiscoveryError((e as Error).message || 'Could not load grouping media');
     } finally {
       if (focusedDiscoveryRequestRef.current === requestId) {
         setFocusedDiscoveryLoading(false);
@@ -169,8 +169,8 @@ export default function useFocusedViewer() {
 
   return {
     focusedDiscoveryOpen,
-    focusedDiscoveryGallerySlug,
-    focusedDiscoveryGalleryTitle,
+    focusedDiscoveryGroupingSlug,
+    focusedDiscoveryGroupingTitle,
     focusedDiscoveryItems,
     focusedDiscoveryIndex,
     focusedDiscoveryLoading,

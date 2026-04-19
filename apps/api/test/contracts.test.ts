@@ -5,8 +5,8 @@ import type { AppConfig } from '../src/config';
 
 const buildConfig = (): AppConfig => ({
   awsRegion: 'ca-central-1',
-  artistsTable: 'artists',
-  galleriesTable: 'galleries',
+  creators: 'creators',
+  groupingsTable: 'groupings',
   imagesTable: 'images',
   commentsTable: 'comments',
   favoritesTable: 'favorites',
@@ -14,12 +14,12 @@ const buildConfig = (): AppConfig => ({
   siteSettingsTable: 'site-settings',
   imageStatsTable: 'image-stats',
   trendingFeedTable: 'trending-feed',
-  galleryCoreTable: 'gallery-core',
-  useGalleryCoreTable: false,
-  mediaBucket: 'gallery-media',
+  groupingCoreTable: 'grouping-core',
+  useGroupingCoreTable: false,
+  mediaBucket: 'grouping-media',
   unlockJwtSecret: 'test-secret',
   unlockTokenTtlSeconds: 3600,
-  rememberGalleryAccessTtlSeconds: 60 * 60 * 24 * 30,
+  rememberGroupingAccessTtlSeconds: 60 * 60 * 24 * 30,
   signedUrlTtlSeconds: 300,
   trendingFeedMaxItems: 600,
   trendingCandidateLimit: 1500

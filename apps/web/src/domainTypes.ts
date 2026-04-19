@@ -1,6 +1,6 @@
-export type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string };
+export type Creator = { creatorId: string; name: string; slug: string; creatorThumbnailUrl?: string };
 
-export type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
+export type ManagedCreator = Creator & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
 
 export type FeedDensity = 'small' | 'medium' | 'large';
 
@@ -53,11 +53,11 @@ export type CollectionSummary = {
 export type TrendingImage = {
   imageId: string;
   assetType?: 'image' | 'video';
-  artistId: string;
-  artistName: string;
-  galleryId: string;
-  gallerySlug: string;
-  galleryVisibility?: 'free' | 'preview' | 'premium';
+  creatorId: string;
+  creatorName: string;
+  groupingId: string;
+  groupingSlug: string;
+  groupingVisibility?: 'free' | 'preview' | 'premium';
   discoverSquareCropEnabled?: boolean;
   effectiveContentRating?: ContentRating;
   displayedContentRating?: string;
@@ -76,15 +76,15 @@ export type TrendingImage = {
   createdAt: string;
 };
 
-export type ArtistProfilePayload = {
-  artistId: string;
+export type CreatorProfilePayload = {
+  creatorId: string;
   name: string;
   slug: string;
   status: 'active' | 'inactive';
-  defaultProfileTab?: 'feed' | 'galleries';
+  defaultProfileTab?: 'feed' | 'groupings';
   followerCount: number;
   imageCount: number;
-  galleryCount: number;
+  groupingCount: number;
   feedItems?: Array<{
     imageId: string;
     title: string;
@@ -96,22 +96,22 @@ export type ArtistProfilePayload = {
   }>;
   featured?: {
     items: Array<{ imageId: string; title: string; previewUrl?: string; previewPosterUrl?: string }>;
-    galleries: Array<{ galleryId: string; title: string; slug: string; visibility: 'free' | 'preview' | 'premium'; galleryThumbnailUrl?: string }>;
+    groupings: Array<{ groupingId: string; title: string; slug: string; visibility: 'free' | 'preview' | 'premium'; groupingThumbnailUrl?: string }>;
   };
   trendingImages: TrendingImage[];
-  galleries: Array<{
-    galleryId: string;
+  groupings: Array<{
+    groupingId: string;
     title: string;
     slug: string;
     visibility: 'free' | 'preview' | 'premium';
     createdAt: string;
     imageCount: number;
     favoriteCount: number;
-    galleryThumbnailUrl?: string;
+    groupingThumbnailUrl?: string;
   }>;
   publicFavoritesByType: {
     images: Array<{ targetId: string; targetType?: 'image'; createdAt?: string; title?: string; previewUrl?: string }>;
-    galleries: Array<{ targetId: string; targetType?: 'gallery'; createdAt?: string; title?: string; slug?: string; galleryThumbnailUrl?: string }>;
+    groupings: Array<{ targetId: string; targetType?: 'grouping'; createdAt?: string; title?: string; slug?: string; groupingThumbnailUrl?: string }>;
     collections: Array<{ targetId: string; targetType?: 'collection'; createdAt?: string; title?: string }>;
   };
   publicCollections: Array<{
@@ -126,18 +126,18 @@ export type ArtistProfilePayload = {
   }>;
 };
 
-export type GallerySummary = {
-  galleryId: string;
+export type GroupingSummary = {
+  groupingId: string;
   title: string;
   slug: string;
   visibility: 'free' | 'preview' | 'premium';
   hasAccess?: boolean;
   purchaseUrl?: string;
-  galleryThumbnailUrl?: string;
+  groupingThumbnailUrl?: string;
   stackPreviewUrls?: string[];
 };
 
-export type GalleryAsset = {
+export type GroupingAsset = {
   imageId: string;
   assetType: 'image' | 'video';
   effectiveContentRating?: ContentRating;
@@ -161,8 +161,8 @@ export type GalleryAsset = {
   favoriteCount: number;
 };
 
-export type Gallery = {
-  galleryId: string;
+export type Grouping = {
+  groupingId: string;
   title: string;
   visibility: 'free' | 'preview' | 'premium';
   hasAccess?: boolean;
@@ -184,12 +184,12 @@ export type Gallery = {
     previewPosterUrl?: string;
   }>;
   favoriteCount: number;
-  media: GalleryAsset[];
+  media: GroupingAsset[];
 };
 
 export type Comment = {
   commentId: string;
-  authorProfileType?: 'user' | 'artist';
+  authorProfileType?: 'user' | 'creator';
   authorProfileId?: string;
   displayName: string;
   body: string;
@@ -217,7 +217,7 @@ export type UserProfile = {
 };
 
 export type ManagedFavorite = {
-  targetType: 'gallery' | 'image' | 'collection';
+  targetType: 'grouping' | 'image' | 'collection';
   targetId: string;
   visibility?: 'public' | 'private';
   createdAt: string;
@@ -236,7 +236,7 @@ export type PostBlockType =
   | 'embed'
   | 'file'
   | 'link'
-  | 'gallery'
+  | 'grouping'
   | 'carousel'
   | 'pdf_preview'
   | 'html_fragment';
@@ -271,7 +271,7 @@ export type PostDestination = {
 
 export type ManagedPost = {
   postId: string;
-  artistId: string;
+  creatorId: string;
   authorId?: string;
   title: string;
   slug: string;

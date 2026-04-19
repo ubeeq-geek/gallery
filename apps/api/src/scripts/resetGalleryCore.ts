@@ -44,8 +44,8 @@ const discoverTableName = async (client: DynamoDBClient, preferred: string, mark
   }
 
   const prioritized = found.sort((a, b) => {
-    const aScore = a.startsWith('GalleryStack-') ? 0 : 1;
-    const bScore = b.startsWith('GalleryStack-') ? 0 : 1;
+    const aScore = a.startsWith('StudioStack-') ? 0 : 1;
+    const bScore = b.startsWith('StudioStack-') ? 0 : 1;
     if (aScore !== bScore) return aScore - bScore;
     return a.localeCompare(b);
   });
@@ -71,8 +71,8 @@ const discoverMediaBucket = async (s3: S3Client, preferred: string): Promise<str
     throw new Error('Could not discover media bucket (expected name containing "mediabucket")');
   }
   const prioritized = candidates.sort((a, b) => {
-    const aScore = a.startsWith('gallerystack-') ? 0 : 1;
-    const bScore = b.startsWith('gallerystack-') ? 0 : 1;
+    const aScore = a.startsWith('studiostack-') ? 0 : 1;
+    const bScore = b.startsWith('studiostack-') ? 0 : 1;
     if (aScore !== bScore) return aScore - bScore;
     return a.localeCompare(b);
   });
@@ -161,17 +161,17 @@ const main = async () => {
   const config = loadConfig();
   const dryRun = process.argv.includes('--dry-run');
   const preserveMedia = process.argv.includes('--preserve-media');
-  const galleryCoreTableRequested = resolveTableName(config.galleryCoreTable, '--gallery-core-table');
+  const groupingCoreTableRequested = resolveTableName(config.groupingCoreTable, '--grouping-core-table');
   const siteSettingsTableRequested = resolveTableName(config.siteSettingsTable, '--site-settings-table');
 
   const lowLevel = new DynamoDBClient({ region: config.awsRegion });
   const s3 = new S3Client({ region: config.awsRegion });
-  const galleryCoreTable = await discoverTableName(lowLevel, galleryCoreTableRequested, 'GalleryCoreTable');
+  const groupingCoreTable = await discoverTableName(lowLevel, groupingCoreTableRequested, 'GroupingCoreTable');
   const siteSettingsTable = await discoverTableName(lowLevel, siteSettingsTableRequested, 'SiteSettingsTable');
   const mediaBucket = await discoverMediaBucket(s3, config.mediaBucket);
 
   console.log(
-    `[reset:core] galleryCoreTable=${galleryCoreTable} siteSettingsTable=${siteSettingsTable} bucket=${mediaBucket} region=${config.awsRegion} dryRun=${dryRun} preserveMedia=${preserveMedia}`
+    `[reset:core] groupingCoreTable=${groupingCoreTable} siteSettingsTable=${siteSettingsTable} bucket=${mediaBucket} region=${config.awsRegion} dryRun=${dryRun} preserveMedia=${preserveMedia}`
   );
 
   if (dryRun) {
@@ -179,7 +179,7 @@ const main = async () => {
   }
 
   const client = DynamoDBDocumentClient.from(lowLevel);
-  const deletedCore = await wipeTable(client, galleryCoreTable, ['PK', 'SK']);
+  const deletedCore = await wipeTable(client, groupingCoreTable, ['PK', 'SK']);
   const deletedSettings = await wipeTable(client, siteSettingsTable, ['settingId']);
   const deletedObjects = preserveMedia ? 0 : await wipeBucketPrefixes(s3, mediaBucket, ['']);
 

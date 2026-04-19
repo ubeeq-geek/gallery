@@ -51,47 +51,47 @@ const main = async () => {
   if (profileArg) process.env.AWS_PROFILE = profileArg;
 
   const config = loadConfig();
-  const artistsTable = resolveTableName(config.artistsTable, '--artists-table');
-  const galleriesTable = resolveTableName(config.galleriesTable, '--galleries-table');
+  const creators = resolveTableName(config.creators, '--creators-table');
+  const groupingsTable = resolveTableName(config.groupingsTable, '--groupings-table');
   const imagesTable = resolveTableName(config.imagesTable, '--images-table');
-  const galleryCoreTable = resolveTableName(config.galleryCoreTable, '--gallery-core-table');
+  const groupingCoreTable = resolveTableName(config.groupingCoreTable, '--grouping-core-table');
 
   const lowLevel = new DynamoDBClient({ region: config.awsRegion });
   const client = DynamoDBDocumentClient.from(lowLevel);
 
-  const requiredTables = [artistsTable, galleriesTable, imagesTable, galleryCoreTable];
+  const requiredTables = [creators, groupingsTable, imagesTable, groupingCoreTable];
   for (const tableName of requiredTables) {
     try {
       await lowLevel.send(new DescribeTableCommand({ TableName: tableName }));
     } catch (error) {
       console.error(`[verify:core] missing table: ${tableName}`);
-      console.error('[verify:core] pass explicit names with --artists-table/--galleries-table/--images-table/--gallery-core-table');
+      console.error('[verify:core] pass explicit names with --creators-table/--groupings-table/--images-table/--grouping-core-table');
       throw error;
     }
   }
 
   const [legacyArtists, legacyGalleries, legacyMedia, coreItems] = await Promise.all([
-    scanAll(client, artistsTable),
-    scanAll(client, galleriesTable),
+    scanAll(client, creators),
+    scanAll(client, groupingsTable),
     scanAll(client, imagesTable),
-    scanAll(client, galleryCoreTable)
+    scanAll(client, groupingCoreTable)
   ]);
 
   const legacyCounts = {
-    artists: legacyArtists.filter((item) => typeof item.artistId === 'string').length,
-    galleries: legacyGalleries.filter((item) => typeof item.galleryId === 'string').length,
+    creators: legacyArtists.filter((item) => typeof item.creatorId === 'string').length,
+    groupings: legacyGalleries.filter((item) => typeof item.groupingId === 'string').length,
     media: legacyMedia.filter((item) => typeof item.imageId === 'string').length
   };
 
   const coreCounts = {
-    artists: countBy(coreItems, (item) => item.entityType === 'ARTIST'),
-    galleries: countBy(coreItems, (item) => item.entityType === 'GALLERY'),
-    media: countBy(coreItems, (item) => item.entityType === 'GALLERY_MEDIA')
+    creators: countBy(coreItems, (item) => item.entityType === 'CREATOR'),
+    groupings: countBy(coreItems, (item) => item.entityType === 'GROUPING'),
+    media: countBy(coreItems, (item) => item.entityType === 'GROUPING_MEDIA')
   };
 
   const mismatches: string[] = [];
-  if (legacyCounts.artists !== coreCounts.artists) mismatches.push('artists');
-  if (legacyCounts.galleries !== coreCounts.galleries) mismatches.push('galleries');
+  if (legacyCounts.creators !== coreCounts.creators) mismatches.push('creators');
+  if (legacyCounts.groupings !== coreCounts.groupings) mismatches.push('groupings');
   if (legacyCounts.media !== coreCounts.media) mismatches.push('media');
 
   console.log('[verify:core] Legacy counts:', legacyCounts);

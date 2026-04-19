@@ -5,7 +5,7 @@ export type HeavyTopic = 'politics-public-affairs' | 'crime-disasters-tragedy';
 export type AiFilterPreference = 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
 export type PostStatus = 'draft' | 'published' | 'archived';
 export type PostDiscoveryMode = 'primary' | 'all' | 'selected';
-export type CreatorGroupDisplayType = 'series' | 'gallery' | 'set';
+export type CreatorGroupDisplayType = 'series' | 'grouping' | 'set';
 export type MediaType = 'image' | 'video' | 'audio';
 export type SourceFileKind = 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
 export type PostBlockType =
@@ -19,7 +19,7 @@ export type PostBlockType =
   | 'embed'
   | 'file'
   | 'link'
-  | 'gallery'
+  | 'grouping'
   | 'carousel'
   | 'pdf_preview'
   | 'html_fragment';
@@ -55,8 +55,7 @@ export interface PostDestination {
 
 export interface Post {
   postId: string;
-  artistId: string;
-  creatorId?: string;
+  creatorId: string;
   groupId?: string;
   authorId?: string;
   title: string;
@@ -77,14 +76,14 @@ export interface Post {
   publishedAt?: string;
 }
 
-export interface Artist {
-  artistId: string;
+export interface Creator {
+  creatorId: string;
   name: string;
   slug: string;
   slugHistory?: string[];
-  defaultProfileTab?: 'feed' | 'galleries';
+  defaultProfileTab?: 'feed' | 'groupings';
   featuredItemIds?: string[];
-  featuredGalleryIds?: string[];
+  featuredGroupingIds?: string[];
   discoverSquareCropEnabled?: boolean;
   defaultAiDisclosure?: AiDisclosure;
   defaultHeavyTopics?: HeavyTopic[];
@@ -92,11 +91,9 @@ export interface Artist {
   sortOrder: number;
   followerCount?: number;
   imageCount?: number;
-  galleryCount?: number;
+  groupingCount?: number;
   createdAt: string;
 }
-
-export type Creator = Artist;
 
 export interface CreatorGroup {
   groupId: string;
@@ -128,10 +125,10 @@ export interface SourceFile {
   updatedAt: string;
 }
 
-export interface Gallery {
-  galleryId: string;
-  artistId: string;
-  artistSlug?: string;
+export interface Grouping {
+  groupingId: string;
+  creatorId: string;
+  creatorSlug?: string;
   title: string;
   slug: string;
   slugHistory?: string[];
@@ -140,7 +137,7 @@ export interface Gallery {
   defaultHeavyTopics?: HeavyTopic[];
   visibility: Visibility;
   releaseVisibility?: 'public' | 'hidden' | 'removed';
-  pairedPremiumGalleryId?: string;
+  pairedPremiumGroupingId?: string;
   purchaseUrl?: string;
   defaultPreviewMaxWidth?: number;
   status: 'draft' | 'published';
@@ -153,8 +150,7 @@ export interface Gallery {
 
 export interface Media {
   mediaId: string;
-  artistId: string;
-  creatorId?: string;
+  creatorId: string;
   sourceFileId?: string;
   mediaType?: MediaType;
   appearsInFeed?: boolean;
@@ -205,9 +201,9 @@ export interface Media {
   createdAt: string;
 }
 
-export interface GalleryMedia {
-  galleryMediaId: string;
-  galleryId: string;
+export interface GroupingMedia {
+  groupingMediaId: string;
+  groupingId: string;
   mediaId: string;
   position: number;
   isPreview?: boolean;
@@ -215,9 +211,9 @@ export interface GalleryMedia {
   createdAt: string;
 }
 
-export interface GalleryMediaView extends Media {
-  galleryId: string;
-  galleryMediaId: string;
+export interface GroupingMediaView extends Media {
+  groupingId: string;
+  groupingMediaId: string;
   position: number;
   isPreview?: boolean;
   previewMaxWidth?: number;
@@ -226,18 +222,18 @@ export interface GalleryMediaView extends Media {
 export interface Comment {
   commentId: string;
   userId: string;
-  authorProfileType: 'user' | 'artist';
+  authorProfileType: 'user' | 'creator';
   authorProfileId: string;
   displayName: string;
-  targetType: 'gallery' | 'image';
+  targetType: 'grouping' | 'image';
   targetId: string;
   body: string;
   hidden: boolean;
   createdAt: string;
 }
 
-export interface ArtistMember {
-  artistId: string;
+export interface CreatorMember {
+  creatorId: string;
   userId: string;
   role: 'owner' | 'manager' | 'editor';
   invitedByUserId?: string;
@@ -246,9 +242,9 @@ export interface ArtistMember {
 
 export interface Favorite {
   userId: string;
-  ownerProfileType?: 'user' | 'artist';
+  ownerProfileType?: 'user' | 'creator';
   ownerProfileId?: string;
-  targetType: 'gallery' | 'image' | 'collection';
+  targetType: 'grouping' | 'image' | 'collection';
   targetId: string;
   visibility?: 'public' | 'private';
   createdAt: string;
@@ -257,7 +253,7 @@ export interface Favorite {
 export interface Collection {
   collectionId: string;
   ownerUserId: string;
-  ownerProfileType?: 'user' | 'artist';
+  ownerProfileType?: 'user' | 'creator';
   ownerProfileId?: string;
   title: string;
   description?: string;
@@ -280,7 +276,7 @@ export interface CollectionImage {
 export interface Follow {
   followId: string;
   followerUserId: string;
-  artistId: string;
+  creatorId: string;
   insertedDate: string;
   notificationsEnabled: boolean;
 }
@@ -331,7 +327,7 @@ export interface AuditEvent {
   auditId: string;
   action: string;
   actorUserId?: string | null;
-  actorRole: 'public' | 'user' | 'artist' | 'admin';
+  actorRole: 'public' | 'user' | 'creator' | 'admin';
   ip?: string;
   detail?: Record<string, unknown>;
   createdAt: string;
@@ -470,14 +466,12 @@ export interface TrendingFeedItem {
   surfaceType?: 'media_surface' | 'post_surface';
   imageId: string;
   assetType: 'image' | 'video' | 'audio';
-  artistId: string;
-  creatorId?: string;
-  artistName: string;
-  creatorName?: string;
+  creatorId: string;
+  creatorName: string;
   postId?: string;
-  galleryId: string;
-  gallerySlug: string;
-  galleryVisibility: 'free' | 'preview';
+  groupingId: string;
+  groupingSlug: string;
+  groupingVisibility: 'free' | 'preview';
   discoverSquareCropEnabled: boolean;
   effectiveContentRating: ContentRating;
   effectiveAiDisclosure: AiDisclosure;

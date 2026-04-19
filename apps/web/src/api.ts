@@ -43,6 +43,21 @@ const handleJson = async (response: Response) => {
   return response.json();
 };
 
+type OwnerProfileType = 'user' | 'creator' | 'artist';
+type FavoriteTargetType = 'grouping' | 'gallery' | 'image' | 'collection';
+
+const normalizeOwnerProfile = (ownerProfile?: { ownerProfileType: OwnerProfileType; ownerProfileId?: string }) =>
+  ownerProfile
+    ? {
+        ...ownerProfile,
+        ownerProfileType: ownerProfile.ownerProfileType === 'artist' ? 'creator' : ownerProfile.ownerProfileType
+      }
+    : undefined;
+
+const normalizeFavoriteTargetType = (targetType: FavoriteTargetType): 'grouping' | 'image' | 'collection' => (
+  targetType === 'gallery' ? 'grouping' : targetType
+);
+
 export const api = {
   async checkUsername(username: string) {
     const response = await fetch(`${API_BASE}/auth/username/check?username=${encodeURIComponent(username)}`);
@@ -61,31 +76,31 @@ export const api = {
     return handleJson(response);
   },
   async getArtists() {
-    const response = await fetch(withDevCacheBypass(`${API_BASE}/artists`));
+    const response = await fetch(withDevCacheBypass(`${API_BASE}/creators`));
     return handleJson(response);
   },
   async getCreators() {
     const response = await fetch(withDevCacheBypass(`${API_BASE}/creators`));
     return handleJson(response);
   },
-  async getLatestGalleries(limit = 12) {
-    const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/latest-galleries?limit=${encodeURIComponent(String(limit))}`));
+  async getLatestGroupings(limit = 12) {
+    const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/latest-groupings?limit=${encodeURIComponent(String(limit))}`));
     return handleJson(response);
   },
-  async getGalleriesByArtist(artistSlug: string, galleryAccessToken?: string) {
+  async getGroupingsByArtist(creator: string, groupingAccessToken?: string) {
     const headers: Record<string, string> = {};
-    if (galleryAccessToken) headers['x-gallery-access-token'] = galleryAccessToken;
-    const response = await fetch(`${API_BASE}/artists/${artistSlug}/galleries`, { headers });
+    if (groupingAccessToken) headers['x-grouping-access-token'] = groupingAccessToken;
+    const response = await fetch(`${API_BASE}/creators/${creator}/groupings`, { headers });
     return handleJson(response);
   },
-  async getGallery(slug: string, galleryAccessToken?: string) {
+  async getGrouping(slug: string, groupingAccessToken?: string) {
     const headers: Record<string, string> = {};
-    if (galleryAccessToken) headers['x-gallery-access-token'] = galleryAccessToken;
-    const response = await fetch(`${API_BASE}/galleries/${slug}`, { headers });
+    if (groupingAccessToken) headers['x-grouping-access-token'] = groupingAccessToken;
+    const response = await fetch(`${API_BASE}/groupings/${slug}`, { headers });
     return handleJson(response);
   },
-  async unlockGallery(slug: string, password: string) {
-    const response = await fetch(`${API_BASE}/galleries/${slug}/unlock`, {
+  async unlockGrouping(slug: string, password: string) {
+    const response = await fetch(`${API_BASE}/groupings/${slug}/unlock`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ password })
@@ -95,35 +110,35 @@ export const api = {
   async getPremiumImages(slug: string, unlockToken: string) {
     const headers: Record<string, string> = { ...(await authHeaders()) };
     if (unlockToken) headers['x-unlock-token'] = unlockToken;
-    const response = await fetch(`${API_BASE}/galleries/${slug}/premium-images`, {
+    const response = await fetch(`${API_BASE}/groupings/${slug}/premium-images`, {
       headers
     });
     return handleJson(response);
   },
-  async getPremiumImagesWithRemember(slug: string, galleryAccessToken: string) {
-    const response = await fetch(`${API_BASE}/galleries/${slug}/premium-images`, {
-      headers: { 'x-gallery-access-token': galleryAccessToken, ...(await authHeaders()) }
+  async getPremiumImagesWithRemember(slug: string, groupingAccessToken: string) {
+    const response = await fetch(`${API_BASE}/groupings/${slug}/premium-images`, {
+      headers: { 'x-grouping-access-token': groupingAccessToken, ...(await authHeaders()) }
     });
     return handleJson(response);
   },
-  async getGalleryComments(slug: string) {
-    const response = await fetch(`${API_BASE}/galleries/${slug}/comments`);
+  async getGroupingComments(slug: string) {
+    const response = await fetch(`${API_BASE}/groupings/${slug}/comments`);
     return handleJson(response);
   },
-  async postGalleryComment(slug: string, body: string) {
-    const response = await fetch(`${API_BASE}/galleries/${slug}/comments`, {
+  async postGroupingComment(slug: string, body: string) {
+    const response = await fetch(`${API_BASE}/groupings/${slug}/comments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ body })
     });
     return handleJson(response);
   },
-  async postGalleryCommentAsProfile(
+  async postGroupingCommentAsProfile(
     slug: string,
     body: string,
-    profile: { authorProfileType: 'user' | 'artist'; authorProfileId?: string }
+    profile: { authorProfileType: 'user' | 'creator'; authorProfileId?: string }
   ) {
-    const response = await fetch(`${API_BASE}/galleries/${slug}/comments`, {
+    const response = await fetch(`${API_BASE}/groupings/${slug}/comments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ body, ...profile })
@@ -168,22 +183,22 @@ export const api = {
     const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-images?${qs.toString()}`));
     return handleJson(response);
   },
-  async getArtistProfile(slug: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/profile`);
+  async getCreatorProfile(slug: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/profile`);
     return handleJson(response);
   },
-  async getArtistFeed(slug: string, cursor?: string, limit = 24) {
+  async getCreatorFeed(slug: string, cursor?: string, limit = 24) {
     const qs = new URLSearchParams();
     qs.set('limit', String(limit));
     if (cursor) qs.set('cursor', cursor);
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/feed?${qs.toString()}`);
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/feed?${qs.toString()}`);
     return handleJson(response);
   },
-  async getArtistFeatured(slug: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/featured`);
+  async getCreatorFeatured(slug: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/featured`);
     return handleJson(response);
   },
-  async getArtistTrendingImages(
+  async getCreatorTrendingImages(
     slug: string,
     period: 'hourly' | 'daily' = 'daily',
     cursor?: string,
@@ -195,7 +210,7 @@ export const api = {
     qs.set('limit', String(limit));
     qs.set('source', source);
     if (cursor) qs.set('cursor', cursor);
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${slug}/trending-images?${qs.toString()}`);
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/trending-images?${qs.toString()}`);
     return handleJson(response);
   },
   async getImageComments(imageId: string) {
@@ -213,7 +228,7 @@ export const api = {
   async postImageCommentAsProfile(
     imageId: string,
     body: string,
-    profile: { authorProfileType: 'user' | 'artist'; authorProfileId?: string }
+    profile: { authorProfileType: 'user' | 'creator'; authorProfileId?: string }
   ) {
     const response = await fetch(`${API_BASE}/images/${imageId}/comments`, {
       method: 'POST',
@@ -223,42 +238,54 @@ export const api = {
     return handleJson(response);
   },
   async favorite(
-    targetType: 'gallery' | 'image' | 'collection',
+    targetType: FavoriteTargetType,
     targetId: string,
     visibility: 'public' | 'private' = 'public',
-    ownerProfile?: { ownerProfileType: 'user' | 'artist'; ownerProfileId?: string }
+    ownerProfile?: { ownerProfileType: OwnerProfileType; ownerProfileId?: string }
   ) {
+    const normalizedOwnerProfile = normalizeOwnerProfile(ownerProfile);
     const response = await fetch(`${API_BASE}/favorites`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-      body: JSON.stringify({ targetType, targetId, visibility, ...ownerProfile })
+      body: JSON.stringify({
+        targetType: normalizeFavoriteTargetType(targetType),
+        targetId,
+        visibility,
+        ...normalizedOwnerProfile
+      })
     });
     return handleJson(response);
   },
   async unfavorite(
-    targetType: 'gallery' | 'image' | 'collection',
+    targetType: FavoriteTargetType,
     targetId: string,
-    ownerProfile?: { ownerProfileType: 'user' | 'artist'; ownerProfileId?: string }
+    ownerProfile?: { ownerProfileType: OwnerProfileType; ownerProfileId?: string }
   ) {
+    const normalizedOwnerProfile = normalizeOwnerProfile(ownerProfile);
     const response = await fetch(`${API_BASE}/favorites`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-      body: JSON.stringify({ targetType, targetId, ...ownerProfile })
+      body: JSON.stringify({
+        targetType: normalizeFavoriteTargetType(targetType),
+        targetId,
+        ...normalizedOwnerProfile
+      })
     });
     return handleJson(response);
   },
-  async myFavorites(ownerProfile?: { ownerProfileType: 'user' | 'artist'; ownerProfileId?: string }) {
+  async myFavorites(ownerProfile?: { ownerProfileType: OwnerProfileType; ownerProfileId?: string }) {
     const page = await this.myFavoritesPage(ownerProfile);
     return page.items;
   },
   async myFavoritesPage(
-    ownerProfile?: { ownerProfileType: 'user' | 'artist'; ownerProfileId?: string },
+    ownerProfile?: { ownerProfileType: OwnerProfileType; ownerProfileId?: string },
     cursor?: string,
     limit = 24
   ) {
+    const normalizedOwnerProfile = normalizeOwnerProfile(ownerProfile);
     const qs = new URLSearchParams();
-    if (ownerProfile?.ownerProfileType) qs.set('ownerProfileType', ownerProfile.ownerProfileType);
-    if (ownerProfile?.ownerProfileId) qs.set('ownerProfileId', ownerProfile.ownerProfileId);
+    if (normalizedOwnerProfile?.ownerProfileType) qs.set('ownerProfileType', normalizedOwnerProfile.ownerProfileType);
+    if (normalizedOwnerProfile?.ownerProfileId) qs.set('ownerProfileId', normalizedOwnerProfile.ownerProfileId);
     qs.set('limit', String(limit));
     if (cursor) qs.set('cursor', cursor);
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
@@ -271,16 +298,16 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/me/follows`);
     return handleJson(response);
   },
-  async followArtist(artistId: string, notificationsEnabled = false) {
-    const response = await fetch(`${API_BASE}/artists/${artistId}/follow`, {
+  async followCreator(creator: string, notificationsEnabled = false) {
+    const response = await fetch(`${API_BASE}/creators/${creator}/follow`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ notificationsEnabled })
     });
     return handleJson(response);
   },
-  async unfollowArtist(artistId: string) {
-    const response = await fetch(`${API_BASE}/artists/${artistId}/follow`, {
+  async unfollowCreator(creator: string) {
+    const response = await fetch(`${API_BASE}/creators/${creator}/follow`, {
       method: 'DELETE',
       headers: await authHeaders()
     });
@@ -299,18 +326,19 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/collections/${collectionId}`);
     return handleJson(response);
   },
-  async myCollections(ownerProfile?: { ownerProfileType: 'user' | 'artist'; ownerProfileId?: string }) {
+  async myCollections(ownerProfile?: { ownerProfileType: OwnerProfileType; ownerProfileId?: string }) {
     const page = await this.myCollectionsPage(ownerProfile);
     return page.items;
   },
   async myCollectionsPage(
-    ownerProfile?: { ownerProfileType: 'user' | 'artist'; ownerProfileId?: string },
+    ownerProfile?: { ownerProfileType: OwnerProfileType; ownerProfileId?: string },
     cursor?: string,
     limit = 24
   ) {
+    const normalizedOwnerProfile = normalizeOwnerProfile(ownerProfile);
     const qs = new URLSearchParams();
-    if (ownerProfile?.ownerProfileType) qs.set('ownerProfileType', ownerProfile.ownerProfileType);
-    if (ownerProfile?.ownerProfileId) qs.set('ownerProfileId', ownerProfile.ownerProfileId);
+    if (normalizedOwnerProfile?.ownerProfileType) qs.set('ownerProfileType', normalizedOwnerProfile.ownerProfileType);
+    if (normalizedOwnerProfile?.ownerProfileId) qs.set('ownerProfileId', normalizedOwnerProfile.ownerProfileId);
     qs.set('limit', String(limit));
     if (cursor) qs.set('cursor', cursor);
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
@@ -324,13 +352,17 @@ export const api = {
     description?: string;
     visibility?: 'public' | 'private';
     coverImageId?: string;
-    ownerProfileType?: 'user' | 'artist';
+    ownerProfileType?: OwnerProfileType;
     ownerProfileId?: string;
   }) {
+    const normalizedPayload = {
+      ...payload,
+      ownerProfileType: payload.ownerProfileType === 'artist' ? 'creator' : payload.ownerProfileType
+    };
     const response = await fetch(`${API_BASE}/me/collections`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(normalizedPayload)
     });
     return handleJson(response);
   },
@@ -409,27 +441,30 @@ export const api = {
     myProfileInFlight = null;
     return handleJson(response);
   },
-  async getMyArtists() {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/me/artists`);
+  async getMyCreators() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/me/creators`);
     return handleJson(response);
   },
-  async getArtistPosts(artistSlug: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/artists/${encodeURIComponent(artistSlug)}/posts`);
+  async getMyArtists() {
+    return this.getMyCreators();
+  },
+  async getCreatorPosts(creator: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${encodeURIComponent(creator)}/posts`);
     return handleJson(response);
   },
   async getPostBySlug(slug: string) {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/posts/${encodeURIComponent(slug)}`);
     return handleJson(response);
   },
-  async adminListPosts(artistId?: string) {
+  async studioListPosts(creatorId?: string) {
     const qs = new URLSearchParams();
-    if (artistId) qs.set('artistId', artistId);
+    if (creatorId) qs.set('creatorId', creatorId);
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/posts${suffix}`);
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/posts${suffix}`);
     return handleJson(response);
   },
-  async adminCreatePost(payload: {
-    artistId: string;
+  async studioCreatePost(payload: {
+    creator: string;
     title: string;
     slug?: string;
     summary?: string;
@@ -441,14 +476,14 @@ export const api = {
     destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
     metadata?: Record<string, string>;
   }) {
-    const response = await fetch(`${API_BASE}/admin/posts`, {
+    const response = await fetch(`${API_BASE}/studio/posts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
   },
-  async adminUpdatePost(postId: string, payload: {
+  async studioUpdatePost(postId: string, payload: {
     title?: string;
     slug?: string;
     summary?: string;
@@ -460,40 +495,40 @@ export const api = {
     destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
     metadata?: Record<string, string>;
   }) {
-    const response = await fetch(`${API_BASE}/admin/posts/${encodeURIComponent(postId)}`, {
+    const response = await fetch(`${API_BASE}/studio/posts/${encodeURIComponent(postId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
   },
-  async adminDeletePost(postId: string) {
-    const response = await fetch(`${API_BASE}/admin/posts/${encodeURIComponent(postId)}`, {
+  async studioDeletePost(postId: string) {
+    const response = await fetch(`${API_BASE}/studio/posts/${encodeURIComponent(postId)}`, {
       method: 'DELETE',
       headers: await authHeaders()
     });
     return handleJson(response);
   },
-  async adminListArtistMembers(artistId: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/artists/${encodeURIComponent(artistId)}/members`);
+  async studioListCreatorMembers(creator: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/creators/${encodeURIComponent(creator)}/members`);
     return handleJson(response);
   },
-  async adminAddArtistMember(artistId: string, payload: { userId: string; role?: 'owner' | 'editor' | 'manager' }) {
-    const response = await fetch(`${API_BASE}/admin/artists/${encodeURIComponent(artistId)}/members`, {
+  async studioAddCreatorMember(creator: string, payload: { userId: string; role?: 'owner' | 'editor' | 'manager' }) {
+    const response = await fetch(`${API_BASE}/studio/creators/${encodeURIComponent(creator)}/members`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
   },
-  async adminRemoveArtistMember(artistId: string, userId: string) {
-    const response = await fetch(`${API_BASE}/admin/artists/${encodeURIComponent(artistId)}/members/${encodeURIComponent(userId)}`, {
+  async studioRemoveCreatorMember(creator: string, userId: string) {
+    const response = await fetch(`${API_BASE}/studio/creators/${encodeURIComponent(creator)}/members/${encodeURIComponent(userId)}`, {
       method: 'DELETE',
       headers: await authHeaders()
     });
     return handleJson(response);
   },
-  async updateArtist(artistId: string, payload: {
+  async studioUpdateCreator(creator: string, payload: {
     name?: string;
     slug?: string;
     status?: 'active' | 'inactive';
@@ -502,30 +537,37 @@ export const api = {
     defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
     defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
   }) {
-    const response = await fetch(`${API_BASE}/admin/artists/${artistId}`, {
+    const response = await fetch(`${API_BASE}/studio/creators/${creator}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
   },
-  async adminListArtists() {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/artists`);
-    return handleJson(response);
+  async updateArtist(creatorId: string, payload: {
+    name?: string;
+    slug?: string;
+    status?: 'active' | 'inactive';
+    sortOrder?: number;
+    discoverSquareCropEnabled?: boolean;
+    defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+  }) {
+    return this.studioUpdateCreator(creatorId, payload);
   },
-  async adminListCreators() {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/creators`);
+  async studioListCreators() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/creators`);
     return handleJson(response);
   },
   async studioMetrics() {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/metrics`);
     return handleJson(response);
   },
-  async adminListFiles() {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/files`);
+  async studioListFiles() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/files`);
     return handleJson(response);
   },
-  async adminCreateFile(payload: {
+  async studioCreateFile(payload: {
     creatorId: string;
     sourceKind?: 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
     mimeType?: string;
@@ -533,18 +575,21 @@ export const api = {
     originalFilename?: string;
     sizeBytes?: number;
   }) {
-    const response = await fetch(`${API_BASE}/admin/files`, {
+    const response = await fetch(`${API_BASE}/studio/files`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
   },
-  async adminListGalleries() {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/galleries`);
+  async studioListGroupings() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/groupings`);
     return handleJson(response);
   },
-  async adminCreateArtist(payload: {
+  async getLatestGalleries(limit = 12) {
+    return this.getLatestGroupings(limit);
+  },
+  async studioCreateCreator(payload: {
     name: string;
     slug: string;
     status?: 'active' | 'inactive';
@@ -553,22 +598,33 @@ export const api = {
     defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
     defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
   }) {
-    const response = await fetch(`${API_BASE}/admin/artists`, {
+    const response = await fetch(`${API_BASE}/studio/creators`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
   },
-  async adminCreateGallery(payload: {
-    artistId: string;
-    artistSlug?: string;
+  async studioListChallenges() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/challenges`);
+    return handleJson(response);
+  },
+  async studioListEntries() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/entries`);
+    return handleJson(response);
+  },
+  async studioListUsers() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/users`);
+    return handleJson(response);
+  },
+  async studioCreateGrouping(payload: {
+    creatorId: string;
     title: string;
     slug: string;
     visibility?: 'free' | 'preview' | 'premium';
     status?: 'draft' | 'published';
     coverImageId?: string;
-    pairedPremiumGalleryId?: string;
+    pairedPremiumGroupingId?: string;
     purchaseUrl?: string;
     premiumPassword?: string;
     discoverSquareCropEnabled?: boolean;
@@ -576,7 +632,7 @@ export const api = {
     defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
     defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
   }) {
-    const response = await fetch(`${API_BASE}/admin/galleries`, {
+    const response = await fetch(`${API_BASE}/studio/groupings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
@@ -584,15 +640,14 @@ export const api = {
     return handleJson(response);
   },
 
-  async adminUpdateGallery(galleryId: string, payload: {
-    artistId?: string;
-    artistSlug?: string;
+  async studioUpdateGrouping(groupingId: string, payload: {
+    creatorId?: string;
     title?: string;
     slug?: string;
     visibility?: 'free' | 'preview' | 'premium';
     status?: 'draft' | 'published';
     coverImageId?: string;
-    pairedPremiumGalleryId?: string;
+    pairedPremiumGroupingId?: string;
     purchaseUrl?: string;
     premiumPassword?: string;
     discoverSquareCropEnabled?: boolean;
@@ -600,19 +655,19 @@ export const api = {
     defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
     defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
   }) {
-    const response = await fetch(`${API_BASE}/admin/galleries/${encodeURIComponent(galleryId)}`, {
+    const response = await fetch(`${API_BASE}/studio/groupings/${encodeURIComponent(groupingId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
   },
-  async adminListGalleryMedia(galleryId: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/galleries/${encodeURIComponent(galleryId)}/images`);
+  async studioListGroupingMedia(groupingId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/groupings/${encodeURIComponent(groupingId)}/media`);
     return handleJson(response);
   },
-  async adminCreateMedia(payload: {
-    galleryId: string;
+  async studioCreateMedia(payload: {
+    groupingId: string;
     assetType?: 'image' | 'video';
     title?: string;
     originalFilename?: string;
@@ -635,7 +690,7 @@ export const api = {
     previewMaxWidth?: number;
     squareCrop?: { x: number; y: number; size: number };
   }) {
-    const response = await fetch(`${API_BASE}/admin/images`, {
+    const response = await fetch(`${API_BASE}/studio/media`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
@@ -643,15 +698,15 @@ export const api = {
     return handleJson(response);
   },
 
-  async adminGenerateMediaRenditions(galleryId: string, imageId: string, payload?: { squareCrop?: { x: number; y: number; size: number } }) {
-    const response = await fetch(`${API_BASE}/admin/images/${encodeURIComponent(galleryId)}/${encodeURIComponent(imageId)}/renditions`, {
+  async studioGenerateMediaRenditions(groupingId: string, imageId: string, payload?: { squareCrop?: { x: number; y: number; size: number } }) {
+    const response = await fetch(`${API_BASE}/studio/groupings/${encodeURIComponent(groupingId)}/media/${encodeURIComponent(imageId)}/renditions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload || {})
     });
     return handleJson(response);
   },
-  async adminUpdateMedia(galleryId: string, imageId: string, payload: {
+  async studioUpdateMedia(groupingId: string, imageId: string, payload: {
     assetType?: 'image' | 'video';
     title?: string;
     originalFilename?: string;
@@ -674,95 +729,153 @@ export const api = {
     previewMaxWidth?: number;
     squareCrop?: { x: number; y: number; size: number };
   }) {
-    const response = await fetch(`${API_BASE}/admin/images/${encodeURIComponent(galleryId)}/${encodeURIComponent(imageId)}`, {
+    const response = await fetch(`${API_BASE}/studio/groupings/${encodeURIComponent(groupingId)}/media/${encodeURIComponent(imageId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
   },
-  async adminDeleteArtist(artistId: string) {
-    const response = await fetch(`${API_BASE}/admin/artists/${encodeURIComponent(artistId)}`, {
+  async studioDeleteCreator(creator: string) {
+    const response = await fetch(`${API_BASE}/studio/creators/${encodeURIComponent(creator)}`, {
       method: 'DELETE',
       headers: await authHeaders()
     });
     return handleJson(response);
   },
-  async adminDeleteGallery(galleryId: string) {
-    const response = await fetch(`${API_BASE}/admin/galleries/${encodeURIComponent(galleryId)}`, {
+  async studioDeleteGrouping(groupingId: string) {
+    const response = await fetch(`${API_BASE}/studio/groupings/${encodeURIComponent(groupingId)}`, {
       method: 'DELETE',
       headers: await authHeaders()
     });
     return handleJson(response);
   },
-  async adminDeleteMedia(galleryId: string, imageId: string, sortOrder = 0) {
-    const response = await fetch(`${API_BASE}/admin/images/${encodeURIComponent(galleryId)}/${encodeURIComponent(imageId)}?sortOrder=${encodeURIComponent(String(sortOrder))}`, {
+  async studioDeleteMedia(groupingId: string, imageId: string, sortOrder = 0) {
+    const response = await fetch(`${API_BASE}/studio/groupings/${encodeURIComponent(groupingId)}/media/${encodeURIComponent(imageId)}?sortOrder=${encodeURIComponent(String(sortOrder))}`, {
       method: 'DELETE',
       headers: await authHeaders()
     });
     return handleJson(response);
   },
 
-  async adminUpdateSiteSettings(payload: { siteName?: string; theme?: 'ubeeq' | 'sand' | 'forest' | 'slate'; logoKey?: string }) {
-    const response = await fetch(`${API_BASE}/admin/site-settings`, {
+  async studioUpdateSiteSettings(payload: { siteName?: string; theme?: 'ubeeq' | 'sand' | 'forest' | 'slate'; logoKey?: string }) {
+    const response = await fetch(`${API_BASE}/studio/settings/site`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
   },
-  async adminCreateSiteSettingsLogoUploadUrl(contentType: string) {
-    const response = await fetch(`${API_BASE}/admin/site-settings/logo-upload-url`, {
+  async studioCreateSiteSettingsLogoUploadUrl(contentType: string) {
+    const response = await fetch(`${API_BASE}/studio/settings/site/logo-upload-url`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ contentType })
     });
     return handleJson(response);
   },
-  async adminSetCommentStatus(commentId: string, payload: { hidden: boolean }) {
-    const response = await fetch(`${API_BASE}/admin/comments/${encodeURIComponent(commentId)}`, {
+  async studioSetCommentStatus(commentId: string, payload: { hidden: boolean }) {
+    const response = await fetch(`${API_BASE}/studio/moderation/comments/${encodeURIComponent(commentId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
     return handleJson(response);
   },
-  async adminDeleteComment(commentId: string) {
-    const response = await fetch(`${API_BASE}/admin/comments/${encodeURIComponent(commentId)}`, {
+  async studioDeleteComment(commentId: string) {
+    const response = await fetch(`${API_BASE}/studio/moderation/comments/${encodeURIComponent(commentId)}`, {
       method: 'DELETE',
       headers: await authHeaders()
     });
     return handleJson(response);
   },
-  async adminBlockUser(userId: string, reason?: string) {
-    const response = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(userId)}/block`, {
+  async studioBlockUser(userId: string, reason?: string) {
+    const response = await fetch(`${API_BASE}/studio/moderation/users/${encodeURIComponent(userId)}/block`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ reason })
     });
     return handleJson(response);
   },
-  async adminUnblockUser(userId: string) {
-    const response = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(userId)}/block`, {
+  async studioUnblockUser(userId: string) {
+    const response = await fetch(`${API_BASE}/studio/moderation/users/${encodeURIComponent(userId)}/block`, {
       method: 'DELETE',
       headers: await authHeaders()
     });
     return handleJson(response);
   },
-  async adminGetAudit(limit = 50, cursor?: string, filters?: { action?: string; actorUserId?: string }) {
+  async studioGetAudit(limit = 50, cursor?: string, filters?: { action?: string; actorUserId?: string }) {
     const qs = new URLSearchParams();
     qs.set('limit', String(limit));
     if (cursor) qs.set('cursor', cursor);
     if (filters?.action) qs.set('action', filters.action);
     if (filters?.actorUserId) qs.set('actorUserId', filters.actorUserId);
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/admin/audit?${qs.toString()}`);
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/operations/audit?${qs.toString()}`);
     return handleJson(response) as Promise<{ items: unknown[]; nextCursor?: string }>;
   },
-  async adminRebuildTrending() {
-    const response = await fetch(`${API_BASE}/admin/trending/rebuild`, {
+  async studioRebuildTrending() {
+    const response = await fetch(`${API_BASE}/studio/operations/trending/rebuild`, {
       method: 'POST',
       headers: await authHeaders()
     });
     return handleJson(response);
+  },
+  async followArtist(creatorId: string, notificationsEnabled = false) {
+    return this.followCreator(creatorId, notificationsEnabled);
+  },
+  async unfollowArtist(creatorId: string) {
+    return this.unfollowCreator(creatorId);
+  },
+  async getGallery(slug: string, groupingAccessToken?: string) {
+    return this.getGrouping(slug, groupingAccessToken);
+  },
+  async unlockGallery(slug: string, password: string) {
+    return this.unlockGrouping(slug, password);
+  },
+  async getGalleryComments(slug: string) {
+    return this.getGroupingComments(slug);
+  },
+  async postGalleryCommentAsProfile(
+    slug: string,
+    body: string,
+    profile: { authorProfileType: 'user' | 'creator' | 'artist'; authorProfileId?: string }
+  ) {
+    return this.postGroupingCommentAsProfile(slug, body, {
+      ...profile,
+      authorProfileType: profile.authorProfileType === 'artist' ? 'creator' : profile.authorProfileType
+    });
+  },
+  async adminListCreators() {
+    return this.studioListCreators();
+  },
+  async adminListPosts() {
+    return this.studioListPosts();
+  },
+  async adminListGalleries() {
+    return this.studioListGroupings();
+  },
+  async adminListFiles() {
+    return this.studioListFiles();
+  },
+  async adminCreateArtist(payload: {
+    name: string;
+    slug: string;
+    status?: 'active' | 'inactive';
+    sortOrder?: number;
+    discoverSquareCropEnabled?: boolean;
+    defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
+    defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+  }) {
+    return this.studioCreateCreator(payload);
+  },
+  async adminCreateFile(payload: {
+    creatorId: string;
+    sourceKind?: 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
+    mimeType?: string;
+    storageKey?: string;
+    originalFilename?: string;
+    sizeBytes?: number;
+  }) {
+    return this.studioCreateFile(payload);
   },
 };

@@ -1,11 +1,11 @@
 import { randomUUID } from 'crypto';
 import type {
-  Artist,
-  ArtistMember,
-  Gallery,
+  Creator,
+  CreatorMember,
+  Grouping,
   Media,
-  GalleryMedia,
-  GalleryMediaView,
+  GroupingMedia,
+  GroupingMediaView,
   Comment,
   Favorite,
   BlockedUser,
@@ -19,6 +19,8 @@ import type {
   Post,
   TrendingFeedItem,
   TrendingPeriod,
+  SourceFile,
+  CreatorGroup,
   UserIdentity,
   UserExternalLink,
   UserBadge,
@@ -30,22 +32,10 @@ import type {
   PlatformRole,
   UserCapabilities
 } from './domain';
-import type { DataStore } from './store';
+import type { DataStore, TrendingFeedQueryOptions } from './store';
+import { capabilitiesForRole } from './roleHelpers';
 
 export class InMemoryStore implements DataStore {
-  private static capabilitiesForRole(role: PlatformRole): UserCapabilities {
-    return {
-      canBrowse: true,
-      canComment: true,
-      canVote: true,
-      canSubmitToContexts: role === 'contributor' || role === 'creator' || role === 'admin',
-      canPublishPosts: role === 'creator' || role === 'admin',
-      canManageGroups: role === 'creator' || role === 'admin',
-      canModerate: role === 'admin',
-      canAwardPrizes: role === 'admin'
-    };
-  }
-
   private getOrCreateIdentity(userId: string): UserIdentity {
     const existing = this.userIdentities.find((item) => item.userId === userId);
     if (existing) return existing;
@@ -54,7 +44,7 @@ export class InMemoryStore implements DataStore {
       userId,
       role: 'user',
       isBeeker: false,
-      capabilities: InMemoryStore.capabilitiesForRole('user'),
+      capabilities: capabilitiesForRole('user'),
       createdAt: now,
       updatedAt: now
     };
@@ -68,16 +58,18 @@ export class InMemoryStore implements DataStore {
     theme: 'ubeeq',
     updatedAt: new Date().toISOString()
   };
-  artists: Artist[] = [];
-  galleries: Gallery[] = [];
+  creators: Creator[] = [];
+  groupings: Grouping[] = [];
   media: Media[] = [];
   posts: Post[] = [];
-  galleryMedia: GalleryMedia[] = [];
+  sourceFiles: SourceFile[] = [];
+  creatorGroups: CreatorGroup[] = [];
+  groupingMedia: GroupingMedia[] = [];
   comments: Comment[] = [];
   favorites: Favorite[] = [];
   blockedUsers: BlockedUser[] = [];
-  galleryAccess: Array<{ userId: string; galleryId: string }> = [];
-  artistMembers: ArtistMember[] = [];
+  groupingAccess: Array<{ userId: string; groupingId: string }> = [];
+  creatorMembers: CreatorMember[] = [];
   usernames: Array<{ normalized: string; username: string; email: string }> = [];
   userProfiles: UserProfile[] = [];
   collections: Collection[] = [];
@@ -102,28 +94,30 @@ export class InMemoryStore implements DataStore {
   async getSiteSettings(): Promise<SiteSettings> { return this.siteSettings; }
   async updateSiteSettings(settings: SiteSettings): Promise<void> { this.siteSettings = settings; }
 
-  async listArtists(): Promise<Artist[]> { return this.artists; }
-  async listAllGalleries(): Promise<Gallery[]> { return this.galleries; }
+  async listCreators(): Promise<Creator[]> { return this.creators; }
+  async listAllGroupings(): Promise<Grouping[]> { return this.groupings; }
+  async listAllSourceFiles(): Promise<SourceFile[]> { return this.sourceFiles; }
+  async listAllCreatorGroups(): Promise<CreatorGroup[]> { return this.creatorGroups; }
 
-  async listGalleriesByArtistSlug(artistSlug: string): Promise<Gallery[]> {
-    return this.galleries.filter((g) => g.artistSlug === artistSlug && g.status === 'published');
+  async listGroupingsByCreatorSlug(creator: string): Promise<Grouping[]> {
+    return this.groupings.filter((g) => g.creatorId === creator && g.status === 'published');
   }
 
-  async getGalleryBySlug(slug: string): Promise<Gallery | null> {
-    return this.galleries.find((g) => (g.slugHistory || [g.slug]).includes(slug)) || null;
+  async getGroupingBySlug(slug: string): Promise<Grouping | null> {
+    return this.groupings.find((g) => (g.slugHistory || [g.slug]).includes(slug)) || null;
   }
 
-  async getMediaByGallery(galleryId: string): Promise<GalleryMediaView[]> {
-    return this.galleryMedia
-      .filter((item) => item.galleryId === galleryId)
+  async getMediaByGrouping(groupingId: string): Promise<GroupingMediaView[]> {
+    return this.groupingMedia
+      .filter((item) => item.groupingId === groupingId)
       .sort((a, b) => a.position - b.position)
       .map((placement) => {
         const media = this.media.find((item) => item.mediaId === placement.mediaId);
         if (!media) return null;
-        const view: GalleryMediaView = {
+        const view: GroupingMediaView = {
           ...media,
-          galleryId,
-          galleryMediaId: placement.galleryMediaId,
+          groupingId,
+          groupingMediaId: placement.groupingMediaId,
           position: placement.position
         };
         if (placement.isPreview !== undefined) {
@@ -134,21 +128,21 @@ export class InMemoryStore implements DataStore {
         }
         return view;
       })
-      .filter((item): item is GalleryMediaView => Boolean(item));
+      .filter((item): item is GroupingMediaView => Boolean(item));
   }
 
-  async listMediaByArtist(artistId: string): Promise<Media[]> {
-    return this.media.filter((item) => item.artistId === artistId);
+  async listMediaByCreator(creator: string): Promise<Media[]> {
+    return this.media.filter((item) => item.creatorId === creator);
   }
 
-  async listPostsByArtistSlug(artistSlug: string): Promise<Post[]> {
-    const artist = this.artists.find((item) => item.slug === artistSlug || (item.slugHistory || []).includes(artistSlug));
-    if (!artist) return [];
-    return this.posts.filter((item) => item.artistId === artist.artistId);
+  async listPostsByCreatorSlug(creator: string): Promise<Post[]> {
+    const creatorProfile = this.creators.find((item) => item.slug === creator || (item.slugHistory || []).includes(creator));
+    if (!creatorProfile) return [];
+    return this.posts.filter((item) => item.creatorId === creatorProfile.creatorId);
   }
 
-  async listPostsByArtistId(artistId: string): Promise<Post[]> {
-    return this.posts.filter((item) => item.artistId === artistId);
+  async listPostsByCreatorId(creator: string): Promise<Post[]> {
+    return this.posts.filter((item) => item.creatorId === creator);
   }
 
   async listAllPosts(): Promise<Post[]> {
@@ -163,26 +157,26 @@ export class InMemoryStore implements DataStore {
     return this.posts.find((item) => item.postId === postId) || null;
   }
 
-  async listMediaGalleryPlacements(mediaId: string): Promise<Array<{
-    galleryMediaId: string;
-    galleryId: string;
+  async listMediaGroupingPlacements(mediaId: string): Promise<Array<{
+    groupingMediaId: string;
+    groupingId: string;
     mediaId: string;
     position: number;
     isPreview?: boolean;
     previewMaxWidth?: number;
     createdAt: string;
   }>> {
-    return this.galleryMedia
+    return this.groupingMedia
       .filter((item) => item.mediaId === mediaId)
       .sort((a, b) => a.position - b.position);
   }
 
-  async createArtist(artist: Artist): Promise<void> { this.artists.push(artist); }
-  async createGallery(gallery: Gallery): Promise<void> { this.galleries.push(gallery); }
+  async createCreator(creator: Creator): Promise<void> { this.creators.push(creator); }
+  async createGrouping(grouping: Grouping): Promise<void> { this.groupings.push(grouping); }
 
   async createMedia(
     media: Media,
-    galleryId?: string,
+    groupingId?: string,
     position = 0,
     placement?: {
       isPreview?: boolean;
@@ -194,10 +188,10 @@ export class InMemoryStore implements DataStore {
       ...media,
       appearsInFeed: media.appearsInFeed !== false
     });
-    if (galleryId) {
-      this.galleryMedia.push({
-        galleryMediaId: randomUUID(),
-        galleryId,
+    if (groupingId) {
+      this.groupingMedia.push({
+        groupingMediaId: randomUUID(),
+        groupingId,
         mediaId: media.mediaId,
         position,
         isPreview: placement?.isPreview,
@@ -207,8 +201,8 @@ export class InMemoryStore implements DataStore {
     }
   }
 
-  async addMediaToGallery(
-    galleryId: string,
+  async addMediaToGrouping(
+    groupingId: string,
     mediaId: string,
     position: number,
     placement?: {
@@ -218,7 +212,7 @@ export class InMemoryStore implements DataStore {
   ): Promise<void> {
     const media = this.media.find((item) => item.mediaId === mediaId);
     if (!media) return;
-    const existing = this.galleryMedia.find((item) => item.galleryId === galleryId && item.mediaId === mediaId);
+    const existing = this.groupingMedia.find((item) => item.groupingId === groupingId && item.mediaId === mediaId);
     if (existing) {
       existing.position = position;
       if (placement?.isPreview !== undefined) {
@@ -229,9 +223,9 @@ export class InMemoryStore implements DataStore {
       }
       return;
     }
-    this.galleryMedia.push({
-      galleryMediaId: randomUUID(),
-      galleryId,
+    this.groupingMedia.push({
+      groupingMediaId: randomUUID(),
+      groupingId,
       mediaId,
       position,
       isPreview: placement?.isPreview,
@@ -240,12 +234,12 @@ export class InMemoryStore implements DataStore {
     });
   }
 
-  async updateArtist(artist: Artist): Promise<void> {
-    this.artists = this.artists.map((item) => (item.artistId === artist.artistId ? artist : item));
+  async updateCreator(creator: Creator): Promise<void> {
+    this.creators = this.creators.map((item) => (item.creatorId === creator.creatorId ? creator : item));
   }
 
-  async updateGallery(gallery: Gallery): Promise<void> {
-    this.galleries = this.galleries.map((item) => (item.galleryId === gallery.galleryId ? gallery : item));
+  async updateGrouping(grouping: Grouping): Promise<void> {
+    this.groupings = this.groupings.map((item) => (item.groupingId === grouping.groupingId ? grouping : item));
   }
 
   async updateMedia(media: Media): Promise<void> {
@@ -265,30 +259,30 @@ export class InMemoryStore implements DataStore {
     this.posts = this.posts.filter((item) => item.postId !== postId);
   }
 
-  async moveMediaInGallery(galleryId: string, mediaId: string, position: number): Promise<void> {
-    this.galleryMedia = this.galleryMedia.map((item) => (
-      item.galleryId === galleryId && item.mediaId === mediaId
+  async moveMediaInGrouping(groupingId: string, mediaId: string, position: number): Promise<void> {
+    this.groupingMedia = this.groupingMedia.map((item) => (
+      item.groupingId === groupingId && item.mediaId === mediaId
         ? { ...item, position }
         : item
     ));
   }
 
-  async deleteArtist(artistId: string): Promise<void> { this.artists = this.artists.filter((a) => a.artistId !== artistId); }
+  async deleteCreator(creator: string): Promise<void> { this.creators = this.creators.filter((a) => a.creatorId !== creator); }
 
-  async deleteGallery(galleryId: string): Promise<void> {
-    this.galleries = this.galleries.filter((g) => g.galleryId !== galleryId);
-    const removedMediaIds = new Set(this.galleryMedia.filter((item) => item.galleryId === galleryId).map((item) => item.mediaId));
-    this.galleryMedia = this.galleryMedia.filter((item) => item.galleryId !== galleryId);
+  async deleteGrouping(groupingId: string): Promise<void> {
+    this.groupings = this.groupings.filter((g) => g.groupingId !== groupingId);
+    const removedMediaIds = new Set(this.groupingMedia.filter((item) => item.groupingId === groupingId).map((item) => item.mediaId));
+    this.groupingMedia = this.groupingMedia.filter((item) => item.groupingId !== groupingId);
     this.media = this.media.filter((item) => (
       !removedMediaIds.has(item.mediaId)
-      || this.galleryMedia.some((p) => p.mediaId === item.mediaId)
+      || this.groupingMedia.some((p) => p.mediaId === item.mediaId)
       || item.appearsInFeed !== false
     ));
   }
 
-  async deleteMediaFromGallery(galleryId: string, mediaId: string): Promise<void> {
-    this.galleryMedia = this.galleryMedia.filter((item) => !(item.galleryId === galleryId && item.mediaId === mediaId));
-    if (!this.galleryMedia.some((item) => item.mediaId === mediaId)) {
+  async deleteMediaFromGrouping(groupingId: string, mediaId: string): Promise<void> {
+    this.groupingMedia = this.groupingMedia.filter((item) => !(item.groupingId === groupingId && item.mediaId === mediaId));
+    if (!this.groupingMedia.some((item) => item.mediaId === mediaId)) {
       const media = this.media.find((item) => item.mediaId === mediaId);
       if (media?.appearsInFeed === false) {
         this.media = this.media.filter((item) => item.mediaId !== mediaId);
@@ -296,26 +290,26 @@ export class InMemoryStore implements DataStore {
     }
   }
 
-  async addArtistMember(member: ArtistMember): Promise<void> {
-    this.artistMembers = this.artistMembers.filter((item) => !(item.artistId === member.artistId && item.userId === member.userId));
-    this.artistMembers.push(member);
+  async addCreatorMember(member: CreatorMember): Promise<void> {
+    this.creatorMembers = this.creatorMembers.filter((item) => !(item.creatorId === member.creatorId && item.userId === member.userId));
+    this.creatorMembers.push(member);
   }
 
-  async removeArtistMember(artistId: string, userId: string): Promise<void> {
-    this.artistMembers = this.artistMembers.filter((item) => !(item.artistId === artistId && item.userId === userId));
+  async removeCreatorMember(creatorId: string, userId: string): Promise<void> {
+    this.creatorMembers = this.creatorMembers.filter((item) => !(item.creatorId === creatorId && item.userId === userId));
   }
 
-  async listArtistMembers(artistId: string): Promise<ArtistMember[]> {
-    return this.artistMembers.filter((item) => item.artistId === artistId);
+  async listCreatorMembers(creatorId: string): Promise<CreatorMember[]> {
+    return this.creatorMembers.filter((item) => item.creatorId === creatorId);
   }
 
-  async listArtistsByUserId(userId: string): Promise<Artist[]> {
-    const ids = new Set(this.artistMembers.filter((item) => item.userId === userId).map((item) => item.artistId));
-    return this.artists.filter((artist) => ids.has(artist.artistId));
+  async listCreatorsByUserId(userId: string): Promise<Creator[]> {
+    const ids = new Set(this.creatorMembers.filter((item) => item.userId === userId).map((item) => item.creatorId));
+    return this.creators.filter((creator) => ids.has(creator.creatorId));
   }
 
-  async hasArtistAccess(userId: string, artistId: string): Promise<boolean> {
-    return this.artistMembers.some((item) => item.userId === userId && item.artistId === artistId);
+  async hasCreatorAccess(userId: string, creatorId: string): Promise<boolean> {
+    return this.creatorMembers.some((item) => item.userId === userId && item.creatorId === creatorId);
   }
 
   async listPublicCollections(limit = 24, cursor?: string): Promise<{ items: Collection[]; nextCursor?: string }> {
@@ -328,7 +322,7 @@ export class InMemoryStore implements DataStore {
     return { items, nextCursor };
   }
 
-  async listPublicCollectionsByProfile(profileType: 'user' | 'artist', profileId: string, limit = 24): Promise<Collection[]> {
+  async listPublicCollectionsByProfile(profileType: 'user' | 'creator', profileId: string, limit = 24): Promise<Collection[]> {
     const ownerType = profileType;
     return this.collections
       .filter((item) => item.visibility === 'public')
@@ -347,7 +341,7 @@ export class InMemoryStore implements DataStore {
       .sort((a, b) => b.updatedDate.localeCompare(a.updatedDate));
   }
 
-  async listCollectionsByProfile(profileType: 'user' | 'artist', profileId: string): Promise<Collection[]> {
+  async listCollectionsByProfile(profileType: 'user' | 'creator', profileId: string): Promise<Collection[]> {
     return this.collections
       .filter((item) => {
         const itemType = item.ownerProfileType || 'user';
@@ -397,28 +391,28 @@ export class InMemoryStore implements DataStore {
       .map((item) => item.imageId);
   }
 
-  async followArtist(follow: Follow): Promise<void> {
-    this.follows = this.follows.filter((item) => !(item.followerUserId === follow.followerUserId && item.artistId === follow.artistId));
+  async followCreator(follow: Follow): Promise<void> {
+    this.follows = this.follows.filter((item) => !(item.followerUserId === follow.followerUserId && item.creatorId === follow.creatorId));
     this.follows.push(follow);
   }
 
-  async unfollowArtist(followerUserId: string, artistId: string): Promise<void> {
-    this.follows = this.follows.filter((item) => !(item.followerUserId === followerUserId && item.artistId === artistId));
+  async unfollowCreator(followerUserId: string, creator: string): Promise<void> {
+    this.follows = this.follows.filter((item) => !(item.followerUserId === followerUserId && item.creatorId === creator));
   }
 
   async listFollowsByUser(followerUserId: string): Promise<Follow[]> {
     return this.follows.filter((item) => item.followerUserId === followerUserId);
   }
 
-  async isFollowingArtist(followerUserId: string, artistId: string): Promise<boolean> {
-    return this.follows.some((item) => item.followerUserId === followerUserId && item.artistId === artistId);
+  async isFollowingCreator(followerUserId: string, creator: string): Promise<boolean> {
+    return this.follows.some((item) => item.followerUserId === followerUserId && item.creatorId === creator);
   }
 
-  async countFollowersByArtist(artistId: string): Promise<number> {
-    return this.follows.filter((item) => item.artistId === artistId).length;
+  async countFollowersByCreator(creator: string): Promise<number> {
+    return this.follows.filter((item) => item.creatorId === creator).length;
   }
 
-  async listComments(targetType: 'gallery' | 'image', targetId: string): Promise<Comment[]> {
+  async listComments(targetType: 'grouping' | 'image', targetId: string): Promise<Comment[]> {
     return this.comments.filter((c) => c.targetType === targetType && c.targetId === targetId && !c.hidden);
   }
 
@@ -450,9 +444,9 @@ export class InMemoryStore implements DataStore {
 
   async removeFavorite(
     userId: string,
-    targetType: 'gallery' | 'image' | 'collection',
+    targetType: 'grouping' | 'image' | 'collection',
     targetId: string,
-    ownerProfileType: 'user' | 'artist' = 'user',
+    ownerProfileType: 'user' | 'creator' = 'user',
     ownerProfileId?: string
   ): Promise<void> {
     const resolvedProfileId = ownerProfileId || userId;
@@ -489,7 +483,7 @@ export class InMemoryStore implements DataStore {
       .filter((f) => (f.ownerProfileType || 'user') === 'user' && (f.ownerProfileId || f.userId) === userId);
   }
 
-  async listFavoritesByProfile(profileType: 'user' | 'artist', profileId: string): Promise<Favorite[]> {
+  async listFavoritesByProfile(profileType: 'user' | 'creator', profileId: string): Promise<Favorite[]> {
     return this.favorites.filter((f) => {
       const ownerType = f.ownerProfileType || 'user';
       const ownerId = f.ownerProfileId || f.userId;
@@ -497,7 +491,7 @@ export class InMemoryStore implements DataStore {
     });
   }
 
-  async listPublicFavoritesByProfile(profileType: 'user' | 'artist', profileId: string): Promise<Favorite[]> {
+  async listPublicFavoritesByProfile(profileType: 'user' | 'creator', profileId: string): Promise<Favorite[]> {
     return this.favorites.filter((f) => {
       const ownerType = f.ownerProfileType || 'user';
       const ownerId = f.ownerProfileId || f.userId;
@@ -505,7 +499,7 @@ export class InMemoryStore implements DataStore {
     });
   }
 
-  async countFavorites(targetType: 'gallery' | 'image' | 'collection', targetId: string): Promise<number> {
+  async countFavorites(targetType: 'grouping' | 'image' | 'collection', targetId: string): Promise<number> {
     return this.favorites.filter((f) => f.targetType === targetType && f.targetId === targetId).length;
   }
 
@@ -521,8 +515,23 @@ export class InMemoryStore implements DataStore {
     this.imageFavoriteCounts.set(imageId, Math.max(0, (this.imageFavoriteCounts.get(imageId) || 0) + delta));
   }
 
-  async listTrendingFeed(period: TrendingPeriod, limit = 24, cursor?: string): Promise<{ items: TrendingFeedItem[]; nextCursor?: string }> {
-    const items = this.trendingFeed.get(period) || [];
+  async listTrendingFeed(
+    period: TrendingPeriod,
+    limit = 24,
+    cursor?: string,
+    options?: TrendingFeedQueryOptions
+  ): Promise<{ items: TrendingFeedItem[]; nextCursor?: string }> {
+    const source = options?.source || 'combined';
+    const itemTypes = options?.itemTypes || { image: true, video: true, post: true };
+    const matches = (item: TrendingFeedItem): boolean => {
+      const isPostSurface = item.surfaceType === 'post_surface' || Boolean(item.postId);
+      if (source === 'media' && isPostSurface) return false;
+      if (source === 'post' && !isPostSurface) return false;
+      if (isPostSurface) return itemTypes.post;
+      if (item.assetType === 'video') return itemTypes.video;
+      return itemTypes.image;
+    };
+    const items = (this.trendingFeed.get(period) || []).filter(matches);
     const offset = cursor ? Number(cursor) || 0 : 0;
     const page = items.slice(offset, offset + limit);
     const nextCursor = offset + page.length < items.length ? String(offset + page.length) : undefined;
@@ -551,14 +560,14 @@ export class InMemoryStore implements DataStore {
     return this.blockedUsers.some((u) => u.userId === userId);
   }
 
-  async grantGalleryAccess(userId: string, galleryId: string): Promise<void> {
-    if (!this.galleryAccess.some((item) => item.userId === userId && item.galleryId === galleryId)) {
-      this.galleryAccess.push({ userId, galleryId });
+  async grantGroupingAccess(userId: string, groupingId: string): Promise<void> {
+    if (!this.groupingAccess.some((item) => item.userId === userId && item.groupingId === groupingId)) {
+      this.groupingAccess.push({ userId, groupingId });
     }
   }
 
-  async hasGalleryAccess(userId: string, galleryId: string): Promise<boolean> {
-    return this.galleryAccess.some((item) => item.userId === userId && item.galleryId === galleryId);
+  async hasGroupingAccess(userId: string, groupingId: string): Promise<boolean> {
+    return this.groupingAccess.some((item) => item.userId === userId && item.groupingId === groupingId);
   }
 
   async isUsernameAvailable(normalizedUsername: string): Promise<boolean> {
@@ -581,6 +590,10 @@ export class InMemoryStore implements DataStore {
     return this.userProfiles.find((item) => item.userId === userId) || null;
   }
 
+  async listUserProfiles(): Promise<UserProfile[]> {
+    return [...this.userProfiles];
+  }
+
   async getUserProfileBySlug(slug: string): Promise<UserProfile | null> {
     const normalized = slug.trim().toLowerCase();
     return this.userProfiles.find((item) => item.username === normalized || (item.usernameHistory || []).includes(normalized)) || null;
@@ -595,6 +608,10 @@ export class InMemoryStore implements DataStore {
     return this.userIdentities.find((item) => item.userId === userId) || null;
   }
 
+  async listUserIdentities(): Promise<UserIdentity[]> {
+    return [...this.userIdentities];
+  }
+
   async upsertUserIdentity(identity: UserIdentity): Promise<void> {
     this.userIdentities = this.userIdentities.filter((item) => item.userId !== identity.userId);
     this.userIdentities.push(identity);
@@ -606,7 +623,7 @@ export class InMemoryStore implements DataStore {
     const next: UserIdentity = {
       ...existing,
       role,
-      capabilities: InMemoryStore.capabilitiesForRole(role),
+      capabilities: capabilitiesForRole(role),
       updatedAt: now
     };
     this.userIdentities = this.userIdentities.filter((item) => item.userId !== userId);

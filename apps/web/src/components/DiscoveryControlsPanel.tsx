@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import type { DensityViewport, DiscoveryFilterSection, FeedDensity, ManagedArtist } from '../domainTypes';
+import type { DensityViewport, DiscoveryFilterSection, FeedDensity, ManagedCreator } from '../domainTypes';
 import { heavyTopicLabels } from '../discoveryUtils';
 
 type CompactTab = {
@@ -30,7 +30,7 @@ type DiscoveryControlsPanelProps = {
   discoverySearch: string;
   currentUserPresent: boolean;
   favoriteIdentity: string;
-  managedArtists: ManagedArtist[];
+  managedArtists: ManagedCreator[];
   discoveryFilterPanelRef: React.MutableRefObject<HTMLDivElement | null>;
   discoverySearchInputRef: React.MutableRefObject<HTMLInputElement | null>;
   compactSearchInputRef: React.MutableRefObject<HTMLInputElement | null>;
@@ -235,7 +235,7 @@ export default function DiscoveryControlsPanel({
             type="text"
             value={discoverySearch}
             onChange={(e) => onDiscoverySearchChange(e.target.value)}
-            placeholder="Search titles, artists, galleries, tags..."
+            placeholder="Search titles, creators, groupings, tags..."
           />
         </div>
       </div>
@@ -424,7 +424,7 @@ export default function DiscoveryControlsPanel({
                   type="text"
                   value={discoverySearch}
                   onChange={(e) => onDiscoverySearchChange(e.target.value)}
-                  placeholder="Search titles, artists, galleries, tags..."
+                  placeholder="Search titles, creators, groupings, tags..."
                 />
               </div>
               {currentUserPresent && (
@@ -436,9 +436,9 @@ export default function DiscoveryControlsPanel({
                     onChange={(e) => onFavoriteIdentityChange(e.target.value)}
                   >
                     <option value="user">User Profile</option>
-                    {managedArtists.map((artist) => (
-                      <option key={`home-favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
-                        Artist: {artist.name}
+                    {managedArtists.map((creator) => (
+                      <option key={`home-favorite-${creator.creatorId}`} value={`creator:${creator.creatorId}`}>
+                        Creator: {creator.name}
                       </option>
                     ))}
                   </select>

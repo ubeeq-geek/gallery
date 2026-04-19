@@ -14,7 +14,7 @@ export type AppRole = 'user' | 'contributor' | 'creator' | 'admin';
 const ADMIN_GROUP = 'Admins';
 const CONTRIBUTOR_GROUP = 'Contributors';
 const CREATOR_GROUP = 'Creators';
-const ARTIST_GROUP = 'Artists';
+const CREATOR = 'Creators';
 
 declare global {
   namespace Express {
@@ -48,11 +48,11 @@ export const createOptionalAuthMiddleware = (config: AppConfig) => {
         if (devRole === 'creator' && !devGroups.includes(CREATOR_GROUP)) {
           devGroups.push(CREATOR_GROUP);
         }
-        if (devRole === 'artist' && !devGroups.includes(CREATOR_GROUP)) {
+        if (devRole === 'creator' && !devGroups.includes(CREATOR_GROUP)) {
           devGroups.push(CREATOR_GROUP);
         }
-        if (devRole === 'artist' && !devGroups.includes(ARTIST_GROUP)) {
-          devGroups.push(ARTIST_GROUP);
+        if (devRole === 'creator' && !devGroups.includes(CREATOR)) {
+          devGroups.push(CREATOR);
         }
         if (devRole === 'contributor' && !devGroups.includes(CONTRIBUTOR_GROUP)) {
           devGroups.push(CONTRIBUTOR_GROUP);
@@ -100,7 +100,7 @@ const hasRole = (user: AuthUser, role: AppRole): boolean => {
     return user.groups.includes(ADMIN_GROUP);
   }
   if (role === 'creator') {
-    return user.groups.includes(CREATOR_GROUP) || user.groups.includes(ARTIST_GROUP) || user.groups.includes(ADMIN_GROUP);
+    return user.groups.includes(CREATOR_GROUP) || user.groups.includes(CREATOR) || user.groups.includes(ADMIN_GROUP);
   }
   if (role === 'contributor') {
     return hasRole(user, 'creator') || user.groups.includes(CONTRIBUTOR_GROUP);

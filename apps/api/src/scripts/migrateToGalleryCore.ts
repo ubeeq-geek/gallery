@@ -1,8 +1,8 @@
 import { DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { loadConfig } from '../config';
-import { GalleryCoreRepository } from '../galleryCoreRepository';
-import type { Artist, Gallery, Media } from '../domain';
+import { GroupingCoreRepository } from '../groupingCoreRepository';
+import type { Creator, Grouping, Media } from '../domain';
 
 const asString = (value: unknown, fallback = ''): string => (typeof value === 'string' ? value : fallback);
 const asNumber = (value: unknown, fallback = 0): number => (typeof value === 'number' ? value : fallback);
@@ -55,36 +55,36 @@ const migrate = async () => {
 
   const config = loadConfig();
   const dryRun = process.argv.includes('--dry-run');
-  const artistsTable = resolveTableName(config.artistsTable, '--artists-table');
-  const galleriesTable = resolveTableName(config.galleriesTable, '--galleries-table');
+  const creatorsTable = resolveTableName(config.creators, '--creators-table');
+  const groupingsTable = resolveTableName(config.groupingsTable, '--groupings-table');
   const imagesTable = resolveTableName(config.imagesTable, '--images-table');
-  const galleryCoreTable = resolveTableName(config.galleryCoreTable, '--gallery-core-table');
+  const groupingCoreTable = resolveTableName(config.groupingCoreTable, '--grouping-core-table');
 
   const lowLevel = new DynamoDBClient({ region: config.awsRegion });
   const client = DynamoDBDocumentClient.from(lowLevel);
-  const repo = new GalleryCoreRepository(client, galleryCoreTable);
+  const repo = new GroupingCoreRepository(client, groupingCoreTable);
 
-  const requiredTables = [artistsTable, galleriesTable, imagesTable, galleryCoreTable];
+  const requiredTables = [creatorsTable, groupingsTable, imagesTable, groupingCoreTable];
   for (const tableName of requiredTables) {
     try {
       await lowLevel.send(new DescribeTableCommand({ TableName: tableName }));
     } catch (error) {
       console.error(`[migrate:core] missing table: ${tableName}`);
-      console.error('[migrate:core] pass explicit names with --artists-table/--galleries-table/--images-table/--gallery-core-table');
+      console.error('[migrate:core] pass explicit names with --creators-table/--groupings-table/--images-table/--grouping-core-table');
       throw error;
     }
   }
 
   const [rawArtists, rawGalleries, rawImages] = await Promise.all([
-    scanAll(client, artistsTable),
-    scanAll(client, galleriesTable),
+    scanAll(client, creatorsTable),
+    scanAll(client, groupingsTable),
     scanAll(client, imagesTable)
   ]);
 
-  const artists: Artist[] = rawArtists
-    .filter((item) => typeof item.artistId === 'string' && typeof item.slug === 'string')
+  const creators: Creator[] = rawArtists
+    .filter((item) => typeof item.creatorId === 'string' && typeof item.slug === 'string')
     .map((item) => ({
-      artistId: asString(item.artistId),
+      creatorId: asString(item.creatorId),
       name: asString(item.name),
       slug: asString(item.slug),
       status: item.status === 'inactive' ? 'inactive' : 'active',
@@ -92,19 +92,19 @@ const migrate = async () => {
       createdAt: asString(item.createdAt, new Date().toISOString())
     }));
 
-  const artistSlugById = new Map<string, string>();
-  for (const artist of artists) {
-    artistSlugById.set(artist.artistId, artist.slug);
+  const creatorSlugById = new Map<string, string>();
+  for (const creator of creators) {
+    creatorSlugById.set(creator.creatorId, creator.slug);
   }
 
-  const galleries: Gallery[] = rawGalleries
-    .filter((item) => typeof item.galleryId === 'string' && typeof item.artistId === 'string' && typeof item.slug === 'string')
+  const groupings: Grouping[] = rawGalleries
+    .filter((item) => typeof item.groupingId === 'string' && typeof item.creatorId === 'string' && typeof item.slug === 'string')
     .map((item) => {
-      const artistId = asString(item.artistId);
+      const creatorId = asString(item.creatorId);
       return {
-        galleryId: asString(item.galleryId),
-        artistId,
-        artistSlug: asString(item.artistSlug, artistSlugById.get(artistId) || ''),
+        groupingId: asString(item.groupingId),
+        creatorId,
+        creatorSlug: creatorSlugById.get(creatorId) || asOptionalString(item.creatorSlug),
         title: asString(item.title),
         slug: asString(item.slug),
         visibility: item.visibility === 'premium' ? 'premium' : 'free',
@@ -115,16 +115,16 @@ const migrate = async () => {
       };
     });
 
-  const galleryById = new Map<string, Gallery>(galleries.map((item) => [item.galleryId, item]));
+  const groupingById = new Map<string, Grouping>(groupings.map((item) => [item.groupingId, item]));
 
   const mediaRows = rawImages
-    .filter((item) => typeof item.imageId === 'string' && typeof item.galleryId === 'string' && typeof item.previewKey === 'string')
+    .filter((item) => typeof item.imageId === 'string' && typeof item.groupingId === 'string' && typeof item.previewKey === 'string')
     .map((item) => {
-      const galleryId = asString(item.galleryId);
-      const gallery = galleryById.get(galleryId);
+      const groupingId = asString(item.groupingId);
+      const grouping = groupingById.get(groupingId);
       const media: Media = {
         mediaId: asString(item.imageId),
-        artistId: gallery?.artistId || '',
+        creatorId: grouping?.creatorId || '',
         assetType: item.assetType === 'video' ? 'video' : 'image',
         previewKey: asString(item.previewKey),
         premiumKey: asOptionalString(item.premiumKey),
@@ -138,25 +138,25 @@ const migrate = async () => {
       };
       return {
         media,
-        galleryId,
+        groupingId,
         position: asNumber(item.sortOrder)
       };
     });
 
-  console.log(`[migrate:core] artists=${artists.length} galleries=${galleries.length} media=${mediaRows.length} dryRun=${dryRun}`);
+  console.log(`[migrate:core] creators=${creators.length} groupings=${groupings.length} media=${mediaRows.length} dryRun=${dryRun}`);
 
   if (dryRun) {
     return;
   }
 
-  for (const artist of artists) {
-    await repo.createArtist(artist);
+  for (const creator of creators) {
+    await repo.createCreator(creator);
   }
-  for (const gallery of galleries) {
-    await repo.createGallery(gallery);
+  for (const grouping of groupings) {
+    await repo.createGrouping(grouping);
   }
   for (const row of mediaRows) {
-    await repo.createMedia(row.media, row.galleryId, row.position);
+    await repo.createMedia(row.media, row.groupingId, row.position);
   }
 
   console.log('[migrate:core] migration complete');

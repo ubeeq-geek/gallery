@@ -17,33 +17,33 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 
-export class GalleryStack extends Stack {
+export class StudioStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    const artistsTable = new dynamodb.Table(this, 'ArtistsTable', {
+    const creatorsTable = new dynamodb.Table(this, 'Creators', {
       partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY
     });
 
-    const galleriesTable = new dynamodb.Table(this, 'GalleriesTable', {
-      partitionKey: { name: 'galleryId', type: dynamodb.AttributeType.STRING },
+    const groupingsTable = new dynamodb.Table(this, 'GroupingsTable', {
+      partitionKey: { name: 'groupingId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY
     });
-    galleriesTable.addGlobalSecondaryIndex({
+    groupingsTable.addGlobalSecondaryIndex({
       indexName: 'slugIndex',
       partitionKey: { name: 'slug', type: dynamodb.AttributeType.STRING }
     });
-    galleriesTable.addGlobalSecondaryIndex({
-      indexName: 'artistSlugIndex',
-      partitionKey: { name: 'artistSlug', type: dynamodb.AttributeType.STRING }
+    groupingsTable.addGlobalSecondaryIndex({
+      indexName: 'creator',
+      partitionKey: { name: 'creator', type: dynamodb.AttributeType.STRING }
     });
 
     const imagesTable = new dynamodb.Table(this, 'ImagesTable', {
-      partitionKey: { name: 'galleryId', type: dynamodb.AttributeType.STRING },
+      partitionKey: { name: 'groupingId', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'imageId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY
@@ -95,19 +95,24 @@ export class GalleryStack extends Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY
     });
+    trendingFeedTable.addGlobalSecondaryIndex({
+      indexName: 'PeriodSurfaceRank',
+      partitionKey: { name: 'periodSurface', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'rankKey', type: dynamodb.AttributeType.STRING }
+    });
 
-    const galleryCoreTable = new dynamodb.Table(this, 'GalleryCoreTable', {
+    const groupingCoreTable = new dynamodb.Table(this, 'GroupingCoreTable', {
       partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY
     });
-    galleryCoreTable.addGlobalSecondaryIndex({
+    groupingCoreTable.addGlobalSecondaryIndex({
       indexName: 'GSI1',
       partitionKey: { name: 'GSI1PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'GSI1SK', type: dynamodb.AttributeType.STRING }
     });
-    galleryCoreTable.addGlobalSecondaryIndex({
+    groupingCoreTable.addGlobalSecondaryIndex({
       indexName: 'GSI2',
       partitionKey: { name: 'GSI2PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'GSI2SK', type: dynamodb.AttributeType.STRING }
@@ -207,7 +212,7 @@ export class GalleryStack extends Stack {
         })
       : undefined;
 
-    const userPool = new cognito.UserPool(this, 'GalleryUserPool', {
+    const userPool = new cognito.UserPool(this, 'StudioUserPool', {
       selfSignUpEnabled: true,
       signInAliases: { email: true },
       standardAttributes: { email: { required: true, mutable: false } }
@@ -218,7 +223,7 @@ export class GalleryStack extends Stack {
       'EMAIL_OTP'
     ]);
 
-    const userPoolClient = new cognito.UserPoolClient(this, 'GalleryUserPoolClient', {
+    const userPoolClient = new cognito.UserPoolClient(this, 'StudioUserPoolClient', {
       userPool,
       authFlows: {
         userPassword: true,
@@ -249,10 +254,10 @@ export class GalleryStack extends Stack {
       description: 'Admin users allowed to access orchestration endpoints'
     });
 
-    const artistsGroup = new cognito.CfnUserPoolGroup(this, 'ArtistsGroup', {
-      groupName: 'Artists',
+    const creatorsGroup = new cognito.CfnUserPoolGroup(this, 'CreatorsGroup', {
+      groupName: 'Creators',
       userPoolId: userPool.userPoolId,
-      description: 'Artist users allowed to create galleries and media'
+      description: 'Creator users allowed to create groupings and media'
     });
 
     const usersGroup = new cognito.CfnUserPoolGroup(this, 'UsersGroup', {
@@ -261,7 +266,7 @@ export class GalleryStack extends Stack {
       description: 'General authenticated users'
     });
 
-    const apiFn = new lambdaNodejs.NodejsFunction(this, 'GalleryApiFunction', {
+    const apiFn = new lambdaNodejs.NodejsFunction(this, 'StudioApiFunction', {
       runtime: lambda.Runtime.NODEJS_22_X,
       entry: path.join(__dirname, '../../apps/api/src/handler.ts'),
       handler: 'handler',
@@ -272,8 +277,8 @@ export class GalleryStack extends Stack {
         externalModules: ['@aws-sdk/*']
       },
       environment: {
-        ARTISTS_TABLE: artistsTable.tableName,
-        GALLERIES_TABLE: galleriesTable.tableName,
+        CREATORS: creatorsTable.tableName,
+        GROUPINGS_TABLE: groupingsTable.tableName,
         IMAGES_TABLE: imagesTable.tableName,
         COMMENTS_TABLE: commentsTable.tableName,
         FAVORITES_TABLE: favoritesTable.tableName,
@@ -281,8 +286,8 @@ export class GalleryStack extends Stack {
         SITE_SETTINGS_TABLE: siteSettingsTable.tableName,
         IMAGE_STATS_TABLE: imageStatsTable.tableName,
         TRENDING_FEED_TABLE: trendingFeedTable.tableName,
-        GALLERY_CORE_TABLE: galleryCoreTable.tableName,
-        USE_GALLERY_CORE_TABLE: 'true',
+        GROUPING_CORE_TABLE: groupingCoreTable.tableName,
+        USE_GROUPING_CORE_TABLE: 'true',
         MEDIA_BUCKET: mediaBucket.bucketName,
         COGNITO_USER_POOL_ID: userPool.userPoolId,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
@@ -307,8 +312,8 @@ export class GalleryStack extends Stack {
         externalModules: ['@aws-sdk/*']
       },
       environment: {
-        ARTISTS_TABLE: artistsTable.tableName,
-        GALLERIES_TABLE: galleriesTable.tableName,
+        CREATORS: creatorsTable.tableName,
+        GROUPINGS_TABLE: groupingsTable.tableName,
         IMAGES_TABLE: imagesTable.tableName,
         COMMENTS_TABLE: commentsTable.tableName,
         FAVORITES_TABLE: favoritesTable.tableName,
@@ -316,8 +321,8 @@ export class GalleryStack extends Stack {
         SITE_SETTINGS_TABLE: siteSettingsTable.tableName,
         IMAGE_STATS_TABLE: imageStatsTable.tableName,
         TRENDING_FEED_TABLE: trendingFeedTable.tableName,
-        GALLERY_CORE_TABLE: galleryCoreTable.tableName,
-        USE_GALLERY_CORE_TABLE: 'true',
+        GROUPING_CORE_TABLE: groupingCoreTable.tableName,
+        USE_GROUPING_CORE_TABLE: 'true',
         MEDIA_BUCKET: mediaBucket.bucketName,
         TRENDING_FEED_MAX_ITEMS: '600',
         TRENDING_CANDIDATE_LIMIT: '1500'
@@ -339,7 +344,7 @@ export class GalleryStack extends Stack {
         ? [lambda.LayerVersion.fromLayerVersionArn(this, 'VideoPosterFfmpegLayer', ffmpegLayerArn)]
         : undefined,
       environment: {
-        GALLERY_CORE_TABLE: galleryCoreTable.tableName,
+        GROUPING_CORE_TABLE: groupingCoreTable.tableName,
         MEDIA_BUCKET: mediaBucket.bucketName,
         VIDEO_POSTER_OUTPUT_PREFIX: 'posters',
         VIDEO_POSTER_FFMPEG_PATH: '/opt/bin/ffmpeg',
@@ -360,8 +365,8 @@ export class GalleryStack extends Stack {
       })
     );
 
-    artistsTable.grantReadWriteData(apiFn);
-    galleriesTable.grantReadWriteData(apiFn);
+    creatorsTable.grantReadWriteData(apiFn);
+    groupingsTable.grantReadWriteData(apiFn);
     imagesTable.grantReadWriteData(apiFn);
     commentsTable.grantReadWriteData(apiFn);
     favoritesTable.grantReadWriteData(apiFn);
@@ -369,16 +374,16 @@ export class GalleryStack extends Stack {
     siteSettingsTable.grantReadWriteData(apiFn);
     imageStatsTable.grantReadWriteData(apiFn);
     trendingFeedTable.grantReadWriteData(apiFn);
-    galleryCoreTable.grantReadWriteData(apiFn);
+    groupingCoreTable.grantReadWriteData(apiFn);
     mediaBucket.grantReadWrite(apiFn);
-    artistsTable.grantReadData(trendingRankerFn);
-    galleriesTable.grantReadData(trendingRankerFn);
+    creatorsTable.grantReadData(trendingRankerFn);
+    groupingsTable.grantReadData(trendingRankerFn);
     imagesTable.grantReadData(trendingRankerFn);
     favoritesTable.grantReadWriteData(trendingRankerFn);
     imageStatsTable.grantReadWriteData(trendingRankerFn);
     trendingFeedTable.grantReadWriteData(trendingRankerFn);
-    galleryCoreTable.grantReadData(trendingRankerFn);
-    galleryCoreTable.grantReadWriteData(videoPosterIngestFn);
+    groupingCoreTable.grantReadData(trendingRankerFn);
+    groupingCoreTable.grantReadWriteData(videoPosterIngestFn);
     mediaBucket.grantReadWrite(videoPosterIngestFn);
     videoPosterIngestQueue.grantConsumeMessages(videoPosterIngestFn);
 
@@ -387,7 +392,7 @@ export class GalleryStack extends Stack {
       targets: [new targets.LambdaFunction(trendingRankerFn)]
     });
 
-    const api = new apigw.LambdaRestApi(this, 'GalleryApi', {
+    const api = new apigw.LambdaRestApi(this, 'StudioApi', {
       handler: apiFn,
       proxy: true
     });
@@ -403,14 +408,14 @@ export class GalleryStack extends Stack {
       new CfnOutput(this, 'PremiumMediaKeyGroupId', { value: keyGroup!.keyGroupId });
       new CfnOutput(this, 'PremiumMediaPublicKeyId', { value: premiumPublicKey!.publicKeyId });
     }
-    new CfnOutput(this, 'GalleryCoreTableName', { value: galleryCoreTable.tableName });
+    new CfnOutput(this, 'GroupingCoreTableName', { value: groupingCoreTable.tableName });
     new CfnOutput(this, 'ImageStatsTableName', { value: imageStatsTable.tableName });
     new CfnOutput(this, 'TrendingFeedTableName', { value: trendingFeedTable.tableName });
     new CfnOutput(this, 'SiteSettingsTableName', { value: siteSettingsTable.tableName });
     new CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new CfnOutput(this, 'UserPoolClientId', { value: userPoolClient.userPoolClientId });
     new CfnOutput(this, 'AdminsGroupName', { value: adminsGroup.groupName || 'Admins' });
-    new CfnOutput(this, 'ArtistsGroupName', { value: artistsGroup.groupName || 'Artists' });
+    new CfnOutput(this, 'CreatorsGroupName', { value: creatorsGroup.ref });
     new CfnOutput(this, 'UsersGroupName', { value: usersGroup.groupName || 'Users' });
   }
 }

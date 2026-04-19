@@ -1,4 +1,4 @@
-import type { AiDisclosure, AiFilterPreference, Artist, Gallery, HeavyTopic, Media, UserProfile } from './domain';
+import type { AiDisclosure, AiFilterPreference, Creator, Grouping, HeavyTopic, Media, UserProfile } from './domain';
 
 export const AI_DISCLOSURE_LEVEL: Record<AiDisclosure, number> = {
   none: 0,
@@ -103,25 +103,25 @@ export const profileDisclosurePolicy = (profile?: UserProfile | null): ViewerDis
 
 export const getEffectiveAiDisclosure = (
   media: Pick<Media, 'aiDisclosure' | 'moderatorAiDisclosure'>,
-  gallery?: Pick<Gallery, 'defaultAiDisclosure'> | null,
-  artist?: Pick<Artist, 'defaultAiDisclosure'> | null
+  grouping?: Pick<Grouping, 'defaultAiDisclosure'> | null,
+  creator?: Pick<Creator, 'defaultAiDisclosure'> | null
 ): AiDisclosure => (
   parseOptionalAiDisclosure(media.moderatorAiDisclosure)
   ?? parseOptionalAiDisclosure(media.aiDisclosure)
-  ?? parseOptionalAiDisclosure(gallery?.defaultAiDisclosure)
-  ?? parseOptionalAiDisclosure(artist?.defaultAiDisclosure)
+  ?? parseOptionalAiDisclosure(grouping?.defaultAiDisclosure)
+  ?? parseOptionalAiDisclosure(creator?.defaultAiDisclosure)
   ?? 'none'
 );
 
 export const getEffectiveHeavyTopics = (
   media: Pick<Media, 'heavyTopics' | 'moderatorHeavyTopics'>,
-  gallery?: Pick<Gallery, 'defaultHeavyTopics'> | null,
-  artist?: Pick<Artist, 'defaultHeavyTopics'> | null
+  grouping?: Pick<Grouping, 'defaultHeavyTopics'> | null,
+  creator?: Pick<Creator, 'defaultHeavyTopics'> | null
 ): HeavyTopic[] => (
   parseOptionalHeavyTopics(media.moderatorHeavyTopics)
   ?? parseOptionalHeavyTopics(media.heavyTopics)
-  ?? parseOptionalHeavyTopics(gallery?.defaultHeavyTopics)
-  ?? parseOptionalHeavyTopics(artist?.defaultHeavyTopics)
+  ?? parseOptionalHeavyTopics(grouping?.defaultHeavyTopics)
+  ?? parseOptionalHeavyTopics(creator?.defaultHeavyTopics)
   ?? []
 );
 

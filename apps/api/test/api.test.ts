@@ -9,9 +9,9 @@ describe('unlock token and password', () => {
   });
 
   it('issues and verifies unlock token', () => {
-    const token = issueUnlockToken({ galleryId: 'g1', userId: 'u1' }, 'secret', 60);
+    const token = issueUnlockToken({ groupingId: 'g1', userId: 'u1' }, 'secret', 60);
     const payload = verifyUnlockToken(token, 'secret');
-    expect(payload.galleryId).toBe('g1');
+    expect(payload.groupingId).toBe('g1');
     expect(payload.userId).toBe('u1');
   });
 });
@@ -23,8 +23,8 @@ describe('in-memory store behaviors', () => {
     await store.blockUser({ userId: 'u1', blockedAt: new Date().toISOString() });
     await expect(store.isUserBlocked('u1')).resolves.toBe(true);
 
-    await store.addFavorite({ userId: 'u1', targetType: 'gallery', targetId: 'g1', createdAt: new Date().toISOString() });
-    await store.addFavorite({ userId: 'u1', targetType: 'gallery', targetId: 'g1', createdAt: new Date().toISOString() });
+    await store.addFavorite({ userId: 'u1', targetType: 'grouping', targetId: 'g1', createdAt: new Date().toISOString() });
+    await store.addFavorite({ userId: 'u1', targetType: 'grouping', targetId: 'g1', createdAt: new Date().toISOString() });
 
     const favorites = await store.listFavoritesByUser('u1');
     expect(favorites.length).toBe(1);
@@ -39,7 +39,7 @@ describe('in-memory store behaviors', () => {
       authorProfileType: 'user',
       authorProfileId: 'u1',
       displayName: 'User',
-      targetType: 'gallery',
+      targetType: 'grouping',
       targetId: 'g1',
       body: 'visible',
       hidden: false,
@@ -52,14 +52,14 @@ describe('in-memory store behaviors', () => {
       authorProfileType: 'user',
       authorProfileId: 'u2',
       displayName: 'User2',
-      targetType: 'gallery',
+      targetType: 'grouping',
       targetId: 'g1',
       body: 'hidden',
       hidden: true,
       createdAt: new Date().toISOString()
     });
 
-    const comments = await store.listComments('gallery', 'g1');
+    const comments = await store.listComments('grouping', 'g1');
     expect(comments).toHaveLength(1);
     expect(comments[0].commentId).toBe('c1');
   });

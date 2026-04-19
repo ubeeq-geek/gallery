@@ -1,6 +1,28 @@
 import { BatchGetCommand, DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'crypto';
-import type { Artist, ArtistMember, AuditEvent, Collection, Follow, Gallery, IdempotencyRecord, Media, GalleryMediaView, Post, UserProfile } from './domain';
+import type {
+  Creator,
+  CreatorMember,
+  AuditEvent,
+  ChallengePrize,
+  Collection,
+  ContextSubmission,
+  ContextUnlockThreshold,
+  ContributionContext,
+  CreatorGroup,
+  Follow,
+  Grouping,
+  IdempotencyRecord,
+  Media,
+  GroupingMediaView,
+  PlatformRole,
+  Post,
+  PrizeAward,
+  SourceFile,
+  UserIdentity,
+  UserProfile
+} from './domain';
+import { capabilitiesForRole } from './roleHelpers';
 
 const stripEntityFields = <T>(item: Record<string, unknown>): T => {
   const clean = { ...item };
@@ -28,25 +50,57 @@ const uniqueValues = (values: Array<string | undefined>): string[] => {
   return result;
 };
 
-export class GalleryCoreRepository {
+export class GroupingCoreRepository {
   constructor(
     private readonly client: DynamoDBDocumentClient,
     private readonly tableName: string
   ) {}
 
-  async listArtists(): Promise<Artist[]> {
+  async listCreators(): Promise<Creator[]> {
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
         IndexName: 'GSI2',
         KeyConditionExpression: 'GSI2PK = :pk',
         ExpressionAttributeValues: {
-          ':pk': 'ENTITY#ARTIST'
+          ':pk': 'ENTITY#CREATOR'
         }
       })
     );
 
-    return (response.Items || []).map((item) => stripEntityFields<Artist>(item));
+    return (response.Items || []).map((item) => stripEntityFields<Creator>(item));
+  }
+
+  async listAllSourceFiles(): Promise<SourceFile[]> {
+    const response = await this.client.send(
+      new ScanCommand({
+        TableName: this.tableName,
+        FilterExpression: 'entityType = :entityType',
+        ExpressionAttributeValues: {
+          ':entityType': 'SOURCE_FILE'
+        }
+      })
+    );
+
+    return (response.Items || [])
+      .map((item) => stripEntityFields<SourceFile>(item))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async listAllCreatorGroups(): Promise<CreatorGroup[]> {
+    const response = await this.client.send(
+      new ScanCommand({
+        TableName: this.tableName,
+        FilterExpression: 'entityType = :entityType',
+        ExpressionAttributeValues: {
+          ':entityType': 'CREATOR_GROUP'
+        }
+      })
+    );
+
+    return (response.Items || [])
+      .map((item) => stripEntityFields<CreatorGroup>(item))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   async listPublicCollections(limit = 24, cursor?: string): Promise<{ items: Collection[]; nextCursor?: string }> {
@@ -74,7 +128,7 @@ export class GalleryCoreRepository {
     return { items, nextCursor };
   }
 
-  async listPublicCollectionsByProfile(profileType: 'user' | 'artist', profileId: string, limit = 24): Promise<Collection[]> {
+  async listPublicCollectionsByProfile(profileType: 'user' | 'creator', profileId: string, limit = 24): Promise<Collection[]> {
     const response = await this.client.send(
       new ScanCommand({
         TableName: this.tableName,
@@ -111,7 +165,7 @@ export class GalleryCoreRepository {
       .sort((a, b) => b.updatedDate.localeCompare(a.updatedDate));
   }
 
-  async listCollectionsByProfile(profileType: 'user' | 'artist', profileId: string): Promise<Collection[]> {
+  async listCollectionsByProfile(profileType: 'user' | 'creator', profileId: string): Promise<Collection[]> {
     if (profileType === 'user') {
       return (await this.listCollectionsByOwner(profileId))
         .filter((item) => (item.ownerProfileType || 'user') === 'user')
@@ -128,7 +182,7 @@ export class GalleryCoreRepository {
     );
     return (response.Items || [])
       .map((item) => stripEntityFields<Collection>(item))
-      .filter((item) => (item.ownerProfileType || 'user') === 'artist')
+      .filter((item) => (item.ownerProfileType || 'user') === 'creator')
       .filter((item) => (item.ownerProfileId || item.ownerUserId) === profileId)
       .sort((a, b) => b.updatedDate.localeCompare(a.updatedDate));
   }
@@ -249,17 +303,17 @@ export class GalleryCoreRepository {
       .map((item) => String(item.imageId));
   }
 
-  async followArtist(follow: Follow): Promise<void> {
+  async followCreator(follow: Follow): Promise<void> {
     await this.client.send(
       new PutCommand({
         TableName: this.tableName,
         Item: {
           PK: `USER#${follow.followerUserId}`,
-          SK: `FOLLOW#ARTIST#${follow.artistId}`,
-          GSI1PK: `ARTIST_FOLLOWERS#${follow.artistId}`,
+          SK: `FOLLOW#CREATOR#${follow.creatorId}`,
+          GSI1PK: `CREATOR#${follow.creatorId}`,
           GSI1SK: `USER#${follow.followerUserId}`,
           GSI2PK: `USER_FOLLOWS#${follow.followerUserId}`,
-          GSI2SK: `ARTIST#${follow.artistId}`,
+          GSI2SK: `CREATOR#${follow.creatorId}`,
           entityType: 'FOLLOW',
           ...follow
         }
@@ -267,13 +321,13 @@ export class GalleryCoreRepository {
     );
   }
 
-  async unfollowArtist(followerUserId: string, artistId: string): Promise<void> {
+  async unfollowCreator(followerUserId: string, creator: string): Promise<void> {
     await this.client.send(
       new DeleteCommand({
         TableName: this.tableName,
         Key: {
           PK: `USER#${followerUserId}`,
-          SK: `FOLLOW#ARTIST#${artistId}`
+          SK: `FOLLOW#CREATOR#${creator}`
         }
       })
     );
@@ -286,7 +340,7 @@ export class GalleryCoreRepository {
         KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
         ExpressionAttributeValues: {
           ':pk': `USER#${followerUserId}`,
-          ':prefix': 'FOLLOW#ARTIST#'
+          ':prefix': 'FOLLOW#CREATOR'
         }
       })
     );
@@ -295,27 +349,27 @@ export class GalleryCoreRepository {
       .map((item) => stripEntityFields<Follow>(item));
   }
 
-  async isFollowingArtist(followerUserId: string, artistId: string): Promise<boolean> {
+  async isFollowingCreator(followerUserId: string, creator: string): Promise<boolean> {
     const response = await this.client.send(
       new GetCommand({
         TableName: this.tableName,
         Key: {
           PK: `USER#${followerUserId}`,
-          SK: `FOLLOW#ARTIST#${artistId}`
+          SK: `FOLLOW#CREATOR#${creator}`
         }
       })
     );
     return Boolean(response.Item);
   }
 
-  async countFollowersByArtist(artistId: string): Promise<number> {
+  async countFollowersByCreator(creator: string): Promise<number> {
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
         IndexName: 'GSI1',
         KeyConditionExpression: 'GSI1PK = :pk',
         ExpressionAttributeValues: {
-          ':pk': `ARTIST_FOLLOWERS#${artistId}`
+          ':pk': `CREATOR#${creator}`
         },
         Select: 'COUNT'
       })
@@ -323,17 +377,17 @@ export class GalleryCoreRepository {
     return response.Count || 0;
   }
 
-  async listAllGalleries(): Promise<Gallery[]> {
+  async listAllGroupings(): Promise<Grouping[]> {
     const response = await this.client.send(
       new ScanCommand({
         TableName: this.tableName,
         FilterExpression: 'entityType = :entityType',
         ExpressionAttributeValues: {
-          ':entityType': 'GALLERY'
+          ':entityType': 'GROUPING'
         }
       })
     );
-    return (response.Items || []).map((item) => stripEntityFields<Gallery>(item));
+    return (response.Items || []).map((item) => stripEntityFields<Grouping>(item));
   }
 
   async listAllPosts(): Promise<Post[]> {
@@ -349,14 +403,14 @@ export class GalleryCoreRepository {
     return (response.Items || []).map((item) => stripEntityFields<Post>(item));
   }
 
-  async getArtistBySlug(slug: string): Promise<Artist | null> {
+  async getCreatorBySlug(slug: string): Promise<Creator | null> {
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
         IndexName: 'GSI1',
         KeyConditionExpression: 'GSI1PK = :slugPk',
         ExpressionAttributeValues: {
-          ':slugPk': `ARTIST_SLUG#${slug}`
+          ':slugPk': `CREATOR#${slug}`
         },
         Limit: 1
       })
@@ -364,18 +418,18 @@ export class GalleryCoreRepository {
 
     const item = response.Items?.[0];
     if (!item) return null;
-    if (item.entityType === 'ARTIST') {
-      return stripEntityFields<Artist>(item);
+    if (item.entityType === 'CREATOR') {
+      return stripEntityFields<Creator>(item);
     }
-    if (item.entityType === 'ARTIST_SLUG_ALIAS' && typeof item.artistId === 'string') {
-      return this.getArtistProfileById(item.artistId);
+    if (item.entityType === 'CREATOR' && typeof item.creatorId === 'string') {
+      return this.getCreatorProfileById(item.creatorId);
     }
     return null;
   }
 
-  async listGalleriesByArtistSlug(artistSlug: string): Promise<Gallery[]> {
-    const artist = await this.getArtistBySlug(artistSlug);
-    if (!artist) {
+  async listGroupingsByCreatorSlug(creatorSlug: string): Promise<Grouping[]> {
+    const creator = await this.getCreatorBySlug(creatorSlug);
+    if (!creator) {
       return [];
     }
 
@@ -385,31 +439,31 @@ export class GalleryCoreRepository {
         IndexName: 'GSI2',
         KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
         ExpressionAttributeValues: {
-          ':pk': `ARTIST#${artist.artistId}`,
-          ':prefix': 'GALLERY#'
+          ':pk': `CREATOR#${creator.creatorId}`,
+          ':prefix': 'GROUPING#'
         }
       })
     );
 
-    return (response.Items || []).map((item) => stripEntityFields<Gallery>(item));
+    return (response.Items || []).map((item) => stripEntityFields<Grouping>(item));
   }
 
-  async listPostsByArtistSlug(artistSlug: string): Promise<Post[]> {
-    const artist = await this.getArtistBySlug(artistSlug);
-    if (!artist) {
+  async listPostsByCreatorSlug(creatorSlug: string): Promise<Post[]> {
+    const creator = await this.getCreatorBySlug(creatorSlug);
+    if (!creator) {
       return [];
     }
-    return this.listPostsByArtistId(artist.artistId);
+    return this.listPostsByCreatorId(creator.creatorId);
   }
 
-  async listPostsByArtistId(artistId: string): Promise<Post[]> {
+  async listPostsByCreatorId(creator: string): Promise<Post[]> {
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
         IndexName: 'GSI2',
         KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
         ExpressionAttributeValues: {
-          ':pk': `ARTIST#${artistId}`,
+          ':pk': `CREATOR#${creator}`,
           ':prefix': 'POST#'
         }
       })
@@ -417,14 +471,14 @@ export class GalleryCoreRepository {
     return (response.Items || []).map((item) => stripEntityFields<Post>(item));
   }
 
-  async getGalleryBySlug(slug: string): Promise<Gallery | null> {
+  async getGroupingBySlug(slug: string): Promise<Grouping | null> {
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
         IndexName: 'GSI1',
         KeyConditionExpression: 'GSI1PK = :slugPk',
         ExpressionAttributeValues: {
-          ':slugPk': `GALLERY_SLUG#${slug}`
+          ':slugPk': `GROUPING_SLUG#${slug}`
         },
         Limit: 1
       })
@@ -432,11 +486,11 @@ export class GalleryCoreRepository {
 
     const item = response.Items?.[0];
     if (!item) return null;
-    if (item.entityType === 'GALLERY') {
-      return stripEntityFields<Gallery>(item);
+    if (item.entityType === 'GROUPING') {
+      return stripEntityFields<Grouping>(item);
     }
-    if (item.entityType === 'GALLERY_SLUG' && typeof item.galleryId === 'string') {
-      const profile = await this.getGalleryProfileById(item.galleryId);
+    if (item.entityType === 'GROUPING_SLUG' && typeof item.groupingId === 'string') {
+      const profile = await this.getGroupingProfileById(item.groupingId);
       return profile;
     }
     return null;
@@ -479,25 +533,25 @@ export class GalleryCoreRepository {
     return response.Item ? stripEntityFields<Post>(response.Item) : null;
   }
 
-  async getMediaByGalleryId(galleryId: string): Promise<GalleryMediaView[]> {
+  async getMediaByGroupingId(groupingId: string): Promise<GroupingMediaView[]> {
     const placementResponse = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
         IndexName: 'GSI2',
         KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
         ExpressionAttributeValues: {
-          ':pk': `GALLERY#${galleryId}`,
+          ':pk': `GROUPING#${groupingId}`,
           ':prefix': 'POS#'
         }
       })
     );
 
     const placements = (placementResponse.Items || [])
-      .filter((item) => item.entityType === 'GALLERY_MEDIA' && typeof item.mediaId === 'string')
+      .filter((item) => item.entityType === 'GROUPING_MEDIA' && typeof item.mediaId === 'string')
       .map((item) =>
         stripEntityFields<{
-          galleryMediaId: string;
-          galleryId: string;
+          groupingMediaId: string;
+          groupingId: string;
           mediaId: string;
           position: number;
           isPreview?: boolean;
@@ -533,24 +587,24 @@ export class GalleryCoreRepository {
         if (!media) return null;
         return {
           ...media,
-          galleryId: placement.galleryId,
-          galleryMediaId: placement.galleryMediaId,
+          groupingId: placement.groupingId,
+          groupingMediaId: placement.groupingMediaId,
           position: placement.position,
           isPreview: placement.isPreview,
           previewMaxWidth: placement.previewMaxWidth
-        } as GalleryMediaView;
+        } as GroupingMediaView;
       })
-      .filter((item): item is GalleryMediaView => Boolean(item));
+      .filter((item): item is GroupingMediaView => Boolean(item));
   }
 
-  async listMediaByArtist(artistId: string): Promise<Media[]> {
+  async listMediaByCreator(creator: string): Promise<Media[]> {
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
         IndexName: 'GSI2',
         KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
         ExpressionAttributeValues: {
-          ':pk': `ARTIST#${artistId}`,
+          ':pk': `CREATOR#${creator}`,
           ':prefix': 'MEDIA#'
         }
       })
@@ -560,9 +614,56 @@ export class GalleryCoreRepository {
       .map((item) => stripEntityFields<Media>(item));
   }
 
-  async listMediaGalleryPlacements(mediaId: string): Promise<Array<{
-    galleryMediaId: string;
-    galleryId: string;
+  async listCreatorGroupsByCreatorId(creatorId: string): Promise<CreatorGroup[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `CREATOR#${creatorId}`,
+          ':prefix': 'GROUP#'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'CREATOR_GROUP')
+      .map((item) => stripEntityFields<CreatorGroup>(item));
+  }
+
+  async listSourceFilesByCreatorId(creatorId: string): Promise<SourceFile[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `CREATOR#${creatorId}`,
+          ':prefix': 'FILE#'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'SOURCE_FILE')
+      .map((item) => stripEntityFields<SourceFile>(item));
+  }
+
+  async getSourceFileById(fileId: string): Promise<SourceFile | null> {
+    const response = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: {
+          PK: `FILE#${fileId}`,
+          SK: 'PROFILE'
+        }
+      })
+    );
+    return response.Item ? stripEntityFields<SourceFile>(response.Item) : null;
+  }
+
+  async listMediaGroupingPlacements(mediaId: string): Promise<Array<{
+    groupingMediaId: string;
+    groupingId: string;
     mediaId: string;
     position: number;
     isPreview?: boolean;
@@ -576,15 +677,15 @@ export class GalleryCoreRepository {
         KeyConditionExpression: 'GSI1PK = :pk AND begins_with(GSI1SK, :prefix)',
         ExpressionAttributeValues: {
           ':pk': `MEDIA#${mediaId}`,
-          ':prefix': 'GALLERY#'
+          ':prefix': 'GROUPING#'
         }
       })
     );
     return (response.Items || [])
-      .filter((item) => item.entityType === 'GALLERY_MEDIA')
+      .filter((item) => item.entityType === 'GROUPING_MEDIA')
       .map((item) => stripEntityFields<{
-        galleryMediaId: string;
-        galleryId: string;
+        groupingMediaId: string;
+        groupingId: string;
         mediaId: string;
         position: number;
         isPreview?: boolean;
@@ -594,26 +695,26 @@ export class GalleryCoreRepository {
       .sort((a, b) => a.position - b.position);
   }
 
-  async createArtist(artist: Artist): Promise<void> {
-    const slugHistory = uniqueValues([...(artist.slugHistory || []), artist.slug]);
-    const featuredItemIds = uniqueValues(artist.featuredItemIds || []);
-    const featuredGalleryIds = uniqueValues(artist.featuredGalleryIds || []);
+  async createCreator(creator: Creator): Promise<void> {
+    const slugHistory = uniqueValues([...(creator.slugHistory || []), creator.slug]);
+    const featuredItemIds = uniqueValues(creator.featuredItemIds || []);
+    const featuredGroupingIds = uniqueValues(creator.featuredGroupingIds || []);
     await this.client.send(
       new PutCommand({
         TableName: this.tableName,
         Item: {
-          PK: `ARTIST#${artist.artistId}`,
+          PK: `CREATOR#${creator.creatorId}`,
           SK: 'PROFILE',
-          GSI1PK: `ARTIST_SLUG#${artist.slug}`,
-          GSI1SK: `ARTIST#${artist.artistId}`,
-          GSI2PK: 'ENTITY#ARTIST',
-          GSI2SK: `ARTIST#${artist.sortOrder.toString().padStart(8, '0')}#${artist.artistId}`,
-          entityType: 'ARTIST',
-          ...artist,
+          GSI1PK: `CREATOR#${creator.slug}`,
+          GSI1SK: `CREATOR#${creator.creatorId}`,
+          GSI2PK: 'ENTITY#CREATOR',
+          GSI2SK: `CREATOR#${creator.sortOrder.toString().padStart(8, '0')}#${creator.creatorId}`,
+          entityType: 'CREATOR',
+          ...creator,
           slugHistory,
-          defaultProfileTab: artist.defaultProfileTab === 'galleries' ? 'galleries' : 'feed',
+          defaultProfileTab: creator.defaultProfileTab === 'groupings' ? 'groupings' : 'feed',
           featuredItemIds,
-          featuredGalleryIds
+          featuredGroupingIds
         }
       })
     );
@@ -622,12 +723,12 @@ export class GalleryCoreRepository {
         new PutCommand({
           TableName: this.tableName,
           Item: {
-            PK: `ARTIST#${artist.artistId}`,
+            PK: `CREATOR#${creator.creatorId}`,
             SK: `SLUG#${slug}`,
-            GSI1PK: `ARTIST_SLUG#${slug}`,
-            GSI1SK: `ARTIST#${artist.artistId}`,
-            entityType: 'ARTIST_SLUG_ALIAS',
-            artistId: artist.artistId,
+            GSI1PK: `CREATOR#${slug}`,
+            GSI1SK: `CREATOR#${creator.creatorId}`,
+            entityType: 'CREATOR',
+            creatorId: creator.creatorId,
             slug
           }
         })
@@ -635,59 +736,59 @@ export class GalleryCoreRepository {
     }
   }
 
-  private async putGallerySlugAlias(galleryId: string, slug: string): Promise<void> {
+  private async putGroupingSlugAlias(groupingId: string, slug: string): Promise<void> {
     await this.client.send(
       new PutCommand({
         TableName: this.tableName,
         Item: {
-          PK: `GALLERY#${galleryId}`,
+          PK: `GROUPING#${groupingId}`,
           SK: `SLUG#${slug}`,
-          GSI1PK: `GALLERY_SLUG#${slug}`,
-          GSI1SK: `GALLERY#${galleryId}`,
-          entityType: 'GALLERY_SLUG',
-          galleryId,
+          GSI1PK: `GROUPING_SLUG#${slug}`,
+          GSI1SK: `GROUPING#${groupingId}`,
+          entityType: 'GROUPING_SLUG',
+          groupingId,
           slug
         }
       })
     );
   }
 
-  private async getGalleryProfileById(galleryId: string): Promise<Gallery | null> {
+  private async getGroupingProfileById(groupingId: string): Promise<Grouping | null> {
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
         KeyConditionExpression: 'PK = :pk AND SK = :sk',
         ExpressionAttributeValues: {
-          ':pk': `GALLERY#${galleryId}`,
+          ':pk': `GROUPING#${groupingId}`,
           ':sk': 'PROFILE'
         },
         Limit: 1
       })
     );
     const item = response.Items?.[0];
-    return item ? stripEntityFields<Gallery>(item) : null;
+    return item ? stripEntityFields<Grouping>(item) : null;
   }
 
-  async createGallery(gallery: Gallery): Promise<void> {
-    const slugHistory = Array.from(new Set([...(gallery.slugHistory || []), gallery.slug]));
+  async createGrouping(grouping: Grouping): Promise<void> {
+    const slugHistory = Array.from(new Set([...(grouping.slugHistory || []), grouping.slug]));
     await this.client.send(
       new PutCommand({
         TableName: this.tableName,
         Item: {
-          PK: `GALLERY#${gallery.galleryId}`,
+          PK: `GROUPING#${grouping.groupingId}`,
           SK: 'PROFILE',
-          GSI1PK: `GALLERY_SLUG#${gallery.slug}`,
-          GSI1SK: `GALLERY#${gallery.galleryId}`,
-          GSI2PK: `ARTIST#${gallery.artistId}`,
-          GSI2SK: `GALLERY#${gallery.status}#${gallery.title}#${gallery.galleryId}`,
-          entityType: 'GALLERY',
-          ...gallery,
+          GSI1PK: `GROUPING_SLUG#${grouping.slug}`,
+          GSI1SK: `GROUPING#${grouping.groupingId}`,
+          GSI2PK: `CREATOR#${grouping.creatorId}`,
+          GSI2SK: `GROUPING#${grouping.status}#${grouping.title}#${grouping.groupingId}`,
+          entityType: 'GROUPING',
+          ...grouping,
           slugHistory
         }
       })
     );
     for (const slug of slugHistory) {
-      await this.putGallerySlugAlias(gallery.galleryId, slug);
+      await this.putGroupingSlugAlias(grouping.groupingId, slug);
     }
   }
 
@@ -718,7 +819,7 @@ export class GalleryCoreRepository {
           SK: 'PROFILE',
           GSI1PK: `POST_SLUG#${post.slug}`,
           GSI1SK: `POST#${post.postId}`,
-          GSI2PK: `ARTIST#${post.artistId}`,
+          GSI2PK: `CREATOR#${post.creatorId}`,
           GSI2SK: `POST#${post.createdAt}#${post.postId}`,
           entityType: 'POST',
           ...post,
@@ -735,32 +836,100 @@ export class GalleryCoreRepository {
     await this.createPost(post);
   }
 
-  private async putGalleryPlacement(
-    galleryId: string,
+  async createSourceFile(file: SourceFile): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `FILE#${file.fileId}`,
+          SK: 'PROFILE',
+          GSI1PK: `FILE#${file.fileId}`,
+          GSI1SK: 'PROFILE',
+          GSI2PK: `CREATOR#${file.creatorId}`,
+          GSI2SK: `FILE#${file.createdAt}#${file.fileId}`,
+          entityType: 'SOURCE_FILE',
+          ...file
+        }
+      })
+    );
+  }
+
+  async updateSourceFile(file: SourceFile): Promise<void> {
+    await this.createSourceFile(file);
+  }
+
+  async deleteSourceFile(fileId: string): Promise<void> {
+    await this.client.send(
+      new DeleteCommand({
+        TableName: this.tableName,
+        Key: {
+          PK: `FILE#${fileId}`,
+          SK: 'PROFILE'
+        }
+      })
+    );
+  }
+
+  async createCreatorGroup(group: CreatorGroup): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `GROUP#${group.groupId}`,
+          SK: 'PROFILE',
+          GSI1PK: `GROUP_SLUG#${group.slug}`,
+          GSI1SK: `GROUP#${group.groupId}`,
+          GSI2PK: `CREATOR#${group.creatorId}`,
+          GSI2SK: `GROUP#${group.createdAt}#${group.groupId}`,
+          entityType: 'CREATOR_GROUP',
+          ...group
+        }
+      })
+    );
+  }
+
+  async updateCreatorGroup(group: CreatorGroup): Promise<void> {
+    await this.createCreatorGroup(group);
+  }
+
+  async deleteCreatorGroup(groupId: string): Promise<void> {
+    await this.client.send(
+      new DeleteCommand({
+        TableName: this.tableName,
+        Key: {
+          PK: `GROUP#${groupId}`,
+          SK: 'PROFILE'
+        }
+      })
+    );
+  }
+
+  private async putGroupingPlacement(
+    groupingId: string,
     mediaId: string,
     position: number,
-    galleryMediaId?: string,
+    groupingMediaId?: string,
     createdAt?: string,
     placement?: {
       isPreview?: boolean;
       previewMaxWidth?: number;
     }
   ): Promise<void> {
-    const resolvedGalleryMediaId = galleryMediaId || randomUUID();
+    const resolvedGroupingMediaId = groupingMediaId || randomUUID();
     const resolvedCreatedAt = createdAt || new Date().toISOString();
     await this.client.send(
       new PutCommand({
         TableName: this.tableName,
         Item: {
-          PK: `GALLERY#${galleryId}`,
-          SK: `ITEM#${resolvedGalleryMediaId}`,
+          PK: `GROUPING#${groupingId}`,
+          SK: `ITEM#${resolvedGroupingMediaId}`,
           GSI1PK: `MEDIA#${mediaId}`,
-          GSI1SK: `GALLERY#${galleryId}#ITEM#${resolvedGalleryMediaId}`,
-          GSI2PK: `GALLERY#${galleryId}`,
-          GSI2SK: `POS#${positionKey(position)}#ITEM#${resolvedGalleryMediaId}`,
-          entityType: 'GALLERY_MEDIA',
-          galleryMediaId: resolvedGalleryMediaId,
-          galleryId,
+          GSI1SK: `GROUPING#${groupingId}#ITEM#${resolvedGroupingMediaId}`,
+          GSI2PK: `GROUPING#${groupingId}`,
+          GSI2SK: `POS#${positionKey(position)}#ITEM#${resolvedGroupingMediaId}`,
+          entityType: 'GROUPING_MEDIA',
+          groupingMediaId: resolvedGroupingMediaId,
+          groupingId,
           mediaId,
           position,
           isPreview: placement?.isPreview,
@@ -773,7 +942,7 @@ export class GalleryCoreRepository {
 
   async createMedia(
     media: Media,
-    galleryId?: string,
+    groupingId?: string,
     position = 0,
     placement?: {
       isPreview?: boolean;
@@ -788,7 +957,7 @@ export class GalleryCoreRepository {
           SK: 'PROFILE',
           GSI1PK: `MEDIA_SLUG#${media.slug || media.mediaId}`,
           GSI1SK: `MEDIA#${media.mediaId}`,
-          GSI2PK: `ARTIST#${media.artistId}`,
+          GSI2PK: `CREATOR#${media.creatorId}`,
           GSI2SK: `MEDIA#${media.createdAt}#${media.mediaId}`,
           entityType: 'MEDIA_OBJECT',
           ...media,
@@ -797,13 +966,13 @@ export class GalleryCoreRepository {
       })
     );
 
-    if (galleryId) {
-      await this.putGalleryPlacement(galleryId, media.mediaId, position, undefined, undefined, placement);
+    if (groupingId) {
+      await this.putGroupingPlacement(groupingId, media.mediaId, position, undefined, undefined, placement);
     }
   }
 
-  async addMediaToGallery(
-    galleryId: string,
+  async addMediaToGrouping(
+    groupingId: string,
     mediaId: string,
     position: number,
     placement?: {
@@ -811,12 +980,12 @@ export class GalleryCoreRepository {
       previewMaxWidth?: number;
     }
   ): Promise<void> {
-    const existingPlacement = await this.getGalleryPlacement(galleryId, mediaId);
-    await this.putGalleryPlacement(
-      galleryId,
+    const existingPlacement = await this.getGroupingPlacement(groupingId, mediaId);
+    await this.putGroupingPlacement(
+      groupingId,
       mediaId,
       position,
-      existingPlacement?.galleryMediaId,
+      existingPlacement?.groupingMediaId,
       existingPlacement?.createdAt,
       {
         isPreview: placement?.isPreview ?? existingPlacement?.isPreview,
@@ -825,58 +994,58 @@ export class GalleryCoreRepository {
     );
   }
 
-  async addArtistMember(member: ArtistMember): Promise<void> {
+  async addCreatorMember(member: CreatorMember): Promise<void> {
     await this.client.send(
       new PutCommand({
         TableName: this.tableName,
         Item: {
-          PK: `ARTIST#${member.artistId}`,
+          PK: `CREATOR#${member.creatorId}`,
           SK: `MEMBER#USER#${member.userId}`,
-          GSI1PK: `USER_ARTIST_MEMBER#${member.userId}`,
-          GSI1SK: `ARTIST#${member.artistId}`,
-          GSI2PK: `ARTIST#${member.artistId}`,
+          GSI1PK: `USER_CREATOR_MEMBER#${member.userId}`,
+          GSI1SK: `CREATOR#${member.creatorId}`,
+          GSI2PK: `CREATOR#${member.creatorId}`,
           GSI2SK: `MEMBER#${member.role}#USER#${member.userId}`,
-          entityType: 'ARTIST_MEMBER',
+          entityType: 'CREATOR_MEMBER',
           ...member
         }
       })
     );
   }
 
-  async removeArtistMember(artistId: string, userId: string): Promise<void> {
+  async removeCreatorMember(creatorId: string, userId: string): Promise<void> {
     await this.client.send(
       new DeleteCommand({
         TableName: this.tableName,
         Key: {
-          PK: `ARTIST#${artistId}`,
+          PK: `CREATOR#${creatorId}`,
           SK: `MEMBER#USER#${userId}`
         }
       })
     );
   }
 
-  async listArtistMembers(artistId: string): Promise<ArtistMember[]> {
+  async listCreatorMembers(creatorId: string): Promise<CreatorMember[]> {
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
         KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
         ExpressionAttributeValues: {
-          ':pk': `ARTIST#${artistId}`,
+          ':pk': `CREATOR#${creatorId}`,
           ':prefix': 'MEMBER#USER#'
         }
       })
     );
     return (response.Items || [])
-      .filter((item) => item.entityType === 'ARTIST_MEMBER')
-      .map((item) => stripEntityFields<ArtistMember>(item));
+      .filter((item) => item.entityType === 'CREATOR_MEMBER')
+      .map((item) => stripEntityFields<CreatorMember>(item));
   }
 
-  async hasArtistAccess(userId: string, artistId: string): Promise<boolean> {
+  async hasCreatorAccess(userId: string, creatorId: string): Promise<boolean> {
     const response = await this.client.send(
       new GetCommand({
         TableName: this.tableName,
         Key: {
-          PK: `ARTIST#${artistId}`,
+          PK: `CREATOR#${creatorId}`,
           SK: `MEMBER#USER#${userId}`
         }
       })
@@ -884,42 +1053,42 @@ export class GalleryCoreRepository {
     return Boolean(response.Item);
   }
 
-  async listArtistsByUserId(userId: string): Promise<Artist[]> {
+  async listCreatorsByUserId(userId: string): Promise<Creator[]> {
     const memberships = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
         IndexName: 'GSI1',
         KeyConditionExpression: 'GSI1PK = :pk',
         ExpressionAttributeValues: {
-          ':pk': `USER_ARTIST_MEMBER#${userId}`
+          ':pk': `USER_CREATOR_MEMBER#${userId}`
         }
       })
     );
 
-    const artistIds = Array.from(
+    const creatorIds = Array.from(
       new Set(
         (memberships.Items || [])
-          .filter((item) => item.entityType === 'ARTIST_MEMBER' && typeof item.artistId === 'string')
-          .map((item) => String(item.artistId))
+          .filter((item) => item.entityType === 'CREATOR' && typeof item.creatorId === 'string')
+          .map((item) => String(item.creatorId))
       )
     );
-    if (artistIds.length === 0) {
+    if (creatorIds.length === 0) {
       return [];
     }
 
-    const artistResponse = await this.client.send(
+    const creatorProfiles = await this.client.send(
       new BatchGetCommand({
         RequestItems: {
           [this.tableName]: {
-            Keys: artistIds.map((artistId) => ({ PK: `ARTIST#${artistId}`, SK: 'PROFILE' }))
+            Keys: creatorIds.map((creatorId) => ({ PK: `CREATOR#${creatorId}`, SK: 'PROFILE' }))
           }
         }
       })
     );
 
-    return (artistResponse.Responses?.[this.tableName] || [])
-      .filter((item) => item.entityType === 'ARTIST')
-      .map((item) => stripEntityFields<Artist>(item));
+    return (creatorProfiles.Responses?.[this.tableName] || [])
+      .filter((item) => item.entityType === 'CREATOR')
+      .map((item) => stripEntityFields<Creator>(item));
   }
 
   async isUsernameAvailable(normalizedUsername: string): Promise<boolean> {
@@ -982,6 +1151,22 @@ export class GalleryCoreRepository {
     return response.Item ? stripEntityFields<UserProfile>(response.Item) : null;
   }
 
+  async listUserProfiles(): Promise<UserProfile[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk',
+        ExpressionAttributeValues: {
+          ':pk': 'ENTITY#USER_PROFILE'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'USER_PROFILE')
+      .map((item) => stripEntityFields<UserProfile>(item));
+  }
+
   async getUserProfileBySlug(slug: string): Promise<UserProfile | null> {
     const response = await this.client.send(
       new QueryCommand({
@@ -1035,9 +1220,71 @@ export class GalleryCoreRepository {
     }
   }
 
-  private async getGalleryPlacement(galleryId: string, mediaId: string): Promise<{
-    galleryMediaId: string;
-    galleryId: string;
+  async getUserIdentity(userId: string): Promise<UserIdentity | null> {
+    const response = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: {
+          PK: `USER#${userId}`,
+          SK: 'IDENTITY'
+        }
+      })
+    );
+    return response.Item ? stripEntityFields<UserIdentity>(response.Item) : null;
+  }
+
+  async listUserIdentities(): Promise<UserIdentity[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk',
+        ExpressionAttributeValues: {
+          ':pk': 'ENTITY#USER_IDENTITY'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'USER_IDENTITY')
+      .map((item) => stripEntityFields<UserIdentity>(item));
+  }
+
+  async upsertUserIdentity(identity: UserIdentity): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `USER#${identity.userId}`,
+          SK: 'IDENTITY',
+          GSI1PK: `USER_IDENTITY#${identity.userId}`,
+          GSI1SK: 'PROFILE',
+          GSI2PK: 'ENTITY#USER_IDENTITY',
+          GSI2SK: `USER#${identity.userId}`,
+          entityType: 'USER_IDENTITY',
+          ...identity
+        }
+      })
+    );
+  }
+
+  async setUserRole(userId: string, role: PlatformRole): Promise<UserIdentity> {
+    const existing = await this.getUserIdentity(userId);
+    const now = new Date().toISOString();
+    const next: UserIdentity = {
+      userId,
+      role,
+      isBeeker: existing?.isBeeker || false,
+      capabilities: capabilitiesForRole(role),
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    await this.upsertUserIdentity(next);
+    return next;
+  }
+
+  private async getGroupingPlacement(groupingId: string, mediaId: string): Promise<{
+    groupingMediaId: string;
+    groupingId: string;
     mediaId: string;
     position: number;
     isPreview?: boolean;
@@ -1049,17 +1296,17 @@ export class GalleryCoreRepository {
         TableName: this.tableName,
         KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
         ExpressionAttributeValues: {
-          ':pk': `GALLERY#${galleryId}`,
+          ':pk': `GROUPING#${groupingId}`,
           ':prefix': 'ITEM#'
         }
       })
     );
 
-    const item = (response.Items || []).find((candidate) => candidate.entityType === 'GALLERY_MEDIA' && candidate.mediaId === mediaId);
+    const item = (response.Items || []).find((candidate) => candidate.entityType === 'GROUPING_MEDIA' && candidate.mediaId === mediaId);
     return item
       ? stripEntityFields<{
-          galleryMediaId: string;
-          galleryId: string;
+          groupingMediaId: string;
+          groupingId: string;
           mediaId: string;
           position: number;
           isPreview?: boolean;
@@ -1069,12 +1316,12 @@ export class GalleryCoreRepository {
       : null;
   }
 
-  async updateArtist(artist: Artist): Promise<void> {
-    await this.createArtist(artist);
+  async updateCreator(creator: Creator): Promise<void> {
+    await this.createCreator(creator);
   }
 
-  async updateGallery(gallery: Gallery): Promise<void> {
-    await this.createGallery(gallery);
+  async updateGrouping(grouping: Grouping): Promise<void> {
+    await this.createGrouping(grouping);
   }
 
   async updateMedia(media: Media): Promise<void> {
@@ -1086,7 +1333,7 @@ export class GalleryCoreRepository {
           SK: 'PROFILE',
           GSI1PK: `MEDIA_SLUG#${media.slug || media.mediaId}`,
           GSI1SK: `MEDIA#${media.mediaId}`,
-          GSI2PK: `ARTIST#${media.artistId}`,
+          GSI2PK: `CREATOR#${media.creatorId}`,
           GSI2SK: `MEDIA#${media.createdAt}#${media.mediaId}`,
           entityType: 'MEDIA_OBJECT',
           ...media,
@@ -1096,71 +1343,71 @@ export class GalleryCoreRepository {
     );
   }
 
-  async moveMediaInGallery(galleryId: string, mediaId: string, position: number): Promise<void> {
-    const placement = await this.getGalleryPlacement(galleryId, mediaId);
+  async moveMediaInGrouping(groupingId: string, mediaId: string, position: number): Promise<void> {
+    const placement = await this.getGroupingPlacement(groupingId, mediaId);
     if (!placement) return;
 
-    await this.putGalleryPlacement(galleryId, mediaId, position, placement.galleryMediaId, placement.createdAt, {
+    await this.putGroupingPlacement(groupingId, mediaId, position, placement.groupingMediaId, placement.createdAt, {
       isPreview: placement.isPreview,
       previewMaxWidth: placement.previewMaxWidth
     });
   }
 
-  async deleteArtist(artistId: string): Promise<void> {
-    const profile = await this.getArtistProfileById(artistId);
+  async deleteCreator(creator: string): Promise<void> {
+    const profile = await this.getCreatorProfileById(creator);
     for (const slug of profile?.slugHistory || (profile?.slug ? [profile.slug] : [])) {
       await this.client.send(
         new DeleteCommand({
           TableName: this.tableName,
           Key: {
-            PK: `ARTIST#${artistId}`,
+            PK: `CREATOR#${creator}`,
             SK: `SLUG#${slug}`
           }
         })
       );
     }
 
-    const members = await this.listArtistMembers(artistId);
+    const members = await this.listCreatorMembers(creator);
     for (const member of members) {
-      await this.removeArtistMember(artistId, member.userId);
+      await this.removeCreatorMember(creator, member.userId);
     }
 
     await this.client.send(
       new DeleteCommand({
         TableName: this.tableName,
         Key: {
-          PK: `ARTIST#${artistId}`,
+          PK: `CREATOR#${creator}`,
           SK: 'PROFILE'
         }
       })
     );
   }
 
-  private async getArtistProfileById(artistId: string): Promise<Artist | null> {
+  private async getCreatorProfileById(creator: string): Promise<Creator | null> {
     const response = await this.client.send(
       new GetCommand({
         TableName: this.tableName,
         Key: {
-          PK: `ARTIST#${artistId}`,
+          PK: `CREATOR#${creator}`,
           SK: 'PROFILE'
         }
       })
     );
-    return response.Item ? stripEntityFields<Artist>(response.Item) : null;
+    return response.Item ? stripEntityFields<Creator>(response.Item) : null;
   }
 
-  async deleteGallery(galleryId: string): Promise<void> {
-    const gallery = await this.getGalleryProfileById(galleryId);
-    const media = await this.getMediaByGalleryId(galleryId);
+  async deleteGrouping(groupingId: string): Promise<void> {
+    const grouping = await this.getGroupingProfileById(groupingId);
+    const media = await this.getMediaByGroupingId(groupingId);
     for (const item of media) {
-      await this.deleteMediaFromGallery(galleryId, item.mediaId);
+      await this.deleteMediaFromGrouping(groupingId, item.mediaId);
     }
-    for (const slug of gallery?.slugHistory || (gallery?.slug ? [gallery.slug] : [])) {
+    for (const slug of grouping?.slugHistory || (grouping?.slug ? [grouping.slug] : [])) {
       await this.client.send(
         new DeleteCommand({
           TableName: this.tableName,
           Key: {
-            PK: `GALLERY#${galleryId}`,
+            PK: `GROUPING#${groupingId}`,
             SK: `SLUG#${slug}`
           }
         })
@@ -1170,7 +1417,7 @@ export class GalleryCoreRepository {
       new DeleteCommand({
         TableName: this.tableName,
         Key: {
-          PK: `GALLERY#${galleryId}`,
+          PK: `GROUPING#${groupingId}`,
           SK: 'PROFILE'
         }
       })
@@ -1201,7 +1448,7 @@ export class GalleryCoreRepository {
     );
   }
 
-  private async countGalleryPlacementsForMedia(mediaId: string): Promise<number> {
+  private async countGroupingPlacementsForMedia(mediaId: string): Promise<number> {
     const response = await this.client.send(
       new QueryCommand({
         TableName: this.tableName,
@@ -1216,8 +1463,8 @@ export class GalleryCoreRepository {
     return response.Count || 0;
   }
 
-  async deleteMediaFromGallery(galleryId: string, mediaId: string): Promise<void> {
-    const placement = await this.getGalleryPlacement(galleryId, mediaId);
+  async deleteMediaFromGrouping(groupingId: string, mediaId: string): Promise<void> {
+    const placement = await this.getGroupingPlacement(groupingId, mediaId);
     if (!placement) {
       return;
     }
@@ -1226,13 +1473,13 @@ export class GalleryCoreRepository {
       new DeleteCommand({
         TableName: this.tableName,
         Key: {
-          PK: `GALLERY#${galleryId}`,
-          SK: `ITEM#${placement.galleryMediaId}`
+          PK: `GROUPING#${groupingId}`,
+          SK: `ITEM#${placement.groupingMediaId}`
         }
       })
     );
 
-    const remainingPlacements = await this.countGalleryPlacementsForMedia(mediaId);
+    const remainingPlacements = await this.countGroupingPlacementsForMedia(mediaId);
     if (remainingPlacements === 0) {
       const mediaProfile = await this.client.send(
         new GetCommand({
@@ -1258,31 +1505,268 @@ export class GalleryCoreRepository {
     }
   }
 
-  async grantGalleryAccess(userId: string, galleryId: string): Promise<void> {
+  async listContributionContexts(): Promise<ContributionContext[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk',
+        ExpressionAttributeValues: {
+          ':pk': 'ENTITY#CONTRIBUTION_CONTEXT'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'CONTRIBUTION_CONTEXT')
+      .map((item) => stripEntityFields<ContributionContext>(item))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async getContributionContextById(contextId: string): Promise<ContributionContext | null> {
+    const response = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: {
+          PK: `CONTEXT#${contextId}`,
+          SK: 'PROFILE'
+        }
+      })
+    );
+    return response.Item ? stripEntityFields<ContributionContext>(response.Item) : null;
+  }
+
+  async getContributionContextBySlug(slug: string): Promise<ContributionContext | null> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI1',
+        KeyConditionExpression: 'GSI1PK = :pk',
+        ExpressionAttributeValues: {
+          ':pk': `CONTEXT_SLUG#${slug}`
+        },
+        Limit: 1
+      })
+    );
+    const item = response.Items?.[0];
+    return item ? stripEntityFields<ContributionContext>(item) : null;
+  }
+
+  async createContributionContext(context: ContributionContext): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `CONTEXT#${context.contextId}`,
+          SK: 'PROFILE',
+          GSI1PK: `CONTEXT_SLUG#${context.slug}`,
+          GSI1SK: `CONTEXT#${context.contextId}`,
+          GSI2PK: 'ENTITY#CONTRIBUTION_CONTEXT',
+          GSI2SK: `CONTEXT#${context.createdAt}#${context.contextId}`,
+          entityType: 'CONTRIBUTION_CONTEXT',
+          ...context
+        }
+      })
+    );
+  }
+
+  async updateContributionContext(context: ContributionContext): Promise<void> {
+    await this.createContributionContext(context);
+  }
+
+  async listContextSubmissions(contextId: string): Promise<ContextSubmission[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `CONTEXT#${contextId}`,
+          ':prefix': 'SUBMISSION#'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'CONTEXT_SUBMISSION')
+      .map((item) => stripEntityFields<ContextSubmission>(item))
+      .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+  }
+
+  async getContextSubmissionById(submissionId: string): Promise<ContextSubmission | null> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI1',
+        KeyConditionExpression: 'GSI1PK = :pk',
+        ExpressionAttributeValues: {
+          ':pk': `SUBMISSION#${submissionId}`
+        },
+        Limit: 1
+      })
+    );
+    const item = response.Items?.[0];
+    return item ? stripEntityFields<ContextSubmission>(item) : null;
+  }
+
+  async createContextSubmission(submission: ContextSubmission): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `CONTEXT#${submission.contextId}`,
+          SK: `SUBMISSION#${submission.submissionId}`,
+          GSI1PK: `SUBMISSION#${submission.submissionId}`,
+          GSI1SK: `CONTEXT#${submission.contextId}`,
+          GSI2PK: `CONTEXT#${submission.contextId}`,
+          GSI2SK: `SUBMISSION#${submission.submittedAt}#${submission.submissionId}`,
+          entityType: 'CONTEXT_SUBMISSION',
+          ...submission
+        }
+      })
+    );
+  }
+
+  async updateContextSubmission(submission: ContextSubmission): Promise<void> {
+    await this.createContextSubmission(submission);
+  }
+
+  async listContextUnlockThresholds(contextId: string): Promise<ContextUnlockThreshold[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `CONTEXT#${contextId}`,
+          ':prefix': 'UNLOCK#'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'CONTEXT_UNLOCK_THRESHOLD')
+      .map((item) => stripEntityFields<ContextUnlockThreshold>(item));
+  }
+
+  async createContextUnlockThreshold(threshold: ContextUnlockThreshold): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `CONTEXT#${threshold.contextId}`,
+          SK: `UNLOCK#${threshold.unlockId}`,
+          GSI1PK: `UNLOCK#${threshold.unlockId}`,
+          GSI1SK: `CONTEXT#${threshold.contextId}`,
+          GSI2PK: `CONTEXT#${threshold.contextId}`,
+          GSI2SK: `UNLOCK#${threshold.createdAt}#${threshold.unlockId}`,
+          entityType: 'CONTEXT_UNLOCK_THRESHOLD',
+          ...threshold
+        }
+      })
+    );
+  }
+
+  async updateContextUnlockThreshold(threshold: ContextUnlockThreshold): Promise<void> {
+    await this.createContextUnlockThreshold(threshold);
+  }
+
+  async listChallengePrizes(contextId: string): Promise<ChallengePrize[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `CONTEXT#${contextId}`,
+          ':prefix': 'PRIZE#'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'CHALLENGE_PRIZE')
+      .map((item) => stripEntityFields<ChallengePrize>(item));
+  }
+
+  async createChallengePrize(prize: ChallengePrize): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `CONTEXT#${prize.contextId}`,
+          SK: `PRIZE#${prize.prizeId}`,
+          GSI1PK: `PRIZE#${prize.prizeId}`,
+          GSI1SK: `CONTEXT#${prize.contextId}`,
+          GSI2PK: `CONTEXT#${prize.contextId}`,
+          GSI2SK: `PRIZE#${prize.createdAt}#${prize.prizeId}`,
+          entityType: 'CHALLENGE_PRIZE',
+          ...prize
+        }
+      })
+    );
+  }
+
+  async updateChallengePrize(prize: ChallengePrize): Promise<void> {
+    await this.createChallengePrize(prize);
+  }
+
+  async listPrizeAwards(contextId: string): Promise<PrizeAward[]> {
+    const response = await this.client.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+        ExpressionAttributeValues: {
+          ':pk': `CONTEXT#${contextId}`,
+          ':prefix': 'AWARD#'
+        }
+      })
+    );
+    return (response.Items || [])
+      .filter((item) => item.entityType === 'PRIZE_AWARD')
+      .map((item) => stripEntityFields<PrizeAward>(item));
+  }
+
+  async createPrizeAward(award: PrizeAward): Promise<void> {
+    await this.client.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          PK: `CONTEXT#${award.contextId}`,
+          SK: `AWARD#${award.prizeAwardId}`,
+          GSI1PK: `PRIZE#${award.prizeId}`,
+          GSI1SK: `AWARD#${award.prizeAwardId}`,
+          GSI2PK: `CONTEXT#${award.contextId}`,
+          GSI2SK: `AWARD#${award.awardedAt}#${award.prizeAwardId}`,
+          entityType: 'PRIZE_AWARD',
+          ...award
+        }
+      })
+    );
+  }
+
+  async grantGroupingAccess(userId: string, groupingId: string): Promise<void> {
     await this.client.send(
       new PutCommand({
         TableName: this.tableName,
         Item: {
           PK: `USER#${userId}`,
-          SK: `ACCESS#GALLERY#${galleryId}`,
-          GSI1PK: `GALLERY_ACCESS#${galleryId}`,
+          SK: `ACCESS#GROUPING#${groupingId}`,
+          GSI1PK: `GROUPING_ACCESS#${groupingId}`,
           GSI1SK: `USER#${userId}`,
-          entityType: 'USER_GALLERY_ACCESS',
+          entityType: 'USER_GROUPING_ACCESS',
           userId,
-          galleryId,
+          groupingId,
           grantedAt: new Date().toISOString()
         }
       })
     );
   }
 
-  async hasGalleryAccess(userId: string, galleryId: string): Promise<boolean> {
+  async hasGroupingAccess(userId: string, groupingId: string): Promise<boolean> {
     const response = await this.client.send(
       new GetCommand({
         TableName: this.tableName,
         Key: {
           PK: `USER#${userId}`,
-          SK: `ACCESS#GALLERY#${galleryId}`
+          SK: `ACCESS#GROUPING#${groupingId}`
         }
       })
     );

@@ -8,7 +8,7 @@ type MediaRow = {
   SK: string;
   entityType?: string;
   mediaId?: string;
-  artistId?: string;
+  creatorId?: string;
   assetType?: 'image' | 'video';
   previewKey?: string;
   premiumKey?: string;
@@ -35,13 +35,13 @@ const chunk = <T>(items: T[], size: number): T[][] => {
 async function run(): Promise<void> {
   const config = loadConfig();
   const region = getArgValue('--region') || config.awsRegion;
-  const tableName = getArgValue('--gallery-core-table') || config.galleryCoreTable;
+  const tableName = getArgValue('--grouping-core-table') || config.groupingCoreTable;
   const queueUrl = getArgValue('--queue-url') || process.env.VIDEO_POSTER_INGEST_QUEUE_URL || '';
   const bucket = getArgValue('--bucket') || config.mediaBucket;
   const dryRun = process.argv.includes('--dry-run');
   const maxItems = Number(getArgValue('--max-items') || '0');
 
-  if (!tableName) throw new Error('--gallery-core-table (or GALLERY_CORE_TABLE) is required');
+  if (!tableName) throw new Error('--grouping-core-table (or GROUPING_CORE_TABLE) is required');
   if (!queueUrl) throw new Error('--queue-url (or VIDEO_POSTER_INGEST_QUEUE_URL) is required');
   if (!bucket) throw new Error('--bucket (or MEDIA_BUCKET) is required');
 
@@ -49,12 +49,12 @@ async function run(): Promise<void> {
   const sqs = new SQSClient({ region });
 
   let lastEvaluatedKey: Record<string, unknown> | undefined;
-  const candidates: Array<{ mediaId: string; key: string; artistId: string }> = [];
+  const candidates: Array<{ mediaId: string; key: string; creatorId: string }> = [];
   do {
     const response = await doc.send(
       new ScanCommand({
         TableName: tableName,
-        ProjectionExpression: 'PK, SK, entityType, mediaId, artistId, assetType, previewKey, premiumKey, previewPosterKey',
+        ProjectionExpression: 'PK, SK, entityType, mediaId, creatorId, assetType, previewKey, premiumKey, previewPosterKey',
         FilterExpression: 'entityType = :entityType AND assetType = :assetType',
         ExpressionAttributeValues: {
           ':entityType': 'MEDIA_OBJECT',
@@ -67,8 +67,8 @@ async function run(): Promise<void> {
     for (const row of rows) {
       if (row.previewPosterKey) continue;
       const sourceKey = row.previewKey || row.premiumKey;
-      if (!sourceKey || !row.mediaId || !row.artistId) continue;
-      candidates.push({ mediaId: row.mediaId, key: sourceKey, artistId: row.artistId });
+      if (!sourceKey || !row.mediaId || !row.creatorId) continue;
+      candidates.push({ mediaId: row.mediaId, key: sourceKey, creatorId: row.creatorId });
       if (maxItems > 0 && candidates.length >= maxItems) break;
     }
     if (maxItems > 0 && candidates.length >= maxItems) break;
@@ -91,7 +91,7 @@ async function run(): Promise<void> {
             bucket,
             key: item.key,
             mediaId: item.mediaId,
-            artistId: item.artistId
+            creatorId: item.creatorId
           })
         }))
       })

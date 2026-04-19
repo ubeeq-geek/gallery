@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "ts-node-dev --respawn --transpile-only src/dev.ts",
     "reset:core": "ts-node --transpile-only src/scripts/resetGalleryCore.ts",
-    "seed:core": "ts-node --transpile-only src/scripts/seedGalleryCore.ts",
+    "seed:core": "ts-node --transpile-only src/scripts/seedStudioCore.ts",
     "migrate:core": "ts-node --transpile-only src/scripts/migrateToGalleryCore.ts",
     "verify:core": "ts-node --transpile-only src/scripts/verifyGalleryCore.ts",
     "rank:trending": "ts-node --transpile-only src/trendingRanker.ts",

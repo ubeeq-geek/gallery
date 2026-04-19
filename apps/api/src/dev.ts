@@ -6,13 +6,13 @@ const config = loadConfig();
 const store = new InMemoryStore();
 
 const now = new Date().toISOString();
-store.artists.push({ artistId: 'artist-1', name: 'Featured Artist', slug: 'featured-artist', status: 'active', sortOrder: 1, createdAt: now });
-store.galleries.push({
-  galleryId: 'gallery-1',
-  artistId: 'artist-1',
-  artistSlug: 'featured-artist',
-  title: 'Free Preview Gallery',
-  slug: 'free-preview-gallery',
+store.creators.push({ creatorId: 'creator-1', name: 'Featured Creator', slug: 'featured-creator', status: 'active', sortOrder: 1, createdAt: now });
+store.groupings.push({
+  groupingId: 'grouping-1',
+  creatorId: 'creator-1',
+  creatorSlug: 'featured-creator',
+  title: 'Free Preview Grouping',
+  slug: 'free-preview-grouping',
   visibility: 'free',
   status: 'published',
   createdAt: now

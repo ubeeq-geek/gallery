@@ -1,14 +1,14 @@
 import { Link } from 'react-router-dom';
-import type { GalleryAsset } from '../domainTypes';
+import type { GroupingAsset } from '../domainTypes';
 import { formatDisclosureLine } from '../discoveryUtils';
 
 type DiscoveryFocusModalProps = {
   open: boolean;
-  item: GalleryAsset | null;
+  item: GroupingAsset | null;
   itemsCount: number;
   itemIndex: number;
-  galleryTitle: string;
-  gallerySlug: string;
+  groupingTitle: string;
+  groupingSlug: string;
   loading: boolean;
   error: string;
   hasPrevious: boolean;
@@ -26,8 +26,8 @@ export default function DiscoveryFocusModal({
   item,
   itemsCount,
   itemIndex,
-  galleryTitle,
-  gallerySlug,
+  groupingTitle,
+  groupingSlug,
   loading,
   error,
   hasPrevious,
@@ -50,7 +50,7 @@ export default function DiscoveryFocusModal({
             <span className="discovery-focus-modal-title-id">
               {item ? (item.imageId || 'Focused view') : 'Focused view'}
             </span>
-            <span className="discovery-focus-modal-title-gallery">{galleryTitle || 'Gallery preview'}</span>
+            <span className="discovery-focus-modal-title-grouping">{groupingTitle || 'Grouping preview'}</span>
           </div>
           <div className="discovery-focus-modal-meta">
             <span>{item?.displayedContentRating || 'General'}</span>
@@ -76,13 +76,13 @@ export default function DiscoveryFocusModal({
             >
               Next
             </button>
-            {gallerySlug && (
+            {groupingSlug && (
               <Link
                 className="auth-primary-btn no-underline"
-                to={`/gallery/${gallerySlug}?image=${encodeURIComponent(item?.imageId || '')}`}
+                to={`/groupings/${groupingSlug}?image=${encodeURIComponent(item?.imageId || '')}`}
                 onClick={onClose}
               >
-                Open gallery
+                Open grouping
               </Link>
             )}
           </div>

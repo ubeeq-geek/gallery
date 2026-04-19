@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { getCurrentUser } from '../cognitoAuth';
-import type { CollectionSummary, ManagedArtist, ManagedFavorite } from '../domainTypes';
+import type { CollectionSummary, ManagedCreator, ManagedFavorite } from '../domainTypes';
 import AutoLoadSentinel from '../components/AutoLoadSentinel';
 
 export default function CollectionsPage() {
@@ -65,7 +65,7 @@ export default function CollectionsPage() {
 export function CollectionDetailPage() {
   const { collectionId = '' } = useParams();
   const currentUser = getCurrentUser();
-  const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
+  const [managedArtists, setManagedArtists] = useState<ManagedCreator[]>([]);
   const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
   const [isFavorited, setIsFavorited] = useState(false);
   const [collection, setCollection] = useState<(CollectionSummary & { imageIds?: string[] }) | null>(null);
@@ -92,8 +92,8 @@ export function CollectionDetailPage() {
     }
     const loadArtists = async () => {
       try {
-        const artists = await api.getMyArtists() as ManagedArtist[];
-        setManagedArtists(artists);
+        const creators = await api.getMyCreators() as ManagedCreator[];
+        setManagedArtists(creators);
       } catch {
         setManagedArtists([]);
       }
@@ -101,8 +101,8 @@ export function CollectionDetailPage() {
     void loadArtists();
   }, [currentUser?.username]);
 
-  const favoriteAsProfile = favoriteIdentity.startsWith('artist:')
-    ? { ownerProfileType: 'artist' as const, ownerProfileId: favoriteIdentity.slice('artist:'.length) }
+  const favoriteAsProfile = favoriteIdentity.startsWith('creator:')
+    ? { ownerProfileType: 'creator' as const, ownerProfileId: favoriteIdentity.slice('creator:'.length) }
     : { ownerProfileType: 'user' as const };
 
   useEffect(() => {
@@ -153,9 +153,9 @@ export function CollectionDetailPage() {
             onChange={(e) => setFavoriteIdentity(e.target.value)}
           >
             <option value="user">User Profile</option>
-            {managedArtists.map((artist) => (
-              <option key={`favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
-                Artist: {artist.name}
+            {managedArtists.map((creator) => (
+              <option key={`favorite-${creator.creatorId}`} value={`creator:${creator.creatorId}`}>
+                Creator: {creator.name}
               </option>
             ))}
           </select>

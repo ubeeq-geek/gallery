@@ -2,7 +2,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 
 export interface UnlockPayload {
-  galleryId: string;
+  groupingId: string;
   userId?: string;
   tokenType?: 'unlock' | 'remember';
 }

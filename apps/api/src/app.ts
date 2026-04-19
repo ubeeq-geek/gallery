@@ -13,14 +13,14 @@ import type { DataStore } from './store';
 import { hashPassword } from './unlock';
 import type {
   AiDisclosure,
-  Artist,
-  ArtistMember,
+  Creator,
+  CreatorMember,
   ChallengePrize,
   Comment,
   ContentRating,
   ContextSubmission,
   ContributionContext,
-  Gallery,
+  Grouping,
   HeavyTopic,
   Media,
   PlatformRole,
@@ -58,11 +58,14 @@ import {
   profileDisclosurePolicy,
   type ViewerDisclosurePolicy
 } from './disclosures';
+import { capabilitiesForRole, normalizePlatformRoleValue } from './roleHelpers';
 
 interface CreateAppOptions {
   config: AppConfig;
   store: DataStore;
 }
+
+let hasHandledInvocation = false;
 
 const slugify = (value: string): string =>
   value
@@ -85,11 +88,11 @@ const uniqueSlugs = (slugs: Array<string | undefined>): string[] => {
   return result;
 };
 
-const artistHasSlug = (artist: Artist, slug: string): boolean => {
+const creatorMatchesSlug = (creator: Creator, slug: string): boolean => {
   const normalized = slugify(slug);
   if (!normalized) return false;
-  if (artist.slug === normalized) return true;
-  return (artist.slugHistory || []).some((item) => slugify(item) === normalized);
+  if (creator.slug === normalized) return true;
+  return (creator.slugHistory || []).some((item) => slugify(item) === normalized);
 };
 
 const parseSquareCrop = (input: unknown): SquareCropInput | undefined => {
@@ -168,7 +171,7 @@ const POST_BLOCK_TYPES = new Set([
   'embed',
   'file',
   'link',
-  'gallery',
+  'grouping',
   'carousel',
   'pdf_preview',
   'html_fragment'
@@ -228,22 +231,6 @@ const parsePostDiscoveryMode = (value: unknown): PostDiscoveryMode => {
   return 'primary';
 };
 
-const capabilityMap = (role: PlatformRole): UserCapabilities => ({
-  canBrowse: true,
-  canComment: true,
-  canVote: true,
-  canSubmitToContexts: role === 'contributor' || role === 'creator' || role === 'admin',
-  canPublishPosts: role === 'creator' || role === 'admin',
-  canManageGroups: role === 'creator' || role === 'admin',
-  canModerate: role === 'admin',
-  canAwardPrizes: role === 'admin'
-});
-
-const normalizePlatformRole = (input: unknown): PlatformRole => {
-  if (input === 'admin' || input === 'creator' || input === 'contributor') return input;
-  return 'user';
-};
-
 const validateUsername = (value: string): { normalized: string; reasons: string[] } => {
   const normalized = normalizeUsername(value);
   const reasons: string[] = [];
@@ -266,7 +253,7 @@ const buildUsernameSuggestions = async (store: DataStore, input: string): Promis
   const candidates = new Set<string>();
   candidates.add(`${trimmed}-${Math.floor(100 + Math.random() * 900)}`);
   candidates.add(`${trimmed}${new Date().getFullYear()}`);
-  candidates.add(`${trimmed}-gallery`);
+  candidates.add(`${trimmed}-grouping`);
   candidates.add(`${trimmed}-art`);
   candidates.add(`u${trimmed}-${Math.floor(10 + Math.random() * 89)}`);
 
@@ -293,6 +280,14 @@ const stableHash = (input: string): number => {
 
 const encodeCursorToken = (payload: Record<string, unknown>): string =>
   Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+
+type ServerTimingEntry = { metric: string; durMs: number; desc?: string };
+
+const addServerTiming = (res: express.Response, metric: string, durMs: number, desc?: string): void => {
+  const locals = res.locals as { __serverTimingEntries?: ServerTimingEntry[] };
+  if (!locals.__serverTimingEntries) locals.__serverTimingEntries = [];
+  locals.__serverTimingEntries.push({ metric, durMs, desc });
+};
 
 const decodeCursorToken = (token?: string): Record<string, unknown> | null => {
   if (!token) return null;
@@ -355,7 +350,6 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   };
   const discoveryCache = new Map<string, DiscoveryCacheEntry>();
   const trendingResponseCache = new Map<string, { payload: unknown; expiresAt: number }>();
-  const localSourceFiles = new Map<string, SourceFile>();
   let trendingWarmupInFlight: Promise<void> | null = null;
 
   const buildDiscoveryCacheKey = (req: express.Request, scope: string): string | null => {
@@ -489,11 +483,24 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     'if-none-match',
     'cache-control',
     'range',
-    'x-gallery-access-token',
+    'x-grouping-access-token',
     'x-unlock-token',
     'x-idempotency-key'
   ];
-  const exposedHeaders = ['accept-ranges', 'content-range', 'content-length', 'content-type', 'etag'];
+  const exposedHeaders = [
+    'accept-ranges',
+    'content-range',
+    'content-length',
+    'content-type',
+    'etag',
+    'server-timing',
+    'x-request-id',
+    'x-handler-ms',
+    'x-runtime-uptime-ms',
+    'x-cold-start',
+    'x-store-ms',
+    'x-media-ms'
+  ];
 
   const encodeS3LikePath = (key: string): string => key.split('/').map((part) => encodeURIComponent(part)).join('/');
   const publicMediaUrl = async (key?: string): Promise<string | undefined> => {
@@ -527,16 +534,16 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     );
   };
 
-  const hasPremiumAccess = async (req: express.Request, galleryId: string): Promise<boolean> => {
-    if (req.authUser?.userId && await store.hasGalleryAccess(req.authUser.userId, galleryId)) {
+  const hasPremiumAccess = async (req: express.Request, groupingId: string): Promise<boolean> => {
+    if (req.authUser?.userId && await store.hasGroupingAccess(req.authUser.userId, groupingId)) {
       return true;
     }
 
-    const token = req.headers['x-gallery-access-token'];
+    const token = req.headers['x-grouping-access-token'];
     if (typeof token === 'string') {
       try {
         const payload = verifyUnlockToken(token, config.unlockJwtSecret);
-        if (payload.galleryId === galleryId && payload.tokenType === 'remember') {
+        if (payload.groupingId === groupingId && payload.tokenType === 'remember') {
           return true;
         }
       } catch {
@@ -652,33 +659,33 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return resolveRole(req.authUser) === 'admin';
   };
 
-  const getArtistMembership = async (artistId: string, userId: string): Promise<ArtistMember | null> => {
-    const members = await store.listArtistMembers(artistId);
+  const getCreatorMembership = async (creatorId: string, userId: string): Promise<CreatorMember | null> => {
+    const members = await store.listCreatorMembers(creatorId);
     return members.find((member) => member.userId === userId) || null;
   };
 
-  const ensureArtistContentAccess = async (req: express.Request, res: express.Response, artistId: string): Promise<boolean> => {
+  const ensureCreatorContentAccess = async (req: express.Request, res: express.Response, creatorId: string): Promise<boolean> => {
     if (!req.authUser) {
       res.status(401).json({ message: 'Authentication required' });
       return false;
     }
-    if (!artistId) {
-      res.status(400).json({ message: 'artistId is required' });
+    if (!creatorId) {
+      res.status(400).json({ message: 'creator is required' });
       return false;
     }
     if (isAdminRequest(req)) return true;
-    const allowed = await store.hasArtistAccess(req.authUser.userId, artistId);
+    const allowed = await store.hasCreatorAccess(req.authUser.userId, creatorId);
     if (!allowed) {
-      res.status(403).json({ message: 'Artist access required' });
+      res.status(403).json({ message: 'Creator access required' });
       return false;
     }
     return true;
   };
 
-  const ensureArtistAccountAccess = async (req: express.Request, res: express.Response, artistId: string): Promise<boolean> => {
-    if (!(await ensureArtistContentAccess(req, res, artistId))) return false;
+  const ensureCreatorAccountAccess = async (req: express.Request, res: express.Response, creatorId: string): Promise<boolean> => {
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return false;
     if (isAdminRequest(req)) return true;
-    const membership = await getArtistMembership(artistId, req.authUser!.userId);
+    const membership = await getCreatorMembership(creatorId, req.authUser!.userId);
     if (!membership || (membership.role !== 'owner' && membership.role !== 'manager')) {
       res.status(403).json({ message: 'Owner or manager role required' });
       return false;
@@ -705,7 +712,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       auditId: event.auditId,
       action: event.action,
       actorUserId: event.actorUserId,
-      actorRole: event.actorRole as 'public' | 'user' | 'artist' | 'admin',
+      actorRole: event.actorRole as 'public' | 'user' | 'creator' | 'admin',
       ip: event.ip,
       detail,
       createdAt: event.time
@@ -740,28 +747,78 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   const resolveOwnerProfile = async (
     req: express.Request,
     body: unknown
-  ): Promise<{ ownerProfileType: 'user' | 'artist'; ownerProfileId: string } | null> => {
+  ): Promise<{ ownerProfileType: 'user' | 'creator'; ownerProfileId: string } | null> => {
     const payload = (body && typeof body === 'object') ? body as Record<string, unknown> : {};
-    const requestedType = payload.ownerProfileType === 'artist' ? 'artist' : 'user';
-    if (requestedType === 'artist') {
-      const artistId = typeof payload.ownerProfileId === 'string' ? payload.ownerProfileId : '';
-      if (!artistId) return null;
-      if (!(await store.hasArtistAccess(req.authUser!.userId, artistId)) && !isAdminRequest(req)) {
+    const requestedType = payload.ownerProfileType === 'creator' ? 'creator' : 'user';
+    if (requestedType === 'creator') {
+      const creator = typeof payload.ownerProfileId === 'string' ? payload.ownerProfileId : '';
+      if (!creator) return null;
+      if (!(await store.hasCreatorAccess(req.authUser!.userId, creator)) && !isAdminRequest(req)) {
         return null;
       }
-      return { ownerProfileType: 'artist', ownerProfileId: artistId };
+      return { ownerProfileType: 'creator', ownerProfileId: creator };
     }
     return { ownerProfileType: 'user', ownerProfileId: req.authUser!.userId };
   };
 
-  const canManageCollection = async (req: express.Request, collection: { ownerUserId: string; ownerProfileType?: 'user' | 'artist'; ownerProfileId?: string }): Promise<boolean> => {
+  const canManageCollection = async (req: express.Request, collection: { ownerUserId: string; ownerProfileType?: 'user' | 'creator'; ownerProfileId?: string }): Promise<boolean> => {
     if (isAdminRequest(req)) return true;
     const profileType = collection.ownerProfileType || 'user';
     const profileId = collection.ownerProfileId || collection.ownerUserId;
     if (profileType === 'user') {
       return req.authUser!.userId === collection.ownerUserId;
     }
-    return store.hasArtistAccess(req.authUser!.userId, profileId);
+    return store.hasCreatorAccess(req.authUser!.userId, profileId);
+  };
+
+  const listVisibleStudioCreators = async (req: express.Request): Promise<Array<Creator & { creatorId: string }>> => {
+    const creators = isAdminRequest(req)
+      ? await store.listCreators()
+      : await store.listCreatorsByUserId(req.authUser!.userId);
+    return creators.map((creator) => ({ ...creator, creatorId: creator.creatorId }));
+  };
+
+  const listVisibleStudioCreatorIds = async (req: express.Request): Promise<Set<string>> =>
+    new Set((await listVisibleStudioCreators(req)).map((creator) => creator.creatorId));
+
+  const listVisibleStudioFiles = async (req: express.Request): Promise<SourceFile[]> => {
+    const files = store.listAllSourceFiles ? await store.listAllSourceFiles() : [];
+    if (isAdminRequest(req)) return files;
+    const allowedCreatorIds = await listVisibleStudioCreatorIds(req);
+    return files.filter((file) => allowedCreatorIds.has(file.creatorId));
+  };
+
+  const listVisibleStudioGroupings = async (req: express.Request): Promise<Grouping[]> => {
+    const groupings = await store.listAllGroupings();
+    if (isAdminRequest(req)) {
+      return groupings.map((grouping) => ({ ...grouping, premiumPasswordHash: undefined }));
+    }
+    const allowedCreatorIds = await listVisibleStudioCreatorIds(req);
+    return groupings
+      .filter((grouping) => allowedCreatorIds.has(grouping.creatorId))
+      .map((grouping) => ({ ...grouping, premiumPasswordHash: undefined }));
+  };
+
+  const listVisibleStudioPosts = async (req: express.Request, requestedCreatorId?: string): Promise<Post[]> => {
+    if (requestedCreatorId) {
+      return store.listPostsByCreatorId(requestedCreatorId);
+    }
+    if (isAdminRequest(req)) {
+      return store.listAllPosts();
+    }
+    const creators = await store.listCreatorsByUserId(req.authUser!.userId);
+    const postLists = await Promise.all(creators.map((creator) => store.listPostsByCreatorId(creator.creatorId)));
+    return postLists.flat();
+  };
+
+  const listStudioSubmissions = async (req: express.Request): Promise<ContextSubmission[]> => {
+    if (!store.listContributionContexts || !store.listContextSubmissions) return [];
+    const contexts = await store.listContributionContexts();
+    const allSubmissions = (
+      await Promise.all(contexts.map((context) => store.listContextSubmissions!(context.contextId)))
+    ).flat();
+    if (isAdminRequest(req)) return allSubmissions;
+    return allSubmissions.filter((submission) => submission.userId === req.authUser!.userId);
   };
 
   const toPublicComment = (comment: Comment): Omit<Comment, 'userId'> => ({
@@ -821,23 +878,23 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     };
   };
 
-  const resolveGalleryThumbnail = async (gallery: Gallery): Promise<{ galleryThumbnailUrl?: string; galleryThumbnailMediaId?: string }> => {
-    const mediaItems = await store.getMediaByGallery(gallery.galleryId);
-    const cover = mediaItems.find((item) => item.mediaId === gallery.coverImageId) || mediaItems[0];
+  const resolveGroupingThumbnail = async (grouping: Grouping): Promise<{ groupingThumbnailUrl?: string; groupingThumbnailMediaId?: string }> => {
+    const mediaItems = await store.getMediaByGrouping(grouping.groupingId);
+    const cover = mediaItems.find((item) => item.mediaId === grouping.coverImageId) || mediaItems[0];
     if (!cover) return {};
     const key = cover.thumbnailKeys?.square512 || cover.thumbnailKeys?.square256 || cover.previewPosterKey || cover.previewKey;
-    const galleryThumbnailUrl = await publicMediaUrl(key);
-    return { galleryThumbnailUrl, galleryThumbnailMediaId: cover.mediaId };
+    const groupingThumbnailUrl = await publicMediaUrl(key);
+    return { groupingThumbnailUrl, groupingThumbnailMediaId: cover.mediaId };
   };
 
-  const resolveGalleryStackPreviewUrls = async (gallery: Gallery): Promise<string[]> => {
-    const mediaItems = await store.getMediaByGallery(gallery.galleryId);
+  const resolveGroupingStackPreviewUrls = async (grouping: Grouping): Promise<string[]> => {
+    const mediaItems = await store.getMediaByGrouping(grouping.groupingId);
     if (!mediaItems.length) return [];
     const sorted = [...mediaItems].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    const coverFirst = gallery.coverImageId
+    const coverFirst = grouping.coverImageId
       ? [
-        ...sorted.filter((item) => item.mediaId === gallery.coverImageId),
-        ...sorted.filter((item) => item.mediaId !== gallery.coverImageId)
+        ...sorted.filter((item) => item.mediaId === grouping.coverImageId),
+        ...sorted.filter((item) => item.mediaId !== grouping.coverImageId)
       ]
       : sorted;
     const keys = coverFirst
@@ -850,11 +907,13 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   type TrendingImageItem = {
     imageId: string;
     assetType: 'image' | 'video';
-    artistId: string;
-    artistName: string;
-    galleryId: string;
-    gallerySlug: string;
-    galleryVisibility: 'free' | 'preview';
+    surfaceType?: 'media' | 'post';
+    postId?: string;
+    creatorId: string;
+    creatorName: string;
+    groupingId: string;
+    groupingSlug: string;
+    groupingVisibility: 'free' | 'preview';
     discoverSquareCropEnabled: boolean;
     effectiveContentRating: ContentRating;
     displayedContentRating: string;
@@ -874,19 +933,78 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     score: number;
   };
 
+  type DiscoveryItemType = 'image' | 'video' | 'post';
+  type DiscoveryItemTypeFilter = {
+    image: boolean;
+    video: boolean;
+    post: boolean;
+  };
+
+  const normalizeDiscoveryItemType = (value: string): DiscoveryItemType | null => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return null;
+    if (normalized === 'image' || normalized === 'images') return 'image';
+    if (normalized === 'video' || normalized === 'videos') return 'video';
+    if (normalized === 'post' || normalized === 'posts') return 'post';
+    return null;
+  };
+
+  const parseDiscoveryItemTypes = (req: express.Request): DiscoveryItemTypeFilter => {
+    const values: string[] = [];
+    const fromItemTypes = req.query.itemTypes;
+    const fromTypes = req.query.types;
+    if (typeof fromItemTypes === 'string') values.push(fromItemTypes);
+    else if (Array.isArray(fromItemTypes)) values.push(...fromItemTypes.map((entry) => String(entry)));
+    if (typeof fromTypes === 'string') values.push(fromTypes);
+    else if (Array.isArray(fromTypes)) values.push(...fromTypes.map((entry) => String(entry)));
+
+    const tokens = values
+      .flatMap((value) => value.split(','))
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (tokens.length === 0) {
+      return { image: true, video: true, post: true };
+    }
+
+    const selected = new Set<DiscoveryItemType>();
+    for (const token of tokens) {
+      const normalized = normalizeDiscoveryItemType(token);
+      if (normalized) selected.add(normalized);
+    }
+
+    if (selected.size === 0) {
+      return { image: true, video: true, post: true };
+    }
+
+    return {
+      image: selected.has('image'),
+      video: selected.has('video'),
+      post: selected.has('post')
+    };
+  };
+
   const computeTrendingImages = async (
     _req: express.Request,
-    opts?: { period?: 'hourly' | 'daily'; cursor?: string; limit?: number; artistId?: string; source?: 'media' | 'post' | 'combined' }
+    opts?: {
+      period?: 'hourly' | 'daily';
+      cursor?: string;
+      limit?: number;
+      creatorId?: string;
+      source?: 'media' | 'post' | 'combined';
+      itemTypes?: DiscoveryItemTypeFilter;
+    }
   ): Promise<{
     period: 'hourly' | 'daily';
     items: Omit<TrendingImageItem, 'score'>[];
     nextCursor?: string;
-    metrics: { candidateCount: number; scoredCount: number; galleryCount: number };
+    metrics: { candidateCount: number; scoredCount: number; groupingCount: number };
   }> => {
     const period = opts?.period === 'hourly' ? 'hourly' : 'daily';
     const source: 'media' | 'post' | 'combined' = opts?.source === 'media' || opts?.source === 'post' || opts?.source === 'combined'
       ? opts.source
       : 'combined';
+    const itemTypes = opts?.itemTypes || { image: true, video: true, post: true };
     const limit = Math.max(1, Math.min(60, Number(opts?.limit || 24)));
     const candidateLimit = Math.max(
       120,
@@ -903,33 +1021,33 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const periodMs = period === 'hourly' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
     const viewerPolicy = await resolveViewerContentPolicy(_req);
 
-    let allArtists: Artist[] = [];
+    let allCreators: Creator[] = [];
     try {
-      allArtists = await store.listArtists();
+      allCreators = await store.listCreators();
     } catch (error) {
-      logServerError('computeTrendingImages:listArtists', error);
-      return { period, items: [], metrics: { candidateCount: 0, scoredCount: 0, galleryCount: 0 } };
+      logServerError('computeTrendingImages:listCreators', error);
+      return { period, items: [], metrics: { candidateCount: 0, scoredCount: 0, groupingCount: 0 } };
     }
-    const artistById = new Map(allArtists.map((artist) => [artist.artistId, artist]));
-    const activeArtistIds = new Set(allArtists.filter((artist) => artist.status === 'active').map((artist) => artist.artistId));
+    const creatorById = new Map(allCreators.map((creator) => [creator.creatorId, creator]));
+    const activeCreatorIds = new Set(allCreators.filter((creator) => creator.status === 'active').map((creator) => creator.creatorId));
 
-    const allGalleries = (await store.listAllGalleries()).filter((gallery) => {
-      if (opts?.artistId && gallery.artistId !== opts.artistId) return false;
-      if (gallery.status !== 'published') return false;
-      if (gallery.visibility === 'premium') return false;
-      if (!activeArtistIds.has(gallery.artistId)) return false;
-      if (isHiddenByVisibility(gallery.releaseVisibility)) return false;
+    const allGalleries = (await store.listAllGroupings()).filter((grouping) => {
+      if (opts?.creatorId && grouping.creatorId !== opts.creatorId) return false;
+      if (grouping.status !== 'published') return false;
+      if (grouping.visibility === 'premium') return false;
+      if (!activeCreatorIds.has(grouping.creatorId)) return false;
+      if (isHiddenByVisibility(grouping.releaseVisibility)) return false;
       // Public discovery feed intentionally ignores follower/admin early-access windows.
-      return canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, nowMs, false);
+      return canViewBySchedule(grouping.publishAt, grouping.publicReleaseAt, nowMs, false);
     });
-    const galleryById = new Map(allGalleries.map((gallery) => [gallery.galleryId, gallery]));
+    const groupingById = new Map(allGalleries.map((grouping) => [grouping.groupingId, grouping]));
     const candidates: Array<{
       imageId: string;
       assetType: 'image' | 'video';
-      artistId: string;
-      galleryId: string;
-      gallerySlug: string;
-      galleryVisibility: 'free' | 'preview';
+      creatorId: string;
+      groupingId: string;
+      groupingSlug: string;
+      groupingVisibility: 'free' | 'preview';
       postId?: string;
       discoverSquareCropEnabled: boolean;
       effectiveContentRating: ContentRating;
@@ -946,39 +1064,41 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       aspectRatio: number;
     }> = [];
     if (source !== 'post') {
-      const mediaByGallery = await Promise.all(
-        allGalleries.map(async (gallery) => ({ gallery, media: await store.getMediaByGallery(gallery.galleryId) }))
+      const mediaByGrouping = await Promise.all(
+        allGalleries.map(async (grouping) => ({ grouping, media: await store.getMediaByGrouping(grouping.groupingId) }))
       );
-      for (const { gallery, media } of mediaByGallery) {
+      for (const { grouping, media } of mediaByGrouping) {
         for (const item of media) {
           const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
+          if (assetType === 'image' && !itemTypes.image) continue;
+          if (assetType === 'video' && !itemTypes.video) continue;
           if (isHiddenByVisibility(item.releaseVisibility)) continue;
-          if (!canViewBySchedule(item.publishAt || gallery.publishAt, item.publicReleaseAt || gallery.publicReleaseAt, nowMs, false)) {
+          if (!canViewBySchedule(item.publishAt || grouping.publishAt, item.publicReleaseAt || grouping.publicReleaseAt, nowMs, false)) {
             continue;
           }
           const createdAtMs = asTime(item.createdAt) || nowMs;
           const discoverSquareCropEnabled =
-            (artistById.get(item.artistId)?.discoverSquareCropEnabled ?? true) &&
-            (gallery.discoverSquareCropEnabled ?? true) &&
+            (creatorById.get(item.creatorId)?.discoverSquareCropEnabled ?? true) &&
+            (grouping.discoverSquareCropEnabled ?? true) &&
             (item.discoverSquareCropEnabled ?? true);
-          const artist = artistById.get(item.artistId);
+          const creatorProfile = creatorById.get(item.creatorId);
           const effectiveContentRating = getEffectiveContentRating(item);
-          const effectiveAiDisclosure = getEffectiveAiDisclosure(item, gallery, artist);
-          const effectiveHeavyTopics = getEffectiveHeavyTopics(item, gallery, artist);
+          const effectiveAiDisclosure = getEffectiveAiDisclosure(item, grouping, creatorProfile);
+          const effectiveHeavyTopics = getEffectiveHeavyTopics(item, grouping, creatorProfile);
           if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) continue;
           if (!passesDisclosureFilter(effectiveAiDisclosure, effectiveHeavyTopics, viewerPolicy.disclosurePolicy)) continue;
           candidates.push({
             imageId: item.mediaId,
             assetType,
-            artistId: item.artistId,
-            galleryId: gallery.galleryId,
-            gallerySlug: gallery.slug,
-            galleryVisibility: gallery.visibility === 'preview' ? 'preview' : 'free',
+            creatorId: item.creatorId,
+            groupingId: grouping.groupingId,
+            groupingSlug: grouping.slug,
+            groupingVisibility: grouping.visibility === 'preview' ? 'preview' : 'free',
             discoverSquareCropEnabled,
             effectiveContentRating,
             effectiveAiDisclosure,
             effectiveHeavyTopics,
-            title: item.title || gallery.title || 'Artwork',
+            title: item.title || grouping.title || 'Artwork',
             createdAt: item.createdAt,
             createdAtMs,
             recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
@@ -996,17 +1116,20 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       }
     }
     if (source !== 'media') {
-      const targetArtists = opts?.artistId
-        ? allArtists.filter((artist) => artist.artistId === opts.artistId && artist.status === 'active')
-        : allArtists.filter((artist) => artist.status === 'active');
+      if (!itemTypes.post) {
+        // Post surfaces explicitly excluded.
+      } else {
+      const targetCreators = opts?.creatorId
+        ? allCreators.filter((creator) => creator.creatorId === opts.creatorId && creator.status === 'active')
+        : allCreators.filter((creator) => creator.status === 'active');
       const perPostSurfaceLimit = 3;
-      for (const artist of targetArtists) {
-        const [posts, artistMedia] = await Promise.all([
-          store.listPostsByArtistId(artist.artistId),
-          store.listMediaByArtist(artist.artistId)
+      for (const creatorProfile of targetCreators) {
+        const [posts, creatorMedia] = await Promise.all([
+          store.listPostsByCreatorId(creatorProfile.creatorId),
+          store.listMediaByCreator(creatorProfile.creatorId)
         ]);
-        const mediaById = new Map(artistMedia.map((item) => [item.mediaId, item]));
-        const placementByMediaId = new Map<string, Array<{ galleryId: string; position: number }>>();
+        const mediaById = new Map(creatorMedia.map((item) => [item.mediaId, item]));
+        const placementByMediaId = new Map<string, Array<{ groupingId: string; position: number }>>();
         const candidateMediaIds = Array.from(new Set(
           posts
             .filter((post) => post.status === 'published')
@@ -1014,15 +1137,15 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         ));
         const placementRows = await Promise.all(candidateMediaIds.map(async (mediaId) => ({
           mediaId,
-          rows: await store.listMediaGalleryPlacements(mediaId)
+          rows: await store.listMediaGroupingPlacements(mediaId)
         })));
         for (const placement of placementRows) {
           placementByMediaId.set(
             placement.mediaId,
             placement.rows
-              .filter((row) => galleryById.has(row.galleryId))
+              .filter((row) => groupingById.has(row.groupingId))
               .sort((a, b) => a.position - b.position)
-              .map((row) => ({ galleryId: row.galleryId, position: row.position }))
+              .map((row) => ({ groupingId: row.groupingId, position: row.position }))
           );
         }
 
@@ -1047,37 +1170,37 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             if (item.status && item.status !== 'published' && item.status !== 'scheduled') continue;
 
             const placements = placementByMediaId.get(item.mediaId) || [];
-            const placedGallery = placements
-              .map((row) => galleryById.get(row.galleryId))
-              .find((gallery): gallery is Gallery => Boolean(gallery));
-            if (!placedGallery) continue;
-            if (!canViewBySchedule(item.publishAt || placedGallery.publishAt, item.publicReleaseAt || placedGallery.publicReleaseAt, nowMs, false)) {
+            const placedGrouping = placements
+              .map((row) => groupingById.get(row.groupingId))
+              .find((grouping): grouping is Grouping => Boolean(grouping));
+            if (!placedGrouping) continue;
+            if (!canViewBySchedule(item.publishAt || placedGrouping.publishAt, item.publicReleaseAt || placedGrouping.publicReleaseAt, nowMs, false)) {
               continue;
             }
             const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
             const createdAtMs = asTime(item.createdAt) || nowMs;
             const discoverSquareCropEnabled =
-              (artist.discoverSquareCropEnabled ?? true) &&
-              (placedGallery.discoverSquareCropEnabled ?? true) &&
+              (creatorProfile.discoverSquareCropEnabled ?? true) &&
+              (placedGrouping.discoverSquareCropEnabled ?? true) &&
               (item.discoverSquareCropEnabled ?? true);
             const effectiveContentRating = getEffectiveContentRating(item);
-            const effectiveAiDisclosure = getEffectiveAiDisclosure(item, placedGallery, artist);
-            const effectiveHeavyTopics = getEffectiveHeavyTopics(item, placedGallery, artist);
+            const effectiveAiDisclosure = getEffectiveAiDisclosure(item, placedGrouping, creatorProfile);
+            const effectiveHeavyTopics = getEffectiveHeavyTopics(item, placedGrouping, creatorProfile);
             if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) continue;
             if (!passesDisclosureFilter(effectiveAiDisclosure, effectiveHeavyTopics, viewerPolicy.disclosurePolicy)) continue;
             candidates.push({
               imageId: item.mediaId,
               assetType,
-              artistId: item.artistId,
-              galleryId: placedGallery.galleryId,
-              gallerySlug: placedGallery.slug,
-              galleryVisibility: placedGallery.visibility === 'preview' ? 'preview' : 'free',
+              creatorId: item.creatorId,
+              groupingId: placedGrouping.groupingId,
+              groupingSlug: placedGrouping.slug,
+              groupingVisibility: placedGrouping.visibility === 'preview' ? 'preview' : 'free',
               postId: post.postId,
               discoverSquareCropEnabled,
               effectiveContentRating,
               effectiveAiDisclosure,
               effectiveHeavyTopics,
-              title: item.title || post.title || placedGallery.title || 'Artwork',
+              title: item.title || post.title || placedGrouping.title || 'Artwork',
               createdAt: item.createdAt,
               createdAtMs,
               recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
@@ -1093,6 +1216,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             });
           }
         }
+      }
       }
     }
     candidates.sort((a, b) => b.createdAtMs - a.createdAtMs);
@@ -1113,11 +1237,13 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return {
         imageId: item.imageId,
         assetType: item.assetType,
-        artistId: item.artistId,
-        artistName: artistById.get(item.artistId)?.name || 'Artist',
-        galleryId: item.galleryId,
-        gallerySlug: item.gallerySlug,
-        galleryVisibility: item.galleryVisibility,
+        surfaceType: item.postId ? 'post' : 'media',
+        postId: item.postId,
+        creatorId: item.creatorId,
+        creatorName: creatorById.get(item.creatorId)?.name || 'Creator',
+        groupingId: item.groupingId,
+        groupingSlug: item.groupingSlug,
+        groupingVisibility: item.groupingVisibility,
         discoverSquareCropEnabled: item.discoverSquareCropEnabled,
         effectiveContentRating: contentProjection.effectiveContentRating,
         displayedContentRating: contentProjection.displayedContentRating,
@@ -1145,10 +1271,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const diversified: TrendingImageItem[] = [];
     const queue = [...flat];
     while (queue.length > 0) {
-      const lastArtistId = diversified.length > 0 ? diversified[diversified.length - 1].artistId : undefined;
-      const lastPostId = diversified.length > 0 ? sampled.find((s) => s.imageId === diversified[diversified.length - 1].imageId)?.postId : undefined;
+      const lastArtistId = diversified.length > 0 ? diversified[diversified.length - 1].creatorId : undefined;
+      const lastPostId = diversified.length > 0 ? diversified[diversified.length - 1].postId : undefined;
       const enforcePostDiversity = source !== 'media';
-      const nextIndex = queue.findIndex((item) => item.artistId !== lastArtistId && (!enforcePostDiversity || !lastPostId || sampled.find((s) => s.imageId === item.imageId)?.postId !== lastPostId));
+      const nextIndex = queue.findIndex((item) => item.creatorId !== lastArtistId && (!enforcePostDiversity || !lastPostId || item.postId !== lastPostId));
       diversified.push(queue.splice(nextIndex >= 0 ? nextIndex : 0, 1)[0]);
     }
 
@@ -1162,10 +1288,40 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       metrics: {
         candidateCount: candidates.length,
         scoredCount: sampled.length,
-        galleryCount: allGalleries.length
+        groupingCount: allGalleries.length
       }
     };
   };
+
+  app.use((req, res, next) => {
+    const requestStartedAt = process.hrtime.bigint();
+    const requestId = (req.headers['x-request-id'] as string | undefined)?.trim() || randomUUID();
+    const coldStart = !hasHandledInvocation;
+    if (coldStart) hasHandledInvocation = true;
+
+    res.setHeader('x-request-id', requestId);
+    res.setHeader('x-cold-start', coldStart ? '1' : '0');
+    res.setHeader('x-runtime-uptime-ms', String(Math.round(process.uptime() * 1000)));
+
+    const originalEnd = res.end.bind(res);
+    res.end = ((...args: any[]) => {
+      const elapsedMs = Number(process.hrtime.bigint() - requestStartedAt) / 1_000_000;
+      const locals = res.locals as { __serverTimingEntries?: ServerTimingEntry[] };
+      const entries = locals.__serverTimingEntries || [];
+      const parts = entries
+        .filter((entry) => Number.isFinite(entry.durMs) && entry.durMs >= 0)
+        .map((entry) => `${entry.metric};dur=${entry.durMs.toFixed(1)}${entry.desc ? `;desc="${entry.desc.replace(/"/g, "'")}"` : ''}`);
+      parts.push(`app;dur=${elapsedMs.toFixed(1)};desc="total handler"`);
+      if (!res.headersSent) {
+        res.setHeader('Server-Timing', parts.join(', '));
+        res.setHeader('x-handler-ms', elapsedMs.toFixed(1));
+      }
+      console.info(`[api-timing] id=${requestId} method=${req.method} path=${req.originalUrl} status=${res.statusCode} cold=${coldStart ? 1 : 0} handlerMs=${elapsedMs.toFixed(1)}`);
+      return originalEnd(...args);
+    }) as typeof res.end;
+
+    return next();
+  });
 
   app.use((req, res, next) => {
     if (req.method !== 'OPTIONS') return next();
@@ -1188,12 +1344,12 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   const resolvePlatformRole = async (userId: string): Promise<PlatformRole> => {
     if (store.getUserIdentity) {
       const identity = await store.getUserIdentity(userId);
-      if (identity) return normalizePlatformRole(identity.role);
+      if (identity) return normalizePlatformRoleValue(identity.role);
     }
     return 'user';
   };
 
-  const resolveCapabilities = (role: PlatformRole): UserCapabilities => capabilityMap(role);
+  const resolveCapabilities = (role: PlatformRole): UserCapabilities => capabilitiesForRole(role);
 
   const promoteToContributor = async (userId: string): Promise<void> => {
     if (!store.setUserRole) return;
@@ -1284,33 +1440,33 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
   });
 
-  const resolveArtistFromSlug = async (requestedSlug: string): Promise<Artist | null> => {
-    const artists = await store.listArtists();
-    return artists.find((item) => item.slug === requestedSlug || (item.slugHistory || []).includes(requestedSlug)) || null;
+  const resolveCreatorFromSlug = async (requestedSlug: string): Promise<Creator | null> => {
+    const creators = await store.listCreators();
+    return creators.find((item) => item.slug === requestedSlug || (item.slugHistory || []).includes(requestedSlug)) || null;
   };
 
-  app.get('/artists', async (req, res) => {
+  app.get('/creators', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120');
     try {
-      const result = await getDiscoveryCached(req, 'discovery:artists', async () => {
-        const artists = await store.listArtists();
-        const active = artists
-          .filter((artist) => artist.status === 'active')
+      const result = await getDiscoveryCached(req, 'discovery:creators', async () => {
+        const creators = await store.listCreators();
+        const active = creators
+          .filter((creator) => creator.status === 'active')
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-        return Promise.all(active.map(async (artist) => {
-          const artistGalleries = (await store.listGalleriesByArtistSlug(artist.slug))
-            .filter((gallery) => gallery.status === 'published')
+        return Promise.all(active.map(async (creator) => {
+          const creatorGroupings = (await store.listGroupingsByCreatorSlug(creator.slug))
+            .filter((grouping) => grouping.status === 'published')
             .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-          const recent = artistGalleries[0];
-          const followerCount = await store.countFollowersByArtist(artist.artistId);
-          if (!recent) return { ...artist, followerCount, galleryCount: artistGalleries.length };
-          const thumb = await resolveGalleryThumbnail(recent);
+          const recent = creatorGroupings[0];
+          const followerCount = await store.countFollowersByCreator(creator.creatorId);
+          if (!recent) return { ...creator, followerCount, groupingCount: creatorGroupings.length };
+          const thumb = await resolveGroupingThumbnail(recent);
           return {
-            ...artist,
-            latestGalleryId: recent.galleryId,
-            artistThumbnailUrl: thumb.galleryThumbnailUrl,
+            ...creator,
+            latestGroupingId: recent.groupingId,
+            creatorThumbnailUrl: thumb.groupingThumbnailUrl,
             followerCount,
-            galleryCount: artistGalleries.length
+            groupingCount: creatorGroupings.length
           };
         }));
       });
@@ -1318,50 +1474,32 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       const payload = result.payload;
       res.json(payload);
     } catch (error) {
-      logServerError('GET /artists', error);
+      logServerError('GET /creators', error);
       res.setHeader('x-discovery-cache', 'BYPASS');
-      res.setHeader('x-api-fallback', 'artists-empty');
+      res.setHeader('x-api-fallback', 'creators-empty');
       res.json([]);
     }
   });
 
-  app.get('/creators', async (req, res) => {
-    try {
-      const artists = await store.listArtists();
-      return res.json(
-        artists
-          .filter((artist) => artist.status === 'active')
-          .sort((a, b) => a.sortOrder - b.sortOrder)
-          .map((artist) => ({
-            ...artist,
-            creatorId: artist.artistId
-          }))
-      );
-    } catch (error) {
-      logServerError('GET /creators', error);
-      return res.status(500).json({ message: 'Failed to load creators' });
-    }
-  });
-
-  app.get('/artists/:slug/feed', async (req, res) => {
+  app.get('/creators/:slug/feed', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
-    const artist = await resolveArtistFromSlug(requestedSlug);
-    if (!artist || artist.status !== 'active') {
-      return res.status(404).json({ message: 'Artist not found' });
+    const creator = await resolveCreatorFromSlug(requestedSlug);
+    if (!creator || creator.status !== 'active') {
+      return res.status(404).json({ message: 'Creator not found' });
     }
-    if (artist.slug !== requestedSlug) {
-      return res.redirect(302, `/artists/${artist.slug}/feed`);
+    if (creator.slug !== requestedSlug) {
+      return res.redirect(302, `/creators/${creator.slug}/feed`);
     }
 
     const nowMs = Date.now();
     const limitRaw = Number(req.query.limit || 24);
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(60, limitRaw)) : 24;
     const offset = parseOffsetCursor(typeof req.query.cursor === 'string' ? req.query.cursor : undefined);
-    const isFollower = req.authUser?.userId ? await store.isFollowingArtist(req.authUser.userId, artist.artistId) : false;
+    const isFollower = req.authUser?.userId ? await store.isFollowingCreator(req.authUser.userId, creator.creatorId) : false;
     const isFollowerOrAdmin = isAdminRequest(req) || isFollower;
     const viewerPolicy = await resolveViewerContentPolicy(req);
 
-    const media = (await store.listMediaByArtist(artist.artistId))
+    const media = (await store.listMediaByCreator(creator.creatorId))
       .filter((item) => item.appearsInFeed !== false)
       .filter((item) => !isHiddenByVisibility(item.releaseVisibility))
       .filter((item) => {
@@ -1379,24 +1517,24 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
     const pageItems = media.slice(offset, offset + limit);
     const nextCursor = offset + pageItems.length < media.length ? encodeOffsetCursor(offset + pageItems.length) : undefined;
-    const allGalleries = await store.listAllGalleries();
-    const galleryById = new Map(allGalleries.map((item) => [item.galleryId, item]));
+    const allGalleries = await store.listAllGroupings();
+    const groupingById = new Map(allGalleries.map((item) => [item.groupingId, item]));
     const favoriteCounts = await store.getImageFavoriteCounts(pageItems.map((item) => item.mediaId));
     const payload = await Promise.all(pageItems.map(async (item) => {
-      const placements = await store.listMediaGalleryPlacements(item.mediaId);
-      const galleryRefs = placements
-        .map((placement) => galleryById.get(placement.galleryId))
-        .filter((gallery): gallery is Gallery => Boolean(gallery))
-        .filter((gallery) => gallery.status === 'published')
-        .filter((gallery) => !isHiddenByVisibility(gallery.releaseVisibility))
-        .filter((gallery) => canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, nowMs, isFollowerOrAdmin))
-        .map((gallery) => ({
-          galleryId: gallery.galleryId,
-          gallerySlug: gallery.slug,
-          galleryTitle: gallery.title,
-          galleryVisibility: gallery.visibility
+      const placements = await store.listMediaGroupingPlacements(item.mediaId);
+      const groupingRefs = placements
+        .map((placement) => groupingById.get(placement.groupingId))
+        .filter((grouping): grouping is Grouping => Boolean(grouping))
+        .filter((grouping) => grouping.status === 'published')
+        .filter((grouping) => !isHiddenByVisibility(grouping.releaseVisibility))
+        .filter((grouping) => canViewBySchedule(grouping.publishAt, grouping.publicReleaseAt, nowMs, isFollowerOrAdmin))
+        .map((grouping) => ({
+          groupingId: grouping.groupingId,
+          groupingSlug: grouping.slug,
+          groupingTitle: grouping.title,
+          groupingVisibility: grouping.visibility
         }));
-      const primaryGallery = galleryRefs[0];
+      const primaryGrouping = groupingRefs[0];
       const effectiveRating = getEffectiveContentRating(item);
       const contentProjection = projectContentRating(effectiveRating, viewerPolicy);
       const effectiveAiDisclosure = getEffectiveAiDisclosure(item);
@@ -1432,47 +1570,47 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         discoverSquareCropEnabled: item.discoverSquareCropEnabled !== false,
         appearsInFeed: item.appearsInFeed !== false,
         favoriteCount: favoriteCounts[item.mediaId] || 0,
-        primaryGallery,
-        galleryRefs
+        primaryGrouping,
+        groupingRefs
       };
     }));
 
     return res.json({
-      artistId: artist.artistId,
-      artistSlug: artist.slug,
+      creatorId: creator.creatorId,
+      creatorSlug: creator.slug,
       items: payload,
       nextCursor
     });
   });
 
-  app.get('/artists/:slug/featured', async (req, res) => {
+  app.get('/creators/:slug/featured', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
-    const artist = await resolveArtistFromSlug(requestedSlug);
-    if (!artist || artist.status !== 'active') {
-      return res.status(404).json({ message: 'Artist not found' });
+    const creator = await resolveCreatorFromSlug(requestedSlug);
+    if (!creator || creator.status !== 'active') {
+      return res.status(404).json({ message: 'Creator not found' });
     }
-    if (artist.slug !== requestedSlug) {
-      return res.redirect(302, `/artists/${artist.slug}/featured`);
+    if (creator.slug !== requestedSlug) {
+      return res.redirect(302, `/creators/${creator.slug}/featured`);
     }
-    const featuredItemIds = artist.featuredItemIds || [];
-    const featuredGalleryIds = artist.featuredGalleryIds || [];
-    if (featuredItemIds.length === 0 && featuredGalleryIds.length === 0) {
-      return res.json({ artistId: artist.artistId, artistSlug: artist.slug, items: [], galleries: [] });
+    const featuredItemIds = creator.featuredItemIds || [];
+    const featuredGroupingIds = creator.featuredGroupingIds || [];
+    if (featuredItemIds.length === 0 && featuredGroupingIds.length === 0) {
+      return res.json({ creatorId: creator.creatorId, creatorSlug: creator.slug, items: [], groupings: [] });
     }
 
     const nowMs = Date.now();
-    const isFollower = req.authUser?.userId ? await store.isFollowingArtist(req.authUser.userId, artist.artistId) : false;
+    const isFollower = req.authUser?.userId ? await store.isFollowingCreator(req.authUser.userId, creator.creatorId) : false;
     const isFollowerOrAdmin = isAdminRequest(req) || isFollower;
     const viewerPolicy = await resolveViewerContentPolicy(req);
-    const [media, galleries] = await Promise.all([
-      store.listMediaByArtist(artist.artistId),
-      store.listAllGalleries()
+    const [media, groupings] = await Promise.all([
+      store.listMediaByCreator(creator.creatorId),
+      store.listAllGroupings()
     ]);
     const mediaById = new Map(media.map((item) => [item.mediaId, item]));
-    const galleriesById = new Map(
-      galleries
-        .filter((item) => item.artistId === artist.artistId && item.status === 'published' && !isHiddenByVisibility(item.releaseVisibility))
-        .map((item) => [item.galleryId, item])
+    const groupingsById = new Map(
+      groupings
+        .filter((item) => item.creatorId === creator.creatorId && item.status === 'published' && !isHiddenByVisibility(item.releaseVisibility))
+        .map((item) => [item.groupingId, item])
     );
 
     const featuredItems = await Promise.all(featuredItemIds.map(async (mediaId) => {
@@ -1495,43 +1633,43 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       };
     }));
 
-    const featuredGalleries = await Promise.all(featuredGalleryIds.map(async (galleryId) => {
-      const gallery = galleriesById.get(galleryId);
-      if (!gallery) return null;
-      if (!canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, nowMs, isFollowerOrAdmin)) return null;
-      const thumb = await resolveGalleryThumbnail(gallery);
+    const featuredGroupings = await Promise.all(featuredGroupingIds.map(async (groupingId) => {
+      const grouping = groupingsById.get(groupingId);
+      if (!grouping) return null;
+      if (!canViewBySchedule(grouping.publishAt, grouping.publicReleaseAt, nowMs, isFollowerOrAdmin)) return null;
+      const thumb = await resolveGroupingThumbnail(grouping);
       return {
-        galleryId: gallery.galleryId,
-        gallerySlug: gallery.slug,
-        title: gallery.title,
-        visibility: gallery.visibility,
-        galleryThumbnailUrl: thumb.galleryThumbnailUrl
+        groupingId: grouping.groupingId,
+        groupingSlug: grouping.slug,
+        title: grouping.title,
+        visibility: grouping.visibility,
+        groupingThumbnailUrl: thumb.groupingThumbnailUrl
       };
     }));
 
     return res.json({
-      artistId: artist.artistId,
-      artistSlug: artist.slug,
+      creatorId: creator.creatorId,
+      creatorSlug: creator.slug,
       items: featuredItems.filter((item): item is NonNullable<typeof item> => Boolean(item)),
-      galleries: featuredGalleries.filter((item): item is NonNullable<typeof item> => Boolean(item))
+      groupings: featuredGroupings.filter((item): item is NonNullable<typeof item> => Boolean(item))
     });
   });
 
-  app.get('/artists/:slug/posts', async (req, res) => {
+  app.get('/creators/:slug/posts', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
-    const artist = await resolveArtistFromSlug(requestedSlug);
-    if (!artist || artist.status !== 'active') {
-      return res.status(404).json({ message: 'Artist not found' });
+    const creator = await resolveCreatorFromSlug(requestedSlug);
+    if (!creator || creator.status !== 'active') {
+      return res.status(404).json({ message: 'Creator not found' });
     }
-    if (artist.slug !== requestedSlug) {
-      return res.redirect(302, `/artists/${artist.slug}/posts`);
+    if (creator.slug !== requestedSlug) {
+      return res.redirect(302, `/creators/${creator.slug}/posts`);
     }
 
     const includeDrafts = req.authUser?.userId
-      ? (isAdminRequest(req) || await store.hasArtistAccess(req.authUser.userId, artist.artistId))
+      ? (isAdminRequest(req) || await store.hasCreatorAccess(req.authUser.userId, creator.creatorId))
       : false;
-    const mediaById = new Map((await store.listMediaByArtist(artist.artistId)).map((item) => [item.mediaId, item]));
-    const posts = (await store.listPostsByArtistSlug(artist.slug))
+    const mediaById = new Map((await store.listMediaByCreator(creator.creatorId)).map((item) => [item.mediaId, item]));
+    const posts = (await store.listPostsByCreatorSlug(creator.slug))
       .filter((post) => includeDrafts ? post.status !== 'archived' : post.status === 'published')
       .sort((a, b) => (b.publishedAt || b.updatedAt || b.createdAt).localeCompare(a.publishedAt || a.updatedAt || a.createdAt));
 
@@ -1563,7 +1701,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       );
       return {
         postId: post.postId,
-        artistId: post.artistId,
+        creator: post.creatorId,
         title: post.title,
         slug: post.slug,
         slugHistory: post.slugHistory || [],
@@ -1594,8 +1732,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }));
 
     return res.json({
-      artistId: artist.artistId,
-      artistSlug: artist.slug,
+      creatorId: creator.creatorId,
+      creatorSlug: creator.slug,
       items: payload
     });
   });
@@ -1610,19 +1748,19 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return res.redirect(302, `/posts/${post.slug}`);
     }
 
-    const artist = (await store.listArtists()).find((item) => item.artistId === post.artistId);
-    if (!artist || artist.status !== 'active') {
+    const creator = (await store.listCreators()).find((item) => item.creatorId === post.creatorId);
+    if (!creator || creator.status !== 'active') {
       return res.status(404).json({ message: 'Post not found' });
     }
 
     const canViewDraft = req.authUser?.userId
-      ? (isAdminRequest(req) || await store.hasArtistAccess(req.authUser.userId, post.artistId))
+      ? (isAdminRequest(req) || await store.hasCreatorAccess(req.authUser.userId, post.creatorId))
       : false;
     if (post.status !== 'published' && !canViewDraft) {
       return res.status(404).json({ message: 'Post not found' });
     }
 
-    const mediaById = new Map((await store.listMediaByArtist(post.artistId)).map((item) => [item.mediaId, item]));
+    const mediaById = new Map((await store.listMediaByCreator(post.creatorId)).map((item) => [item.mediaId, item]));
     const media = await Promise.all(post.media.map(async (ref) => {
       const source = mediaById.get(ref.mediaId);
       if (!source) return null;
@@ -1643,10 +1781,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.json({
       ...post,
       slugHistory: post.slugHistory || [],
-      artist: {
-        artistId: artist.artistId,
-        name: artist.name,
-        slug: artist.slug
+      creator: {
+        creatorId: creator.creatorId,
+        name: creator.name,
+        slug: creator.slug
       },
       media: media.filter((item): item is NonNullable<typeof item> => Boolean(item))
     });
@@ -1654,8 +1792,17 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
   app.get('/site-settings', async (_req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120');
+    const settingsStartedAt = process.hrtime.bigint();
     const settings = await store.getSiteSettings();
+    const settingsMs = Number(process.hrtime.bigint() - settingsStartedAt) / 1_000_000;
+    addServerTiming(res, 'store', settingsMs, 'getSiteSettings');
+    res.setHeader('x-store-ms', settingsMs.toFixed(1));
+
+    const logoStartedAt = process.hrtime.bigint();
     const logoUrl = await publicMediaUrl(settings.logoKey);
+    const logoMs = Number(process.hrtime.bigint() - logoStartedAt) / 1_000_000;
+    addServerTiming(res, 'media', logoMs, 'resolveLogoUrl');
+    res.setHeader('x-media-ms', logoMs.toFixed(1));
 
     return res.json({ ...settings, logoUrl });
   });
@@ -1668,6 +1815,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       : req.query.source === 'media'
         ? 'media'
         : 'combined';
+    const itemTypes = parseDiscoveryItemTypes(req);
     const limit = Math.max(1, Math.min(60, Number(req.query.limit || 24)));
     const cursorToken = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const decodedCursor = parsePassthroughCursor(cursorToken);
@@ -1678,13 +1826,13 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       `p:${viewerPolicy.disclosurePolicy.hidePoliticsPublicAffairs ? 1 : 0}`,
       `c:${viewerPolicy.disclosurePolicy.hideCrimeDisastersTragedy ? 1 : 0}`
     ].join(',');
-    const cacheKey = `viewer=${viewerPolicy.loggedIn ? 'auth' : 'anon'}:${viewerPolicy.matureEnabled ? 'm1' : 'm0'}:${viewerPolicy.maxAllowedContentRating}|${disclosureKey}|period=${period}|source=${source}|limit=${limit}|cursor=${decodedCursor || ''}`;
+    const cacheKey = `viewer=${viewerPolicy.loggedIn ? 'auth' : 'anon'}:${viewerPolicy.matureEnabled ? 'm1' : 'm0'}:${viewerPolicy.maxAllowedContentRating}|${disclosureKey}|period=${period}|source=${source}|types=i${itemTypes.image ? 1 : 0}v${itemTypes.video ? 1 : 0}p${itemTypes.post ? 1 : 0}|limit=${limit}|cursor=${decodedCursor || ''}`;
     const cached = readTrendingResponseCache<{
       body: { period: 'hourly' | 'daily'; items: Omit<TrendingImageItem, 'score'>[]; nextCursor?: string };
       source: 'materialized' | 'fallback';
       candidates: number;
       scored: number;
-      galleries: number;
+      groupings: number;
     }>(cacheKey);
     if (cached) {
       res.setHeader('x-trending-source', cached.source);
@@ -1692,23 +1840,24 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       res.setHeader('x-trending-ms', String(Date.now() - startedAt));
       res.setHeader('x-trending-candidates', String(cached.candidates));
       res.setHeader('x-trending-scored', String(cached.scored));
-      res.setHeader('x-trending-galleries', String(cached.galleries));
+      res.setHeader('x-trending-groupings', String(cached.groupings));
       return res.json(cached.body);
     }
     try {
       let feedPage: { items: Awaited<ReturnType<typeof store.listTrendingFeed>>['items']; nextCursor?: string } = {
         items: []
       };
-      if (source === 'media') {
-        feedPage = await store.listTrendingFeed(period, limit, decodedCursor);
-        if (!feedPage.items.length && !decodedCursor) {
-          // Warm feed on demand so first request after deploy can still switch to materialized quickly.
-          await triggerTrendingWarmup();
-          feedPage = await store.listTrendingFeed(period, limit, decodedCursor);
-        }
+      feedPage = await store.listTrendingFeed(period, limit, decodedCursor, { source, itemTypes });
+      if (!feedPage.items.length && !decodedCursor) {
+        // Warm feed on demand so first request after deploy can still switch to materialized quickly.
+        await triggerTrendingWarmup();
+        feedPage = await store.listTrendingFeed(period, limit, decodedCursor, { source, itemTypes });
       }
-      if (source === 'media' && feedPage.items.length > 0) {
+      if (feedPage.items.length > 0) {
         const filtered = feedPage.items.filter((item) => {
+          const isPostSurface = item.surfaceType === 'post_surface' || Boolean(item.postId);
+          if (source === 'post' && !isPostSurface) return false;
+          if (source === 'media' && isPostSurface) return false;
           const effective = normalizeContentRating(item.effectiveContentRating);
           const effectiveAi = normalizeAiDisclosure(item.effectiveAiDisclosure);
           const effectiveHeavyTopics = normalizeHeavyTopics(item.effectiveHeavyTopics);
@@ -1724,11 +1873,13 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           return {
             imageId: item.imageId,
             assetType: item.assetType === 'video' ? 'video' : 'image',
-            artistId: item.artistId,
-            artistName: item.artistName,
-            galleryId: item.galleryId,
-            gallerySlug: item.gallerySlug,
-            galleryVisibility: item.galleryVisibility,
+            surfaceType: item.surfaceType === 'post_surface' || Boolean(item.postId) ? 'post' : 'media',
+            postId: item.postId,
+            creatorId: item.creatorId,
+            creatorName: item.creatorName,
+            groupingId: item.groupingId,
+            groupingSlug: item.groupingSlug,
+            groupingVisibility: item.groupingVisibility,
             discoverSquareCropEnabled: item.discoverSquareCropEnabled !== false,
             effectiveContentRating: contentProjection.effectiveContentRating,
             displayedContentRating: contentProjection.displayedContentRating,
@@ -1757,7 +1908,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           source: 'materialized',
           candidates: feedPage.items.length,
           scored: feedPage.items.length,
-          galleries: 0
+          groupings: 0
         });
         res.setHeader('x-trending-source', 'materialized');
         res.setHeader('x-trending-mode', source);
@@ -1765,14 +1916,15 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         res.setHeader('x-trending-ms', String(Date.now() - startedAt));
         res.setHeader('x-trending-candidates', String(feedPage.items.length));
         res.setHeader('x-trending-scored', String(feedPage.items.length));
-        res.setHeader('x-trending-galleries', '0');
+        res.setHeader('x-trending-groupings', '0');
         return res.json(body);
       }
       const fallback = await computeTrendingImages(req, {
         period,
         cursor: cursorToken,
         limit,
-        source
+        source,
+        itemTypes
       });
       const payload = fallback as Awaited<ReturnType<typeof computeTrendingImages>>;
       const body = { period: payload.period, items: payload.items, nextCursor: payload.nextCursor };
@@ -1781,7 +1933,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         source: 'fallback',
         candidates: payload.metrics.candidateCount,
         scored: payload.metrics.scoredCount,
-        galleries: payload.metrics.galleryCount
+        groupings: payload.metrics.groupingCount
       });
       res.setHeader('x-trending-source', 'fallback');
       res.setHeader('x-trending-mode', source);
@@ -1789,7 +1941,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       res.setHeader('x-trending-ms', String(Date.now() - startedAt));
       res.setHeader('x-trending-candidates', String(payload.metrics.candidateCount));
       res.setHeader('x-trending-scored', String(payload.metrics.scoredCount));
-      res.setHeader('x-trending-galleries', String(payload.metrics.galleryCount));
+      res.setHeader('x-trending-groupings', String(payload.metrics.groupingCount));
       return res.json(body);
     } catch (error) {
       logServerError('GET /discovery/trending-images', error);
@@ -1800,50 +1952,56 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       res.setHeader('x-trending-ms', String(Date.now() - startedAt));
       res.setHeader('x-trending-candidates', '0');
       res.setHeader('x-trending-scored', '0');
-      res.setHeader('x-trending-galleries', '0');
+      res.setHeader('x-trending-groupings', '0');
       return res.json({ period: req.query.period === 'hourly' ? 'hourly' : 'daily', items: [] });
     }
   });
 
-  app.get('/artists/:slug/trending-images', async (req, res) => {
+  app.get('/creators/:slug/trending-images', async (req, res) => {
     const startedAt = Date.now();
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
-    let artists: Artist[] = [];
+    let creators: Creator[] = [];
     try {
-      artists = await store.listArtists();
+      creators = await store.listCreators();
     } catch (error) {
-      logServerError('GET /artists/:slug/trending-images:listArtists', error);
+      logServerError('GET /creators/:slug/trending-images:listCreators', error);
       res.setHeader('x-discovery-cache', 'BYPASS');
       res.setHeader('x-api-fallback', 'trending-empty');
       res.setHeader('x-trending-ms', String(Date.now() - startedAt));
       res.setHeader('x-trending-candidates', '0');
       res.setHeader('x-trending-scored', '0');
-      res.setHeader('x-trending-galleries', '0');
+      res.setHeader('x-trending-groupings', '0');
       return res.json({ period: req.query.period === 'hourly' ? 'hourly' : 'daily', items: [] });
     }
-    const artist = artists.find((item) => item.slug === requestedSlug || (item.slugHistory || []).includes(requestedSlug));
-    if (!artist || artist.status !== 'active') {
-      return res.status(404).json({ message: 'Artist not found' });
+    const creator = creators.find((item) => item.slug === requestedSlug || (item.slugHistory || []).includes(requestedSlug));
+    if (!creator || creator.status !== 'active') {
+      return res.status(404).json({ message: 'Creator not found' });
     }
     const source: 'media' | 'post' | 'combined' = req.query.source === 'post'
       ? 'post'
       : req.query.source === 'media'
         ? 'media'
         : 'combined';
-    const result = await getDiscoveryCached(req, `discovery:artist-trending:${artist.artistId}:source=${source}`, () => computeTrendingImages(req, {
+    const itemTypes = parseDiscoveryItemTypes(req);
+    const result = await getDiscoveryCached(
+      req,
+      `discovery:creator-trending:${creator.creatorId}:source=${source}:types=i${itemTypes.image ? 1 : 0}v${itemTypes.video ? 1 : 0}p${itemTypes.post ? 1 : 0}`,
+      () => computeTrendingImages(req, {
       period: req.query.period === 'hourly' ? 'hourly' : 'daily',
       cursor: typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
       limit: Number(req.query.limit || 24),
-      artistId: artist.artistId,
-      source
-    }));
+      creatorId: creator.creatorId,
+      source,
+      itemTypes
+      })
+    );
     res.setHeader('x-discovery-cache', result.cacheStatus);
     res.setHeader('x-trending-mode', source);
     const payload = result.payload as Awaited<ReturnType<typeof computeTrendingImages>>;
     res.setHeader('x-trending-ms', String(Date.now() - startedAt));
     res.setHeader('x-trending-candidates', String(payload.metrics.candidateCount));
     res.setHeader('x-trending-scored', String(payload.metrics.scoredCount));
-    res.setHeader('x-trending-galleries', String(payload.metrics.galleryCount));
+    res.setHeader('x-trending-groupings', String(payload.metrics.groupingCount));
     return res.json({ period: payload.period, items: payload.items, nextCursor: payload.nextCursor });
   });
 
@@ -1868,184 +2026,184 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     });
   });
 
-  app.get('/artists/:slug/galleries', async (req, res) => {
-    const galleries = await store.listGalleriesByArtistSlug(req.params.slug);
+  app.get('/creators/:slug/groupings', async (req, res) => {
+    const groupings = await store.listGroupingsByCreatorSlug(req.params.slug);
     const nowMs = Date.now();
     const followerArtistIds = new Set<string>();
     if (req.authUser?.userId) {
       const follows = await store.listFollowsByUser(req.authUser.userId);
-      follows.forEach((follow) => followerArtistIds.add(follow.artistId));
+      follows.forEach((follow) => followerArtistIds.add(follow.creatorId));
     }
-    const filtered = galleries.filter((gallery) => {
-      if (gallery.status !== 'published') return false;
-      if (isHiddenByVisibility(gallery.releaseVisibility)) return false;
-      const isFollowerOrAdmin = isAdminRequest(req) || followerArtistIds.has(gallery.artistId);
-      return canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, nowMs, isFollowerOrAdmin);
+    const filtered = groupings.filter((grouping) => {
+      if (grouping.status !== 'published') return false;
+      if (isHiddenByVisibility(grouping.releaseVisibility)) return false;
+      const isFollowerOrAdmin = isAdminRequest(req) || followerArtistIds.has(grouping.creatorId);
+      return canViewBySchedule(grouping.publishAt, grouping.publicReleaseAt, nowMs, isFollowerOrAdmin);
     });
-    const byId = new Map(filtered.map((gallery) => [gallery.galleryId, gallery]));
-    const payload: Array<Gallery & { premiumPasswordHash?: undefined; hasAccess: boolean }> = [];
+    const byId = new Map(filtered.map((grouping) => [grouping.groupingId, grouping]));
+    const payload: Array<Grouping & { premiumPasswordHash?: undefined; hasAccess: boolean }> = [];
     const seen = new Set<string>();
 
-    for (const gallery of filtered) {
-      if (seen.has(gallery.galleryId)) continue;
-      if (gallery.visibility === 'free') {
-        const thumb = await resolveGalleryThumbnail(gallery);
-        payload.push({ ...gallery, ...thumb, premiumPasswordHash: undefined, hasAccess: true });
-        seen.add(gallery.galleryId);
+    for (const grouping of filtered) {
+      if (seen.has(grouping.groupingId)) continue;
+      if (grouping.visibility === 'free') {
+        const thumb = await resolveGroupingThumbnail(grouping);
+        payload.push({ ...grouping, ...thumb, premiumPasswordHash: undefined, hasAccess: true });
+        seen.add(grouping.groupingId);
         continue;
       }
 
-      if (gallery.visibility === 'premium') {
-        const hasAccess = await hasPremiumAccess(req, gallery.galleryId);
-        const previews = filtered.filter((item) => item.visibility === 'preview' && item.pairedPremiumGalleryId === gallery.galleryId);
+      if (grouping.visibility === 'premium') {
+        const hasAccess = await hasPremiumAccess(req, grouping.groupingId);
+        const previews = filtered.filter((item) => item.visibility === 'preview' && item.pairedPremiumGroupingId === grouping.groupingId);
         if (hasAccess || previews.length === 0) {
-          const thumb = await resolveGalleryThumbnail(gallery);
-          payload.push({ ...gallery, ...thumb, premiumPasswordHash: undefined, hasAccess: true });
-          seen.add(gallery.galleryId);
-          previews.forEach((item) => seen.add(item.galleryId));
+          const thumb = await resolveGroupingThumbnail(grouping);
+          payload.push({ ...grouping, ...thumb, premiumPasswordHash: undefined, hasAccess: true });
+          seen.add(grouping.groupingId);
+          previews.forEach((item) => seen.add(item.groupingId));
         } else {
           for (const preview of previews) {
-            if (seen.has(preview.galleryId)) continue;
-            const thumb = await resolveGalleryThumbnail(preview);
+            if (seen.has(preview.groupingId)) continue;
+            const thumb = await resolveGroupingThumbnail(preview);
             payload.push({ ...preview, ...thumb, premiumPasswordHash: undefined, hasAccess: false });
-            seen.add(preview.galleryId);
+            seen.add(preview.groupingId);
           }
-          seen.add(gallery.galleryId);
+          seen.add(grouping.groupingId);
         }
         continue;
       }
 
-      if (gallery.visibility === 'preview') {
-        const premium = gallery.pairedPremiumGalleryId ? byId.get(gallery.pairedPremiumGalleryId) : undefined;
+      if (grouping.visibility === 'preview') {
+        const premium = grouping.pairedPremiumGroupingId ? byId.get(grouping.pairedPremiumGroupingId) : undefined;
         if (premium) {
-          const hasAccess = await hasPremiumAccess(req, premium.galleryId);
+          const hasAccess = await hasPremiumAccess(req, premium.groupingId);
           if (hasAccess) {
-            if (!seen.has(premium.galleryId)) {
-              const thumb = await resolveGalleryThumbnail(premium);
+            if (!seen.has(premium.groupingId)) {
+              const thumb = await resolveGroupingThumbnail(premium);
               payload.push({ ...premium, ...thumb, premiumPasswordHash: undefined, hasAccess: true });
-              seen.add(premium.galleryId);
+              seen.add(premium.groupingId);
             }
           } else {
-            const thumb = await resolveGalleryThumbnail(gallery);
-            payload.push({ ...gallery, ...thumb, premiumPasswordHash: undefined, hasAccess: false });
-            seen.add(gallery.galleryId);
+            const thumb = await resolveGroupingThumbnail(grouping);
+            payload.push({ ...grouping, ...thumb, premiumPasswordHash: undefined, hasAccess: false });
+            seen.add(grouping.groupingId);
           }
         } else {
-          const thumb = await resolveGalleryThumbnail(gallery);
-          payload.push({ ...gallery, ...thumb, premiumPasswordHash: undefined, hasAccess: false });
-          seen.add(gallery.galleryId);
+          const thumb = await resolveGroupingThumbnail(grouping);
+          payload.push({ ...grouping, ...thumb, premiumPasswordHash: undefined, hasAccess: false });
+          seen.add(grouping.groupingId);
         }
       }
     }
     res.json(payload);
   });
 
-  app.get('/discovery/latest-galleries', async (req, res) => {
+  app.get('/discovery/latest-groupings', async (req, res) => {
     try {
-      const result = await getDiscoveryCached(req, 'discovery:latest-galleries', async () => {
+      const result = await getDiscoveryCached(req, 'discovery:latest-groupings', async () => {
         const nowMs = Date.now();
         const limitRaw = Number(req.query.limit || 12);
         const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(24, limitRaw)) : 12;
-        const artistList = await store.listArtists();
-        const artistById = new Map(artistList.map((artist) => [artist.artistId, artist]));
-        const galleries = (await store.listAllGalleries())
-          .filter((gallery) => gallery.status === 'published' && !isHiddenByVisibility(gallery.releaseVisibility))
+        const creators = await store.listCreators();
+        const creatorById = new Map(creators.map((creator) => [creator.creatorId, creator]));
+        const groupings = (await store.listAllGroupings())
+          .filter((grouping) => grouping.status === 'published' && !isHiddenByVisibility(grouping.releaseVisibility))
           .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
         const followerArtistIds = new Set<string>();
         if (req.authUser?.userId) {
           const follows = await store.listFollowsByUser(req.authUser.userId);
-          follows.forEach((follow) => followerArtistIds.add(follow.artistId));
+          follows.forEach((follow) => followerArtistIds.add(follow.creatorId));
         }
-        const canViewGalleryBySchedule = (gallery: Gallery): boolean => {
-          const isFollowerOrAdmin = isAdminRequest(req) || followerArtistIds.has(gallery.artistId);
-          return canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, nowMs, isFollowerOrAdmin);
+        const canViewGroupingBySchedule = (grouping: Grouping): boolean => {
+          const isFollowerOrAdmin = isAdminRequest(req) || followerArtistIds.has(grouping.creatorId);
+          return canViewBySchedule(grouping.publishAt, grouping.publicReleaseAt, nowMs, isFollowerOrAdmin);
         };
-        const visibleGalleries = galleries.filter(canViewGalleryBySchedule);
-        const visibleById = new Map(visibleGalleries.map((gallery) => [gallery.galleryId, gallery]));
-        const previewsByPremiumId = new Map<string, Gallery[]>();
-        for (const gallery of visibleGalleries) {
-          if (gallery.visibility === 'preview' && gallery.pairedPremiumGalleryId) {
-            const existing = previewsByPremiumId.get(gallery.pairedPremiumGalleryId) || [];
-            existing.push(gallery);
-            previewsByPremiumId.set(gallery.pairedPremiumGalleryId, existing);
+        const visibleGalleries = groupings.filter(canViewGroupingBySchedule);
+        const visibleById = new Map(visibleGalleries.map((grouping) => [grouping.groupingId, grouping]));
+        const previewsByPremiumId = new Map<string, Grouping[]>();
+        for (const grouping of visibleGalleries) {
+          if (grouping.visibility === 'preview' && grouping.pairedPremiumGroupingId) {
+            const existing = previewsByPremiumId.get(grouping.pairedPremiumGroupingId) || [];
+            existing.push(grouping);
+            previewsByPremiumId.set(grouping.pairedPremiumGroupingId, existing);
           }
         }
-        const payload: Array<Gallery & {
+        const payload: Array<Grouping & {
           premiumPasswordHash?: undefined;
           hasAccess: boolean;
-          artistName: string;
-          artistSlug: string;
+          creatorName: string;
+          creatorSlug: string;
           stackPreviewUrls: string[];
         }> = [];
         const seen = new Set<string>();
-        const premiumAccessByGalleryId = new Map<string, boolean>();
-        const readPremiumAccess = async (galleryId: string): Promise<boolean> => {
-          const cached = premiumAccessByGalleryId.get(galleryId);
+        const premiumAccessByGroupingId = new Map<string, boolean>();
+        const readPremiumAccess = async (groupingId: string): Promise<boolean> => {
+          const cached = premiumAccessByGroupingId.get(groupingId);
           if (cached !== undefined) return cached;
-          const hasAccess = await hasPremiumAccess(req, galleryId);
-          premiumAccessByGalleryId.set(galleryId, hasAccess);
+          const hasAccess = await hasPremiumAccess(req, groupingId);
+          premiumAccessByGroupingId.set(groupingId, hasAccess);
           return hasAccess;
         };
-        const pushGallery = async (gallery: Gallery, hasAccess: boolean, artistName: string, artistSlug: string) => {
+        const pushGrouping = async (grouping: Grouping, hasAccess: boolean, creatorName: string, creatorSlug: string) => {
           if (payload.length >= limit) return;
-          if (seen.has(gallery.galleryId)) return;
+          if (seen.has(grouping.groupingId)) return;
           const [thumb, stackPreviewUrls] = await Promise.all([
-            resolveGalleryThumbnail(gallery),
-            resolveGalleryStackPreviewUrls(gallery)
+            resolveGroupingThumbnail(grouping),
+            resolveGroupingStackPreviewUrls(grouping)
           ]);
           payload.push({
-            ...gallery,
+            ...grouping,
             ...thumb,
             stackPreviewUrls,
             premiumPasswordHash: undefined,
             hasAccess,
-            artistName,
-            artistSlug
+            creatorName,
+            creatorSlug
           });
-          seen.add(gallery.galleryId);
+          seen.add(grouping.groupingId);
         };
 
-        for (const gallery of visibleGalleries) {
+        for (const grouping of visibleGalleries) {
           if (payload.length >= limit) break;
-          if (seen.has(gallery.galleryId)) continue;
-          const artist = artistById.get(gallery.artistId);
-          const artistName = artist?.name || 'Artist';
-          const artistSlug = artist?.slug || '';
+          if (seen.has(grouping.groupingId)) continue;
+          const creatorProfile = creatorById.get(grouping.creatorId);
+          const creatorName = creatorProfile?.name || 'Creator';
+          const creatorSlug = creatorProfile?.slug || '';
 
-          if (gallery.visibility === 'free') {
-            await pushGallery(gallery, true, artistName, artistSlug);
+          if (grouping.visibility === 'free') {
+            await pushGrouping(grouping, true, creatorName, creatorSlug);
             continue;
           }
 
-          if (gallery.visibility === 'premium') {
-            const hasAccess = await readPremiumAccess(gallery.galleryId);
-            const previews = previewsByPremiumId.get(gallery.galleryId) || [];
+          if (grouping.visibility === 'premium') {
+            const hasAccess = await readPremiumAccess(grouping.groupingId);
+            const previews = previewsByPremiumId.get(grouping.groupingId) || [];
             if (hasAccess || previews.length === 0) {
-              await pushGallery(gallery, true, artistName, artistSlug);
-              previews.forEach((item) => seen.add(item.galleryId));
+              await pushGrouping(grouping, true, creatorName, creatorSlug);
+              previews.forEach((item) => seen.add(item.groupingId));
             } else {
               for (const preview of previews) {
                 if (payload.length >= limit) break;
-                const previewArtist = artistById.get(preview.artistId);
-                await pushGallery(preview, false, previewArtist?.name || artistName, previewArtist?.slug || artistSlug);
+                const previewCreator = creatorById.get(preview.creatorId);
+                await pushGrouping(preview, false, previewCreator?.name || creatorName, previewCreator?.slug || creatorSlug);
               }
-              seen.add(gallery.galleryId);
+              seen.add(grouping.groupingId);
             }
             continue;
           }
 
-          if (gallery.visibility === 'preview') {
-            const premium = gallery.pairedPremiumGalleryId ? visibleById.get(gallery.pairedPremiumGalleryId) : undefined;
+          if (grouping.visibility === 'preview') {
+            const premium = grouping.pairedPremiumGroupingId ? visibleById.get(grouping.pairedPremiumGroupingId) : undefined;
             if (premium) {
-              const hasAccess = await readPremiumAccess(premium.galleryId);
+              const hasAccess = await readPremiumAccess(premium.groupingId);
               if (hasAccess) {
-                const premiumArtist = artistById.get(premium.artistId);
-                await pushGallery(premium, true, premiumArtist?.name || artistName, premiumArtist?.slug || artistSlug);
+                const premiumCreator = creatorById.get(premium.creatorId);
+                await pushGrouping(premium, true, premiumCreator?.name || creatorName, premiumCreator?.slug || creatorSlug);
               } else {
-                await pushGallery(gallery, false, artistName, artistSlug);
+                await pushGrouping(grouping, false, creatorName, creatorSlug);
               }
             } else {
-              await pushGallery(gallery, false, artistName, artistSlug);
+              await pushGrouping(grouping, false, creatorName, creatorSlug);
             }
           }
         }
@@ -2055,64 +2213,64 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       res.setHeader('x-discovery-cache', result.cacheStatus);
       res.json(result.payload);
     } catch (error) {
-      logServerError('GET /discovery/latest-galleries', error);
+      logServerError('GET /discovery/latest-groupings', error);
       res.setHeader('x-discovery-cache', 'BYPASS');
-      res.setHeader('x-api-fallback', 'latest-galleries-empty');
+      res.setHeader('x-api-fallback', 'latest-groupings-empty');
       res.json([]);
     }
   });
 
-  app.get('/artists/:slug/profile', async (req, res) => {
+  app.get('/creators/:slug/profile', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
-    const artist = await resolveArtistFromSlug(requestedSlug);
-    if (!artist || artist.status !== 'active') {
-      return res.status(404).json({ message: 'Artist not found' });
+    const creator = await resolveCreatorFromSlug(requestedSlug);
+    if (!creator || creator.status !== 'active') {
+      return res.status(404).json({ message: 'Creator not found' });
     }
-    if (artist.slug !== requestedSlug) {
-      return res.redirect(302, `/artists/${artist.slug}/profile`);
+    if (creator.slug !== requestedSlug) {
+      return res.redirect(302, `/creators/${creator.slug}/profile`);
     }
-    const allGalleries = (await store.listAllGalleries())
-      .filter((item) => item.artistId === artist.artistId && item.status === 'published' && !isHiddenByVisibility(item.releaseVisibility))
+    const allGalleries = (await store.listAllGroupings())
+      .filter((item) => item.creatorId === creator.creatorId && item.status === 'published' && !isHiddenByVisibility(item.releaseVisibility))
       .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     const nowMs = Date.now();
-    const isFollower = req.authUser?.userId ? await store.isFollowingArtist(req.authUser.userId, artist.artistId) : false;
+    const isFollower = req.authUser?.userId ? await store.isFollowingCreator(req.authUser.userId, creator.creatorId) : false;
     const isFollowerOrAdmin = isAdminRequest(req) || isFollower;
     const viewerPolicy = await resolveViewerContentPolicy(req);
     const visibleGalleries = allGalleries.filter((item) => canViewBySchedule(item.publishAt, item.publicReleaseAt, nowMs, isFollowerOrAdmin));
-    const imageCount = (await Promise.all(visibleGalleries.map((gallery) => store.getMediaByGallery(gallery.galleryId)))).flat().filter((item) => (item.assetType || 'image') === 'image').length;
-    const followerCount = await store.countFollowersByArtist(artist.artistId);
-    const galleries = await Promise.all(visibleGalleries.slice(0, 12).map(async (gallery) => {
-      const thumb = await resolveGalleryThumbnail(gallery);
-      const favoriteCount = await store.countFavorites('gallery', gallery.galleryId);
+    const imageCount = (await Promise.all(visibleGalleries.map((grouping) => store.getMediaByGrouping(grouping.groupingId)))).flat().filter((item) => (item.assetType || 'image') === 'image').length;
+    const followerCount = await store.countFollowersByCreator(creator.creatorId);
+    const groupings = await Promise.all(visibleGalleries.slice(0, 12).map(async (grouping) => {
+      const thumb = await resolveGroupingThumbnail(grouping);
+      const favoriteCount = await store.countFavorites('grouping', grouping.groupingId);
       return {
-        galleryId: gallery.galleryId,
-        title: gallery.title,
-        slug: gallery.slug,
-        visibility: gallery.visibility,
-        createdAt: gallery.createdAt,
-        imageCount: (await store.getMediaByGallery(gallery.galleryId)).filter((item) => (item.assetType || 'image') === 'image').length,
+        groupingId: grouping.groupingId,
+        title: grouping.title,
+        slug: grouping.slug,
+        visibility: grouping.visibility,
+        createdAt: grouping.createdAt,
+        imageCount: (await store.getMediaByGrouping(grouping.groupingId)).filter((item) => (item.assetType || 'image') === 'image').length,
         favoriteCount,
-        galleryThumbnailUrl: thumb.galleryThumbnailUrl
+        groupingThumbnailUrl: thumb.groupingThumbnailUrl
       };
     }));
-    const trending = await computeTrendingImages(req, { period: 'daily', limit: 18, artistId: artist.artistId });
-    const publicFavorites = await store.listPublicFavoritesByProfile('artist', artist.artistId);
-    const publicCollections = await store.listPublicCollectionsByProfile('artist', artist.artistId, 6);
-    const feedAll = (await store.listMediaByArtist(artist.artistId))
+    const trending = await computeTrendingImages(req, { period: 'daily', limit: 18, creatorId: creator.creatorId });
+    const publicFavorites = await store.listPublicFavoritesByProfile('creator', creator.creatorId);
+    const publicCollections = await store.listPublicCollectionsByProfile('creator', creator.creatorId, 6);
+    const feedAll = (await store.listMediaByCreator(creator.creatorId))
       .filter((item) => item.appearsInFeed !== false)
       .filter((item) => !isHiddenByVisibility(item.releaseVisibility))
       .filter((item) => canViewBySchedule(item.publishAt, item.publicReleaseAt, nowMs, isFollowerOrAdmin))
       .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     const feedPreview = feedAll.slice(0, 18);
-    const featuredItemIds = artist.featuredItemIds || [];
-    const featuredGalleryIds = artist.featuredGalleryIds || [];
+    const featuredItemIds = creator.featuredItemIds || [];
+    const featuredGroupingIds = creator.featuredGroupingIds || [];
     const feedFavoriteCounts = await store.getImageFavoriteCounts(feedPreview.map((item) => item.mediaId));
     const featuredFeedItems = featuredItemIds
       .map((itemId) => feedAll.find((item) => item.mediaId === itemId))
       .filter((item): item is Media => Boolean(item));
-    const featuredGalleries = visibleGalleries.filter((gallery) => featuredGalleryIds.includes(gallery.galleryId));
-    const galleryById = new Map(visibleGalleries.map((item) => [item.galleryId, item]));
-    const mediaRows = await Promise.all(visibleGalleries.map((item) => store.getMediaByGallery(item.galleryId)));
+    const featuredGroupings = visibleGalleries.filter((grouping) => featuredGroupingIds.includes(grouping.groupingId));
+    const groupingById = new Map(visibleGalleries.map((item) => [item.groupingId, item]));
+    const mediaRows = await Promise.all(visibleGalleries.map((item) => store.getMediaByGrouping(item.groupingId)));
     const mediaById = new Map(mediaRows.flat().map((item) => [item.mediaId, item]));
     const toPublicImageFavorite = async (item: { targetId: string; createdAt: string }) => {
       const media = mediaById.get(item.targetId);
@@ -2126,16 +2284,16 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         previewUrl: previewUrl || ''
       };
     };
-    const toPublicGalleryFavorite = async (item: { targetId: string; createdAt: string }) => {
-      const gallery = galleryById.get(item.targetId);
-      if (!gallery) return { targetId: item.targetId, createdAt: item.createdAt };
-      const thumb = await resolveGalleryThumbnail(gallery);
+    const toPublicGroupingFavorite = async (item: { targetId: string; createdAt: string }) => {
+      const grouping = groupingById.get(item.targetId);
+      if (!grouping) return { targetId: item.targetId, createdAt: item.createdAt };
+      const thumb = await resolveGroupingThumbnail(grouping);
       return {
         targetId: item.targetId,
         createdAt: item.createdAt,
-        title: gallery.title,
-        slug: gallery.slug,
-        galleryThumbnailUrl: thumb.galleryThumbnailUrl
+        title: grouping.title,
+        slug: grouping.slug,
+        groupingThumbnailUrl: thumb.groupingThumbnailUrl
       };
     };
     const toPublicCollectionFavorite = async (item: { targetId: string; createdAt: string }) => {
@@ -2148,14 +2306,14 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       };
     };
     return res.json({
-      artistId: artist.artistId,
-      name: artist.name,
-      slug: artist.slug,
-      status: artist.status,
-      defaultProfileTab: artist.defaultProfileTab === 'galleries' ? 'galleries' : 'feed',
+      creatorId: creator.creatorId,
+      name: creator.name,
+      slug: creator.slug,
+      status: creator.status,
+      defaultProfileTab: creator.defaultProfileTab === 'groupings' ? 'groupings' : 'feed',
       followerCount,
       imageCount,
-      galleryCount: visibleGalleries.length,
+      groupingCount: visibleGalleries.length,
       feedItems: await Promise.all(feedPreview.map(async (item) => {
         const contentProjection = projectContentRating(getEffectiveContentRating(item), viewerPolicy);
         const disclosureProjection = projectDisclosures(getEffectiveAiDisclosure(item), getEffectiveHeavyTopics(item));
@@ -2183,22 +2341,22 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           previewUrl: await publicMediaUrl(item.previewKey),
           previewPosterUrl: await publicMediaUrl(item.previewPosterKey)
         }))),
-        galleries: await Promise.all(featuredGalleries.map(async (gallery) => {
-          const thumb = await resolveGalleryThumbnail(gallery);
+        groupings: await Promise.all(featuredGroupings.map(async (grouping) => {
+          const thumb = await resolveGroupingThumbnail(grouping);
           return {
-            galleryId: gallery.galleryId,
-            title: gallery.title,
-            slug: gallery.slug,
-            visibility: gallery.visibility,
-            galleryThumbnailUrl: thumb.galleryThumbnailUrl
+            groupingId: grouping.groupingId,
+            title: grouping.title,
+            slug: grouping.slug,
+            visibility: grouping.visibility,
+            groupingThumbnailUrl: thumb.groupingThumbnailUrl
           };
         }))
       },
       trendingImages: trending.items,
-      galleries,
+      groupings,
       publicFavoritesByType: {
         images: await Promise.all(publicFavorites.filter((item) => item.targetType === 'image').map(toPublicImageFavorite)),
-        galleries: await Promise.all(publicFavorites.filter((item) => item.targetType === 'gallery').map(toPublicGalleryFavorite)),
+        groupings: await Promise.all(publicFavorites.filter((item) => item.targetType === 'grouping').map(toPublicGroupingFavorite)),
         collections: await Promise.all(publicFavorites.filter((item) => item.targetType === 'collection').map(toPublicCollectionFavorite))
       },
       publicCollections: publicCollections.map((item) => ({
@@ -2215,65 +2373,65 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     });
   });
 
-  app.get('/galleries/:slug', async (req, res) => {
-    const gallery = await store.getGalleryBySlug(req.params.slug);
-    if (!gallery || gallery.status !== 'published' || isHiddenByVisibility(gallery.releaseVisibility)) {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.get('/groupings/:slug', async (req, res) => {
+    const grouping = await store.getGroupingBySlug(req.params.slug);
+    if (!grouping || grouping.status !== 'published' || isHiddenByVisibility(grouping.releaseVisibility)) {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
-    const isFollower = req.authUser?.userId ? await store.isFollowingArtist(req.authUser.userId, gallery.artistId) : false;
+    const isFollower = req.authUser?.userId ? await store.isFollowingCreator(req.authUser.userId, grouping.creatorId) : false;
     const isFollowerOrAdmin = isAdminRequest(req) || isFollower;
     const viewerPolicy = await resolveViewerContentPolicy(req);
-    if (!canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, Date.now(), isFollowerOrAdmin)) {
-      return res.status(404).json({ message: 'Gallery not found' });
+    if (!canViewBySchedule(grouping.publishAt, grouping.publicReleaseAt, Date.now(), isFollowerOrAdmin)) {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
 
-    const galleryHasAccess = gallery.visibility === 'free'
+    const groupingHasAccess = grouping.visibility === 'free'
       ? true
-      : (gallery.visibility === 'preview' && gallery.pairedPremiumGalleryId
-        ? await hasPremiumAccess(req, gallery.pairedPremiumGalleryId)
-        : await hasPremiumAccess(req, gallery.galleryId));
-    let resolvedGallery = gallery;
-    if (gallery.visibility === 'preview' && galleryHasAccess && gallery.pairedPremiumGalleryId) {
-      const premiumGallery = (await store.listAllGalleries()).find((item) => item.galleryId === gallery.pairedPremiumGalleryId);
-      if (premiumGallery) {
-        resolvedGallery = premiumGallery;
+      : (grouping.visibility === 'preview' && grouping.pairedPremiumGroupingId
+        ? await hasPremiumAccess(req, grouping.pairedPremiumGroupingId)
+        : await hasPremiumAccess(req, grouping.groupingId));
+    let resolvedGrouping = grouping;
+    if (grouping.visibility === 'preview' && groupingHasAccess && grouping.pairedPremiumGroupingId) {
+      const premiumGrouping = (await store.listAllGroupings()).find((item) => item.groupingId === grouping.pairedPremiumGroupingId);
+      if (premiumGrouping) {
+        resolvedGrouping = premiumGrouping;
       }
     }
-    const resolvedArtist = (await store.listArtists()).find((item) => item.artistId === resolvedGallery.artistId);
+    const resolvedArtist = (await store.listCreators()).find((item) => item.creatorId === resolvedGrouping.creatorId);
     const resolvedArtistName = resolvedArtist?.name || '';
-    const resolvedArtistSlug = resolvedArtist?.slug || resolvedGallery.artistSlug || '';
-    const allMediaItems = (await store.getMediaByGallery(resolvedGallery.galleryId)).filter((item) => {
+    const resolvedArtistSlug = resolvedArtist?.slug || resolvedGrouping.creatorId || '';
+    const allMediaItems = (await store.getMediaByGrouping(resolvedGrouping.groupingId)).filter((item) => {
       if (isHiddenByVisibility(item.releaseVisibility)) return false;
       if (item.status && item.status !== 'published' && item.status !== 'scheduled') return false;
       const effectiveContentRating = getEffectiveContentRating(item);
       if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) return false;
-      return canViewBySchedule(item.publishAt || resolvedGallery.publishAt, item.publicReleaseAt || resolvedGallery.publicReleaseAt, Date.now(), isFollowerOrAdmin);
+      return canViewBySchedule(item.publishAt || resolvedGrouping.publishAt, item.publicReleaseAt || resolvedGrouping.publicReleaseAt, Date.now(), isFollowerOrAdmin);
     });
     let mediaItems = allMediaItems;
-    if (resolvedGallery.visibility === 'premium' && !galleryHasAccess) {
+    if (resolvedGrouping.visibility === 'premium' && !groupingHasAccess) {
       const previewItems = allMediaItems.filter((item) => item.isPreview);
       mediaItems = previewItems.length > 0 ? previewItems : [];
     }
     const coverPool = mediaItems.length > 0 ? mediaItems : allMediaItems;
-    const coverMedia = coverPool.find((item) => item.mediaId === gallery.coverImageId) || coverPool[0];
+    const coverMedia = coverPool.find((item) => item.mediaId === grouping.coverImageId) || coverPool[0];
     let coverPreviewUrl = coverMedia
       ? await publicMediaUrl(coverMedia.previewPosterKey || coverMedia.previewKey)
       : undefined;
-    let coverBlur = (gallery.visibility === 'premium' || gallery.visibility === 'preview') && !galleryHasAccess;
+    let coverBlur = (grouping.visibility === 'premium' || grouping.visibility === 'preview') && !groupingHasAccess;
     if (coverMedia) {
       const effectiveCoverRating = getEffectiveContentRating(coverMedia);
       coverBlur = coverBlur || shouldBlurContent(effectiveCoverRating, viewerPolicy);
     }
-    // For premium galleries without an explicit cover, prefer paired preview cover.
-    if (gallery.visibility === 'premium' && !gallery.coverImageId) {
-      const previewGallery = (await store.listAllGalleries()).find((item) =>
+    // For premium groupings without an explicit cover, prefer paired preview cover.
+    if (grouping.visibility === 'premium' && !grouping.coverImageId) {
+      const previewGrouping = (await store.listAllGroupings()).find((item) =>
         item.status === 'published' &&
         item.visibility === 'preview' &&
-        item.pairedPremiumGalleryId === gallery.galleryId
+        item.pairedPremiumGroupingId === grouping.groupingId
       );
-      if (previewGallery) {
-        const previewMedia = await store.getMediaByGallery(previewGallery.galleryId);
-        const previewCover = previewMedia.find((item) => item.mediaId === previewGallery.coverImageId) || previewMedia[0];
+      if (previewGrouping) {
+        const previewMedia = await store.getMediaByGrouping(previewGrouping.groupingId);
+        const previewCover = previewMedia.find((item) => item.mediaId === previewGrouping.coverImageId) || previewMedia[0];
         if (previewCover) {
           coverPreviewUrl = await publicMediaUrl(previewCover.previewPosterKey || previewCover.previewKey);
           coverBlur = shouldBlurContent(getEffectiveContentRating(previewCover), viewerPolicy);
@@ -2282,8 +2440,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
     const mediaPayload = await Promise.all(mediaItems.map(async (item) => {
       const effectiveContentRating = getEffectiveContentRating(item);
-      const effectiveAiDisclosure = getEffectiveAiDisclosure(item, resolvedGallery);
-      const effectiveHeavyTopics = getEffectiveHeavyTopics(item, resolvedGallery);
+      const effectiveAiDisclosure = getEffectiveAiDisclosure(item, resolvedGrouping);
+      const effectiveHeavyTopics = getEffectiveHeavyTopics(item, resolvedGrouping);
       const contentProjection = projectContentRating(effectiveContentRating, viewerPolicy);
       const disclosureProjection = projectDisclosures(effectiveAiDisclosure, effectiveHeavyTopics);
       return {
@@ -2291,7 +2449,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         imageId: item.mediaId,
         sortOrder: item.position,
         isPreview: item.isPreview,
-        previewMaxWidth: item.previewMaxWidth ?? resolvedGallery.defaultPreviewMaxWidth,
+        previewMaxWidth: item.previewMaxWidth ?? resolvedGrouping.defaultPreviewMaxWidth,
         assetType: item.assetType || 'image',
         contentRating: contentProjection.effectiveContentRating,
         moderatorContentRating: undefined,
@@ -2333,8 +2491,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       previewUrl: string;
       previewPosterUrl?: string;
     }> = [];
-    if (gallery.visibility === 'preview' && gallery.pairedPremiumGalleryId && !galleryHasAccess) {
-      const premiumMediaRaw = (await store.getMediaByGallery(gallery.pairedPremiumGalleryId))
+    if (grouping.visibility === 'preview' && grouping.pairedPremiumGroupingId && !groupingHasAccess) {
+      const premiumMediaRaw = (await store.getMediaByGrouping(grouping.pairedPremiumGroupingId))
         .filter((item) => isRatingAllowed(getEffectiveContentRating(item), viewerPolicy.maxAllowedContentRating));
       const premiumMediaPreviewOnly = premiumMediaRaw.filter((item) => item.isPreview);
       const premiumMedia = premiumMediaPreviewOnly.length > 0 ? premiumMediaPreviewOnly : premiumMediaRaw;
@@ -2350,70 +2508,70 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
 
     return res.json({
-      ...resolvedGallery,
-      artistName: resolvedArtistName,
-      artistSlug: resolvedArtistSlug,
-      sourceGalleryId: gallery.galleryId,
+      ...resolvedGrouping,
+      creatorName: resolvedArtistName,
+      creatorSlug: resolvedArtistSlug,
+      sourceGroupingId: grouping.groupingId,
       premiumPasswordHash: undefined,
-      hasAccess: galleryHasAccess,
+      hasAccess: groupingHasAccess,
       coverMediaId: coverMedia?.mediaId,
       coverPreviewUrl,
       coverBlur,
       premiumTeaserMedia,
-      favoriteCount: await store.countFavorites('gallery', resolvedGallery.galleryId),
+      favoriteCount: await store.countFavorites('grouping', resolvedGrouping.groupingId),
       media: mediaPayload,
       images: mediaPayload.filter((asset) => asset.assetType === 'image'),
       videos: mediaPayload.filter((asset) => asset.assetType === 'video')
     });
   });
 
-  app.post('/galleries/:slug/unlock', async (req, res) => {
-    const gallery = await store.getGalleryBySlug(req.params.slug);
-    if (!gallery || gallery.status !== 'published') {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.post('/groupings/:slug/unlock', async (req, res) => {
+    const grouping = await store.getGroupingBySlug(req.params.slug);
+    if (!grouping || grouping.status !== 'published') {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
-    if (gallery.visibility !== 'premium') {
-      return res.status(400).json({ message: 'Gallery is not premium' });
+    if (grouping.visibility !== 'premium') {
+      return res.status(400).json({ message: 'Grouping is not premium' });
     }
 
     const ip = req.ip || 'unknown';
-    if (!checkRateLimit(`unlock:${gallery.galleryId}:${ip}`, 60_000, 10)) {
+    if (!checkRateLimit(`unlock:${grouping.groupingId}:${ip}`, 60_000, 10)) {
       return res.status(429).json({ message: 'Too many unlock attempts, try again later' });
     }
 
     const password = String(req.body?.password || '');
-    if (!gallery.premiumPasswordHash || !(await verifyPassword(password, gallery.premiumPasswordHash))) {
-      auditLog(req, 'gallery.unlock.failed', { galleryId: gallery.galleryId, reason: 'invalid-password' });
+    if (!grouping.premiumPasswordHash || !(await verifyPassword(password, grouping.premiumPasswordHash))) {
+      auditLog(req, 'grouping.unlock.failed', { groupingId: grouping.groupingId, reason: 'invalid-password' });
       return res.status(401).json({ message: 'Invalid password' });
     }
 
     if (req.authUser?.userId) {
-      await store.grantGalleryAccess(req.authUser.userId, gallery.galleryId);
+      await store.grantGroupingAccess(req.authUser.userId, grouping.groupingId);
     }
-    const unlockToken = issueUnlockToken({ galleryId: gallery.galleryId, userId: req.authUser?.userId }, config.unlockJwtSecret, config.unlockTokenTtlSeconds);
+    const unlockToken = issueUnlockToken({ groupingId: grouping.groupingId, userId: req.authUser?.userId }, config.unlockJwtSecret, config.unlockTokenTtlSeconds);
     const rememberToken = issueRememberAccessToken(
-      { galleryId: gallery.galleryId, userId: req.authUser?.userId },
+      { groupingId: grouping.groupingId, userId: req.authUser?.userId },
       config.unlockJwtSecret,
-      config.rememberGalleryAccessTtlSeconds
+      config.rememberGroupingAccessTtlSeconds
     );
-    auditLog(req, 'gallery.unlock.success', { galleryId: gallery.galleryId });
+    auditLog(req, 'grouping.unlock.success', { groupingId: grouping.groupingId });
     return res.json({
       unlockToken,
       expiresInSeconds: config.unlockTokenTtlSeconds,
       rememberToken,
-      rememberExpiresInSeconds: config.rememberGalleryAccessTtlSeconds
+      rememberExpiresInSeconds: config.rememberGroupingAccessTtlSeconds
     });
   });
 
-  app.get('/galleries/:slug/premium-images', async (req, res) => {
-    const gallery = await store.getGalleryBySlug(req.params.slug);
-    if (!gallery || gallery.status !== 'published') {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.get('/groupings/:slug/premium-images', async (req, res) => {
+    const grouping = await store.getGroupingBySlug(req.params.slug);
+    if (!grouping || grouping.status !== 'published') {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
 
-    const hasUserAccess = req.authUser?.userId ? await store.hasGalleryAccess(req.authUser.userId, gallery.galleryId) : false;
+    const hasUserAccess = req.authUser?.userId ? await store.hasGroupingAccess(req.authUser.userId, grouping.groupingId) : false;
     const unlockToken = req.headers['x-unlock-token'];
-    const rememberToken = req.headers['x-gallery-access-token'];
+    const rememberToken = req.headers['x-grouping-access-token'];
     if (!hasUserAccess && typeof unlockToken !== 'string' && typeof rememberToken !== 'string') {
       return res.status(401).json({ message: 'Unlock token required' });
     }
@@ -2422,14 +2580,14 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       const scopedToken = typeof unlockToken === 'string' ? unlockToken : String(rememberToken);
       try {
         const payload = verifyUnlockToken(scopedToken, config.unlockJwtSecret);
-        if (payload.galleryId !== gallery.galleryId) {
+        if (payload.groupingId !== grouping.groupingId) {
           return res.status(403).json({ message: 'Invalid unlock token scope' });
         }
         if (typeof unlockToken === 'string' && payload.tokenType !== 'unlock') {
           return res.status(401).json({ message: 'Invalid unlock token type' });
         }
         if (typeof rememberToken === 'string' && payload.tokenType !== 'remember') {
-          return res.status(401).json({ message: 'Invalid gallery access token type' });
+          return res.status(401).json({ message: 'Invalid grouping access token type' });
         }
       } catch {
         return res.status(401).json({ message: 'Invalid unlock token' });
@@ -2437,13 +2595,13 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
 
     const viewerPolicy = await resolveViewerContentPolicy(req);
-    const mediaItems = await store.getMediaByGallery(gallery.galleryId);
+    const mediaItems = await store.getMediaByGrouping(grouping.groupingId);
     const premiumMedia = await Promise.all(mediaItems
       .filter((item) => Boolean(item.premiumKey))
       .map(async (item) => {
         const effectiveRating = getEffectiveContentRating(item);
-        const effectiveAiDisclosure = getEffectiveAiDisclosure(item, gallery);
-        const effectiveHeavyTopics = getEffectiveHeavyTopics(item, gallery);
+        const effectiveAiDisclosure = getEffectiveAiDisclosure(item, grouping);
+        const effectiveHeavyTopics = getEffectiveHeavyTopics(item, grouping);
         const contentProjection = projectContentRating(effectiveRating, viewerPolicy);
         const disclosureProjection = projectDisclosures(effectiveAiDisclosure, effectiveHeavyTopics);
         if (contentProjection.blurred) {
@@ -2471,19 +2629,19 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.json(premiumMedia);
   });
 
-  app.get('/galleries/:slug/comments', async (req, res) => {
-    const gallery = await store.getGalleryBySlug(req.params.slug);
-    if (!gallery) {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.get('/groupings/:slug/comments', async (req, res) => {
+    const grouping = await store.getGroupingBySlug(req.params.slug);
+    if (!grouping) {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
-    const comments = await store.listComments('gallery', gallery.galleryId);
+    const comments = await store.listComments('grouping', grouping.groupingId);
     return res.json(comments.map(toPublicComment));
   });
 
-  app.post('/galleries/:slug/comments', requireAuth, async (req, res) => {
-    const gallery = await store.getGalleryBySlug(req.params.slug);
-    if (!gallery) {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.post('/groupings/:slug/comments', requireAuth, async (req, res) => {
+    const grouping = await store.getGroupingBySlug(req.params.slug);
+    if (!grouping) {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
     if (await store.isUserBlocked(req.authUser!.userId)) {
       return res.status(403).json({ message: 'User blocked' });
@@ -2499,23 +2657,23 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return res.status(400).json({ message: 'Comment body is required' });
     }
 
-    const requestedProfileType = req.body?.authorProfileType === 'artist' ? 'artist' : 'user';
-    let authorProfileType: 'user' | 'artist' = 'user';
+    const requestedProfileType = req.body?.authorProfileType === 'creator' ? 'creator' : 'user';
+    let authorProfileType: 'user' | 'creator' = 'user';
     let authorProfileId = 'profile';
     let displayName = req.authUser!.displayName;
-    if (requestedProfileType === 'artist') {
+    if (requestedProfileType === 'creator') {
       const requestedArtistId = typeof req.body?.authorProfileId === 'string' ? req.body.authorProfileId : '';
-      const artists = await store.listArtists();
-      const artist = artists.find((item) => item.artistId === requestedArtistId);
-      if (!artist) {
-        return res.status(400).json({ message: 'Artist profile not found' });
+      const creators = await store.listCreators();
+      const creator = creators.find((item) => item.creatorId === requestedArtistId);
+      if (!creator) {
+        return res.status(400).json({ message: 'Creator profile not found' });
       }
-      if (!(await ensureArtistContentAccess(req, res, artist.artistId))) {
+      if (!(await ensureCreatorContentAccess(req, res, creator.creatorId))) {
         return;
       }
-      authorProfileType = 'artist';
-      authorProfileId = artist.slug;
-      displayName = artist.name;
+      authorProfileType = 'creator';
+      authorProfileId = creator.slug;
+      displayName = creator.name;
     } else {
       const profile = await ensureUserProfile(req);
       authorProfileType = 'user';
@@ -2529,8 +2687,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       authorProfileType,
       authorProfileId,
       displayName,
-      targetType: 'gallery' as const,
-      targetId: gallery.galleryId,
+      targetType: 'grouping' as const,
+      targetId: grouping.groupingId,
       body,
       hidden: false,
       createdAt: new Date().toISOString()
@@ -2555,23 +2713,23 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return res.status(400).json({ message: 'Comment body is required' });
     }
 
-    const requestedProfileType = req.body?.authorProfileType === 'artist' ? 'artist' : 'user';
-    let authorProfileType: 'user' | 'artist' = 'user';
+    const requestedProfileType = req.body?.authorProfileType === 'creator' ? 'creator' : 'user';
+    let authorProfileType: 'user' | 'creator' = 'user';
     let authorProfileId = 'profile';
     let displayName = req.authUser!.displayName;
-    if (requestedProfileType === 'artist') {
+    if (requestedProfileType === 'creator') {
       const requestedArtistId = typeof req.body?.authorProfileId === 'string' ? req.body.authorProfileId : '';
-      const artists = await store.listArtists();
-      const artist = artists.find((item) => item.artistId === requestedArtistId);
-      if (!artist) {
-        return res.status(400).json({ message: 'Artist profile not found' });
+      const creators = await store.listCreators();
+      const creator = creators.find((item) => item.creatorId === requestedArtistId);
+      if (!creator) {
+        return res.status(400).json({ message: 'Creator profile not found' });
       }
-      if (!(await ensureArtistContentAccess(req, res, artist.artistId))) {
+      if (!(await ensureCreatorContentAccess(req, res, creator.creatorId))) {
         return;
       }
-      authorProfileType = 'artist';
-      authorProfileId = artist.slug;
-      displayName = artist.name;
+      authorProfileType = 'creator';
+      authorProfileId = creator.slug;
+      displayName = creator.name;
     } else {
       const profile = await ensureUserProfile(req);
       authorProfileType = 'user';
@@ -2602,7 +2760,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       ownerProfileId: req.query.ownerProfileId
     });
     if (!ownerProfile) {
-      return res.status(403).json({ message: 'Artist access required for artist profile actions' });
+      return res.status(403).json({ message: 'Creator access required for creator profile actions' });
     }
     const favorites = await store.listFavoritesByProfile(ownerProfile.ownerProfileType, ownerProfile.ownerProfileId);
     const limit = Number(req.query.limit);
@@ -2647,31 +2805,26 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     });
   });
 
-  app.get('/me/artists', requireAuth, async (req, res) => {
+  app.get('/me/creators', requireAuth, async (req, res) => {
     try {
-      const artists = isAdminRequest(req)
-        ? await store.listArtists()
-        : await store.listArtistsByUserId(req.authUser!.userId);
+      const creators = isAdminRequest(req)
+        ? await store.listCreators()
+        : await store.listCreatorsByUserId(req.authUser!.userId);
       if (isAdminRequest(req)) {
-        return res.json(artists.map((artist) => ({ ...artist, memberRole: 'admin' })));
+        return res.json(creators.map((creator) => ({ ...creator, memberRole: 'admin' })));
       }
       const memberships = await Promise.all(
-        artists.map(async (artist) => {
-          const member = await getArtistMembership(artist.artistId, req.authUser!.userId);
-          return { ...artist, memberRole: member?.role || 'editor' };
+        creators.map(async (creator) => {
+          const member = await getCreatorMembership(creator.creatorId, req.authUser!.userId);
+          return { ...creator, memberRole: member?.role || 'editor' };
         })
       );
       return res.json(memberships);
     } catch (error) {
-      logServerError('GET /me/artists', error);
-      res.setHeader('x-api-fallback', 'me-artists-empty');
+      logServerError('GET /me/creators', error);
+      res.setHeader('x-api-fallback', 'me-creators-empty');
       return res.json([]);
     }
-  });
-
-  app.get('/me/creators', requireAuth, async (req, res) => {
-    const creators = await store.listArtistsByUserId(req.authUser!.userId);
-    return res.json(creators.map((creator) => ({ ...creator, creatorId: creator.artistId })));
   });
 
   app.put('/me/profile', requireAuth, async (req, res) => {
@@ -2778,7 +2931,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const targetType = req.body?.targetType;
     const targetId = req.body?.targetId;
     const visibility: 'public' | 'private' = req.body?.visibility === 'private' ? 'private' : 'public';
-    if ((targetType !== 'gallery' && targetType !== 'image' && targetType !== 'collection') || !targetId) {
+    if ((targetType !== 'grouping' && targetType !== 'image' && targetType !== 'collection') || !targetId) {
       return res.status(400).json({ message: 'targetType and targetId are required' });
     }
 
@@ -2789,7 +2942,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
     const ownerProfile = await resolveOwnerProfile(req, req.body);
     if (!ownerProfile) {
-      return res.status(403).json({ message: 'Artist access required for artist profile actions' });
+      return res.status(403).json({ message: 'Creator access required for creator profile actions' });
     }
 
     const favorite = {
@@ -2818,7 +2971,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   app.delete('/favorites', requireAuth, async (req, res) => {
     const targetType = req.body?.targetType;
     const targetId = req.body?.targetId;
-    if ((targetType !== 'gallery' && targetType !== 'image' && targetType !== 'collection') || !targetId) {
+    if ((targetType !== 'grouping' && targetType !== 'image' && targetType !== 'collection') || !targetId) {
       return res.status(400).json({ message: 'targetType and targetId are required' });
     }
 
@@ -2829,7 +2982,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
     const ownerProfile = await resolveOwnerProfile(req, req.body);
     if (!ownerProfile) {
-      return res.status(403).json({ message: 'Artist access required for artist profile actions' });
+      return res.status(403).json({ message: 'Creator access required for creator profile actions' });
     }
 
     const result = await withIdempotency(req, async () => {
@@ -2845,27 +2998,27 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.status(result.status).send();
   });
 
-  app.post('/artists/:artistId/follow', requireAuth, async (req, res) => {
-    const artists = await store.listArtists();
-    const artist = artists.find((item) => item.artistId === req.params.artistId);
-    if (!artist || artist.status !== 'active') {
-      return res.status(404).json({ message: 'Artist not found' });
+  app.post('/creators/:creatorId/follow', requireAuth, async (req, res) => {
+    const creators = await store.listCreators();
+    const creator = creators.find((item) => item.creatorId === req.params.creatorId);
+    if (!creator || creator.status !== 'active') {
+      return res.status(404).json({ message: 'Creator not found' });
     }
     const follow = {
       followId: randomUUID(),
       followerUserId: req.authUser!.userId,
-      artistId: artist.artistId,
+      creatorId: creator.creatorId,
       notificationsEnabled: Boolean(req.body?.notificationsEnabled),
       insertedDate: new Date().toISOString()
     };
-    await store.followArtist(follow);
-    auditLog(req, 'follow.add', { artistId: follow.artistId });
+    await store.followCreator(follow);
+    auditLog(req, 'follow.add', { creator: follow.creatorId });
     return res.status(201).json(follow);
   });
 
-  app.delete('/artists/:artistId/follow', requireAuth, async (req, res) => {
-    await store.unfollowArtist(req.authUser!.userId, req.params.artistId);
-    auditLog(req, 'follow.remove', { artistId: req.params.artistId });
+  app.delete('/creators/:creatorId/follow', requireAuth, async (req, res) => {
+    await store.unfollowCreator(req.authUser!.userId, req.params.creatorId);
+    auditLog(req, 'follow.remove', { creator: req.params.creatorId });
     return res.status(204).send();
   });
 
@@ -2944,7 +3097,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       ownerProfileId: req.query.ownerProfileId
     });
     if (!ownerProfile) {
-      return res.status(403).json({ message: 'Artist access required for artist profile actions' });
+      return res.status(403).json({ message: 'Creator access required for creator profile actions' });
     }
     const collections = await store.listCollectionsByProfile(ownerProfile.ownerProfileType, ownerProfile.ownerProfileId);
     const limit = Number(req.query.limit);
@@ -2970,7 +3123,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
     const ownerProfile = await resolveOwnerProfile(req, req.body);
     if (!ownerProfile) {
-      return res.status(403).json({ message: 'Artist access required for artist profile actions' });
+      return res.status(403).json({ message: 'Creator access required for creator profile actions' });
     }
     const now = new Date().toISOString();
     const visibility: 'public' | 'private' = req.body?.visibility === 'private' ? 'private' : 'public';
@@ -3091,7 +3244,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
   app.get('/me/identity', requireAuth, async (req, res) => {
     const stored = await store.getUserIdentity?.(req.authUser!.userId);
-    const role = normalizePlatformRole(stored?.role ?? (resolveRole(req.authUser!) === 'admin' ? 'admin' : 'user'));
+    const role = normalizePlatformRoleValue(stored?.role ?? (resolveRole(req.authUser!) === 'admin' ? 'admin' : 'user'));
     const capabilities = stored?.capabilities || resolveCapabilities(role);
     return res.json({
       userId: req.authUser!.userId,
@@ -3156,12 +3309,12 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.status(201).json(submission);
   });
 
-  app.get('/admin/contribution-contexts', requireAdmin, async (_req, res) => {
+  app.get('/studio/contribution-contexts', requireAdmin, async (_req, res) => {
     if (!store.listContributionContexts) return res.json([]);
     return res.json(await store.listContributionContexts());
   });
 
-  app.post('/admin/contribution-contexts', requireAdmin, async (req, res) => {
+  app.post('/studio/contribution-contexts', requireAdmin, async (req, res) => {
     if (!store.createContributionContext) return res.status(503).json({ message: 'Context service unavailable' });
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     if (!title) return res.status(400).json({ message: 'title is required' });
@@ -3192,12 +3345,12 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.status(201).json(context);
   });
 
-  app.get('/admin/contribution-contexts/:contextId/submissions', requireAdmin, async (req, res) => {
+  app.get('/studio/contribution-contexts/:contextId/submissions', requireAdmin, async (req, res) => {
     if (!store.listContextSubmissions) return res.json([]);
     return res.json(await store.listContextSubmissions(req.params.contextId));
   });
 
-  app.patch('/admin/contribution-submissions/:submissionId', requireAdmin, async (req, res) => {
+  app.patch('/studio/entries/:submissionId', requireAdmin, async (req, res) => {
     if (!store.getContextSubmissionById || !store.updateContextSubmission) {
       return res.status(503).json({ message: 'Submission moderation unavailable' });
     }
@@ -3217,8 +3370,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       const mediaRef = (submission.mediaIds || []).slice(0, 8).map((mediaId, index) => ({ mediaId, discoverable: true, sortOrder: index }));
       const post: Post = {
         postId: randomUUID(),
-        artistId: 'community',
-        creatorId: submission.userId,
+        creatorId: 'community',
         authorId: submission.userId,
         title: submission.title,
         slug: slugify(`${submission.title}-${submission.submissionId.slice(0, 8)}`),
@@ -3242,12 +3394,12 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.json(updated);
   });
 
-  app.get('/admin/contribution-contexts/:contextId/prizes', requireAdmin, async (req, res) => {
+  app.get('/studio/challenges/:contextId/prizes', requireAdmin, async (req, res) => {
     if (!store.listChallengePrizes) return res.json([]);
     return res.json(await store.listChallengePrizes(req.params.contextId));
   });
 
-  app.post('/admin/contribution-contexts/:contextId/prizes', requireAdmin, async (req, res) => {
+  app.post('/studio/challenges/:contextId/prizes', requireAdmin, async (req, res) => {
     if (!store.createChallengePrize) return res.status(503).json({ message: 'Prize service unavailable' });
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
@@ -3270,65 +3422,85 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   });
 
   app.get('/studio/metrics', requireAuth, async (req, res) => {
-    const artists = await store.listArtists();
-    const galleries = await store.listAllGalleries();
-    const posts = await store.listAllPosts();
-    const contexts = store.listContributionContexts ? await store.listContributionContexts() : [];
-    const submissions = store.listContextSubmissions
-      ? (await Promise.all(contexts.map((context) => store.listContextSubmissions!(context.contextId)))).flat()
-      : [];
-    const sourceFiles = Array.from(localSourceFiles.values());
-    const dynamicStore = store as unknown as {
-      userProfiles?: Array<unknown>;
-      userIdentities?: Array<{ role?: string }>;
-    };
-    const profileCount = Array.isArray(dynamicStore.userProfiles) ? dynamicStore.userProfiles.length : 0;
-    const contributorCount = Array.isArray(dynamicStore.userIdentities)
-      ? dynamicStore.userIdentities.filter((item) => item.role === 'contributor').length
-      : 0;
-    const dynamicFns = store as unknown as {
-      listAllMedia?: () => Promise<Media[]>;
-      listModerationQueue?: () => Promise<Array<unknown>>;
-    };
-    const allMedia = dynamicFns.listAllMedia ? await dynamicFns.listAllMedia() : [];
-    const moderationQueue = dynamicFns.listModerationQueue ? await dynamicFns.listModerationQueue() : [];
+    const creators = await listVisibleStudioCreators(req);
+    const groupings = await listVisibleStudioGroupings(req);
+    const posts = await listVisibleStudioPosts(req);
+    const submissions = await listStudioSubmissions(req);
+    const sourceFiles = await listVisibleStudioFiles(req);
+    const profileCount = isAdminRequest(req)
+      ? ((store.listUserProfiles ? await store.listUserProfiles() : []).length)
+      : 1;
+    const contributorCount = (store.listUserIdentities ? await store.listUserIdentities() : [])
+      .filter((item) => item.role === 'contributor')
+      .length;
+    const mediaItems = (
+      await Promise.all(groupings.map((grouping) => store.getMediaByGrouping(grouping.groupingId)))
+    ).reduce((total, items) => total + items.length, 0);
     return res.json({
       totalUsers: profileCount,
-      creators: artists.length,
-      galleries: galleries.length,
+      creators: creators.length,
+      groupings: groupings.length,
       posts: posts.length,
       files: sourceFiles.length,
-      mediaItems: allMedia.length,
+      mediaItems,
       pendingEntries: submissions.filter((item) => item.status === 'pending').length,
-      adminReviewItems: submissions.filter((item) => item.status === 'pending').length + moderationQueue.length,
+      reviewItems: submissions.filter((item) => item.status === 'pending').length,
       contributors: contributorCount
     });
   });
 
-  app.get('/admin/artists', requireAuth, async (req, res) => {
-    const artists = isAdminRequest(req)
-      ? await store.listArtists()
-      : await store.listArtistsByUserId(req.authUser!.userId);
-    return res.json(artists);
+  app.get('/studio/creators', requireAuth, async (req, res) => {
+    return res.json(await listVisibleStudioCreators(req));
   });
 
-  app.get('/admin/creators', requireAuth, async (req, res) => {
-    const creators = isAdminRequest(req)
-      ? await store.listArtists()
-      : await store.listArtistsByUserId(req.authUser!.userId);
-    return res.json(creators.map((creator) => ({ ...creator, creatorId: creator.artistId })));
+  app.post('/studio/creators', requireAuth, async (req, res) => {
+    const name = String(req.body?.name || '').trim();
+    const slug = slugify(String(req.body?.slug || name || randomUUID().slice(0, 8)));
+    const creators = await store.listCreators();
+    const conflict = creators.find((item) => creatorMatchesSlug(item, slug));
+    if (conflict) {
+      return res.status(409).json({ message: 'Creator slug is already taken.', slug });
+    }
+
+    const creator: Creator = {
+      creatorId: randomUUID(),
+      name,
+      slug,
+      slugHistory: uniqueSlugs([slug]),
+      defaultProfileTab: req.body?.defaultProfileTab === 'groupings' ? 'groupings' : 'feed',
+      featuredItemIds: parseStringArray(req.body?.featuredItemIds),
+      featuredGroupingIds: parseStringArray(req.body?.featuredGroupingIds),
+      discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
+        ? req.body.discoverSquareCropEnabled
+        : true,
+      defaultAiDisclosure: parseOptionalAiDisclosure(req.body?.defaultAiDisclosure) || 'none',
+      defaultHeavyTopics: parseOptionalHeavyTopics(req.body?.defaultHeavyTopics) || [],
+      status: req.body?.status === 'inactive' ? 'inactive' : 'active',
+      sortOrder: Number(req.body?.sortOrder || 0),
+      createdAt: new Date().toISOString()
+    };
+    await store.createCreator(creator);
+    await store.addCreatorMember({
+      creatorId: creator.creatorId,
+      userId: req.authUser!.userId,
+      role: 'owner',
+      invitedByUserId: req.authUser!.userId,
+      createdAt: new Date().toISOString()
+    });
+    return res.status(201).json(creator);
   });
 
-  app.get('/admin/files', requireAuth, async (_req, res) => {
-    return res.json(Array.from(localSourceFiles.values()));
+  app.get('/studio/files', requireAuth, async (req, res) => {
+    return res.json(await listVisibleStudioFiles(req));
   });
 
-  app.post('/admin/files', requireAuth, async (req, res) => {
+  app.post('/studio/files', requireAuth, async (req, res) => {
     const creatorId = typeof req.body?.creatorId === 'string'
       ? req.body.creatorId
-      : (typeof req.body?.artistId === 'string' ? req.body.artistId : '');
+      : (typeof req.body?.creatorId === 'string' ? req.body.creatorId : '');
     if (!creatorId) return res.status(400).json({ message: 'creatorId is required' });
-    if (!(await ensureArtistContentAccess(req, res, creatorId))) return;
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    if (!store.createSourceFile) return res.status(503).json({ message: 'File service unavailable' });
     const now = new Date().toISOString();
     const file: SourceFile = {
       fileId: randomUUID(),
@@ -3349,11 +3521,63 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       createdAt: now,
       updatedAt: now
     };
-    localSourceFiles.set(file.fileId, file);
+    await store.createSourceFile(file);
     return res.status(201).json(file);
   });
 
-  app.get('/admin/audit', requireAdmin, async (req, res) => {
+  app.get('/studio/groupings', requireAuth, async (req, res) => {
+    return res.json(await listVisibleStudioGroupings(req));
+  });
+
+  app.get('/studio/posts', requireAuth, async (req, res) => {
+    const requestedCreatorId = typeof req.query.creatorId === 'string'
+      ? req.query.creatorId.trim()
+      : '';
+    if (requestedCreatorId && !(await ensureCreatorContentAccess(req, res, requestedCreatorId))) return;
+    return res.json(await listVisibleStudioPosts(req, requestedCreatorId));
+  });
+
+  app.get('/studio/challenges', requireAuth, async (req, res) => {
+    const contexts = store.listContributionContexts ? await store.listContributionContexts() : [];
+    const challengeContexts = contexts.filter((context) => context.type === 'challenge');
+    if (isAdminRequest(req)) return res.json(challengeContexts);
+    return res.json(challengeContexts.filter((context) => context.status === 'active' || context.status === 'closed'));
+  });
+
+  app.get('/studio/entries', requireAuth, async (req, res) => {
+    const entries = await listStudioSubmissions(req);
+    return res.json(entries.map((entry) => ({
+      ...entry,
+      promotionOutcome: entry.status === 'approved' ? 'contributor' : 'none'
+    })));
+  });
+
+  app.get('/studio/users', requireAuth, async (req, res) => {
+    const profiles = store.listUserProfiles ? await store.listUserProfiles() : [];
+    const identities = store.listUserIdentities ? await store.listUserIdentities() : [];
+    const identityByUserId = new Map(identities.map((identity) => [identity.userId, identity]));
+    if (!isAdminRequest(req)) {
+      const currentProfile = profiles.find((profile) => profile.userId === req.authUser!.userId)
+        || await store.getUserProfile(req.authUser!.userId);
+      const currentIdentity = identityByUserId.get(req.authUser!.userId);
+      return res.json(currentProfile ? [{
+        ...currentProfile,
+        role: currentIdentity?.role || 'user',
+        isBeeker: Boolean(currentIdentity?.isBeeker),
+        managedCreatorCount: (await store.listCreatorsByUserId(req.authUser!.userId)).length
+      }] : []);
+    }
+
+    const users = await Promise.all(profiles.map(async (profile) => ({
+      ...profile,
+      role: identityByUserId.get(profile.userId)?.role || 'user',
+      isBeeker: Boolean(identityByUserId.get(profile.userId)?.isBeeker),
+      managedCreatorCount: (await store.listCreatorsByUserId(profile.userId)).length
+    })));
+    return res.json(users);
+  });
+
+  app.get('/studio/operations/audit', requireAdmin, async (req, res) => {
     const limit = Math.max(1, Math.min(200, Number(req.query.limit || 100)));
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const actionFilter = typeof req.query.action === 'string' ? req.query.action : undefined;
@@ -3370,53 +3594,16 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     });
   });
 
-  app.post('/admin/artists', requireAuth, async (req, res) => {
-    const name = String(req.body?.name || '').trim();
-    const slug = slugify(String(req.body?.slug || name || randomUUID().slice(0, 8)));
-    const artists = await store.listArtists();
-    const conflict = artists.find((item) => artistHasSlug(item, slug));
-    if (conflict) {
-      return res.status(409).json({ message: 'Artist slug is already taken.', slug });
-    }
-
-    const artist: Artist = {
-      artistId: randomUUID(),
-      name,
-      slug,
-      slugHistory: uniqueSlugs([slug]),
-      defaultProfileTab: req.body?.defaultProfileTab === 'galleries' ? 'galleries' : 'feed',
-      featuredItemIds: parseStringArray(req.body?.featuredItemIds),
-      featuredGalleryIds: parseStringArray(req.body?.featuredGalleryIds),
-      discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
-        ? req.body.discoverSquareCropEnabled
-        : true,
-      defaultAiDisclosure: parseOptionalAiDisclosure(req.body?.defaultAiDisclosure) || 'none',
-      defaultHeavyTopics: parseOptionalHeavyTopics(req.body?.defaultHeavyTopics) || [],
-      status: req.body?.status === 'inactive' ? 'inactive' : 'active',
-      sortOrder: Number(req.body?.sortOrder || 0),
-      createdAt: new Date().toISOString()
-    };
-    await store.createArtist(artist);
-    await store.addArtistMember({
-      artistId: artist.artistId,
-      userId: req.authUser!.userId,
-      role: 'owner',
-      invitedByUserId: req.authUser!.userId,
-      createdAt: new Date().toISOString()
-    });
-    return res.status(201).json(artist);
-  });
-
-  app.get('/admin/artists/:artistId/members', requireAuth, async (req, res) => {
-    if (!(await ensureArtistContentAccess(req, res, req.params.artistId))) {
+  app.get('/studio/creators/:creatorId/members', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorContentAccess(req, res, req.params.creatorId))) {
       return;
     }
-    const members = await store.listArtistMembers(req.params.artistId);
+    const members = await store.listCreatorMembers(req.params.creatorId);
     return res.json(members);
   });
 
-  app.post('/admin/artists/:artistId/members', requireAuth, async (req, res) => {
-    if (!(await ensureArtistAccountAccess(req, res, req.params.artistId))) {
+  app.post('/studio/creators/:creatorId/members', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) {
       return;
     }
     const userId = typeof req.body?.userId === 'string' ? req.body.userId : '';
@@ -3426,79 +3613,79 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     if (!userId) {
       return res.status(400).json({ message: 'userId is required' });
     }
-    const member: ArtistMember = {
-      artistId: req.params.artistId,
+    const member: CreatorMember = {
+      creatorId: req.params.creatorId,
       userId,
       role,
       invitedByUserId: req.authUser!.userId,
       createdAt: new Date().toISOString()
     };
-    await store.addArtistMember(member);
+    await store.addCreatorMember(member);
     return res.status(201).json(member);
   });
 
-  app.delete('/admin/artists/:artistId/members/:userId', requireAuth, async (req, res) => {
-    if (!(await ensureArtistAccountAccess(req, res, req.params.artistId))) {
+  app.delete('/studio/creators/:creatorId/members/:userId', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) {
       return;
     }
-    await store.removeArtistMember(req.params.artistId, req.params.userId);
+    await store.removeCreatorMember(req.params.creatorId, req.params.userId);
     return res.status(204).send();
   });
 
-  app.patch('/admin/artists/:artistId', requireAuth, async (req, res) => {
-    if (!(await ensureArtistAccountAccess(req, res, req.params.artistId))) {
+  app.patch('/studio/creators/:creatorId', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) {
       return;
     }
-    const artists = await store.listArtists();
-    const existing = artists.find((artist) => artist.artistId === req.params.artistId);
+    const creators = await store.listCreators();
+    const existing = creators.find((creator) => creator.creatorId === req.params.creatorId);
     if (!existing) {
-      return res.status(404).json({ message: 'Artist not found' });
+      return res.status(404).json({ message: 'Creator not found' });
     }
 
     const nextSlug = req.body?.slug ? slugify(String(req.body.slug)) : existing.slug;
     const nextSlugHistory = uniqueSlugs([...(existing.slugHistory || [existing.slug]), nextSlug]);
     const conflictSlug = nextSlugHistory.find((slug) =>
-      artists.some((item) => item.artistId !== existing.artistId && artistHasSlug(item, slug))
+      creators.some((item) => item.creatorId !== existing.creatorId && creatorMatchesSlug(item, slug))
     );
     if (conflictSlug) {
-      return res.status(409).json({ message: 'Artist slug is already taken.', slug: conflictSlug });
+      return res.status(409).json({ message: 'Creator slug is already taken.', slug: conflictSlug });
     }
 
     const requestedFeaturedItemIds = req.body?.featuredItemIds !== undefined
       ? parseStringArray(req.body.featuredItemIds)
       : undefined;
     if (requestedFeaturedItemIds) {
-      const artistMediaIds = new Set((await store.listMediaByArtist(existing.artistId)).map((item) => item.mediaId));
-      const invalid = requestedFeaturedItemIds.find((itemId) => !artistMediaIds.has(itemId));
+      const creator = new Set((await store.listMediaByCreator(existing.creatorId)).map((item) => item.mediaId));
+      const invalid = requestedFeaturedItemIds.find((itemId) => !creator.has(itemId));
       if (invalid) {
-        return res.status(400).json({ message: `featuredItemId does not belong to artist: ${invalid}` });
+        return res.status(400).json({ message: `featuredItemId does not belong to creator: ${invalid}` });
       }
     }
-    const requestedFeaturedGalleryIds = req.body?.featuredGalleryIds !== undefined
-      ? parseStringArray(req.body.featuredGalleryIds)
+    const requestedFeaturedGroupingIds = req.body?.featuredGroupingIds !== undefined
+      ? parseStringArray(req.body.featuredGroupingIds)
       : undefined;
-    if (requestedFeaturedGalleryIds) {
-      const artistGalleryIds = new Set((await store.listAllGalleries()).filter((item) => item.artistId === existing.artistId).map((item) => item.galleryId));
-      const invalid = requestedFeaturedGalleryIds.find((galleryId) => !artistGalleryIds.has(galleryId));
+    if (requestedFeaturedGroupingIds) {
+      const creator = new Set((await store.listAllGroupings()).filter((item) => item.creatorId === existing.creatorId).map((item) => item.groupingId));
+      const invalid = requestedFeaturedGroupingIds.find((groupingId) => !creator.has(groupingId));
       if (invalid) {
-        return res.status(400).json({ message: `featuredGalleryId does not belong to artist: ${invalid}` });
+        return res.status(400).json({ message: `featuredGroupingId does not belong to creator: ${invalid}` });
       }
     }
 
-    const updated: Artist = {
+    const updated: Creator = {
       ...existing,
       name: req.body?.name ? String(req.body.name) : existing.name,
       slug: nextSlug,
       slugHistory: nextSlugHistory,
-      defaultProfileTab: req.body?.defaultProfileTab === 'galleries'
-        ? 'galleries'
-        : (req.body?.defaultProfileTab === 'feed' ? 'feed' : (existing.defaultProfileTab === 'galleries' ? 'galleries' : 'feed')),
+      defaultProfileTab: req.body?.defaultProfileTab === 'groupings'
+        ? 'groupings'
+        : (req.body?.defaultProfileTab === 'feed' ? 'feed' : (existing.defaultProfileTab === 'groupings' ? 'groupings' : 'feed')),
       featuredItemIds: req.body?.featuredItemIds !== undefined
         ? (requestedFeaturedItemIds || [])
         : (existing.featuredItemIds || []),
-      featuredGalleryIds: req.body?.featuredGalleryIds !== undefined
-        ? (requestedFeaturedGalleryIds || [])
-        : (existing.featuredGalleryIds || []),
+      featuredGroupingIds: req.body?.featuredGroupingIds !== undefined
+        ? (requestedFeaturedGroupingIds || [])
+        : (existing.featuredGroupingIds || []),
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
         ? req.body.discoverSquareCropEnabled
         : (existing.discoverSquareCropEnabled ?? true),
@@ -3512,19 +3699,19 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       sortOrder: req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : existing.sortOrder
     };
 
-    await store.updateArtist(updated);
+    await store.updateCreator(updated);
     return res.json(updated);
   });
 
-  app.delete('/admin/artists/:artistId', requireAuth, async (req, res) => {
-    if (!(await ensureArtistAccountAccess(req, res, req.params.artistId))) {
+  app.delete('/studio/creators/:creatorId', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) {
       return;
     }
-    await store.deleteArtist(req.params.artistId);
+    await store.deleteCreator(req.params.creatorId);
     return res.status(204).send();
   });
 
-  app.patch('/admin/site-settings', requireAdmin, async (req, res) => {
+  app.patch('/studio/settings/site', requireAdmin, async (req, res) => {
     const current = await store.getSiteSettings();
     const requestedTheme = req.body?.theme;
     const theme: SiteSettings['theme'] =
@@ -3542,7 +3729,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.json(updated);
   });
 
-  app.post('/admin/site-settings/logo-upload-url', requireAdmin, async (req, res) => {
+  app.post('/studio/settings/site/logo-upload-url', requireAdmin, async (req, res) => {
     const contentType = req.body?.contentType ? String(req.body.contentType) : 'image/png';
     const extension = contentType.includes('jpeg') ? 'jpg' : (contentType.split('/')[1] || 'png');
     const key = `branding/logo-${randomUUID()}.${extension}`;
@@ -3559,36 +3746,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.status(201).json({ key, uploadUrl, contentType });
   });
 
-  app.get('/admin/galleries', requireAuth, async (req, res) => {
-    const galleries = await store.listAllGalleries();
-    if (isAdminRequest(req)) {
-      return res.json(galleries.map((gallery) => ({ ...gallery, premiumPasswordHash: undefined })));
-    }
-    const allowedArtistIds = new Set((await store.listArtistsByUserId(req.authUser!.userId)).map((artist) => artist.artistId));
-    const scoped = galleries.filter((gallery) => allowedArtistIds.has(gallery.artistId));
-    return res.json(scoped.map((gallery) => ({ ...gallery, premiumPasswordHash: undefined })));
-  });
-
-  app.get('/admin/posts', requireAuth, async (req, res) => {
-    const requestedArtistId = typeof req.query.artistId === 'string' ? req.query.artistId.trim() : '';
-    if (requestedArtistId) {
-      if (!(await ensureArtistContentAccess(req, res, requestedArtistId))) return;
-      const posts = await store.listPostsByArtistId(requestedArtistId);
-      return res.json(posts);
-    }
-    if (isAdminRequest(req)) {
-      const posts = await store.listAllPosts();
-      return res.json(posts);
-    }
-    const artists = await store.listArtistsByUserId(req.authUser!.userId);
-    const postLists = await Promise.all(artists.map((artist) => store.listPostsByArtistId(artist.artistId)));
-    return res.json(postLists.flat());
-  });
-
-  app.post('/admin/posts', requireAuth, async (req, res) => {
-    const artistId = typeof req.body?.artistId === 'string' ? req.body.artistId.trim() : '';
-    if (!artistId) return res.status(400).json({ message: 'artistId is required' });
-    if (!(await ensureArtistContentAccess(req, res, artistId))) return;
+  app.post('/studio/posts', requireAuth, async (req, res) => {
+    const creator = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!creator) return res.status(400).json({ message: 'creator is required' });
+    if (!(await ensureCreatorContentAccess(req, res, creator))) return;
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     if (!title) return res.status(400).json({ message: 'title is required' });
 
@@ -3600,7 +3761,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const status = req.body?.status === 'draft' || req.body?.status === 'archived' ? req.body.status : 'published';
     const post: Post = {
       postId: randomUUID(),
-      artistId,
+      creatorId: creator,
       authorId: req.authUser?.userId,
       title,
       slug,
@@ -3639,10 +3800,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.status(201).json(post);
   });
 
-  app.patch('/admin/posts/:postId', requireAuth, async (req, res) => {
+  app.patch('/studio/posts/:postId', requireAuth, async (req, res) => {
     const existing = await store.getPostById(req.params.postId);
     if (!existing) return res.status(404).json({ message: 'Post not found' });
-    if (!(await ensureArtistContentAccess(req, res, existing.artistId))) return;
+    if (!(await ensureCreatorContentAccess(req, res, existing.creatorId))) return;
 
     const nextTitle = typeof req.body?.title === 'string' && req.body.title.trim()
       ? req.body.title.trim()
@@ -3705,20 +3866,20 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.json(updated);
   });
 
-  app.delete('/admin/posts/:postId', requireAuth, async (req, res) => {
+  app.delete('/studio/posts/:postId', requireAuth, async (req, res) => {
     const existing = await store.getPostById(req.params.postId);
     if (!existing) return res.status(404).json({ message: 'Post not found' });
-    if (!(await ensureArtistContentAccess(req, res, existing.artistId))) return;
+    if (!(await ensureCreatorContentAccess(req, res, existing.creatorId))) return;
     await store.deletePost(existing.postId);
     return res.status(204).send();
   });
 
-  app.post('/admin/galleries', requireAuth, async (req, res) => {
-    const artistId = String(req.body?.artistId || '');
-    if (!(await ensureArtistContentAccess(req, res, artistId))) {
+  app.post('/studio/groupings', requireAuth, async (req, res) => {
+    const creator = String(req.body?.creatorId || '');
+    if (!(await ensureCreatorContentAccess(req, res, creator))) {
       return;
     }
-    const visibility: Gallery['visibility'] = req.body?.visibility === 'premium'
+    const visibility: Grouping['visibility'] = req.body?.visibility === 'premium'
       ? 'premium'
       : (req.body?.visibility === 'preview' ? 'preview' : 'free');
     const passwordHash = visibility === 'premium' && req.body?.premiumPassword
@@ -3731,10 +3892,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const requestedSlug = req.body?.slug ? String(req.body.slug) : title;
     const slug = slugify(requestedSlug);
 
-    const gallery: Gallery = {
-      galleryId: randomUUID(),
-      artistId,
-      artistSlug: String(req.body?.artistSlug || ''),
+    const grouping: Grouping = {
+      groupingId: randomUUID(),
+      creatorId: String(req.body?.creatorId || ''),
       title,
       slug,
       slugHistory: uniqueSlugs([slug]),
@@ -3745,7 +3905,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       defaultHeavyTopics: parseOptionalHeavyTopics(req.body?.defaultHeavyTopics) || [],
       coverImageId: req.body?.coverImageId ? String(req.body.coverImageId) : undefined,
       visibility,
-      pairedPremiumGalleryId: req.body?.pairedPremiumGalleryId ? String(req.body.pairedPremiumGalleryId) : undefined,
+      pairedPremiumGroupingId: req.body?.pairedPremiumGroupingId ? String(req.body.pairedPremiumGroupingId) : undefined,
       purchaseUrl: req.body?.purchaseUrl ? String(req.body.purchaseUrl) : undefined,
       defaultPreviewMaxWidth: parseOptionalPreviewWidth(req.body?.defaultPreviewMaxWidth),
       status: req.body?.status === 'published' ? 'published' : 'draft',
@@ -3753,26 +3913,26 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       createdAt: new Date().toISOString()
     };
 
-    await store.createGallery(gallery);
-    return res.status(201).json({ ...gallery, premiumPasswordHash: undefined });
+    await store.createGrouping(grouping);
+    return res.status(201).json({ ...grouping, premiumPasswordHash: undefined });
   });
 
-  app.patch('/admin/galleries/:galleryId', requireAuth, async (req, res) => {
-    const galleries = await store.listAllGalleries();
-    const existing = galleries.find((gallery) => gallery.galleryId === req.params.galleryId);
+  app.patch('/studio/groupings/:groupingId', requireAuth, async (req, res) => {
+    const groupings = await store.listAllGroupings();
+    const existing = groupings.find((grouping) => grouping.groupingId === req.params.groupingId);
     if (!existing) {
-      return res.status(404).json({ message: 'Gallery not found' });
+      return res.status(404).json({ message: 'Grouping not found' });
     }
-    if (!(await ensureArtistContentAccess(req, res, existing.artistId))) {
+    if (!(await ensureCreatorContentAccess(req, res, existing.creatorId))) {
       return;
     }
-    if (req.body?.artistId && String(req.body.artistId) !== existing.artistId) {
-      if (!(await ensureArtistContentAccess(req, res, String(req.body.artistId)))) {
+    if (req.body?.creatorId && String(req.body.creatorId) !== existing.creatorId) {
+      if (!(await ensureCreatorContentAccess(req, res, String(req.body.creatorId)))) {
         return;
       }
     }
 
-    const visibility: Gallery['visibility'] = req.body?.visibility === 'premium'
+    const visibility: Grouping['visibility'] = req.body?.visibility === 'premium'
       ? 'premium'
       : (req.body?.visibility === 'preview' ? 'preview' : (req.body?.visibility === 'free' ? 'free' : existing.visibility));
     const nextTitle = req.body?.title ? String(req.body.title) : existing.title;
@@ -3780,10 +3940,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       ? slugify(String(req.body.slug))
       : (req.body?.title ? slugify(String(req.body.title)) : existing.slug);
 
-    const updated: Gallery = {
+    const updated: Grouping = {
       ...existing,
-      artistId: req.body?.artistId ? String(req.body.artistId) : existing.artistId,
-      artistSlug: req.body?.artistSlug ? String(req.body.artistSlug) : existing.artistSlug,
+      creatorId: req.body?.creatorId ? String(req.body.creatorId) : existing.creatorId,
       title: nextTitle,
       slug: nextSlug,
       slugHistory: uniqueSlugs([...(existing.slugHistory || [existing.slug]), nextSlug]),
@@ -3798,9 +3957,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         : normalizeHeavyTopics(existing.defaultHeavyTopics),
       coverImageId: req.body?.coverImageId !== undefined ? (req.body.coverImageId ? String(req.body.coverImageId) : undefined) : existing.coverImageId,
       visibility,
-      pairedPremiumGalleryId: req.body?.pairedPremiumGalleryId !== undefined
-        ? (req.body.pairedPremiumGalleryId ? String(req.body.pairedPremiumGalleryId) : undefined)
-        : existing.pairedPremiumGalleryId,
+      pairedPremiumGroupingId: req.body?.pairedPremiumGroupingId !== undefined
+        ? (req.body.pairedPremiumGroupingId ? String(req.body.pairedPremiumGroupingId) : undefined)
+        : existing.pairedPremiumGroupingId,
       purchaseUrl: req.body?.purchaseUrl !== undefined
         ? (req.body.purchaseUrl ? String(req.body.purchaseUrl) : undefined)
         : existing.purchaseUrl,
@@ -3816,51 +3975,51 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       updated.premiumPasswordHash = undefined;
     }
 
-    await store.updateGallery(updated);
+    await store.updateGrouping(updated);
     return res.json({ ...updated, premiumPasswordHash: undefined });
   });
 
-  app.delete('/admin/galleries/:galleryId', requireAuth, async (req, res) => {
-    const gallery = (await store.listAllGalleries()).find((item) => item.galleryId === req.params.galleryId);
-    if (!gallery) {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.delete('/studio/groupings/:groupingId', requireAuth, async (req, res) => {
+    const grouping = (await store.listAllGroupings()).find((item) => item.groupingId === req.params.groupingId);
+    if (!grouping) {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
-    if (!(await ensureArtistContentAccess(req, res, gallery.artistId))) {
+    if (!(await ensureCreatorContentAccess(req, res, grouping.creatorId))) {
       return;
     }
-    await store.deleteGallery(req.params.galleryId);
+    await store.deleteGrouping(req.params.groupingId);
     return res.status(204).send();
   });
 
-  app.get('/admin/galleries/:galleryId/images', requireAuth, async (req, res) => {
-    const gallery = (await store.listAllGalleries()).find((item) => item.galleryId === req.params.galleryId);
-    if (!gallery) {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.get('/studio/groupings/:groupingId/media', requireAuth, async (req, res) => {
+    const grouping = (await store.listAllGroupings()).find((item) => item.groupingId === req.params.groupingId);
+    if (!grouping) {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
-    if (!(await ensureArtistContentAccess(req, res, gallery.artistId))) {
+    if (!(await ensureCreatorContentAccess(req, res, grouping.creatorId))) {
       return;
     }
-    const mediaItems = await store.getMediaByGallery(req.params.galleryId);
+    const mediaItems = await store.getMediaByGrouping(req.params.groupingId);
     return res.json(mediaItems.map((item) => ({ ...item, imageId: item.mediaId, sortOrder: item.position })));
   });
 
-  app.post('/admin/images', requireAuth, async (req, res) => {
-    const galleryIdRaw = req.body?.galleryId ? String(req.body.galleryId) : '';
-    const galleryId = galleryIdRaw.trim() || undefined;
+  app.post('/studio/media', requireAuth, async (req, res) => {
+    const groupingIdRaw = req.body?.groupingId ? String(req.body.groupingId) : '';
+    const groupingId = groupingIdRaw.trim() || undefined;
     const position = Number(req.body?.sortOrder || 0);
-    const gallery = galleryId
-      ? (await store.listAllGalleries()).find((item) => item.galleryId === galleryId)
+    const grouping = groupingId
+      ? (await store.listAllGroupings()).find((item) => item.groupingId === groupingId)
       : undefined;
-    const artistId = gallery
-      ? gallery.artistId
-      : String(req.body?.artistId || '').trim();
-    if (galleryId && !gallery) {
-      return res.status(400).json({ message: 'galleryId must exist when provided' });
+    const creator = grouping
+      ? grouping.creatorId
+      : String(req.body?.creatorId || '').trim();
+    if (groupingId && !grouping) {
+      return res.status(400).json({ message: 'groupingId must exist when provided' });
     }
-    if (!artistId) {
-      return res.status(400).json({ message: 'artistId is required when galleryId is not provided' });
+    if (!creator) {
+      return res.status(400).json({ message: 'creator is required when groupingId is not provided' });
     }
-    if (!(await ensureArtistContentAccess(req, res, artistId))) {
+    if (!(await ensureCreatorContentAccess(req, res, creator))) {
       return;
     }
     const originalFilename = req.body?.originalFilename ? String(req.body.originalFilename) : undefined;
@@ -3870,7 +4029,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const slug = title ? slugify(title) : undefined;
     const media: Media = {
       mediaId: randomUUID(),
-      artistId,
+      creatorId: creator,
       appearsInFeed: parseOptionalBoolean(req.body?.appearsInFeed) ?? true,
       assetType: req.body?.assetType === 'video' ? 'video' : 'image',
       discoverSquareCropEnabled: typeof req.body?.discoverSquareCropEnabled === 'boolean'
@@ -3898,7 +4057,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     };
 
     if (media.assetType === 'image') {
-      const targetPrefix = `${artistId}/${media.mediaId}`;
+      const targetPrefix = `${creator}/${media.mediaId}`;
       const generated = await generateImageRenditions({
         s3: s3Client,
         bucket: config.mediaBucket,
@@ -3912,36 +4071,36 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       media.height = generated.sourceHeight;
     }
 
-    await store.createMedia(media, galleryId, position, {
+    await store.createMedia(media, groupingId, position, {
       isPreview: parseOptionalBoolean(req.body?.isPreview),
       previewMaxWidth: parseOptionalPreviewWidth(req.body?.previewMaxWidth)
     });
-    return res.status(201).json({ ...media, imageId: media.mediaId, galleryId, sortOrder: galleryId ? position : undefined });
+    return res.status(201).json({ ...media, imageId: media.mediaId, groupingId, sortOrder: groupingId ? position : undefined });
   });
 
-  app.post('/admin/galleries/:galleryId/items/:imageId', requireAuth, async (req, res) => {
-    const gallery = (await store.listAllGalleries()).find((item) => item.galleryId === req.params.galleryId);
-    if (!gallery) {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.post('/studio/groupings/:groupingId/media/:imageId', requireAuth, async (req, res) => {
+    const grouping = (await store.listAllGroupings()).find((item) => item.groupingId === req.params.groupingId);
+    if (!grouping) {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
-    if (!(await ensureArtistContentAccess(req, res, gallery.artistId))) {
+    if (!(await ensureCreatorContentAccess(req, res, grouping.creatorId))) {
       return;
     }
-    const artistMedia = await store.listMediaByArtist(gallery.artistId);
-    const media = artistMedia.find((item) => item.mediaId === req.params.imageId);
+    const creatorMedia = await store.listMediaByCreator(grouping.creatorId);
+    const media = creatorMedia.find((item) => item.mediaId === req.params.imageId);
     if (!media) {
-      return res.status(404).json({ message: 'Image not found for artist' });
+      return res.status(404).json({ message: 'Image not found for creator' });
     }
     const position = Number(req.body?.sortOrder);
     const resolvedPosition = Number.isFinite(position)
       ? Math.max(0, Math.floor(position))
-      : (await store.getMediaByGallery(gallery.galleryId)).length;
-    await store.addMediaToGallery(gallery.galleryId, media.mediaId, resolvedPosition, {
+      : (await store.getMediaByGrouping(grouping.groupingId)).length;
+    await store.addMediaToGrouping(grouping.groupingId, media.mediaId, resolvedPosition, {
       isPreview: parseOptionalBoolean(req.body?.isPreview),
       previewMaxWidth: parseOptionalPreviewWidth(req.body?.previewMaxWidth)
     });
     return res.status(201).json({
-      galleryId: gallery.galleryId,
+      groupingId: grouping.groupingId,
       imageId: media.mediaId,
       sortOrder: resolvedPosition,
       isPreview: parseOptionalBoolean(req.body?.isPreview),
@@ -3949,15 +4108,15 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     });
   });
 
-  app.patch('/admin/images/:galleryId/:imageId', requireAuth, async (req, res) => {
-    const gallery = (await store.listAllGalleries()).find((item) => item.galleryId === req.params.galleryId);
-    if (!gallery) {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.patch('/studio/groupings/:groupingId/media/:imageId', requireAuth, async (req, res) => {
+    const grouping = (await store.listAllGroupings()).find((item) => item.groupingId === req.params.groupingId);
+    if (!grouping) {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
-    if (!(await ensureArtistContentAccess(req, res, gallery.artistId))) {
+    if (!(await ensureCreatorContentAccess(req, res, grouping.creatorId))) {
       return;
     }
-    const mediaItems = await store.getMediaByGallery(req.params.galleryId);
+    const mediaItems = await store.getMediaByGrouping(req.params.groupingId);
     const existing = mediaItems.find((item) => item.mediaId === req.params.imageId);
     if (!existing) {
       return res.status(404).json({ message: 'Image not found' });
@@ -4030,7 +4189,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       );
 
     if (shouldGenerateRenditions) {
-      const targetPrefix = `${gallery.artistId || existing.artistId}/${updated.mediaId}`;
+      const targetPrefix = `${grouping.creatorId || existing.creatorId}/${updated.mediaId}`;
       const generated = await generateImageRenditions({
         s3: s3Client,
         bucket: config.mediaBucket,
@@ -4057,7 +4216,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       || nextIsPreview !== existing.isPreview
       || nextPreviewMaxWidth !== existing.previewMaxWidth
     ) {
-      await store.addMediaToGallery(req.params.galleryId, updated.mediaId, nextPosition, {
+      await store.addMediaToGrouping(req.params.groupingId, updated.mediaId, nextPosition, {
         isPreview: nextIsPreview,
         previewMaxWidth: nextPreviewMaxWidth
       });
@@ -4065,22 +4224,22 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.json({
       ...updated,
       imageId: updated.mediaId,
-      galleryId: req.params.galleryId,
+      groupingId: req.params.groupingId,
       sortOrder: nextPosition,
       isPreview: nextIsPreview,
       previewMaxWidth: nextPreviewMaxWidth
     });
   });
 
-  app.post('/admin/images/:galleryId/:imageId/renditions', requireAuth, async (req, res) => {
-    const gallery = (await store.listAllGalleries()).find((item) => item.galleryId === req.params.galleryId);
-    if (!gallery) {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.post('/studio/groupings/:groupingId/media/:imageId/renditions', requireAuth, async (req, res) => {
+    const grouping = (await store.listAllGroupings()).find((item) => item.groupingId === req.params.groupingId);
+    if (!grouping) {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
-    if (!(await ensureArtistContentAccess(req, res, gallery.artistId))) {
+    if (!(await ensureCreatorContentAccess(req, res, grouping.creatorId))) {
       return;
     }
-    const mediaItems = await store.getMediaByGallery(req.params.galleryId);
+    const mediaItems = await store.getMediaByGrouping(req.params.groupingId);
     const existing = mediaItems.find((item) => item.mediaId === req.params.imageId);
     if (!existing) {
       return res.status(404).json({ message: 'Image not found' });
@@ -4089,7 +4248,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return res.status(400).json({ message: 'Renditions only apply to image assets' });
     }
 
-    const targetPrefix = `${gallery.artistId || existing.artistId}/${existing.mediaId}`;
+    const targetPrefix = `${grouping.creatorId || existing.creatorId}/${existing.mediaId}`;
     const generated = await generateImageRenditions({
       s3: s3Client,
       bucket: config.mediaBucket,
@@ -4107,42 +4266,42 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       height: generated.sourceHeight
     };
     await store.updateMedia(updated);
-    return res.json({ ...updated, imageId: updated.mediaId, galleryId: req.params.galleryId, sortOrder: existing.position });
+    return res.json({ ...updated, imageId: updated.mediaId, groupingId: req.params.groupingId, sortOrder: existing.position });
   });
 
-  app.delete('/admin/images/:galleryId/:imageId', requireAuth, async (req, res) => {
-    const gallery = (await store.listAllGalleries()).find((item) => item.galleryId === req.params.galleryId);
-    if (!gallery) {
-      return res.status(404).json({ message: 'Gallery not found' });
+  app.delete('/studio/groupings/:groupingId/media/:imageId', requireAuth, async (req, res) => {
+    const grouping = (await store.listAllGroupings()).find((item) => item.groupingId === req.params.groupingId);
+    if (!grouping) {
+      return res.status(404).json({ message: 'Grouping not found' });
     }
-    if (!(await ensureArtistContentAccess(req, res, gallery.artistId))) {
+    if (!(await ensureCreatorContentAccess(req, res, grouping.creatorId))) {
       return;
     }
-    await store.deleteMediaFromGallery(req.params.galleryId, req.params.imageId);
+    await store.deleteMediaFromGrouping(req.params.groupingId, req.params.imageId);
     return res.status(204).send();
   });
 
-  app.patch('/admin/comments/:commentId', requireAdmin, async (req, res) => {
+  app.patch('/studio/moderation/comments/:commentId', requireAdmin, async (req, res) => {
     await store.updateCommentVisibility(req.params.commentId, Boolean(req.body?.hidden));
     return res.status(204).send();
   });
 
-  app.delete('/admin/comments/:commentId', requireAdmin, async (req, res) => {
+  app.delete('/studio/moderation/comments/:commentId', requireAdmin, async (req, res) => {
     await store.deleteComment(req.params.commentId);
     return res.status(204).send();
   });
 
-  app.post('/admin/users/:userId/block', requireAdmin, async (req, res) => {
+  app.post('/studio/moderation/users/:userId/block', requireAdmin, async (req, res) => {
     await store.blockUser({ userId: req.params.userId, reason: req.body?.reason, blockedAt: new Date().toISOString() });
     return res.status(201).json({ userId: req.params.userId, blocked: true });
   });
 
-  app.delete('/admin/users/:userId/block', requireAdmin, async (req, res) => {
+  app.delete('/studio/moderation/users/:userId/block', requireAdmin, async (req, res) => {
     await store.unblockUser(req.params.userId);
     return res.status(204).send();
   });
 
-  app.post('/admin/trending/rebuild', requireAdmin, async (_req, res) => {
+  app.post('/studio/operations/trending/rebuild', requireAdmin, async (_req, res) => {
     const startedAt = Date.now();
     try {
       const stats = await refreshTrendingFeeds(store, config, Date.now());
@@ -4152,7 +4311,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         stats
       });
     } catch (error) {
-      logServerError('POST /admin/trending/rebuild', error);
+      logServerError('POST /studio/operations/trending/rebuild', error);
       return res.status(500).json({ message: 'Failed to rebuild trending feed' });
     }
   });
