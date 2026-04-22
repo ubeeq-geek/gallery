@@ -456,6 +456,10 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/posts/${encodeURIComponent(slug)}`);
     return handleJson(response);
   },
+  async getPostById(postId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/posts/by-id/${encodeURIComponent(postId)}`);
+    return handleJson(response);
+  },
   async studioListPosts(creatorId?: string) {
     const qs = new URLSearchParams();
     if (creatorId) qs.set('creatorId', creatorId);

@@ -909,6 +909,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     assetType: 'image' | 'video';
     surfaceType?: 'media' | 'post';
     postId?: string;
+    postSlug?: string;
+    postTitle?: string;
+    postSummary?: string;
     creatorId: string;
     creatorName: string;
     groupingId: string;
@@ -1050,6 +1053,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       groupingSlug: string;
       groupingVisibility: 'free' | 'preview';
       postId?: string;
+      postSlug?: string;
+      postTitle?: string;
+      postSummary?: string;
       relatedPostIds: string[];
       isPrimaryPostSurface: boolean;
       discoverSquareCropEnabled: boolean;
@@ -1135,7 +1141,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           store.listPostsByCreatorId(creatorProfile.creatorId),
           store.listMediaByCreator(creatorProfile.creatorId)
         ]);
-        const mediaById = new Map(creatorMedia.map((item) => [item.mediaId, item]));
+      const mediaById = new Map(creatorMedia.map((item) => [item.mediaId, item]));
         const placementByMediaId = new Map<string, Array<{ groupingId: string; position: number }>>();
         const candidateMediaIds = Array.from(new Set(
           posts
@@ -1210,6 +1216,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
               groupingSlug: placedGrouping.slug,
               groupingVisibility: placedGrouping.visibility === 'preview' ? 'preview' : 'free',
               postId: post.postId,
+              postSlug: post.slug,
+              postTitle: post.title,
+              postSummary: post.summary,
               relatedPostIds: [post.postId],
               isPrimaryPostSurface: Boolean(post.primaryMediaId && ref.mediaId === post.primaryMediaId),
               discoverSquareCropEnabled,
@@ -1271,6 +1280,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         assetType: item.assetType,
         surfaceType: item.surfaceType,
         postId: item.postId,
+        postSlug: item.postSlug,
+        postTitle: item.postTitle,
+        postSummary: item.postSummary,
         creatorId: item.creatorId,
         creatorName: creatorById.get(item.creatorId)?.name || 'Creator',
         groupingId: item.groupingId,
@@ -1868,6 +1880,58 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     });
   });
 
+  app.get('/posts/by-id/:postId', async (req, res) => {
+    const requestedId = String(req.params.postId || '').trim();
+    if (!requestedId) {
+      return res.status(400).json({ message: 'Post ID is required' });
+    }
+    const post = await store.getPostById(requestedId);
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    const creator = (await store.listCreators()).find((item) => item.creatorId === post.creatorId);
+    if (!creator || creator.status !== 'active') {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    const canViewDraft = req.authUser?.userId
+      ? (isAdminRequest(req) || await store.hasCreatorAccess(req.authUser.userId, post.creatorId))
+      : false;
+    if (post.status !== 'published' && !canViewDraft) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    const mediaById = new Map((await store.listMediaByCreator(post.creatorId)).map((item) => [item.mediaId, item]));
+    const media = await Promise.all(post.media.map(async (ref) => {
+      const source = mediaById.get(ref.mediaId);
+      if (!source) return null;
+      return {
+        mediaId: source.mediaId,
+        assetType: (source.assetType || 'image') as 'image' | 'video',
+        title: source.title || source.originalFilename || source.mediaId,
+        previewUrl: await publicMediaUrl(source.previewKey),
+        previewPosterUrl: await publicMediaUrl(source.previewPosterKey),
+        width: source.width,
+        height: source.height,
+        discoverable: ref.discoverable !== false,
+        sortOrder: ref.sortOrder ?? 0,
+        caption: ref.caption
+      };
+    }));
+
+    return res.json({
+      ...post,
+      slugHistory: post.slugHistory || [],
+      creator: {
+        creatorId: creator.creatorId,
+        name: creator.name,
+        slug: creator.slug
+      },
+      media: media.filter((item): item is NonNullable<typeof item> => Boolean(item))
+    });
+  });
+
   app.get('/site-settings', async (_req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120');
     const settingsStartedAt = process.hrtime.bigint();
@@ -1942,7 +2006,22 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           return isRatingAllowed(effective, viewerPolicy.maxAllowedContentRating)
             && passesDisclosureFilter(effectiveAi, effectiveHeavyTopics, viewerPolicy.disclosurePolicy);
         });
+        const postIds = Array.from(new Set(
+          filtered
+            .map((item) => item.postId)
+            .filter((value): value is string => Boolean(value))
+        ));
+        const postsById = new Map<string, Awaited<ReturnType<typeof store.getPostById>>>();
+        await Promise.all(postIds.map(async (postId) => {
+          try {
+            const post = await store.getPostById(postId);
+            if (post) postsById.set(postId, post);
+          } catch {
+            // Best-effort enrichment only.
+          }
+        }));
         const items = await Promise.all(filtered.map(async (item) => {
+          const post = item.postId ? postsById.get(item.postId) : undefined;
           const effective = normalizeContentRating(item.effectiveContentRating);
           const contentProjection = projectContentRating(effective, viewerPolicy);
           const effectiveAi = normalizeAiDisclosure(item.effectiveAiDisclosure);
@@ -1953,6 +2032,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             assetType: item.assetType === 'video' ? 'video' : 'image',
             surfaceType: item.surfaceType === 'post_surface' || Boolean(item.postId) ? 'post' : 'media',
             postId: item.postId,
+            postSlug: post?.slug,
+            postTitle: post?.title,
+            postSummary: post?.summary,
             creatorId: item.creatorId,
             creatorName: item.creatorName,
             groupingId: item.groupingId,
@@ -1966,7 +2048,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             displayedAiDisclosure: disclosureProjection.displayedAiDisclosure,
             effectiveHeavyTopics: disclosureProjection.effectiveHeavyTopics,
             displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
-            title: item.title,
+            title: post?.title || item.title,
             previewUrl: await publicMediaUrl(item.previewKey) || '',
             previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
             width: item.width,

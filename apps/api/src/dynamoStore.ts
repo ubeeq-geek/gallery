@@ -914,13 +914,26 @@ export class DynamoStore implements DataStore {
   }
 
   async listFavoritesByProfile(profileType: 'user' | 'creator', profileId: string): Promise<Favorite[]> {
-    const responses: Favorite[][] = [((await this.client.send(
-      new QueryCommand({
-        TableName: this.config.favoritesTable,
-        KeyConditionExpression: 'userKey = :userKey',
-        ExpressionAttributeValues: { ':userKey': this.profileUserKey(profileType, profileId) }
-      })
-    )).Items || []) as Favorite[]];
+    let primaryItems: Favorite[] = [];
+    try {
+      const primary = await this.client.send(
+        new QueryCommand({
+          TableName: this.config.favoritesTable,
+          KeyConditionExpression: 'userKey = :userKey',
+          ExpressionAttributeValues: { ':userKey': this.profileUserKey(profileType, profileId) }
+        })
+      );
+      primaryItems = (primary.Items || []) as Favorite[];
+    } catch (error) {
+      const code = (error as { name?: string; __type?: string }).name
+        || (error as { __type?: string }).__type
+        || '';
+      if (!code.includes('ResourceNotFound') && !code.includes('Validation') && !code.includes('AccessDenied')) {
+        throw error;
+      }
+    }
+
+    const responses: Favorite[][] = [primaryItems];
     if (profileType === 'user') {
       const legacy = await this.client.send(
         new QueryCommand({
@@ -962,7 +975,7 @@ export class DynamoStore implements DataStore {
       const code = (error as { name?: string; __type?: string }).name
         || (error as { __type?: string }).__type
         || '';
-      if (code.includes('ResourceNotFound')) {
+      if (code.includes('ResourceNotFound') || code.includes('Validation') || code.includes('AccessDenied')) {
         return 0;
       }
       throw error;

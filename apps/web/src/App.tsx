@@ -3,6 +3,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } fr
 import { api } from './api';
 import { StudioWorkspace } from './StudioWorkspace';
 import { ForCreatorsPage } from './pages/ForCreatorsPage';
+import DiscoveryQuickReadOverlay, { type DiscoveryOverlayItem } from './components/DiscoveryQuickReadOverlay';
 import {
   changePassword,
   clearStoredAuthSession,
@@ -284,6 +285,9 @@ type TrendingImage = {
   assetType?: 'image' | 'video';
   surfaceType?: 'media' | 'post';
   postId?: string;
+  postSlug?: string;
+  postTitle?: string;
+  postSummary?: string;
   artistId: string;
   artistName: string;
   galleryId: string;
@@ -381,6 +385,7 @@ type PostDetailPayload = {
   summary?: string;
   status: 'draft' | 'published' | 'archived';
   discovery: { mode: 'primary' | 'all' | 'selected' };
+  primaryMediaId?: string;
   destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
   metadata?: Record<string, string>;
   createdAt: string;
@@ -399,7 +404,13 @@ type PostDetailPayload = {
     sortOrder?: number;
     caption?: string;
   }>;
-  artist: {
+  creator?: {
+    artistId?: string;
+    creatorId: string;
+    name: string;
+    slug: string;
+  };
+  artist?: {
     artistId: string;
     name: string;
     slug: string;
@@ -2146,10 +2157,9 @@ function HomePage({
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [followedArtistIds, setFollowedArtistIds] = useState<Set<string>>(new Set());
   const [focusedDiscoveryOpen, setFocusedDiscoveryOpen] = useState(false);
-  const [focusedDiscoveryGallerySlug, setFocusedDiscoveryGallerySlug] = useState('');
-  const [focusedDiscoveryGalleryTitle, setFocusedDiscoveryGalleryTitle] = useState('');
-  const [focusedDiscoveryItems, setFocusedDiscoveryItems] = useState<GalleryAsset[]>([]);
-  const [focusedDiscoveryIndex, setFocusedDiscoveryIndex] = useState(0);
+  const [focusedDiscoveryContextItems, setFocusedDiscoveryContextItems] = useState<TrendingImage[]>([]);
+  const [focusedDiscoveryContextIndex, setFocusedDiscoveryContextIndex] = useState(0);
+  const [focusedDiscoveryPost, setFocusedDiscoveryPost] = useState<PostDetailPayload | null>(null);
   const [focusedDiscoveryLoading, setFocusedDiscoveryLoading] = useState(false);
   const [focusedDiscoveryError, setFocusedDiscoveryError] = useState('');
   const [focusedDiscoveryVideoMuted, setFocusedDiscoveryVideoMuted] = useState(true);
@@ -2964,66 +2974,108 @@ function HomePage({
     }
   };
 
-  const toFocusedAsset = (item: TrendingImage): GalleryAsset => ({
-    imageId: item.imageId,
-    assetType: item.assetType === 'video' ? 'video' : 'image',
-    effectiveContentRating: item.effectiveContentRating,
-    displayedContentRating: item.displayedContentRating,
-    blurred: item.blurred,
-    effectiveAiDisclosure: item.effectiveAiDisclosure,
-    displayedAiDisclosure: item.displayedAiDisclosure,
-    effectiveHeavyTopics: item.effectiveHeavyTopics,
-    displayedHeavyTopics: item.displayedHeavyTopics,
-    previewUrl: item.previewUrl,
-    previewPosterUrl: item.previewPosterUrl,
-    favoriteCount: item.favoriteCount || 0
-  });
-
   const openFocusedDiscovery = async (item: TrendingImage) => {
-    const fallback = toFocusedAsset(item);
     setFocusedDiscoveryOpen(true);
-    setFocusedDiscoveryGallerySlug(item.gallerySlug || '');
-    setFocusedDiscoveryGalleryTitle(item.title || 'Artwork');
-    setFocusedDiscoveryItems([fallback]);
-    setFocusedDiscoveryIndex(0);
     setFocusedDiscoveryError('');
-    if (!item.gallerySlug) {
-      setFocusedDiscoveryLoading(false);
-      return;
-    }
-    const requestId = focusedDiscoveryRequestRef.current + 1;
-    focusedDiscoveryRequestRef.current = requestId;
-    setFocusedDiscoveryLoading(true);
-    try {
-      const response = await api.getGallery(item.gallerySlug) as Gallery;
-      if (focusedDiscoveryRequestRef.current !== requestId) return;
-      const media = (response.media || []).filter((asset) => Boolean(asset.previewUrl));
-      const nextItems = media.length > 0 ? media : [fallback];
-      const focusedIndex = Math.max(0, nextItems.findIndex((asset) => asset.imageId === item.imageId));
-      setFocusedDiscoveryGalleryTitle(response.title || item.title || 'Artwork');
-      setFocusedDiscoveryItems(nextItems);
-      setFocusedDiscoveryIndex(focusedIndex);
-      setFocusedDiscoveryError('');
-    } catch (e) {
-      if (focusedDiscoveryRequestRef.current !== requestId) return;
-      setFocusedDiscoveryError((e as Error).message || 'Could not load gallery media');
-    } finally {
-      if (focusedDiscoveryRequestRef.current === requestId) {
-        setFocusedDiscoveryLoading(false);
-      }
-    }
+    const activeFeed = trendingAfterMediaType.length > 0 ? trendingAfterMediaType : [item];
+    const focusedIndex = Math.max(
+      0,
+      activeFeed.findIndex((entry) => (
+        entry.imageId === item.imageId
+        && entry.surfaceType === item.surfaceType
+        && (entry.postId || '') === (item.postId || '')
+      ))
+    );
+    setFocusedDiscoveryContextItems(activeFeed);
+    setFocusedDiscoveryContextIndex(focusedIndex);
   };
 
   const closeFocusedDiscovery = () => {
     setFocusedDiscoveryOpen(false);
+    setFocusedDiscoveryPost(null);
     setFocusedDiscoveryLoading(false);
     setFocusedDiscoveryError('');
     focusedDiscoveryRequestRef.current += 1;
   };
 
-  const focusedDiscoveryItem = focusedDiscoveryItems[focusedDiscoveryIndex] || null;
-  const focusedDiscoveryHasPrevious = focusedDiscoveryIndex > 0;
-  const focusedDiscoveryHasNext = focusedDiscoveryIndex >= 0 && focusedDiscoveryIndex < focusedDiscoveryItems.length - 1;
+  const focusedDiscoveryItem = focusedDiscoveryContextItems[focusedDiscoveryContextIndex] || null;
+  const focusedDiscoveryHasPrevious = focusedDiscoveryContextIndex > 0;
+  const focusedDiscoveryHasNext = focusedDiscoveryContextIndex >= 0 && focusedDiscoveryContextIndex < focusedDiscoveryContextItems.length - 1;
+  const focusedOverlayItem: DiscoveryOverlayItem | null = focusedDiscoveryItem
+    ? {
+      imageId: focusedDiscoveryItem.imageId,
+      assetType: focusedDiscoveryItem.assetType === 'video' ? 'video' : 'image',
+      surfaceType: focusedDiscoveryItem.surfaceType,
+      postId: focusedDiscoveryItem.postId,
+      postSlug: focusedDiscoveryItem.postSlug,
+      postTitle: focusedDiscoveryItem.postTitle,
+      postSummary: focusedDiscoveryItem.postSummary,
+      artistId: focusedDiscoveryItem.artistId,
+      artistName: focusedDiscoveryItem.artistName,
+      creatorSlug: artistSlugById.get(focusedDiscoveryItem.artistId),
+      gallerySlug: focusedDiscoveryItem.gallerySlug,
+      title: focusedDiscoveryItem.title,
+      previewUrl: focusedDiscoveryItem.previewUrl,
+      previewPosterUrl: focusedDiscoveryItem.previewPosterUrl,
+      displayedContentRating: focusedDiscoveryItem.displayedContentRating,
+      displayedAiDisclosure: focusedDiscoveryItem.displayedAiDisclosure,
+      displayedHeavyTopics: focusedDiscoveryItem.displayedHeavyTopics,
+      blurred: focusedDiscoveryItem.blurred
+    }
+    : null;
+  const focusedRelatedItems: DiscoveryOverlayItem[] = focusedDiscoveryContextItems
+    .filter((entry, index) => index !== focusedDiscoveryContextIndex)
+    .slice(0, 8)
+    .map((entry) => ({
+      imageId: entry.imageId,
+      assetType: entry.assetType === 'video' ? 'video' : 'image',
+      surfaceType: entry.surfaceType,
+      postId: entry.postId,
+      postSlug: entry.postSlug,
+      postTitle: entry.postTitle,
+      postSummary: entry.postSummary,
+      artistId: entry.artistId,
+      artistName: entry.artistName,
+      creatorSlug: artistSlugById.get(entry.artistId),
+      gallerySlug: entry.gallerySlug,
+      title: entry.title,
+      previewUrl: entry.previewUrl,
+      previewPosterUrl: entry.previewPosterUrl,
+      displayedContentRating: entry.displayedContentRating,
+      displayedAiDisclosure: entry.displayedAiDisclosure,
+      displayedHeavyTopics: entry.displayedHeavyTopics,
+      blurred: entry.blurred
+    }));
+
+  useEffect(() => {
+    if (!focusedDiscoveryOpen || !focusedDiscoveryItem) return;
+    const isPostSurface = focusedDiscoveryItem.surfaceType === 'post' || Boolean(focusedDiscoveryItem.postId);
+    if (!isPostSurface || !focusedDiscoveryItem.postId) {
+      setFocusedDiscoveryPost(null);
+      setFocusedDiscoveryLoading(false);
+      setFocusedDiscoveryError('');
+      return;
+    }
+    const requestId = focusedDiscoveryRequestRef.current + 1;
+    focusedDiscoveryRequestRef.current = requestId;
+    setFocusedDiscoveryLoading(true);
+    setFocusedDiscoveryError('');
+    void (async () => {
+      try {
+        const post = await api.getPostById(focusedDiscoveryItem.postId || '') as PostDetailPayload;
+        if (focusedDiscoveryRequestRef.current !== requestId) return;
+        setFocusedDiscoveryPost(post);
+      } catch (e) {
+        if (focusedDiscoveryRequestRef.current !== requestId) return;
+        setFocusedDiscoveryPost(null);
+        setFocusedDiscoveryError((e as Error).message || 'Could not load post');
+      } finally {
+        if (focusedDiscoveryRequestRef.current === requestId) {
+          setFocusedDiscoveryLoading(false);
+        }
+      }
+    })();
+  }, [focusedDiscoveryOpen, focusedDiscoveryItem?.imageId, focusedDiscoveryItem?.postId, focusedDiscoveryItem?.surfaceType]);
 
   useEffect(() => {
     const video = focusedDiscoveryVideoRef.current;
@@ -3082,10 +3134,10 @@ function HomePage({
         return;
       }
       if (event.key === 'ArrowLeft' && focusedDiscoveryHasPrevious) {
-        setFocusedDiscoveryIndex((index) => Math.max(0, index - 1));
+        setFocusedDiscoveryContextIndex((index) => Math.max(0, index - 1));
       }
       if (event.key === 'ArrowRight' && focusedDiscoveryHasNext) {
-        setFocusedDiscoveryIndex((index) => Math.min(focusedDiscoveryItems.length - 1, index + 1));
+        setFocusedDiscoveryContextIndex((index) => Math.min(focusedDiscoveryContextItems.length - 1, index + 1));
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -3097,7 +3149,7 @@ function HomePage({
     focusedDiscoveryOpen,
     focusedDiscoveryHasPrevious,
     focusedDiscoveryHasNext,
-    focusedDiscoveryItems.length
+    focusedDiscoveryContextItems.length
   ]);
 
   const renderTrendingCard = (
@@ -3105,6 +3157,7 @@ function HomePage({
     cardIndex: number,
     options?: { forceSquareFrame?: boolean; compactCard?: boolean; preload?: boolean }
   ) => {
+    const isPostSurface = item.surfaceType === 'post' || Boolean(item.postId);
     const assetType = item.assetType === 'video' ? 'video' : 'image';
     const effectivePosterUrl = item.previewPosterUrl
       || (assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
@@ -3115,6 +3168,8 @@ function HomePage({
         : null;
     const isFavorite = favoriteImageIds.has(item.imageId);
     const displayedRating = item.displayedContentRating || 'General';
+    const cardTitle = isPostSurface ? (item.postTitle || item.title || 'Untitled post') : (item.title || 'Artwork title');
+    const cardSummary = isPostSurface ? (item.postSummary || '') : '';
     const disclosureLine = formatDisclosureLine(item);
     const isBlurredByRating = item.blurred === true;
     const ratio = displayAspectRatio(item, cardIndex);
@@ -3174,10 +3229,18 @@ function HomePage({
               />
             )}
             {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
+            {isPostSurface && (
+              <span
+                className="discovery-chip"
+                style={{ left: visibilityPill ? '6.1rem' : '1rem' }}
+              >
+                POST
+              </span>
+            )}
             {assetType === 'video' && (
               <span
                 className="discovery-chip"
-                style={{ left: 'unset', right: visibilityPill ? '8.2rem' : '1rem' }}
+                style={{ left: 'unset', right: visibilityPill ? '8.2rem' : (isPostSurface ? '6rem' : '1rem') }}
               >
                 Video
               </span>
@@ -3190,9 +3253,9 @@ function HomePage({
             <h3 className="discovery-feature-title">
               {item.gallerySlug ? (
                 <Link to={`/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}`} className="no-underline">
-                  {item.title || 'Artwork title'}
+                  {cardTitle}
                 </Link>
-              ) : (item.title || 'Artwork title')}
+              ) : cardTitle}
             </h3>
             <p className="discovery-feature-subtitle">
               by {artistSlugById.get(item.artistId)
@@ -3203,6 +3266,9 @@ function HomePage({
                 )
                 : (item.artistName || 'Creator Name')}
             </p>
+            {cardSummary && !compactCard && (
+              <p className="discovery-feature-summary">{cardSummary}</p>
+            )}
             {disclosureLine && !compactCard && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
           </div>
           {!compactCard && (
@@ -3957,73 +4023,35 @@ function HomePage({
         </section>
       )}
 
-      {focusedDiscoveryOpen && (
-        <div className="discovery-focus-modal-layer" onClick={closeFocusedDiscovery}>
-          <div className="discovery-focus-modal" role="dialog" aria-modal="true" aria-label="Focused media viewer" onClick={(e) => e.stopPropagation()}>
-            <div className="discovery-focus-modal-header">
-              <div className="discovery-focus-modal-title-wrap">
-                <span className="discovery-focus-modal-title-id">
-                  {focusedDiscoveryItem ? (focusedDiscoveryItem.imageId || 'Focused view') : 'Focused view'}
-                </span>
-                <span className="discovery-focus-modal-title-gallery">{focusedDiscoveryGalleryTitle || 'Gallery preview'}</span>
-              </div>
-              <div className="discovery-focus-modal-meta">
-                <span>{focusedDiscoveryItem?.displayedContentRating || 'General'}</span>
-                {focusedDiscoveryItem && formatDisclosureLine(focusedDiscoveryItem) && <span>{formatDisclosureLine(focusedDiscoveryItem)}</span>}
-                <span>{Math.max(1, focusedDiscoveryIndex + 1)} / {Math.max(1, focusedDiscoveryItems.length)}</span>
-                {focusedDiscoveryLoading && <span className="discovery-focus-modal-status-chip">Loading…</span>}
-                {focusedDiscoveryError && <span className="discovery-focus-modal-error-chip">{focusedDiscoveryError}</span>}
-              </div>
-              <div className="discovery-focus-modal-actions">
-                {focusedDiscoveryGallerySlug && (
-                  <Link
-                    className="auth-primary-btn no-underline"
-                    to={`/gallery/${focusedDiscoveryGallerySlug}?image=${encodeURIComponent(focusedDiscoveryItem?.imageId || '')}`}
-                    onClick={closeFocusedDiscovery}
-                  >
-                    Open in Gallery
-                  </Link>
-                )}
-              </div>
-              <button type="button" className="discovery-focus-modal-close" onClick={closeFocusedDiscovery} aria-label="Close focused viewer">
-                ✕
-              </button>
-            </div>
-            <div className="discovery-focus-modal-media">
-              {focusedDiscoveryItem && (
-                focusedDiscoveryItem.assetType === 'video'
-                  ? (
-                    <video
-                      key={focusedDiscoveryItem.imageId}
-                      ref={focusedDiscoveryVideoRef}
-                      autoPlay
-                      controls
-                      playsInline
-                      muted={focusedDiscoveryVideoMuted}
-                      poster={focusedDiscoveryItem.previewPosterUrl}
-                      style={{ filter: focusedDiscoveryItem.blurred ? 'blur(28px)' : undefined }}
-                      onVolumeChange={(event) => {
-                        const target = event.currentTarget;
-                        setFocusedDiscoveryVideoMuted(target.muted);
-                        setFocusedDiscoveryVideoVolume(Math.max(0, Math.min(1, target.volume)));
-                      }}
-                    >
-                      <source src={focusedDiscoveryItem.previewUrl} />
-                    </video>
-                  )
-                  : (
-                    <img
-                      src={focusedDiscoveryItem.thumbnailUrls?.w1280 || focusedDiscoveryItem.thumbnailUrls?.w640 || focusedDiscoveryItem.previewUrl}
-                      alt={focusedDiscoveryItem.imageId || 'Focused media'}
-                      style={{ filter: focusedDiscoveryItem.blurred ? 'blur(28px)' : undefined }}
-                    />
-                  )
-              )}
-              {!focusedDiscoveryItem && <div className="small">No media selected.</div>}
-            </div>
-          </div>
-        </div>
-      )}
+      <DiscoveryQuickReadOverlay
+        open={focusedDiscoveryOpen}
+        item={focusedOverlayItem}
+        itemIndex={focusedDiscoveryContextIndex}
+        itemsCount={focusedDiscoveryContextItems.length}
+        hasPrevious={focusedDiscoveryHasPrevious}
+        hasNext={focusedDiscoveryHasNext}
+        loading={focusedDiscoveryLoading}
+        error={focusedDiscoveryError}
+        post={focusedDiscoveryPost}
+        moreFromStream={focusedRelatedItems}
+        videoMuted={focusedDiscoveryVideoMuted}
+        videoRef={focusedDiscoveryVideoRef}
+        onClose={closeFocusedDiscovery}
+        onPrevious={() => setFocusedDiscoveryContextIndex((index) => Math.max(0, index - 1))}
+        onNext={() => setFocusedDiscoveryContextIndex((index) => Math.min(focusedDiscoveryContextItems.length - 1, index + 1))}
+        onSelectStreamItem={(selectedItem) => {
+          const nextIndex = focusedDiscoveryContextItems.findIndex((entry) => (
+            entry.imageId === selectedItem.imageId
+            && entry.surfaceType === selectedItem.surfaceType
+            && (entry.postId || '') === (selectedItem.postId || '')
+          ));
+          if (nextIndex >= 0) setFocusedDiscoveryContextIndex(nextIndex);
+        }}
+        onVideoVolumeChange={(video) => {
+          setFocusedDiscoveryVideoMuted(video.muted);
+          setFocusedDiscoveryVideoVolume(Math.max(0, Math.min(1, video.volume)));
+        }}
+      />
 
       {error && (
         <section className="panel">
@@ -6860,7 +6888,16 @@ function PostPage() {
       <section className="panel">
         <h1>{post.title}</h1>
         <p className="small">
-          By <Link to={`/creators/${post.artist.slug}`} className="no-underline">{post.artist.name}</Link>
+          By {(post.creator || post.artist)
+            ? (
+              <Link
+                to={`/creators/${encodeURIComponent((post.creator || post.artist)!.slug)}`}
+                className="no-underline"
+              >
+                {(post.creator || post.artist)!.name}
+              </Link>
+            )
+            : 'Unknown creator'}
           {' · '}
           {post.status}
           {' · '}
