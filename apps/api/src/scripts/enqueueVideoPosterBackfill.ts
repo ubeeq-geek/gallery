@@ -35,13 +35,13 @@ const chunk = <T>(items: T[], size: number): T[][] => {
 async function run(): Promise<void> {
   const config = loadConfig();
   const region = getArgValue('--region') || config.awsRegion;
-  const tableName = getArgValue('--grouping-core-table') || config.groupingCoreTable;
+  const tableName = getArgValue('--content-core-table') || config.contentCoreTable;
   const queueUrl = getArgValue('--queue-url') || process.env.VIDEO_POSTER_INGEST_QUEUE_URL || '';
   const bucket = getArgValue('--bucket') || config.mediaBucket;
   const dryRun = process.argv.includes('--dry-run');
   const maxItems = Number(getArgValue('--max-items') || '0');
 
-  if (!tableName) throw new Error('--grouping-core-table (or GROUPING_CORE_TABLE) is required');
+  if (!tableName) throw new Error('--content-core-table (or CONTENT_CORE_TABLE) is required');
   if (!queueUrl) throw new Error('--queue-url (or VIDEO_POSTER_INGEST_QUEUE_URL) is required');
   if (!bucket) throw new Error('--bucket (or MEDIA_BUCKET) is required');
 

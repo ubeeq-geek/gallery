@@ -3,12 +3,12 @@ import { CloudFormationClient, DescribeStacksCommand } from '@aws-sdk/client-clo
 import { DeleteObjectsCommand, HeadBucketCommand, ListBucketsCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { BatchWriteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { createHash } from 'crypto';
-import { createReadStream, existsSync, readFileSync, readdirSync } from 'fs';
+import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import path from 'path';
 import { Jimp } from 'jimp';
 import { hashPassword } from '../unlock';
 import { loadConfig } from '../config';
-import { GroupingCoreRepository } from '../groupingCoreRepository';
+import { ContentCoreRepository } from '../contentCoreRepository';
 import type {
   AiDisclosure,
   Creator as CreatorRecord,
@@ -105,7 +105,7 @@ const seedId = (entity: string, ...parts: string[]): string => {
   return deterministicUuidV5(name);
 };
 
-type AssetFile = { filename: string; absolutePath: string };
+type AssetFile = { filename: string; relativePath: string; absolutePath: string };
 type GroupingSeedKind = 'free' | 'preview' | 'premium';
 type CreatorMediaSeed = {
   file: string;
@@ -196,6 +196,7 @@ type CreatorSeed = {
   premiumPassword?: string;
   purchaseUrl?: string;
   posts?: ScenarioPostSeed[];
+  usesImplicitDefaultGrouping?: boolean;
 };
 
 type ScenarioGroupingSeed = {
@@ -248,7 +249,7 @@ type SeedScenarioInputs = {
 };
 
 type StackTargets = {
-  groupingCoreTable?: string;
+  contentCoreTable?: string;
   siteSettingsTable?: string;
   mediaBucket?: string;
 };
@@ -326,6 +327,30 @@ const resolveScenarioMediaId = (
     throw new Error(`Scenario ${label} references ambiguous media file "${file}". Add groupingSlug.`);
   }
   return candidates[0];
+};
+
+const listScenarioMediaFiles = (rootDir: string): AssetFile[] => {
+  const output: AssetFile[] = [];
+  const visit = (relativeDir: string) => {
+    const absoluteDir = path.join(rootDir, relativeDir);
+    const names = readdirSync(absoluteDir).filter((name) => !name.startsWith('.'));
+    for (const name of names) {
+      const rel = relativeDir ? path.join(relativeDir, name) : name;
+      const absolutePath = path.join(rootDir, rel);
+      const stats = statSync(absolutePath);
+      if (stats.isDirectory()) {
+        visit(rel);
+        continue;
+      }
+      output.push({
+        filename: path.basename(name),
+        relativePath: rel,
+        absolutePath
+      });
+    }
+  };
+  visit('');
+  return output;
 };
 
 const toSeedPostBlocks = (
@@ -719,18 +744,32 @@ const parseScenarioCreator = (
   const posts = Array.isArray(postsRaw)
     ? postsRaw.map((item, idx) => parseScenarioPost(item, `${fieldName}.posts[${idx}]`))
     : undefined;
-  if (!filePrefix && (!media || media.length === 0)) {
-    throw new Error(`Scenario field "${fieldName}.filePrefix" is required when "${fieldName}.media" is not provided`);
-  }
+  // filePrefix/media can be omitted; seed falls back to creator slug folder under scenario mediaDir.
   if (postsRaw !== undefined && !Array.isArray(postsRaw)) {
     throw new Error(`Scenario field "${fieldName}.posts" must be an array`);
   }
   const discoverSquareCropEnabled = asOptionalBoolean(value.discoverSquareCropEnabled);
   const groupingsRaw = value.groupings;
-  if (!Array.isArray(groupingsRaw) || groupingsRaw.length === 0) {
-    throw new Error(`Scenario field "${fieldName}.groupings" must be a non-empty array`);
-  }
-  const groupings = groupingsRaw.map((item, idx) => parseScenarioGrouping(item, `${fieldName}.groupings[${idx}]`));
+  let usesImplicitDefaultGrouping = false;
+  const groupings = groupingsRaw === undefined
+    ? (() => {
+        usesImplicitDefaultGrouping = true;
+        return [{
+          kind: 'free' as GroupingSeedKind,
+          title: undefined,
+          slug: `${slug}-default`,
+          status: 'published' as const,
+          defaultPreviewMaxWidth: undefined,
+          purchaseUrl: undefined,
+          premiumPassword: undefined
+        }];
+      })()
+    : (() => {
+        if (!Array.isArray(groupingsRaw) || groupingsRaw.length === 0) {
+          throw new Error(`Scenario field "${fieldName}.groupings" must be a non-empty array`);
+        }
+        return groupingsRaw.map((item, idx) => parseScenarioGrouping(item, `${fieldName}.groupings[${idx}]`));
+      })();
   const groupingByKind = new Map<GroupingSeedKind, ScenarioGroupingSeed>();
   for (const grouping of groupings) {
     if (groupingByKind.has(grouping.kind)) {
@@ -772,7 +811,8 @@ const parseScenarioCreator = (
     premiumGroupingDefaultPreviewMaxWidth: premiumGrouping?.defaultPreviewMaxWidth,
     premiumPassword: premiumGrouping?.premiumPassword,
     purchaseUrl: previewGrouping?.purchaseUrl,
-    posts
+    posts,
+    usesImplicitDefaultGrouping
   };
 };
 
@@ -839,7 +879,7 @@ const readStackTargets = async (client: CloudFormationClient, stackName: string)
     }
   }
   return {
-    groupingCoreTable: outputByKey.get('GroupingCoreTableName'),
+    contentCoreTable: outputByKey.get('ContentCoreTableName'),
     siteSettingsTable: outputByKey.get('SiteSettingsTableName'),
     mediaBucket: outputByKey.get('MediaBucketName')
   };
@@ -889,8 +929,8 @@ const discoverTableName = async (client: DynamoDBClient, preferred: string, mark
   }
 
   const prioritized = found.sort((a, b) => {
-    const aScore = a.startsWith('StudioStack-') ? 0 : 1;
-    const bScore = b.startsWith('StudioStack-') ? 0 : 1;
+    const aScore = a.startsWith('UbeeqStack-') ? 0 : 1;
+    const bScore = b.startsWith('UbeeqStack-') ? 0 : 1;
     if (aScore !== bScore) return aScore - bScore;
     return a.localeCompare(b);
   });
@@ -915,8 +955,8 @@ const discoverMediaBucket = async (s3: S3Client, preferred: string): Promise<str
     throw new Error('Could not discover media bucket (expected name containing "mediabucket")');
   }
   const prioritized = candidates.sort((a, b) => {
-    const aScore = a.startsWith('studiostack-') ? 0 : 1;
-    const bScore = b.startsWith('studiostack-') ? 0 : 1;
+    const aScore = a.startsWith('ubeeqstack-') ? 0 : 1;
+    const bScore = b.startsWith('ubeeqstack-') ? 0 : 1;
     if (aScore !== bScore) return aScore - bScore;
     return a.localeCompare(b);
   });
@@ -1010,7 +1050,7 @@ const main = async () => {
   const scenarioFileArg = getArgValue('--scenario-file') || defaultScenarioFile;
   const scenarioInputs = loadScenarioInputs(scenarioFileArg);
 
-  const groupingCoreTableArg = getArgValue('--grouping-core-table');
+  const groupingCoreTableArg = getArgValue('--content-core-table');
   const siteSettingsTableArg = getArgValue('--site-settings-table');
   const mediaBucketArg = getArgValue('--media-bucket');
   const stackNameArg = getArgValue('--stack-name');
@@ -1022,7 +1062,7 @@ const main = async () => {
   }
 
   const groupingCoreTableRequested =
-    groupingCoreTableArg || (stackName ? undefined : config.groupingCoreTable);
+    groupingCoreTableArg || (stackName ? undefined : config.contentCoreTable);
   const siteSettingsTableRequested =
     siteSettingsTableArg || (stackName ? undefined : config.siteSettingsTable);
   const premiumPassword = getArgValue('--premium-password') || 'replace-me';
@@ -1048,10 +1088,28 @@ const main = async () => {
     throw new Error(`Media directory not found: ${mediaDir}`);
   }
 
-  const mediaFiles = readdirSync(mediaDir)
-    .filter((name) => !name.startsWith('.'))
-    .map((name) => ({ filename: name, absolutePath: path.join(mediaDir, name) }));
-  const mediaFileByName = new Map(mediaFiles.map((file) => [normalize(file.filename), file]));
+  const mediaFiles = listScenarioMediaFiles(mediaDir);
+  const mediaFileByRelativePath = new Map(
+    mediaFiles.map((file) => [normalize(file.relativePath.replace(/\\/g, '/')), file])
+  );
+  const mediaFilesByName = new Map<string, AssetFile[]>();
+  for (const file of mediaFiles) {
+    const key = normalize(file.filename);
+    const existing = mediaFilesByName.get(key) || [];
+    existing.push(file);
+    mediaFilesByName.set(key, existing);
+  }
+  const resolveMediaFile = (ref: string): AssetFile | undefined => {
+    const normalizedRef = normalize(ref.replace(/\\/g, '/'));
+    const byRelativePath = mediaFileByRelativePath.get(normalizedRef);
+    if (byRelativePath) return byRelativePath;
+    const byBasename = mediaFilesByName.get(normalize(path.basename(ref)));
+    if (!byBasename?.length) return undefined;
+    if (byBasename.length > 1) {
+      throw new Error(`Ambiguous media file reference "${ref}". Use creator-slug/file.ext path.`);
+    }
+    return byBasename[0];
+  };
 
   const lowLevel = new DynamoDBClient({ region: config.awsRegion });
   const cloudFormation = new CloudFormationClient({ region: config.awsRegion });
@@ -1059,8 +1117,8 @@ const main = async () => {
   const stackTargets = stackName ? await readStackTargets(cloudFormation, stackName) : {};
   const groupingCoreTable = await discoverTableName(
     lowLevel,
-    groupingCoreTableRequested || stackTargets.groupingCoreTable || '',
-    'GroupingCoreTable'
+    groupingCoreTableRequested || stackTargets.contentCoreTable || '',
+    'ContentCoreTable'
   );
   const siteSettingsTable = await discoverTableName(
     lowLevel,
@@ -1070,7 +1128,7 @@ const main = async () => {
   const mediaBucket = await discoverMediaBucket(s3, mediaBucketArg || stackTargets.mediaBucket || config.mediaBucket);
 
   const client = DynamoDBDocumentClient.from(lowLevel);
-  const repo = new GroupingCoreRepository(client, groupingCoreTable);
+  const repo = new ContentCoreRepository(client, groupingCoreTable);
 
   const creators: CreatorRecord[] = [];
   const groupings: GroupingRecord[] = [];
@@ -1117,14 +1175,18 @@ const main = async () => {
     };
     creators.push(creator);
 
+    const defaultFreeSlug = seed.freeGroupingSlug || `${seed.slug}-default`;
     const freeGrouping = seed.groupings.includes('free')
       ? {
-          groupingId: seedId('grouping', seed.slug, 'free'),
+          groupingId: seedId('grouping', seed.slug, seed.usesImplicitDefaultGrouping ? 'default' : 'free'),
           creatorId: creatorId,
           creatorSlug: seed.slug,
-          title: seed.freeGroupingTitle || `${seed.name} Free Grouping`,
-          slug: seed.freeGroupingSlug || `${seed.slug}-free`,
-          slugHistory: [seed.freeGroupingSlug || `${seed.slug}-free`],
+          title: seed.usesImplicitDefaultGrouping
+            ? (seed.freeGroupingTitle || 'Original Series')
+            : (seed.freeGroupingTitle || `${seed.name} Free Grouping`),
+          isDefaultStream: seed.usesImplicitDefaultGrouping || undefined,
+          slug: seed.usesImplicitDefaultGrouping ? defaultFreeSlug : (seed.freeGroupingSlug || `${seed.slug}-free`),
+          slugHistory: [seed.usesImplicitDefaultGrouping ? defaultFreeSlug : (seed.freeGroupingSlug || `${seed.slug}-free`)],
           discoverSquareCropEnabled,
           defaultAiDisclosure: aiDisclosure,
           defaultHeavyTopics: heavyTopics,
@@ -1174,9 +1236,11 @@ const main = async () => {
         }
       : undefined;
 
-    if (freeGrouping) groupings.push(freeGrouping);
-    if (previewGrouping) groupings.push(previewGrouping);
-    if (premiumGrouping) groupings.push(premiumGrouping);
+    const creatorGroupings: GroupingRecord[] = [];
+    if (freeGrouping) creatorGroupings.push(freeGrouping);
+    if (previewGrouping) creatorGroupings.push(previewGrouping);
+    if (premiumGrouping) creatorGroupings.push(premiumGrouping);
+    groupings.push(...creatorGroupings);
 
     const groupingIdByKind: Partial<Record<GroupingSeedKind, string>> = {
       free: freeGrouping?.groupingId,
@@ -1186,7 +1250,7 @@ const main = async () => {
     const mediaIdByComposite = new Map<string, string>();
     const mediaIdsByFile = new Map<string, string[]>();
     const groupingBySlug = new Map<string, GroupingRecord>();
-    for (const grouping of groupings) {
+    for (const grouping of creatorGroupings) {
       groupingBySlug.set(grouping.slug, grouping);
     }
     const nextPositionByKind: Record<GroupingSeedKind, number> = { free: 1, preview: 1, premium: 1 };
@@ -1210,12 +1274,19 @@ const main = async () => {
         placement
       });
     };
-    const registerMediaLookup = (file: string, groupingSlug: string, mediaId: string) => {
-      const fileNorm = normalize(file);
-      mediaIdByComposite.set(composeMediaLookupKey(fileNorm, groupingSlug), mediaId);
-      const fileList = mediaIdsByFile.get(fileNorm) || [];
-      fileList.push(mediaId);
-      mediaIdsByFile.set(fileNorm, fileList);
+    const registerMediaLookup = (file: AssetFile, groupingSlug: string, mediaId: string) => {
+      const keys = Array.from(
+        new Set([
+          normalize(file.filename),
+          normalize(file.relativePath.replace(/\\/g, '/'))
+        ])
+      );
+      for (const fileNorm of keys) {
+        mediaIdByComposite.set(composeMediaLookupKey(fileNorm, groupingSlug), mediaId);
+        const fileList = mediaIdsByFile.get(fileNorm) || [];
+        fileList.push(mediaId);
+        mediaIdsByFile.set(fileNorm, fileList);
+      }
     };
     const pushMediaToKind = (
       kind: GroupingSeedKind,
@@ -1262,7 +1333,7 @@ const main = async () => {
       };
 
       for (const mediaSeed of seed.media) {
-        const file = mediaFileByName.get(normalize(mediaSeed.file));
+        const file = resolveMediaFile(mediaSeed.file);
         if (!file) {
           throw new Error(`Media file not found for ${seed.name}: ${mediaSeed.file}`);
         }
@@ -1317,11 +1388,11 @@ const main = async () => {
             previewMaxWidth: mediaSeed.previewMaxWidth
           });
           queueUpload(objectKey, file);
-          registerMediaLookup(file.filename, grouping.slug, mediaId);
+          registerMediaLookup(file, grouping.slug, mediaId);
           continue;
         }
 
-        const explicitPoster = mediaSeed.posterFile ? mediaFileByName.get(normalize(mediaSeed.posterFile)) : undefined;
+        const explicitPoster = mediaSeed.posterFile ? resolveMediaFile(mediaSeed.posterFile) : undefined;
         if (mediaSeed.posterFile && !explicitPoster) {
           throw new Error(`Poster file not found for ${seed.name}: ${mediaSeed.posterFile}`);
         }
@@ -1357,15 +1428,16 @@ const main = async () => {
         if (poster && posterKey) {
           queueUpload(posterKey, poster);
         }
-        registerMediaLookup(file.filename, grouping.slug, mediaId);
+        registerMediaLookup(file, grouping.slug, mediaId);
       }
     } else {
-      const filePrefix = seed.filePrefix;
-      if (!filePrefix) {
-        throw new Error(`Creator ${seed.name} is missing filePrefix and has no explicit media list`);
+      const normalizedSlugPrefix = `${normalize(seed.slug)}/`;
+      const creatorFiles = seed.filePrefix
+        ? mediaFiles.filter((file) => normalize(file.filename).startsWith(normalize(seed.filePrefix as string)))
+        : mediaFiles.filter((file) => normalize(file.relativePath.replace(/\\/g, '/')).startsWith(normalizedSlugPrefix));
+      if (!seed.filePrefix && creatorFiles.length === 0) {
+        throw new Error(`Creator ${seed.name} has no explicit media and no files under media/${seed.slug}/`);
       }
-
-      const creatorFiles = mediaFiles.filter((file) => normalize(file.filename).startsWith(normalize(filePrefix)));
       const selectedCreatorFiles = seed.includePrefixes?.length
         ? creatorFiles.filter((file) => seed.includePrefixes!.some((prefix) => normalize(file.filename).startsWith(normalize(prefix))))
         : creatorFiles;
@@ -1434,7 +1506,7 @@ const main = async () => {
         });
         }
         queueUpload(previewKey, file);
-        if (freeGrouping) registerMediaLookup(file.filename, freeGrouping.slug, mediaId);
+        if (freeGrouping) registerMediaLookup(file, freeGrouping.slug, mediaId);
         freeOrder += 1;
       }
 
@@ -1466,7 +1538,7 @@ const main = async () => {
           previewOrder += 1;
         }
         queueUpload(previewKey, file);
-        if (previewGrouping) registerMediaLookup(file.filename, previewGrouping.slug, mediaId);
+        if (previewGrouping) registerMediaLookup(file, previewGrouping.slug, mediaId);
       }
 
       for (const file of premiumImages) {
@@ -1497,7 +1569,7 @@ const main = async () => {
         });
         }
         queueUpload(objectKey, file);
-        if (premiumGrouping) registerMediaLookup(file.filename, premiumGrouping.slug, mediaId);
+        if (premiumGrouping) registerMediaLookup(file, premiumGrouping.slug, mediaId);
         premiumOrder += 1;
       }
 
@@ -1542,7 +1614,7 @@ const main = async () => {
         }
         queueUpload(previewKey, file);
         if (poster) queueUpload(previewPosterKey, poster);
-        if (freeGrouping) registerMediaLookup(file.filename, freeGrouping.slug, mediaId);
+        if (freeGrouping) registerMediaLookup(file, freeGrouping.slug, mediaId);
         freeOrder += 1;
       }
 
@@ -1579,7 +1651,7 @@ const main = async () => {
         }
         queueUpload(previewKey, file);
         if (poster) queueUpload(previewPosterKey, poster);
-        if (previewGrouping) registerMediaLookup(file.filename, previewGrouping.slug, mediaId);
+        if (previewGrouping) registerMediaLookup(file, previewGrouping.slug, mediaId);
       }
 
       for (const file of premiumVideos) {
@@ -1622,7 +1694,7 @@ const main = async () => {
         if (poster) {
           queueUpload(previewPosterKey, poster);
         }
-        if (premiumGrouping) registerMediaLookup(file.filename, premiumGrouping.slug, mediaId);
+        if (premiumGrouping) registerMediaLookup(file, premiumGrouping.slug, mediaId);
         premiumOrder += 1;
       }
     }

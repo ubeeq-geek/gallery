@@ -12,7 +12,7 @@ import path from 'node:path';
 const execFileAsync = promisify(execFile);
 
 const region = process.env.AWS_REGION || 'ca-central-1';
-const tableName = process.env.GROUPING_CORE_TABLE || '';
+const tableName = process.env.CONTENT_CORE_TABLE || '';
 const defaultBucket = process.env.MEDIA_BUCKET || '';
 const posterPrefix = process.env.VIDEO_POSTER_OUTPUT_PREFIX || 'posters';
 const ffmpegPath = process.env.VIDEO_POSTER_FFMPEG_PATH || '/opt/bin/ffmpeg';
@@ -164,7 +164,7 @@ const updateMediaPosterKeys = async (media: MediaRecord, posterKey: string): Pro
 
 const processJob = async (job: S3KeyJob): Promise<void> => {
   if (!tableName) {
-    throw new Error('GROUPING_CORE_TABLE is required');
+    throw new Error('CONTENT_CORE_TABLE is required');
   }
 
   const sourceKey = normalizeKey(job.key);

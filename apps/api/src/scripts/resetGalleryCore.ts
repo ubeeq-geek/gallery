@@ -44,8 +44,8 @@ const discoverTableName = async (client: DynamoDBClient, preferred: string, mark
   }
 
   const prioritized = found.sort((a, b) => {
-    const aScore = a.startsWith('StudioStack-') ? 0 : 1;
-    const bScore = b.startsWith('StudioStack-') ? 0 : 1;
+    const aScore = a.startsWith('UbeeqStack-') ? 0 : 1;
+    const bScore = b.startsWith('UbeeqStack-') ? 0 : 1;
     if (aScore !== bScore) return aScore - bScore;
     return a.localeCompare(b);
   });
@@ -71,8 +71,8 @@ const discoverMediaBucket = async (s3: S3Client, preferred: string): Promise<str
     throw new Error('Could not discover media bucket (expected name containing "mediabucket")');
   }
   const prioritized = candidates.sort((a, b) => {
-    const aScore = a.startsWith('studiostack-') ? 0 : 1;
-    const bScore = b.startsWith('studiostack-') ? 0 : 1;
+    const aScore = a.startsWith('ubeeqstack-') ? 0 : 1;
+    const bScore = b.startsWith('ubeeqstack-') ? 0 : 1;
     if (aScore !== bScore) return aScore - bScore;
     return a.localeCompare(b);
   });
@@ -161,12 +161,12 @@ const main = async () => {
   const config = loadConfig();
   const dryRun = process.argv.includes('--dry-run');
   const preserveMedia = process.argv.includes('--preserve-media');
-  const groupingCoreTableRequested = resolveTableName(config.groupingCoreTable, '--grouping-core-table');
+  const groupingCoreTableRequested = resolveTableName(config.contentCoreTable, '--content-core-table');
   const siteSettingsTableRequested = resolveTableName(config.siteSettingsTable, '--site-settings-table');
 
   const lowLevel = new DynamoDBClient({ region: config.awsRegion });
   const s3 = new S3Client({ region: config.awsRegion });
-  const groupingCoreTable = await discoverTableName(lowLevel, groupingCoreTableRequested, 'GroupingCoreTable');
+  const groupingCoreTable = await discoverTableName(lowLevel, groupingCoreTableRequested, 'ContentCoreTable');
   const siteSettingsTable = await discoverTableName(lowLevel, siteSettingsTableRequested, 'SiteSettingsTable');
   const mediaBucket = await discoverMediaBucket(s3, config.mediaBucket);
 

@@ -58,8 +58,8 @@ const discoverTableName = async (client: DynamoDBClient, preferred: string, mark
   }
 
   return matches.sort((a, b) => {
-    const aScore = a.startsWith('StudioStack-') ? 0 : 1;
-    const bScore = b.startsWith('StudioStack-') ? 0 : 1;
+    const aScore = a.startsWith('UbeeqStack-') ? 0 : 1;
+    const bScore = b.startsWith('UbeeqStack-') ? 0 : 1;
     if (aScore !== bScore) return aScore - bScore;
     return a.localeCompare(b);
   })[0];
@@ -74,23 +74,23 @@ const prepareCliConfig = async (): Promise<void> => {
   const region = process.env.AWS_REGION || 'ca-central-1';
   const lowLevel = new DynamoDBClient({ region });
 
-  const groupingCoreTable = getArgValue('--grouping-core-table')
-    || process.env.GROUPING_CORE_TABLE
-    || 'grouping-core';
-  const imageStatsTable = getArgValue('--image-stats-table')
-    || process.env.IMAGE_STATS_TABLE
-    || 'image-stats';
+  const contentCoreTable = getArgValue('--content-core-table')
+    || process.env.CONTENT_CORE_TABLE
+    || 'content-core';
+  const contentStatsTable = getArgValue('--content-stats-table')
+    || process.env.CONTENT_STATS_TABLE
+    || 'content-stats';
   const trendingFeedTable = getArgValue('--trending-feed-table')
     || process.env.TRENDING_FEED_TABLE
     || 'trending-feed';
 
-  process.env.GROUPING_CORE_TABLE = await discoverTableName(lowLevel, groupingCoreTable, 'GroupingCoreTable');
-  process.env.IMAGE_STATS_TABLE = await discoverTableName(lowLevel, imageStatsTable, 'ImageStatsTable');
+  process.env.CONTENT_CORE_TABLE = await discoverTableName(lowLevel, contentCoreTable, 'ContentCoreTable');
+  process.env.CONTENT_STATS_TABLE = await discoverTableName(lowLevel, contentStatsTable, 'ContentStatsTable');
   process.env.TRENDING_FEED_TABLE = await discoverTableName(lowLevel, trendingFeedTable, 'TrendingFeedTable');
-  process.env.USE_GROUPING_CORE_TABLE = 'true';
+  process.env.USE_CONTENT_CORE_TABLE = 'true';
 
   console.log(
-    `[trending-ranker] resolved tables: core=${process.env.GROUPING_CORE_TABLE} imageStats=${process.env.IMAGE_STATS_TABLE} trendingFeed=${process.env.TRENDING_FEED_TABLE} region=${region}`
+    `[trending-ranker] resolved tables: core=${process.env.CONTENT_CORE_TABLE} contentStats=${process.env.CONTENT_STATS_TABLE} trendingFeed=${process.env.TRENDING_FEED_TABLE} region=${region}`
   );
 };
 

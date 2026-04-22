@@ -130,6 +130,7 @@ export interface Grouping {
   creatorId: string;
   creatorSlug?: string;
   title: string;
+  isDefaultStream?: boolean;
   slug: string;
   slugHistory?: string[];
   discoverSquareCropEnabled?: boolean;
@@ -454,7 +455,7 @@ export interface PrizeAward {
   fulfillmentNotes?: string;
 }
 
-export interface ImageStats {
+export interface ContentStats {
   imageId: string;
   favoriteCount: number;
   updatedAt: string;

@@ -8,846 +8,310 @@
   },
   "creators": [
     {
-      "name": "Anne Smith",
-      "slug": "anne-smith",
-      "filePrefix": "anne-",
-      "groupings": [
-        {
-          "kind": "free",
-          "slug": "anne-smith-free"
-        },
-        {
-          "kind": "preview",
-          "slug": "anne-smith-premium-preview",
-          "purchaseUrl": "https://store.example.com/anne-smith-premium"
-        },
-        {
-          "kind": "premium",
-          "slug": "anne-smith-premium"
-        }
-      ],
-      "media": [
-        {
-          "file": "anne-1.png",
-          "title": "anne-1",
-          "groupingSlug": "anne-smith-free"
-        },
-        {
-          "file": "anne-2.png",
-          "title": "anne-2",
-          "groupingSlug": "anne-smith-free"
-        },
-        {
-          "file": "anne-3.png",
-          "title": "anne-3",
-          "groupingSlug": "anne-smith-free"
-        },
-        {
-          "file": "anne-4.png",
-          "title": "anne-4",
-          "groupingSlug": "anne-smith-free"
-        },
-        {
-          "file": "anne-5.png",
-          "title": "anne-5",
-          "groupingSlug": "anne-smith-premium-preview"
-        },
-        {
-          "file": "anne-6.png",
-          "title": "anne-6",
-          "groupingSlug": "anne-smith-premium-preview"
-        },
-        {
-          "file": "anne-7.png",
-          "title": "anne-7",
-          "groupingSlug": "anne-smith-premium-preview"
-        },
-        {
-          "file": "anne-8.png",
-          "title": "anne-8",
-          "groupingSlug": "anne-smith-premium-preview"
-        },
-        {
-          "file": "anne-9.png",
-          "title": "anne-9",
-          "groupingSlug": "anne-smith-premium-preview"
-        },
-        {
-          "file": "anne-10.png",
-          "title": "anne-10",
-          "groupingSlug": "anne-smith-premium-preview"
-        },
-        {
-          "file": "anne-11.png",
-          "title": "anne-11",
-          "groupingSlug": "anne-smith-premium-preview"
-        },
-        {
-          "file": "anne-12.png",
-          "title": "anne-12",
-          "groupingSlug": "anne-smith-premium-preview"
-        },
-        {
-          "file": "anne-5.png",
-          "title": "anne-5",
-          "groupingSlug": "anne-smith-premium"
-        },
-        {
-          "file": "anne-6.png",
-          "title": "anne-6",
-          "groupingSlug": "anne-smith-premium"
-        },
-        {
-          "file": "anne-7.png",
-          "title": "anne-7",
-          "groupingSlug": "anne-smith-premium"
-        },
-        {
-          "file": "anne-8.png",
-          "title": "anne-8",
-          "groupingSlug": "anne-smith-premium"
-        },
-        {
-          "file": "anne-9.png",
-          "title": "anne-9",
-          "groupingSlug": "anne-smith-premium"
-        },
-        {
-          "file": "anne-10.png",
-          "title": "anne-10",
-          "groupingSlug": "anne-smith-premium"
-        },
-        {
-          "file": "anne-11.png",
-          "title": "anne-11",
-          "groupingSlug": "anne-smith-premium"
-        },
-        {
-          "file": "anne-12.png",
-          "title": "anne-12",
-          "groupingSlug": "anne-smith-premium"
-        },
-        {
-          "file": "anne-free-video-1.mp4",
-          "title": "anne-free-video-1",
-          "posterFile": "anne-free-video-1-poster.png",
-          "groupingSlug": "anne-smith-free"
-        }
-      ],
-      "posts": [
-        {
-          "title": "Desert Light Collection",
-          "slug": "desert-light-collection",
-          "summary": "A grouped post anchored on Anne's free grouping images.",
-          "discoveryMode": "selected",
-          "primaryMedia": {
-            "file": "anne-1.png",
-            "groupingSlug": "anne-smith-free"
-          },
-          "media": [
-            {
-              "file": "anne-1.png",
-              "groupingSlug": "anne-smith-free",
-              "discoverable": true
-            },
-            {
-              "file": "anne-2.png",
-              "groupingSlug": "anne-smith-free",
-              "discoverable": true
-            },
-            {
-              "file": "anne-3.png",
-              "groupingSlug": "anne-smith-free",
-              "discoverable": false
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Desert Light Collection"
-            },
-            {
-              "type": "paragraph",
-              "text": "A small grouped release from Anne's free feed."
-            },
-            {
-              "type": "image",
-              "file": "anne-1.png",
-              "groupingSlug": "anne-smith-free",
-              "caption": "Entry one"
-            },
-            {
-              "type": "image",
-              "file": "anne-2.png",
-              "groupingSlug": "anne-smith-free",
-              "caption": "Entry two"
-            }
-          ],
-          "metadata": {
-            "template": "default",
-            "layout": "standard",
-            "kind": "collection"
-          }
-        },
-        {
-          "title": "Joshua Field Notes",
-          "slug": "joshua-field-notes",
-          "summary": "Longform post with inline media blocks and optional external destination.",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "anne-5.png",
-            "groupingSlug": "anne-smith-premium-preview"
-          },
-          "media": [
-            {
-              "file": "anne-5.png",
-              "groupingSlug": "anne-smith-premium-preview"
-            },
-            {
-              "file": "anne-6.png",
-              "groupingSlug": "anne-smith-premium-preview",
-              "discoverable": false
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 1,
-              "text": "Joshua Field Notes"
-            },
-            {
-              "type": "paragraph",
-              "text": "A longform entry using block composition with media and links."
-            },
-            {
-              "type": "image",
-              "file": "anne-5.png",
-              "groupingSlug": "anne-smith-premium-preview",
-              "caption": "Primary frame"
-            },
-            {
-              "type": "paragraph",
-              "text": "Preview and premium are modeled by grouping access while posts remain generic."
-            },
-            {
-              "type": "link",
-              "title": "Open premium grouping",
-              "url": "https://store.example.com/anne-smith-premium"
-            }
-          ],
-          "destination": {
-            "type": "external",
-            "url": "https://store.example.com/anne-smith-premium"
-          },
-          "metadata": {
-            "template": "reading",
-            "layout": "longform",
-            "kind": "story"
-          }
-        },
-        {
-          "title": "Boardwalk Clip",
-          "slug": "boardwalk-clip",
-          "summary": "Video-led post with cover and media-first discovery.",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "anne-free-video-1.mp4",
-            "groupingSlug": "anne-smith-free"
-          },
-          "media": [
-            {
-              "file": "anne-free-video-1.mp4",
-              "groupingSlug": "anne-smith-free",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "video",
-              "file": "anne-free-video-1.mp4",
-              "groupingSlug": "anne-smith-free",
-              "caption": "Boardwalk walk-through"
-            },
-            {
-              "type": "paragraph",
-              "text": "A short video update published through the same generic post model."
-            }
-          ],
-          "metadata": {
-            "template": "default",
-            "layout": "standard",
-            "kind": "video"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Samuel Jones",
-      "slug": "samuel-jones",
-      "filePrefix": "samuel-",
-      "groupings": [
-        {
-          "kind": "free",
-          "slug": "samuel-jones-free"
-        }
-      ],
-      "media": [
-        {
-          "file": "samuel-1.png",
-          "title": "samuel-1",
-          "groupingSlug": "samuel-jones-free"
-        },
-        {
-          "file": "samuel-2.png",
-          "title": "samuel-2",
-          "groupingSlug": "samuel-jones-free"
-        },
-        {
-          "file": "samuel-3.png",
-          "title": "samuel-3",
-          "groupingSlug": "samuel-jones-free"
-        },
-        {
-          "file": "samuel-4.png",
-          "title": "samuel-4",
-          "groupingSlug": "samuel-jones-free"
-        },
-        {
-          "file": "samuel-5.png",
-          "title": "samuel-5",
-          "groupingSlug": "samuel-jones-free"
-        },
-        {
-          "file": "samuel-6.png",
-          "title": "samuel-6",
-          "groupingSlug": "samuel-jones-free"
-        },
-        {
-          "file": "samuel-7.png",
-          "title": "samuel-7",
-          "groupingSlug": "samuel-jones-free"
-        },
-        {
-          "file": "samuel-8.png",
-          "title": "samuel-8",
-          "groupingSlug": "samuel-jones-free"
-        }
-      ]
-    },
-    {
-      "name": "Ubeeq Girl",
-      "slug": "ubeeq-girl",
-      "filePrefix": "ubeeq-girl-",
-      "contentRating": "fetish",
-      "discoverSquareCropEnabled": false,
-      "groupings": [
-        {
-          "kind": "preview",
-          "slug": "ubeeq-girl-premium-preview",
-          "purchaseUrl": "https://store.example.com/ubeeq-girl-premium"
-        },
-        {
-          "kind": "premium",
-          "slug": "ubeeq-girl-premium"
-        }
-      ],
-      "media": [
-        {
-          "file": "ubeeq-girl-1.png",
-          "title": "ubeeq-girl-1",
-          "groupingSlug": "ubeeq-girl-premium-preview"
-        },
-        {
-          "file": "ubeeq-girl-2.png",
-          "title": "ubeeq-girl-2",
-          "groupingSlug": "ubeeq-girl-premium-preview"
-        },
-        {
-          "file": "ubeeq-girl-3.png",
-          "title": "ubeeq-girl-3",
-          "groupingSlug": "ubeeq-girl-premium-preview"
-        },
-        {
-          "file": "ubeeq-girl-4.png",
-          "title": "ubeeq-girl-4",
-          "groupingSlug": "ubeeq-girl-premium-preview"
-        },
-        {
-          "file": "ubeeq-girl-5.png",
-          "title": "ubeeq-girl-5",
-          "groupingSlug": "ubeeq-girl-premium"
-        },
-        {
-          "file": "ubeeq-girl-6.png",
-          "title": "ubeeq-girl-6",
-          "groupingSlug": "ubeeq-girl-premium"
-        },
-        {
-          "file": "ubeeq-girl-7.png",
-          "title": "ubeeq-girl-7",
-          "groupingSlug": "ubeeq-girl-premium"
-        },
-        {
-          "file": "ubeeq-girl-8.png",
-          "title": "ubeeq-girl-8",
-          "groupingSlug": "ubeeq-girl-premium"
-        },
-        {
-          "file": "ubeeq-girl-9.png",
-          "title": "ubeeq-girl-9",
-          "groupingSlug": "ubeeq-girl-premium"
-        },
-        {
-          "file": "ubeeq-girl-10.png",
-          "title": "ubeeq-girl-10",
-          "groupingSlug": "ubeeq-girl-premium"
-        },
-        {
-          "file": "ubeeq-girl-11.png",
-          "title": "ubeeq-girl-11",
-          "groupingSlug": "ubeeq-girl-premium"
-        },
-        {
-          "file": "ubeeq-girl-12.png",
-          "title": "ubeeq-girl-12",
-          "groupingSlug": "ubeeq-girl-premium"
-        },
-        {
-          "file": "ubeeq-girl-premium-video-1.mp4",
-          "title": "ubeeq-girl-premium-video-1",
-          "posterFile": "ubeeq-girl-premium-video-1-poster.png",
-          "groupingSlug": "ubeeq-girl-premium"
-        }
-      ]
-    },
-    {
-      "name": "Bureau of Occupational Records",
-      "slug": "bureau-of-occupational-records",
-      "filePrefix": "alp-",
-      "includePrefixes": [
-        "alp-0001",
-        "alp-0002",
-        "alp-0003",
-        "alp-0004",
-        "alp-0005"
-      ],
-      "discoverSquareCropEnabled": false,
-      "groupings": [
-        {
-          "kind": "free",
-          "title": "Atlas of Lost Occupations",
-          "slug": "atlas-of-lost-occupations"
-        }
-      ],
-      "media": [
-        {
-          "file": "ALP-0001 - Airship Car Ferry Loading Officer.png",
-          "title": "Airship Car Ferry Loading Officer",
-          "groupingSlug": "atlas-of-lost-occupations"
-        },
-        {
-          "file": "ALP-0002 - Snowfall Grid Analyst.png",
-          "title": "Snowfall Grid Analyst",
-          "groupingSlug": "atlas-of-lost-occupations"
-        },
-        {
-          "file": "ALP-0003 - Fish Ladder Flow Monitor.png",
-          "title": "Fish Ladder Flow Monitor",
-          "groupingSlug": "atlas-of-lost-occupations"
-        },
-        {
-          "file": "ALP-0004 - Library Whisper Compliance Officer.png",
-          "title": "Library Whisper Compliance Officer",
-          "groupingSlug": "atlas-of-lost-occupations"
-        },
-        {
-          "file": "ALP-0005 - Beach Umbrella Registrar.png",
-          "title": "Beach Umbrella Registrar",
-          "groupingSlug": "atlas-of-lost-occupations"
-        }
-      ]
-    },
-    {
-      "name": "Daily Cosmos",
-      "slug": "daily-cosmos",
-      "filePrefix": "dc-",
-      "groupings": [
-        {
-          "kind": "free",
-          "slug": "daily-cosmos-free"
-        }
-      ],
-      "media": [
-        {
-          "file": "DC-001.png",
-          "title": "DC-001",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-002.jpg",
-          "title": "DC-002",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-003.jpg",
-          "title": "DC-003",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-004.jpg",
-          "title": "DC-004",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-005.jpg",
-          "title": "DC-005",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-006.jpg",
-          "title": "DC-006",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-007.jpg",
-          "title": "DC-007",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-008.jpg",
-          "title": "DC-008",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-009.jpg",
-          "title": "DC-009",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-010.jpg",
-          "title": "DC-010",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-011.jpg",
-          "title": "DC-011",
-          "groupingSlug": "daily-cosmos-free"
-        },
-        {
-          "file": "DC-012.jpg",
-          "title": "DC-012",
-          "groupingSlug": "daily-cosmos-free"
-        }
-      ],
-      "posts": [
-        {
-          "title": "Daily Cosmos Drop 001",
-          "slug": "daily-cosmos-drop-001",
-          "summary": "Image-first post with selected discovery items.",
-          "discoveryMode": "selected",
-          "primaryMedia": {
-            "file": "DC-001.png",
-            "groupingSlug": "daily-cosmos-free"
-          },
-          "media": [
-            {
-              "file": "DC-001.png",
-              "groupingSlug": "daily-cosmos-free",
-              "discoverable": true
-            },
-            {
-              "file": "DC-002.jpg",
-              "groupingSlug": "daily-cosmos-free",
-              "discoverable": true
-            },
-            {
-              "file": "DC-003.jpg",
-              "groupingSlug": "daily-cosmos-free",
-              "discoverable": false
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Daily Cosmos Drop 001"
-            },
-            {
-              "type": "image",
-              "file": "DC-001.png",
-              "groupingSlug": "daily-cosmos-free",
-              "caption": "Primary discovery frame"
-            },
-            {
-              "type": "paragraph",
-              "text": "This post demonstrates selected discovery mode in a generic post structure."
-            }
-          ],
-          "metadata": {
-            "template": "default",
-            "layout": "standard",
-            "kind": "image-first"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Nearly Natural Vistas",
-      "slug": "nearly-natural-vistas",
-      "filePrefix": "vista-",
-      "groupings": [
-        {
-          "kind": "free",
-          "title": "Nearly Natural Vistas Free Grouping",
-          "slug": "nearly-natural-vistas-free-grouping"
-        }
-      ],
-      "media": [
-        {
-          "file": "VISTA-1.png",
-          "title": "VISTA-1",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-2.png",
-          "title": "VISTA-2",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-3.png",
-          "title": "VISTA-3",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-4.png",
-          "title": "VISTA-4",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-5.png",
-          "title": "VISTA-5",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-6.png",
-          "title": "VISTA-6",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-7.png",
-          "title": "VISTA-7",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-8.png",
-          "title": "VISTA-8",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-9.png",
-          "title": "VISTA-9",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-10.png",
-          "title": "VISTA-10",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-11.png",
-          "title": "VISTA-11",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-12.png",
-          "title": "VISTA-12",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-13.png",
-          "title": "VISTA-13",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-14.png",
-          "title": "VISTA-14",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-15.png",
-          "title": "VISTA-15",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-16.png",
-          "title": "VISTA-16",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-17.png",
-          "title": "VISTA-17",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-18.png",
-          "title": "VISTA-18",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-19.png",
-          "title": "VISTA-19",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        },
-        {
-          "file": "VISTA-20.png",
-          "title": "VISTA-20",
-          "groupingSlug": "nearly-natural-vistas-free-grouping"
-        }
-      ]
-    },
-    {
       "name": "Roadside America",
       "slug": "roadside-america",
-      "filePrefix": "road-000",
-      "groupings": [
-        {
-          "kind": "free",
-          "title": "Roadside America Free Grouping",
-          "slug": "roadside-america-free-grouping"
-        }
-      ],
       "media": [
-        {
-          "file": "ROAD-0001.jpg",
-          "title": "ROAD-0001",
-          "groupingSlug": "roadside-america-free-grouping"
-        },
-        {
-          "file": "ROAD-0002.jpg",
-          "title": "ROAD-0002",
-          "groupingSlug": "roadside-america-free-grouping"
-        },
-        {
-          "file": "ROAD-0003.jpg",
-          "title": "ROAD-0003",
-          "groupingSlug": "roadside-america-free-grouping"
-        },
-        {
-          "file": "ROAD-0004.jpg",
-          "title": "ROAD-0004",
-          "groupingSlug": "roadside-america-free-grouping"
-        },
-        {
-          "file": "ROAD-0005.jpg",
-          "title": "ROAD-0005",
-          "groupingSlug": "roadside-america-free-grouping"
-        },
-        {
-          "file": "ROAD-0006.jpg",
-          "title": "ROAD-0006",
-          "groupingSlug": "roadside-america-free-grouping"
-        },
-        {
-          "file": "ROAD-0007.jpg",
-          "title": "ROAD-0007",
-          "groupingSlug": "roadside-america-free-grouping"
-        },
-        {
-          "file": "ROAD-0008.jpg",
-          "title": "ROAD-0008",
-          "groupingSlug": "roadside-america-free-grouping"
-        },
-        {
-          "file": "ROAD-0009.jpg",
-          "title": "ROAD-0009",
-          "groupingSlug": "roadside-america-free-grouping"
-        }
-      ]
-    },
-    {
-      "name": "Livestreams From the Past",
-      "slug": "livestreams-from-the-past",
-      "filePrefix": "past-",
-      "groupings": [
-        {
-          "kind": "free",
-          "title": "Livestreams From the Past Free Grouping",
-          "slug": "livestreams-from-the-past-free-grouping"
-        }
-      ],
-      "media": [
-        {
-          "file": "PAST-0001-france-1912.mp4",
-          "title": "france-1912",
-          "groupingSlug": "livestreams-from-the-past-free-grouping"
-        },
-        {
-          "file": "PAST-0002-uk-1910.mp4",
-          "title": "uk-1910",
-          "groupingSlug": "livestreams-from-the-past-free-grouping"
-        },
-        {
-          "file": "PAST-0003-venice-1912.mp4",
-          "title": "venice-1912",
-          "groupingSlug": "livestreams-from-the-past-free-grouping"
-        },
-        {
-          "file": "PAST-0004-greece-1912.mp4",
-          "title": "greece-1912",
-          "groupingSlug": "livestreams-from-the-past-free-grouping"
-        },
-        {
-          "file": "PAST-0004-venice-1912.mp4",
-          "title": "venice-1912",
-          "groupingSlug": "livestreams-from-the-past-free-grouping"
-        }
+        { "file": "roadside-america/ROAD-0001.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0001", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0002.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0002", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0003.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0003", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0004.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0004", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0005.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0005", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0006.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0006", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0007.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0007", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0008.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0008", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0009.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0009", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0010.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0010", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0011.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0011", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0012.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0012", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0013.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0013", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0014.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0014", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0015.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0015", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0016.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0016", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0017.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0017", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0018.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0018", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0019.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0019", "appearsInFeed": true },
+        { "file": "roadside-america/ROAD-0020.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0020", "appearsInFeed": true }
       ],
       "posts": [
         {
-          "title": "Livestream Archive Episode One",
-          "slug": "livestream-archive-episode-one",
-          "summary": "Video narrative post from the archive feed.",
+          "title": "Roadside Journal 0001",
+          "slug": "roadside-journal-0001",
+          "summary": "Pulled over just after sunrise and caught the first good light of the day.",
+          "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "PAST-0001-france-1912.mp4",
-            "groupingSlug": "livestreams-from-the-past-free-grouping"
-          },
-          "media": [
-            {
-              "file": "PAST-0001-france-1912.mp4",
-              "groupingSlug": "livestreams-from-the-past-free-grouping",
-              "discoverable": true
-            },
-            {
-              "file": "PAST-0002-uk-1910.mp4",
-              "groupingSlug": "livestreams-from-the-past-free-grouping",
-              "discoverable": false
-            }
-          ],
+          "primaryMedia": { "file": "roadside-america/ROAD-0001.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0001.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
           "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Livestream Archive Episode One"
-            },
-            {
-              "type": "video",
-              "file": "PAST-0001-france-1912.mp4",
-              "groupingSlug": "livestreams-from-the-past-free-grouping",
-              "caption": "Featured stream excerpt"
-            },
-            {
-              "type": "paragraph",
-              "text": "Serialized video entries can use the same post structure with optional destination links."
-            }
-          ],
-          "metadata": {
-            "template": "default",
-            "layout": "standard",
-            "series": "archive-season-1",
-            "kind": "video-series"
-          }
+            { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
+            { "type": "paragraph", "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough." },
+            { "type": "image", "file": "roadside-america/ROAD-0001.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0001" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0002",
+          "slug": "roadside-journal-0002",
+          "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0002.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0002.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Roadside Stop" },
+            { "type": "paragraph", "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck." },
+            { "type": "image", "file": "roadside-america/ROAD-0002.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0002" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0003",
+          "slug": "roadside-journal-0003",
+          "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0003.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0003.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Noon Light" },
+            { "type": "paragraph", "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work." },
+            { "type": "image", "file": "roadside-america/ROAD-0003.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0003" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0004",
+          "slug": "roadside-journal-0004",
+          "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0004.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0004.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Cloud Break" },
+            { "type": "paragraph", "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up." },
+            { "type": "image", "file": "roadside-america/ROAD-0004.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0004" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0005",
+          "slug": "roadside-journal-0005",
+          "summary": "Backroad detour turned into the strongest scene of the afternoon.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0005.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0005.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Unexpected Detour" },
+            { "type": "paragraph", "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting." },
+            { "type": "image", "file": "roadside-america/ROAD-0005.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0005" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0006",
+          "slug": "roadside-journal-0006",
+          "summary": "Pulled over just after sunrise and caught the first good light of the day.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0006.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0006.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
+            { "type": "paragraph", "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough." },
+            { "type": "image", "file": "roadside-america/ROAD-0006.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0006" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0007",
+          "slug": "roadside-journal-0007",
+          "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0007.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0007.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Roadside Stop" },
+            { "type": "paragraph", "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck." },
+            { "type": "image", "file": "roadside-america/ROAD-0007.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0007" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0008",
+          "slug": "roadside-journal-0008",
+          "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0008.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0008.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Noon Light" },
+            { "type": "paragraph", "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work." },
+            { "type": "image", "file": "roadside-america/ROAD-0008.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0008" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0009",
+          "slug": "roadside-journal-0009",
+          "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0009.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0009.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Cloud Break" },
+            { "type": "paragraph", "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up." },
+            { "type": "image", "file": "roadside-america/ROAD-0009.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0009" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0010",
+          "slug": "roadside-journal-0010",
+          "summary": "Backroad detour turned into the strongest scene of the afternoon.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0010.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0010.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Unexpected Detour" },
+            { "type": "paragraph", "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting." },
+            { "type": "image", "file": "roadside-america/ROAD-0010.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0010" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0011",
+          "slug": "roadside-journal-0011",
+          "summary": "Pulled over just after sunrise and caught the first good light of the day.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0011.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0011.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
+            { "type": "paragraph", "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough." },
+            { "type": "image", "file": "roadside-america/ROAD-0011.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0011" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0012",
+          "slug": "roadside-journal-0012",
+          "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0012.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0012.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Roadside Stop" },
+            { "type": "paragraph", "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck." },
+            { "type": "image", "file": "roadside-america/ROAD-0012.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0012" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0013",
+          "slug": "roadside-journal-0013",
+          "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0013.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0013.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Noon Light" },
+            { "type": "paragraph", "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work." },
+            { "type": "image", "file": "roadside-america/ROAD-0013.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0013" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0014",
+          "slug": "roadside-journal-0014",
+          "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0014.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0014.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Cloud Break" },
+            { "type": "paragraph", "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up." },
+            { "type": "image", "file": "roadside-america/ROAD-0014.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0014" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0015",
+          "slug": "roadside-journal-0015",
+          "summary": "Backroad detour turned into the strongest scene of the afternoon.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0015.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0015.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Unexpected Detour" },
+            { "type": "paragraph", "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting." },
+            { "type": "image", "file": "roadside-america/ROAD-0015.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0015" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0016",
+          "slug": "roadside-journal-0016",
+          "summary": "Pulled over just after sunrise and caught the first good light of the day.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0016.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0016.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
+            { "type": "paragraph", "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough." },
+            { "type": "image", "file": "roadside-america/ROAD-0016.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0016" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0017",
+          "slug": "roadside-journal-0017",
+          "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0017.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0017.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Roadside Stop" },
+            { "type": "paragraph", "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck." },
+            { "type": "image", "file": "roadside-america/ROAD-0017.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0017" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0018",
+          "slug": "roadside-journal-0018",
+          "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0018.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0018.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Noon Light" },
+            { "type": "paragraph", "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work." },
+            { "type": "image", "file": "roadside-america/ROAD-0018.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0018" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0019",
+          "slug": "roadside-journal-0019",
+          "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0019.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0019.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Cloud Break" },
+            { "type": "paragraph", "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up." },
+            { "type": "image", "file": "roadside-america/ROAD-0019.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0019" }
+          ]
+        },
+        {
+          "title": "Roadside Journal 0020",
+          "slug": "roadside-journal-0020",
+          "summary": "Backroad detour turned into the strongest scene of the afternoon.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": { "file": "roadside-america/ROAD-0020.jpg", "groupingSlug": "roadside-america-default" },
+          "media": [{ "file": "roadside-america/ROAD-0020.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "blocks": [
+            { "type": "heading", "level": 2, "text": "Unexpected Detour" },
+            { "type": "paragraph", "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting." },
+            { "type": "image", "file": "roadside-america/ROAD-0020.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0020" }
+          ]
         }
       ]
     }

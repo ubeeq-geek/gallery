@@ -7,10 +7,10 @@ export interface AppConfig {
   favoritesTable: string;
   blockedUsersTable: string;
   siteSettingsTable: string;
-  imageStatsTable: string;
+  contentStatsTable: string;
   trendingFeedTable: string;
-  groupingCoreTable: string;
-  useGroupingCoreTable: boolean;
+  contentCoreTable: string;
+  useContentCoreTable: boolean;
   mediaBucket: string;
   unlockJwtSecret: string;
   unlockTokenTtlSeconds: number;
@@ -36,11 +36,11 @@ export const loadConfig = (): AppConfig => ({
   favoritesTable: process.env.FAVORITES_TABLE || 'favorites',
   blockedUsersTable: process.env.BLOCKED_USERS_TABLE || 'blocked-users',
   siteSettingsTable: process.env.SITE_SETTINGS_TABLE || 'site-settings',
-  imageStatsTable: process.env.IMAGE_STATS_TABLE || 'image-stats',
+  contentStatsTable: process.env.CONTENT_STATS_TABLE || 'content-stats',
   trendingFeedTable: process.env.TRENDING_FEED_TABLE || 'trending-feed',
-  groupingCoreTable: process.env.GROUPING_CORE_TABLE || 'grouping-core',
-  useGroupingCoreTable: (process.env.USE_GROUPING_CORE_TABLE || 'false') === 'true',
-  mediaBucket: process.env.MEDIA_BUCKET || 'grouping-media',
+  contentCoreTable: process.env.CONTENT_CORE_TABLE || 'content-core',
+  useContentCoreTable: (process.env.USE_CONTENT_CORE_TABLE || 'false') === 'true',
+  mediaBucket: process.env.MEDIA_BUCKET || 'content-media',
   unlockJwtSecret: process.env.UNLOCK_JWT_SECRET || 'dev-secret',
   unlockTokenTtlSeconds: Number(process.env.UNLOCK_TOKEN_TTL_SECONDS || 3600),
   rememberGroupingAccessTtlSeconds: Number(process.env.REMEMBER_GROUPING_ACCESS_TTL_SECONDS || 60 * 60 * 24 * 30),

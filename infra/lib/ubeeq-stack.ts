@@ -17,65 +17,9 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 
-export class StudioStack extends Stack {
+export class UbeeqStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
-
-    const creatorsTable = new dynamodb.Table(this, 'Creators', {
-      partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
-      sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
-    });
-
-    const groupingsTable = new dynamodb.Table(this, 'GroupingsTable', {
-      partitionKey: { name: 'groupingId', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
-    });
-    groupingsTable.addGlobalSecondaryIndex({
-      indexName: 'slugIndex',
-      partitionKey: { name: 'slug', type: dynamodb.AttributeType.STRING }
-    });
-    groupingsTable.addGlobalSecondaryIndex({
-      indexName: 'creator',
-      partitionKey: { name: 'creator', type: dynamodb.AttributeType.STRING }
-    });
-
-    const imagesTable = new dynamodb.Table(this, 'ImagesTable', {
-      partitionKey: { name: 'groupingId', type: dynamodb.AttributeType.STRING },
-      sortKey: { name: 'imageId', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
-    });
-
-    const commentsTable = new dynamodb.Table(this, 'CommentsTable', {
-      partitionKey: { name: 'targetKey', type: dynamodb.AttributeType.STRING },
-      sortKey: { name: 'createdSort', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
-    });
-    commentsTable.addGlobalSecondaryIndex({
-      indexName: 'commentIdIndex',
-      partitionKey: { name: 'commentId', type: dynamodb.AttributeType.STRING }
-    });
-
-    const favoritesTable = new dynamodb.Table(this, 'FavoritesTable', {
-      partitionKey: { name: 'userKey', type: dynamodb.AttributeType.STRING },
-      sortKey: { name: 'targetKey', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
-    });
-    favoritesTable.addGlobalSecondaryIndex({
-      indexName: 'targetKeyIndex',
-      partitionKey: { name: 'targetKey', type: dynamodb.AttributeType.STRING }
-    });
-
-    const blockedUsersTable = new dynamodb.Table(this, 'BlockedUsersTable', {
-      partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
-    });
 
     const siteSettingsTable = new dynamodb.Table(this, 'SiteSettingsTable', {
       partitionKey: { name: 'settingId', type: dynamodb.AttributeType.STRING },
@@ -83,7 +27,7 @@ export class StudioStack extends Stack {
       removalPolicy: RemovalPolicy.DESTROY
     });
 
-    const imageStatsTable = new dynamodb.Table(this, 'ImageStatsTable', {
+    const contentStatsTable = new dynamodb.Table(this, 'ContentStatsTable', {
       partitionKey: { name: 'imageId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY
@@ -101,18 +45,18 @@ export class StudioStack extends Stack {
       sortKey: { name: 'rankKey', type: dynamodb.AttributeType.STRING }
     });
 
-    const groupingCoreTable = new dynamodb.Table(this, 'GroupingCoreTable', {
+    const contentCoreTable = new dynamodb.Table(this, 'ContentCoreTable', {
       partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY
     });
-    groupingCoreTable.addGlobalSecondaryIndex({
+    contentCoreTable.addGlobalSecondaryIndex({
       indexName: 'GSI1',
       partitionKey: { name: 'GSI1PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'GSI1SK', type: dynamodb.AttributeType.STRING }
     });
-    groupingCoreTable.addGlobalSecondaryIndex({
+    contentCoreTable.addGlobalSecondaryIndex({
       indexName: 'GSI2',
       partitionKey: { name: 'GSI2PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'GSI2SK', type: dynamodb.AttributeType.STRING }
@@ -212,7 +156,7 @@ export class StudioStack extends Stack {
         })
       : undefined;
 
-    const userPool = new cognito.UserPool(this, 'StudioUserPool', {
+    const userPool = new cognito.UserPool(this, 'UbeeqUserPool', {
       selfSignUpEnabled: true,
       signInAliases: { email: true },
       standardAttributes: { email: { required: true, mutable: false } }
@@ -223,7 +167,7 @@ export class StudioStack extends Stack {
       'EMAIL_OTP'
     ]);
 
-    const userPoolClient = new cognito.UserPoolClient(this, 'StudioUserPoolClient', {
+    const userPoolClient = new cognito.UserPoolClient(this, 'UbeeqUserPoolClient', {
       userPool,
       authFlows: {
         userPassword: true,
@@ -266,7 +210,7 @@ export class StudioStack extends Stack {
       description: 'General authenticated users'
     });
 
-    const apiFn = new lambdaNodejs.NodejsFunction(this, 'StudioApiFunction', {
+    const apiFn = new lambdaNodejs.NodejsFunction(this, 'UbeeqApiFunction', {
       runtime: lambda.Runtime.NODEJS_22_X,
       entry: path.join(__dirname, '../../apps/api/src/handler.ts'),
       handler: 'handler',
@@ -277,17 +221,11 @@ export class StudioStack extends Stack {
         externalModules: ['@aws-sdk/*']
       },
       environment: {
-        CREATORS: creatorsTable.tableName,
-        GROUPINGS_TABLE: groupingsTable.tableName,
-        IMAGES_TABLE: imagesTable.tableName,
-        COMMENTS_TABLE: commentsTable.tableName,
-        FAVORITES_TABLE: favoritesTable.tableName,
-        BLOCKED_USERS_TABLE: blockedUsersTable.tableName,
         SITE_SETTINGS_TABLE: siteSettingsTable.tableName,
-        IMAGE_STATS_TABLE: imageStatsTable.tableName,
+        CONTENT_STATS_TABLE: contentStatsTable.tableName,
         TRENDING_FEED_TABLE: trendingFeedTable.tableName,
-        GROUPING_CORE_TABLE: groupingCoreTable.tableName,
-        USE_GROUPING_CORE_TABLE: 'true',
+        CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        USE_CONTENT_CORE_TABLE: 'true',
         MEDIA_BUCKET: mediaBucket.bucketName,
         COGNITO_USER_POOL_ID: userPool.userPoolId,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
@@ -312,17 +250,11 @@ export class StudioStack extends Stack {
         externalModules: ['@aws-sdk/*']
       },
       environment: {
-        CREATORS: creatorsTable.tableName,
-        GROUPINGS_TABLE: groupingsTable.tableName,
-        IMAGES_TABLE: imagesTable.tableName,
-        COMMENTS_TABLE: commentsTable.tableName,
-        FAVORITES_TABLE: favoritesTable.tableName,
-        BLOCKED_USERS_TABLE: blockedUsersTable.tableName,
         SITE_SETTINGS_TABLE: siteSettingsTable.tableName,
-        IMAGE_STATS_TABLE: imageStatsTable.tableName,
+        CONTENT_STATS_TABLE: contentStatsTable.tableName,
         TRENDING_FEED_TABLE: trendingFeedTable.tableName,
-        GROUPING_CORE_TABLE: groupingCoreTable.tableName,
-        USE_GROUPING_CORE_TABLE: 'true',
+        CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        USE_CONTENT_CORE_TABLE: 'true',
         MEDIA_BUCKET: mediaBucket.bucketName,
         TRENDING_FEED_MAX_ITEMS: '600',
         TRENDING_CANDIDATE_LIMIT: '1500'
@@ -344,7 +276,7 @@ export class StudioStack extends Stack {
         ? [lambda.LayerVersion.fromLayerVersionArn(this, 'VideoPosterFfmpegLayer', ffmpegLayerArn)]
         : undefined,
       environment: {
-        GROUPING_CORE_TABLE: groupingCoreTable.tableName,
+        CONTENT_CORE_TABLE: contentCoreTable.tableName,
         MEDIA_BUCKET: mediaBucket.bucketName,
         VIDEO_POSTER_OUTPUT_PREFIX: 'posters',
         VIDEO_POSTER_FFMPEG_PATH: '/opt/bin/ffmpeg',
@@ -365,25 +297,15 @@ export class StudioStack extends Stack {
       })
     );
 
-    creatorsTable.grantReadWriteData(apiFn);
-    groupingsTable.grantReadWriteData(apiFn);
-    imagesTable.grantReadWriteData(apiFn);
-    commentsTable.grantReadWriteData(apiFn);
-    favoritesTable.grantReadWriteData(apiFn);
-    blockedUsersTable.grantReadWriteData(apiFn);
     siteSettingsTable.grantReadWriteData(apiFn);
-    imageStatsTable.grantReadWriteData(apiFn);
+    contentStatsTable.grantReadWriteData(apiFn);
     trendingFeedTable.grantReadWriteData(apiFn);
-    groupingCoreTable.grantReadWriteData(apiFn);
+    contentCoreTable.grantReadWriteData(apiFn);
     mediaBucket.grantReadWrite(apiFn);
-    creatorsTable.grantReadData(trendingRankerFn);
-    groupingsTable.grantReadData(trendingRankerFn);
-    imagesTable.grantReadData(trendingRankerFn);
-    favoritesTable.grantReadWriteData(trendingRankerFn);
-    imageStatsTable.grantReadWriteData(trendingRankerFn);
+    contentStatsTable.grantReadWriteData(trendingRankerFn);
     trendingFeedTable.grantReadWriteData(trendingRankerFn);
-    groupingCoreTable.grantReadData(trendingRankerFn);
-    groupingCoreTable.grantReadWriteData(videoPosterIngestFn);
+    contentCoreTable.grantReadData(trendingRankerFn);
+    contentCoreTable.grantReadWriteData(videoPosterIngestFn);
     mediaBucket.grantReadWrite(videoPosterIngestFn);
     videoPosterIngestQueue.grantConsumeMessages(videoPosterIngestFn);
 
@@ -392,7 +314,7 @@ export class StudioStack extends Stack {
       targets: [new targets.LambdaFunction(trendingRankerFn)]
     });
 
-    const api = new apigw.LambdaRestApi(this, 'StudioApi', {
+    const api = new apigw.LambdaRestApi(this, 'UbeeqApi', {
       handler: apiFn,
       proxy: true
     });
@@ -408,8 +330,8 @@ export class StudioStack extends Stack {
       new CfnOutput(this, 'PremiumMediaKeyGroupId', { value: keyGroup!.keyGroupId });
       new CfnOutput(this, 'PremiumMediaPublicKeyId', { value: premiumPublicKey!.publicKeyId });
     }
-    new CfnOutput(this, 'GroupingCoreTableName', { value: groupingCoreTable.tableName });
-    new CfnOutput(this, 'ImageStatsTableName', { value: imageStatsTable.tableName });
+    new CfnOutput(this, 'ContentCoreTableName', { value: contentCoreTable.tableName });
+    new CfnOutput(this, 'ContentStatsTableName', { value: contentStatsTable.tableName });
     new CfnOutput(this, 'TrendingFeedTableName', { value: trendingFeedTable.tableName });
     new CfnOutput(this, 'SiteSettingsTableName', { value: siteSettingsTable.tableName });
     new CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });

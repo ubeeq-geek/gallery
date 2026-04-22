@@ -40,13 +40,13 @@ import type {
   PrizeAward,
   PlatformRole
 } from './domain';
-import { GroupingCoreRepository } from './groupingCoreRepository';
+import { ContentCoreRepository } from './contentCoreRepository';
 import { normalizeContentRating } from './contentRating';
 import { normalizeAiDisclosure, normalizeHeavyTopics } from './disclosures';
 
 export class DynamoStore implements DataStore {
   private readonly client: DynamoDBDocumentClient;
-  private readonly coreRepo?: GroupingCoreRepository;
+  private readonly coreRepo?: ContentCoreRepository;
   private readonly localUsernameReservations = new Map<string, { username: string; email: string }>();
   private readonly localUserProfiles = new Map<string, UserProfile>();
   private readonly localCreatorMembers = new Map<string, CreatorMember>();
@@ -60,8 +60,32 @@ export class DynamoStore implements DataStore {
   constructor(private readonly config: AppConfig) {
     const lowLevel = new DynamoDBClient({ region: config.awsRegion });
     this.client = DynamoDBDocumentClient.from(lowLevel);
-    if (config.useGroupingCoreTable) {
-      this.coreRepo = new GroupingCoreRepository(this.client, config.groupingCoreTable);
+    if (config.useContentCoreTable) {
+      this.coreRepo = new ContentCoreRepository(this.client, config.contentCoreTable);
+    }
+  }
+
+  private async batchWriteAll(requestItems: Record<string, Array<Record<string, unknown>>>): Promise<void> {
+    let pending = requestItems;
+    let attempts = 0;
+    while (Object.keys(pending).length > 0) {
+      const response = await this.client.send(
+        new BatchWriteCommand({
+          RequestItems: pending
+        })
+      );
+      const unprocessed = (response.UnprocessedItems || {}) as Record<string, Array<Record<string, unknown>>>;
+      const hasUnprocessed = Object.values(unprocessed).some((items) => (items || []).length > 0);
+      if (!hasUnprocessed) return;
+      pending = Object.fromEntries(
+        Object.entries(unprocessed).filter(([, items]) => (items || []).length > 0)
+      );
+      attempts += 1;
+      if (attempts > 8) {
+        throw new Error('BatchWriteCommand did not complete after retries');
+      }
+      const sleepMs = Math.min(400, 25 * (2 ** Math.min(attempts, 4)));
+      await new Promise((resolve) => setTimeout(resolve, sleepMs));
     }
   }
 
@@ -955,13 +979,13 @@ export class DynamoStore implements DataStore {
       const response = await this.client.send(
         new BatchGetCommand({
           RequestItems: {
-            [this.config.imageStatsTable]: {
+            [this.config.contentStatsTable]: {
               Keys: slice.map((imageId) => ({ imageId }))
             }
           }
         })
       );
-      for (const item of (response.Responses?.[this.config.imageStatsTable] || [])) {
+      for (const item of (response.Responses?.[this.config.contentStatsTable] || [])) {
         const imageId = String((item as Record<string, unknown>).imageId || '');
         if (!imageId) continue;
         const favoriteCount = Number((item as Record<string, unknown>).favoriteCount || 0);
@@ -978,7 +1002,7 @@ export class DynamoStore implements DataStore {
           out[imageId] = count;
           await this.client.send(
             new PutCommand({
-              TableName: this.config.imageStatsTable,
+              TableName: this.config.contentStatsTable,
               Item: {
                 imageId,
                 favoriteCount: count,
@@ -996,7 +1020,7 @@ export class DynamoStore implements DataStore {
     if (!imageId || !Number.isFinite(delta) || delta === 0) return;
     await this.client.send(
       new UpdateCommand({
-        TableName: this.config.imageStatsTable,
+        TableName: this.config.contentStatsTable,
         Key: { imageId },
         UpdateExpression: 'SET updatedAt = :updatedAt ADD favoriteCount :delta',
         ExpressionAttributeValues: {
@@ -1134,15 +1158,11 @@ export class DynamoStore implements DataStore {
       const existing = (page.Items || []) as Array<{ period: string; rankKey: string }>;
       for (let i = 0; i < existing.length; i += 25) {
         const chunk = existing.slice(i, i + 25);
-        await this.client.send(
-          new BatchWriteCommand({
-            RequestItems: {
-              [this.config.trendingFeedTable]: chunk.map((item) => ({
-                DeleteRequest: { Key: { period: item.period, rankKey: item.rankKey } }
-              }))
-            }
-          })
-        );
+        await this.batchWriteAll({
+          [this.config.trendingFeedTable]: chunk.map((item) => ({
+            DeleteRequest: { Key: { period: item.period, rankKey: item.rankKey } }
+          }))
+        });
       }
     } while (cursor);
 
@@ -1150,27 +1170,23 @@ export class DynamoStore implements DataStore {
     const normalized = [...items].sort((a, b) => a.rank - b.rank);
     for (let i = 0; i < normalized.length; i += 25) {
       const chunk = normalized.slice(i, i + 25);
-      await this.client.send(
-        new BatchWriteCommand({
-          RequestItems: {
-            [this.config.trendingFeedTable]: chunk.map((item, index) => {
-              const rank = i + index + 1;
-              return {
-                PutRequest: {
-                  Item: {
-                    ...item,
-                    period: partitionKey,
-                    rankKey: `RANK#${rank.toString().padStart(8, '0')}#IMAGE#${item.imageId}`,
-                    periodSurface: `PERIOD#${period}#SURFACE#${item.surfaceType === 'post_surface' || item.postId ? 'post' : item.assetType === 'video' ? 'video' : 'image'}`,
-                    rank,
-                    updatedAt: item.updatedAt || nowIso
-                  }
-                }
-              };
-            })
-          }
+      await this.batchWriteAll({
+        [this.config.trendingFeedTable]: chunk.map((item, index) => {
+          const rank = i + index + 1;
+          return {
+            PutRequest: {
+              Item: {
+                ...item,
+                period: partitionKey,
+                rankKey: `RANK#${rank.toString().padStart(8, '0')}#IMAGE#${item.imageId}`,
+                periodSurface: `PERIOD#${period}#SURFACE#${item.surfaceType === 'post_surface' || item.postId ? 'post' : item.assetType === 'video' ? 'video' : 'image'}`,
+                rank,
+                updatedAt: item.updatedAt || nowIso
+              }
+            }
+          };
         })
-      );
+      });
     }
   }
 

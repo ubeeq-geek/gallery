@@ -1,7 +1,7 @@
 import { DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { loadConfig } from '../config';
-import { GroupingCoreRepository } from '../groupingCoreRepository';
+import { ContentCoreRepository } from '../contentCoreRepository';
 import type { Creator, Grouping, Media } from '../domain';
 
 const asString = (value: unknown, fallback = ''): string => (typeof value === 'string' ? value : fallback);
@@ -58,11 +58,11 @@ const migrate = async () => {
   const creatorsTable = resolveTableName(config.creators, '--creators-table');
   const groupingsTable = resolveTableName(config.groupingsTable, '--groupings-table');
   const imagesTable = resolveTableName(config.imagesTable, '--images-table');
-  const groupingCoreTable = resolveTableName(config.groupingCoreTable, '--grouping-core-table');
+  const groupingCoreTable = resolveTableName(config.contentCoreTable, '--content-core-table');
 
   const lowLevel = new DynamoDBClient({ region: config.awsRegion });
   const client = DynamoDBDocumentClient.from(lowLevel);
-  const repo = new GroupingCoreRepository(client, groupingCoreTable);
+  const repo = new ContentCoreRepository(client, groupingCoreTable);
 
   const requiredTables = [creatorsTable, groupingsTable, imagesTable, groupingCoreTable];
   for (const tableName of requiredTables) {
@@ -70,7 +70,7 @@ const migrate = async () => {
       await lowLevel.send(new DescribeTableCommand({ TableName: tableName }));
     } catch (error) {
       console.error(`[migrate:core] missing table: ${tableName}`);
-      console.error('[migrate:core] pass explicit names with --creators-table/--groupings-table/--images-table/--grouping-core-table');
+      console.error('[migrate:core] pass explicit names with --creators-table/--groupings-table/--images-table/--content-core-table');
       throw error;
     }
   }

@@ -35,6 +35,8 @@ interface CandidateItem {
   surfaceKey: string;
   surfaceType: 'media_surface' | 'post_surface';
   postId?: string;
+  relatedPostIds: string[];
+  isPrimaryPostSurface: boolean;
   imageId: string;
   assetType: 'image' | 'video';
   creatorId: string;
@@ -174,6 +176,7 @@ const buildCandidates = async (
 
   const mediaRows = await Promise.all(groupings.map(async (grouping) => ({ grouping, media: await store.getMediaByGrouping(grouping.groupingId) })));
   const groupingById = new Map(groupings.map((grouping) => [grouping.groupingId, grouping]));
+  const mediaPostLinks = new Map<string, Set<string>>();
   const candidates: CandidateItem[] = [];
 
   for (const { grouping, media } of mediaRows) {
@@ -198,6 +201,8 @@ const buildCandidates = async (
         surfaceKey: `media:${item.mediaId}`,
         surfaceType: 'media_surface',
         imageId: item.mediaId,
+        relatedPostIds: [],
+        isPrimaryPostSurface: false,
         assetType: normalizedAssetType,
         creatorId: item.creatorId,
         creatorName: creatorProfile?.name || 'Creator',
@@ -255,6 +260,12 @@ const buildCandidates = async (
     for (const post of posts) {
       if (post.status !== 'published') continue;
       const sortedRefs = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
+      for (const ref of sortedRefs) {
+        if (!ref?.mediaId) continue;
+        const linked = mediaPostLinks.get(ref.mediaId) || new Set<string>();
+        linked.add(post.postId);
+        mediaPostLinks.set(ref.mediaId, linked);
+      }
       const primaryRef = post.primaryMediaId
         ? sortedRefs.find((ref) => ref.mediaId === post.primaryMediaId)
         : undefined;
@@ -293,6 +304,8 @@ const buildCandidates = async (
           surfaceType: 'post_surface',
           postId: post.postId,
           imageId: item.mediaId,
+          relatedPostIds: [post.postId],
+          isPrimaryPostSurface: Boolean(post.primaryMediaId && ref.mediaId === post.primaryMediaId),
           assetType: normalizedAssetType,
           creatorId: item.creatorId,
           creatorName: creatorProfile?.name || 'Creator',
@@ -322,7 +335,21 @@ const buildCandidates = async (
     }
   }
 
-  return { candidates, groupingCount: groupings.length };
+  const postSurfaceMediaIds = new Set(
+    candidates
+      .filter((item) => item.surfaceType === 'post_surface')
+      .map((item) => item.imageId)
+  );
+  const filteredCandidates = candidates
+    .filter((item) => !(item.surfaceType === 'media_surface' && postSurfaceMediaIds.has(item.imageId)))
+    .map((item) => ({
+      ...item,
+      relatedPostIds: item.surfaceType === 'post_surface'
+        ? item.relatedPostIds
+        : Array.from(mediaPostLinks.get(item.imageId) || [])
+    }));
+
+  return { candidates: filteredCandidates, groupingCount: groupings.length };
 };
 
 export const buildTrendingFeedForPeriod = async (
@@ -345,7 +372,9 @@ export const buildTrendingFeedForPeriod = async (
     const favoriteCount = Math.max(0, Number(favoriteCounts[item.imageId] || 0));
     const discoverSquareCropBonus = item.discoverSquareCropEnabled ? 1.25 : 0;
     const jitter = (hashToUnit(`${period}:${seed}:${item.surfaceKey}`) - 0.5) * 4.4;
-    const score = favoriteCount * 2 + item.recencyBoost * 7 + discoverSquareCropBonus + jitter;
+    const postLinkedMediaPenalty = item.surfaceType === 'media_surface' && item.relatedPostIds.length > 0 ? 0.7 : 0;
+    const postSurfaceBoost = item.surfaceType === 'post_surface' ? 0.35 : 0;
+    const score = favoriteCount * 2 + item.recencyBoost * 7 + discoverSquareCropBonus + postSurfaceBoost - postLinkedMediaPenalty + jitter;
     return {
       ...item,
       favoriteCount,
@@ -359,14 +388,32 @@ export const buildTrendingFeedForPeriod = async (
     return b.createdAtMs - a.createdAtMs;
   });
 
+  const oneSurfacePerImage = new Map<string, (typeof scored)[number]>();
+  for (const candidate of scored) {
+    const existing = oneSurfacePerImage.get(candidate.imageId);
+    if (!existing) {
+      oneSurfacePerImage.set(candidate.imageId, candidate);
+      continue;
+    }
+    if (candidate.surfaceType === 'post_surface' && existing.surfaceType !== 'post_surface') {
+      oneSurfacePerImage.set(candidate.imageId, candidate);
+    }
+  }
+  const uniqueScored = Array.from(oneSurfacePerImage.values()).sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.createdAtMs - a.createdAtMs;
+  });
+
   const diversified: Array<(typeof scored)[number] & { selectionScore: number }> = [];
-  const queue = [...scored];
+  const queue = [...uniqueScored];
   const creatorUsage = new Map<string, number>();
   const groupingUsage = new Map<string, number>();
   const recentArtists: string[] = [];
   const recentGroupings: string[] = [];
-  const diversityArtistCount = Math.max(1, new Set(scored.map((item) => item.creatorId)).size);
-  const diversityGroupingCount = Math.max(1, new Set(scored.map((item) => item.groupingId)).size);
+  const surfacedPostIds = new Set<string>();
+  const selectedImageIds = new Set<string>();
+  const diversityArtistCount = Math.max(1, new Set(uniqueScored.map((item) => item.creatorId)).size);
+  const diversityGroupingCount = Math.max(1, new Set(uniqueScored.map((item) => item.groupingId)).size);
 
   while (queue.length > 0 && diversified.length < maxFeedItems) {
     const lastArtistId = diversified.length > 0 ? diversified[diversified.length - 1].creatorId : undefined;
@@ -393,6 +440,7 @@ export const buildTrendingFeedForPeriod = async (
     const hasAltGroupingFromLast = Boolean(lastGroupingId) && lookaheadItems.some((item) => item.groupingId !== lastGroupingId);
     const hasAltNonRecentArtist = lookaheadItems.some((item) => !recentArtistWindow.includes(item.creatorId));
     const hasAltNonRecentGrouping = lookaheadItems.some((item) => !recentGroupingWindow.includes(item.groupingId));
+    const hasAltImageNotSelected = lookaheadItems.some((item) => !selectedImageIds.has(item.imageId));
 
     let bestIndex = -1;
     let bestScore = Number.NEGATIVE_INFINITY;
@@ -421,6 +469,10 @@ export const buildTrendingFeedForPeriod = async (
           && groupingCount >= groupingCap
           && !groupingsUnderCap.has(candidate.groupingId)
         );
+        const blockByDuplicateImage = Boolean(
+          selectedImageIds.has(candidate.imageId)
+          && hasAltImageNotSelected
+        );
 
         const disqualified =
           (pass <= 3 && blockByLastArtist) ||
@@ -428,7 +480,8 @@ export const buildTrendingFeedForPeriod = async (
           (pass <= 1 && blockByRecentArtist) ||
           (pass === 0 && blockByRecentGrouping) ||
           (pass <= 1 && blockByArtistCap) ||
-          (pass === 0 && blockByGroupingCap);
+          (pass === 0 && blockByGroupingCap) ||
+          (pass === 0 && blockByDuplicateImage);
         if (disqualified) continue;
 
         let selectionScore = candidate.score;
@@ -439,6 +492,16 @@ export const buildTrendingFeedForPeriod = async (
         if (blockByLastGrouping) selectionScore -= 6;
         if (blockByRecentArtist) selectionScore -= 4;
         if (blockByRecentGrouping) selectionScore -= 2.5;
+        if (blockByDuplicateImage) selectionScore -= 8;
+        if (candidate.surfaceType === 'media_surface' && surfacedPostIds.size > 0 && candidate.relatedPostIds.length > 0) {
+          const overlaps = candidate.relatedPostIds.filter((postId) => surfacedPostIds.has(postId)).length;
+          if (overlaps > 0) {
+            selectionScore -= overlaps * 6;
+          }
+        }
+        if (candidate.surfaceType === 'post_surface' && candidate.postId && surfacedPostIds.has(candidate.postId)) {
+          selectionScore -= 4.5;
+        }
 
         if (selectionScore > bestScore) {
           bestScore = selectionScore;
@@ -461,6 +524,10 @@ export const buildTrendingFeedForPeriod = async (
       ...picked,
       selectionScore: bestScore
     });
+    selectedImageIds.add(picked.imageId);
+    if (picked.surfaceType === 'post_surface' && picked.postId) {
+      surfacedPostIds.add(picked.postId);
+    }
     creatorUsage.set(picked.creatorId, (creatorUsage.get(picked.creatorId) || 0) + 1);
     groupingUsage.set(picked.groupingId, (groupingUsage.get(picked.groupingId) || 0) + 1);
 

@@ -54,7 +54,7 @@ const main = async () => {
   const creators = resolveTableName(config.creators, '--creators-table');
   const groupingsTable = resolveTableName(config.groupingsTable, '--groupings-table');
   const imagesTable = resolveTableName(config.imagesTable, '--images-table');
-  const groupingCoreTable = resolveTableName(config.groupingCoreTable, '--grouping-core-table');
+  const groupingCoreTable = resolveTableName(config.contentCoreTable, '--content-core-table');
 
   const lowLevel = new DynamoDBClient({ region: config.awsRegion });
   const client = DynamoDBDocumentClient.from(lowLevel);
@@ -65,7 +65,7 @@ const main = async () => {
       await lowLevel.send(new DescribeTableCommand({ TableName: tableName }));
     } catch (error) {
       console.error(`[verify:core] missing table: ${tableName}`);
-      console.error('[verify:core] pass explicit names with --creators-table/--groupings-table/--images-table/--grouping-core-table');
+      console.error('[verify:core] pass explicit names with --creators-table/--groupings-table/--images-table/--content-core-table');
       throw error;
     }
   }

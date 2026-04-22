@@ -50,7 +50,7 @@ const uniqueValues = (values: Array<string | undefined>): string[] => {
   return result;
 };
 
-export class GroupingCoreRepository {
+export class ContentCoreRepository {
   constructor(
     private readonly client: DynamoDBDocumentClient,
     private readonly tableName: string

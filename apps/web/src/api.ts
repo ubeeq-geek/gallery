@@ -156,7 +156,7 @@ export const api = {
     qs.set('limit', String(limit));
     qs.set('source', source);
     if (cursor) qs.set('cursor', cursor);
-    const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-images?${qs.toString()}`));
+    const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-content?${qs.toString()}`));
     return handleJson(response);
   },
   async getTrendingImagesFiltered(
@@ -180,7 +180,7 @@ export const api = {
     if (filters?.hideHeavyTopics !== undefined) qs.set('hideHeavyTopics', String(Boolean(filters.hideHeavyTopics)));
     if (filters?.hidePoliticsPublicAffairs !== undefined) qs.set('hidePoliticsPublicAffairs', String(Boolean(filters.hidePoliticsPublicAffairs)));
     if (filters?.hideCrimeDisastersTragedy !== undefined) qs.set('hideCrimeDisastersTragedy', String(Boolean(filters.hideCrimeDisastersTragedy)));
-    const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-images?${qs.toString()}`));
+    const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-content?${qs.toString()}`));
     return handleJson(response);
   },
   async getCreatorProfile(slug: string) {
@@ -210,7 +210,7 @@ export const api = {
     qs.set('limit', String(limit));
     qs.set('source', source);
     if (cursor) qs.set('cursor', cursor);
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/trending-images?${qs.toString()}`);
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/trending-content?${qs.toString()}`);
     return handleJson(response);
   },
   async getImageComments(imageId: string) {
