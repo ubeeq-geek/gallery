@@ -1,5 +1,5 @@
 import type { AppConfig } from './config';
-import type { AiDisclosure, Creator, Grouping, GroupingMediaView, HeavyTopic, TrendingFeedItem, TrendingPeriod } from './domain';
+import type { AiDisclosure, Creator, Grouping, GroupingMediaView, HeavyTopic, Media, Post, PostFormat, PostType, TrendingFeedItem, TrendingPeriod } from './domain';
 import type { DataStore } from './store';
 import { getEffectiveContentRating } from './contentRating';
 import { getEffectiveAiDisclosure, getEffectiveHeavyTopics } from './disclosures';
@@ -38,7 +38,9 @@ interface CandidateItem {
   relatedPostIds: string[];
   isPrimaryPostSurface: boolean;
   imageId: string;
-  assetType: 'image' | 'video';
+  assetType: 'image' | 'video' | 'audio';
+  postType?: PostType;
+  postFormat?: PostFormat;
   creatorId: string;
   creatorName: string;
   groupingId: string;
@@ -74,6 +76,34 @@ const resolveTrendingPreviewKeys = (
     previewKey: item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewKey,
     previewPosterKey: undefined
   };
+};
+
+const normalizePostType = (post: Pick<Post, 'metadata' | 'blocks' | 'media' | 'primaryMediaId'>, mediaById?: Map<string, Pick<Media, 'mediaId' | 'assetType'>>): PostType => {
+  const raw = (post.metadata?.postType || post.metadata?.type || post.metadata?.kind || '').toLowerCase();
+  if (raw === 'image' || raw === 'images' || raw === 'photo' || raw === 'photos') return 'image';
+  if (raw === 'video' || raw === 'videos' || raw === 'short' || raw === 'shorts' || raw === 'reel' || raw === 'reels') return 'video';
+  if (raw === 'audio' || raw === 'track' || raw === 'album') return 'audio';
+  if (raw === 'story' || raw === 'stories' || raw === 'blocks' || raw === 'article' || raw === 'reading' || raw === 'fiction') return 'story';
+  const primaryId = post.primaryMediaId || post.media[0]?.mediaId;
+  const primary = primaryId ? mediaById?.get(primaryId) : undefined;
+  if (primary?.assetType === 'video') return 'video';
+  if (primary?.assetType === 'audio') return 'audio';
+  if (primary?.assetType === 'image' && post.blocks.length <= 2) return 'image';
+  if (post.blocks.some((block) => block.type === 'audio')) return 'audio';
+  if (post.blocks.some((block) => block.type === 'video')) return 'video';
+  return 'story';
+};
+
+const normalizePostFormat = (post: Pick<Post, 'metadata' | 'blocks' | 'media'>, postType: PostType): PostFormat => {
+  const raw = (post.metadata?.postFormat || post.metadata?.format || '').toLowerCase();
+  if ((postType === 'image' || postType === 'audio') && (raw === 'single' || raw === 'multi' || raw === 'album')) {
+    return raw === 'album' ? 'multi' : raw;
+  }
+  if ((postType === 'video' || postType === 'story') && (raw === 'short' || raw === 'long')) return raw;
+  if (postType === 'story') return post.blocks.filter((block) => block.type === 'paragraph').length >= 6 ? 'long' : 'short';
+  if (postType === 'video') return post.metadata?.videoFormat === 'short' || post.metadata?.layout === 'short' ? 'short' : 'long';
+  if (postType === 'audio') return post.media.length > 1 ? 'multi' : 'single';
+  return post.media.length > 1 ? 'multi' : 'single';
 };
 
 const hashToUnit = (input: string): number => {
@@ -177,64 +207,9 @@ const buildCandidates = async (
 
   const mediaRows = await Promise.all(groupings.map(async (grouping) => ({ grouping, media: await store.getMediaByGrouping(grouping.groupingId) })));
   const groupingById = new Map(groupings.map((grouping) => [grouping.groupingId, grouping]));
-  const mediaPostLinks = new Map<string, Set<string>>();
   const candidates: CandidateItem[] = [];
 
-  for (const { grouping, media } of mediaRows) {
-    for (const item of media) {
-      const assetType = (item.assetType || 'image');
-      const normalizedAssetType = assetType === 'video' ? 'video' : assetType === 'image' ? 'image' : null;
-      if (!normalizedAssetType) continue;
-      if (item.appearsInFeed === false) continue;
-      if (isHiddenByVisibility(item.releaseVisibility)) continue;
-      if (item.status && item.status !== 'published' && item.status !== 'scheduled') continue;
-      if (!canViewBySchedule(item.publishAt || grouping.publishAt, item.publicReleaseAt || grouping.publicReleaseAt, nowMs, false)) {
-        continue;
-      }
-      const { previewKey, previewPosterKey } = resolveTrendingPreviewKeys(item);
-      if (!previewKey) continue;
-      const createdAtMs = asTime(item.createdAt) || nowMs;
-      const discoverSquareCropEnabled =
-        (creatorById.get(item.creatorId)?.discoverSquareCropEnabled ?? true) &&
-        (grouping.discoverSquareCropEnabled ?? true) &&
-        (item.discoverSquareCropEnabled ?? true);
-      const creatorProfile = creatorById.get(item.creatorId);
-      candidates.push({
-        surfaceKey: `media:${item.mediaId}`,
-        surfaceType: 'media_surface',
-        imageId: item.mediaId,
-        relatedPostIds: [],
-        isPrimaryPostSurface: false,
-        assetType: normalizedAssetType,
-        creatorId: item.creatorId,
-        creatorName: creatorProfile?.name || 'Creator',
-        groupingId: grouping.groupingId,
-        groupingSlug: grouping.slug,
-        groupingVisibility: grouping.visibility === 'preview' ? 'preview' : 'free',
-        discoverSquareCropEnabled,
-        effectiveContentRating: getEffectiveContentRating(item),
-        effectiveAiDisclosure: getEffectiveAiDisclosure(item, grouping, creatorProfile),
-        effectiveHeavyTopics: getEffectiveHeavyTopics(item, grouping, creatorProfile),
-        title: item.title || grouping.title || 'Artwork',
-        previewKey,
-        previewPosterKey,
-        thumbnailKeys: item.thumbnailKeys,
-        width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
-        height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
-        aspectRatio: (
-          Number.isFinite(item.width) && item.width > 0
-          && Number.isFinite(item.height) && item.height > 0
-        )
-          ? Number((item.width / item.height).toFixed(5))
-          : 1,
-        createdAt: item.createdAt,
-        createdAtMs,
-        recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs))
-      });
-    }
-  }
-
-  const perPostSurfaceLimit = 3;
+  const perPostSurfaceLimit = 1;
   for (const creatorProfile of activeCreators) {
     const [posts, creatorMedia] = await Promise.all([
       store.listPostsByCreatorId(creatorProfile.creatorId),
@@ -262,22 +237,14 @@ const buildCandidates = async (
     }
     for (const post of posts) {
       if (post.status !== 'published') continue;
+      const postType = normalizePostType(post, mediaById);
+      const postFormat = normalizePostFormat(post, postType);
       const sortedRefs = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
-      for (const ref of sortedRefs) {
-        if (!ref?.mediaId) continue;
-        const linked = mediaPostLinks.get(ref.mediaId) || new Set<string>();
-        linked.add(post.postId);
-        mediaPostLinks.set(ref.mediaId, linked);
-      }
       const primaryRef = post.primaryMediaId
         ? sortedRefs.find((ref) => ref.mediaId === post.primaryMediaId)
         : undefined;
       const selectedRefs = sortedRefs.filter((ref) => ref.discoverable !== false);
-      const refs = post.discovery.mode === 'all'
-        ? sortedRefs
-        : (post.discovery.mode === 'selected'
-          ? selectedRefs
-          : (primaryRef ? [primaryRef] : selectedRefs.slice(0, 1)));
+      const refs = primaryRef ? [primaryRef] : selectedRefs.slice(0, 1);
       const limitedRefs = refs.slice(0, perPostSurfaceLimit);
       for (let refIndex = 0; refIndex < limitedRefs.length; refIndex += 1) {
         const ref = limitedRefs[refIndex];
@@ -294,7 +261,7 @@ const buildCandidates = async (
         if (!canViewBySchedule(item.publishAt || placedGrouping.publishAt, item.publicReleaseAt || placedGrouping.publicReleaseAt, nowMs, false)) {
           continue;
         }
-        const normalizedAssetType = item.assetType === 'video' ? 'video' : item.assetType === 'image' ? 'image' : null;
+        const normalizedAssetType = item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : item.assetType === 'image' ? 'image' : null;
         if (!normalizedAssetType) continue;
         const { previewKey, previewPosterKey } = resolveTrendingPreviewKeys(item);
         if (!previewKey) continue;
@@ -311,6 +278,8 @@ const buildCandidates = async (
           relatedPostIds: [post.postId],
           isPrimaryPostSurface: Boolean(post.primaryMediaId && ref.mediaId === post.primaryMediaId),
           assetType: normalizedAssetType,
+          postType,
+          postFormat,
           creatorId: item.creatorId,
           creatorName: creatorProfile?.name || 'Creator',
           groupingId: placedGrouping.groupingId,
@@ -340,21 +309,7 @@ const buildCandidates = async (
     }
   }
 
-  const postSurfaceMediaIds = new Set(
-    candidates
-      .filter((item) => item.surfaceType === 'post_surface')
-      .map((item) => item.imageId)
-  );
-  const filteredCandidates = candidates
-    .filter((item) => !(item.surfaceType === 'media_surface' && postSurfaceMediaIds.has(item.imageId)))
-    .map((item) => ({
-      ...item,
-      relatedPostIds: item.surfaceType === 'post_surface'
-        ? item.relatedPostIds
-        : Array.from(mediaPostLinks.get(item.imageId) || [])
-    }));
-
-  return { candidates: filteredCandidates, groupingCount: groupings.length };
+  return { candidates, groupingCount: groupings.length };
 };
 
 export const buildTrendingFeedForPeriod = async (
@@ -557,6 +512,8 @@ export const buildTrendingFeedForPeriod = async (
     imageId: item.imageId,
     surfaceType: item.surfaceType,
     assetType: item.assetType,
+    postType: item.postType,
+    postFormat: item.postFormat,
     postId: item.postId,
     creatorId: item.creatorId,
     creatorName: item.creatorName,

@@ -34,6 +34,7 @@ type DiscoveryDockSummary = {
   showImages: boolean;
   showVideos: boolean;
   showPosts: boolean;
+  showAudio: boolean;
   heavyLabel:
     | 'Heavy Shown'
     | 'Some Heavy'
@@ -138,16 +139,27 @@ type DiscoveryMediaFilters = {
   showImages: boolean;
   showVideos: boolean;
   showPosts: boolean;
+  showAudio: boolean;
 };
 const getDiscoveryMediaLabel = (filters: DiscoveryMediaFilters): string => {
   const parts: string[] = [];
   if (filters.showImages) parts.push('Images');
   if (filters.showVideos) parts.push('Videos');
-  if (filters.showPosts) parts.push('Posts');
+  if (filters.showPosts) parts.push('Stories');
+  if (filters.showAudio) parts.push('Audio');
   return parts.length > 0 ? parts.join(' + ') : 'None';
 };
-type DiscoveryMediaKind = 'image' | 'video' | 'post';
+type DiscoveryMediaKind = 'image' | 'video' | 'post' | 'audio';
 const DiscoveryMediaIcon = ({ kind, className }: { kind: DiscoveryMediaKind; className?: string }) => {
+  if (kind === 'audio') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+        <path d="M8 14.2V5.4L15 4.2V13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="5.8" cy="14.2" r="2.1" stroke="currentColor" strokeWidth="1.6" />
+        <circle cx="12.8" cy="13" r="2.1" stroke="currentColor" strokeWidth="1.6" />
+      </svg>
+    );
+  }
   if (kind === 'video') {
     return (
       <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
@@ -178,26 +190,29 @@ const DiscoveryMediaIcon = ({ kind, className }: { kind: DiscoveryMediaKind; cla
 const DiscoveryMediaIndicator = ({
   showImages,
   showVideos,
-  showPosts
+  showPosts,
+  showAudio
 }: {
   showImages: boolean;
   showVideos: boolean;
   showPosts: boolean;
+  showAudio: boolean;
 }) => (
   <span className="discovery-media-indicator" aria-hidden="true">
     {showImages && <DiscoveryMediaIcon kind="image" className="discovery-media-icon" />}
     {showVideos && <DiscoveryMediaIcon kind="video" className="discovery-media-icon" />}
     {showPosts && <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />}
+    {showAudio && <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />}
   </span>
 );
 const passesDiscoveryMediaFilter = (
-  item: { assetType?: 'image' | 'video'; surfaceType?: 'media' | 'post'; postId?: string },
+  item: { assetType?: 'image' | 'video' | 'audio'; postType?: 'image' | 'video' | 'story' | 'audio'; surfaceType?: 'media' | 'post'; postId?: string },
   filters: DiscoveryMediaFilters
 ): boolean => {
-  const isPostSurface = item.surfaceType === 'post' || Boolean(item.postId);
-  if (isPostSurface) return filters.showPosts;
-  const normalizedType = item.assetType === 'video' ? 'video' : 'image';
+  const normalizedType = item.postType || (item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image');
+  if (normalizedType === 'story') return filters.showPosts;
   if (normalizedType === 'video') return filters.showVideos;
+  if (normalizedType === 'audio') return filters.showAudio;
   return filters.showImages;
 };
 const passesAiDisclosureFilter = (aiDisclosure: AiDisclosure | undefined, aiFilter: AiFilterPreference): boolean => {
@@ -282,7 +297,9 @@ type CollectionSummary = {
 };
 type TrendingImage = {
   imageId: string;
-  assetType?: 'image' | 'video';
+  assetType?: 'image' | 'video' | 'audio';
+  postType?: 'image' | 'video' | 'story' | 'audio';
+  postFormat?: 'single' | 'multi' | 'short' | 'long';
   surfaceType?: 'media' | 'post';
   postId?: string;
   postSlug?: string;
@@ -398,7 +415,7 @@ type CreatorPostSummary = {
   discoveryMediaIds?: string[];
   primaryMedia?: {
     mediaId: string;
-    assetType: 'image' | 'video';
+    assetType: 'image' | 'video' | 'audio';
     previewUrl: string;
     previewPosterUrl?: string;
     width?: number;
@@ -406,7 +423,7 @@ type CreatorPostSummary = {
   } | null;
   discoveryMedia?: Array<{
     mediaId: string;
-    assetType: 'image' | 'video';
+    assetType: 'image' | 'video' | 'audio';
     previewUrl: string;
     previewPosterUrl?: string;
     width?: number;
@@ -431,7 +448,7 @@ type PostDetailPayload = {
   blocks: PostBlock[];
   media: Array<{
     mediaId: string;
-    assetType: 'image' | 'video';
+    assetType: 'image' | 'video' | 'audio';
     title?: string;
     previewUrl: string;
     previewPosterUrl?: string;
@@ -489,7 +506,7 @@ type CreatorProfilePayload = {
   feedItems?: Array<{
     imageId: string;
     title: string;
-    assetType: 'image' | 'video';
+    assetType: 'image' | 'video' | 'audio';
     createdAt: string;
     previewUrl?: string;
     previewPosterUrl?: string;
@@ -556,7 +573,7 @@ type GallerySummary = {
 type GalleryAsset = {
   imageId: string;
   title?: string;
-  assetType: 'image' | 'video';
+  assetType: 'image' | 'video' | 'audio';
   effectiveContentRating?: ContentRating;
   displayedContentRating?: string;
   blurred?: boolean;
@@ -591,7 +608,7 @@ type Gallery = {
   premiumTeaserMedia?: Array<{
     imageId: string;
     title?: string;
-    assetType: 'image' | 'video';
+    assetType: 'image' | 'video' | 'audio';
     effectiveContentRating?: ContentRating;
     displayedContentRating?: string;
     blurred?: boolean;
@@ -844,6 +861,7 @@ function HeaderAuth({
                   showImages={discoveryDock.showImages}
                   showVideos={discoveryDock.showVideos}
                   showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
                 />
               </button>
               <div className="topbar-discovery-chip-list">
@@ -1033,6 +1051,7 @@ function HeaderAuth({
                     showImages={discoveryDock.showImages}
                     showVideos={discoveryDock.showVideos}
                     showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
                   />
                 )}
               </button>
@@ -1107,6 +1126,7 @@ function HeaderAuth({
                     showImages={discoveryDock.showImages}
                     showVideos={discoveryDock.showVideos}
                     showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
                   />
                 )}
               </button>
@@ -2205,6 +2225,7 @@ function HomePage({
   const [showImageMedia, setShowImageMedia] = useState(true);
   const [showVideoMedia, setShowVideoMedia] = useState(true);
   const [showPostMedia, setShowPostMedia] = useState(true);
+  const [showAudioMedia, setShowAudioMedia] = useState(true);
   const [showCompactDiscoveryDock, setShowCompactDiscoveryDock] = useState(false);
   const [compactFiltersOpen, setCompactFiltersOpen] = useState(false);
   const [compactFilterSection, setCompactFilterSection] = useState<DiscoveryFilterSection>('period');
@@ -2254,14 +2275,21 @@ function HomePage({
     aiFilter: disclosureAiFilter,
     hideHeavyTopics,
     hidePoliticsPublicAffairs: hideHeavyTopics ? true : hidePoliticsPublicAffairs,
-    hideCrimeDisastersTragedy: hideHeavyTopics ? true : hideCrimeDisastersTragedy
+    hideCrimeDisastersTragedy: hideHeavyTopics ? true : hideCrimeDisastersTragedy,
+    itemTypes: [
+      ...(showImageMedia ? ['image'] : []),
+      ...(showVideoMedia ? ['video'] : []),
+      ...(showPostMedia ? ['story'] : []),
+      ...(showAudioMedia ? ['audio'] : [])
+    ]
   };
   const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
   const someHeavyHidden = !heavyHidden && (hidePoliticsPublicAffairs || hideCrimeDisastersTragedy);
   const mediaSummaryLabel = getDiscoveryMediaLabel({
     showImages: showImageMedia,
     showVideos: showVideoMedia,
-    showPosts: showPostMedia
+    showPosts: showPostMedia,
+    showAudio: showAudioMedia
   });
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
     densityViewport === 'mobile'
@@ -2326,7 +2354,7 @@ function HomePage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.requestAnimationFrame(() => window.dispatchEvent(new Event('scroll')));
-  }, [heavyTopicsExpanded, densityViewport, feedDensity, trendingPeriod, discoverySearch, showImageMedia, showVideoMedia, showPostMedia]);
+  }, [heavyTopicsExpanded, densityViewport, feedDensity, trendingPeriod, discoverySearch, showImageMedia, showVideoMedia, showPostMedia, showAudioMedia]);
 
   useEffect(() => {
     if (densityViewport !== 'mobile' && !showCompactDiscoveryDock) {
@@ -2423,6 +2451,7 @@ function HomePage({
       showImages: showImageMedia,
       showVideos: showVideoMedia,
       showPosts: showPostMedia,
+      showAudio: showAudioMedia,
       heavyLabel: heavySummaryLabel,
       searchActive: discoverySearch.trim().length > 0
     });
@@ -2819,7 +2848,8 @@ function HomePage({
   const trendingAfterMediaType = trendingAfterSearch.filter((item) => passesDiscoveryMediaFilter(item, {
     showImages: showImageMedia,
     showVideos: showVideoMedia,
-    showPosts: showPostMedia
+    showPosts: showPostMedia,
+    showAudio: showAudioMedia
   }));
   const trendingRenderable = trendingAfterMediaType.filter((item) => Boolean(item.previewUrl));
   const smallTopItemCount = densityTopRows.small * 4;
@@ -3279,7 +3309,7 @@ function HomePage({
     options?: { forceSquareFrame?: boolean; compactCard?: boolean; preload?: boolean }
   ) => {
     const isPostSurface = item.surfaceType === 'post' || Boolean(item.postId);
-    const assetType = item.assetType === 'video' ? 'video' : 'image';
+    const assetType = item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image';
     const effectivePosterUrl = item.previewPosterUrl
       || (assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
     const visibilityPill = item.galleryVisibility === 'preview'
@@ -3331,7 +3361,11 @@ function HomePage({
               aspectRatio: `${frameRatio.toFixed(3)} / 1`
             }}
           >
-            {(assetType === 'video' && !effectivePosterUrl) ? (
+            {(assetType === 'audio') ? (
+              <div className="discovery-audio-preview" aria-label={item.title || 'Audio preview'}>
+                <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              </div>
+            ) : (assetType === 'video' && !effectivePosterUrl) ? (
               <video
                 src={item.previewUrl}
                 muted
@@ -3363,7 +3397,7 @@ function HomePage({
                 className="discovery-chip"
                 style={{ left: visibilityPill ? '6.1rem' : '1rem' }}
               >
-                POST
+                {(item.postType || 'story').toUpperCase()}
               </span>
             )}
             {assetType === 'video' && (
@@ -3372,6 +3406,14 @@ function HomePage({
                 style={{ left: 'unset', right: visibilityPill ? '8.2rem' : (isPostSurface ? '6rem' : '1rem') }}
               >
                 Video
+              </span>
+            )}
+            {assetType === 'audio' && (
+              <span
+                className="discovery-chip"
+                style={{ left: 'unset', right: visibilityPill ? '8.2rem' : (isPostSurface ? '6rem' : '1rem') }}
+              >
+                Audio
               </span>
             )}
             {isBlurredByRating && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
@@ -3601,7 +3643,12 @@ function HomePage({
             <button className={`discovery-pill-btn discovery-media-toggle-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
               <span className={`discovery-media-toggle-check${showPostMedia ? ' is-checked' : ''}`} aria-hidden="true" />
               <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />
-              <span>Posts</span>
+              <span>Stories</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => setShowAudioMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showAudioMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              <span>Audio</span>
             </button>
           </div>
         </div>
@@ -3848,8 +3895,13 @@ function HomePage({
                   <button className={`discovery-pill-btn discovery-media-toggle-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
                     <span className={`discovery-media-toggle-check${showPostMedia ? ' is-checked' : ''}`} aria-hidden="true" />
                     <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />
-                    <span>Posts</span>
+                    <span>Stories</span>
                   </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => setShowAudioMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showAudioMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              <span>Audio</span>
+            </button>
                 </div>
               </div>
 
@@ -4326,7 +4378,7 @@ function GalleryPage({
   const [premiumImages, setPremiumImages] = useState<Array<{
     imageId: string;
     title?: string;
-    assetType: 'image' | 'video';
+    assetType: 'image' | 'video' | 'audio';
     effectiveContentRating?: ContentRating;
     displayedContentRating?: string;
     blurred?: boolean;
@@ -4348,6 +4400,7 @@ function GalleryPage({
   const [showImageMedia, setShowImageMedia] = useState(true);
   const [showVideoMedia, setShowVideoMedia] = useState(true);
   const [showPostMedia, setShowPostMedia] = useState(true);
+  const [showAudioMedia, setShowAudioMedia] = useState(true);
   const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
   const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
   const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
@@ -4380,7 +4433,8 @@ function GalleryPage({
   const mediaSummaryLabel = getDiscoveryMediaLabel({
     showImages: showImageMedia,
     showVideos: showVideoMedia,
-    showPosts: showPostMedia
+    showPosts: showPostMedia,
+    showAudio: showAudioMedia
   });
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
     densityViewport === 'mobile'
@@ -4647,8 +4701,9 @@ function GalleryPage({
     passesDiscoveryMediaFilter(item, {
       showImages: showImageMedia,
       showVideos: showVideoMedia,
-      showPosts: showPostMedia
-    })
+      showPosts: showPostMedia,
+    showAudio: showAudioMedia
+  })
     && passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
     && passesHeavyTopicFilter(item.effectiveHeavyTopics, {
       hideHeavyTopics,
@@ -4716,7 +4771,7 @@ function GalleryPage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.requestAnimationFrame(() => window.dispatchEvent(new Event('scroll')));
-  }, [galleryScope, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch, showImageMedia, showVideoMedia, showPostMedia]);
+  }, [galleryScope, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch, showImageMedia, showVideoMedia, showPostMedia, showAudioMedia]);
 
   useEffect(() => {
     if (densityViewport !== 'mobile' && !showCompactDiscoveryDock) {
@@ -4785,6 +4840,7 @@ function GalleryPage({
       showImages: showImageMedia,
       showVideos: showVideoMedia,
       showPosts: showPostMedia,
+      showAudio: showAudioMedia,
       heavyLabel: heavySummaryLabel,
       searchActive: discoverySearch.trim().length > 0
     });
@@ -5083,7 +5139,12 @@ function GalleryPage({
             <button className={`discovery-pill-btn discovery-media-toggle-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
               <span className={`discovery-media-toggle-check${showPostMedia ? ' is-checked' : ''}`} aria-hidden="true" />
               <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />
-              <span>Posts</span>
+              <span>Stories</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => setShowAudioMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showAudioMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              <span>Audio</span>
             </button>
           </div>
         </div>
@@ -5300,8 +5361,13 @@ function GalleryPage({
                   <button className={`discovery-pill-btn discovery-media-toggle-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
                     <span className={`discovery-media-toggle-check${showPostMedia ? ' is-checked' : ''}`} aria-hidden="true" />
                     <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />
-                    <span>Posts</span>
+                    <span>Stories</span>
                   </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => setShowAudioMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showAudioMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              <span>Audio</span>
+            </button>
                 </div>
               </div>
               <div className="discovery-heavy-card">
@@ -6011,6 +6077,7 @@ function CreatorProfilePage({
   const [showImageMedia, setShowImageMedia] = useState(true);
   const [showVideoMedia, setShowVideoMedia] = useState(true);
   const [showPostMedia, setShowPostMedia] = useState(true);
+  const [showAudioMedia, setShowAudioMedia] = useState(true);
   const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
   const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
   const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
@@ -6065,7 +6132,8 @@ function CreatorProfilePage({
   const mediaSummaryLabel = getDiscoveryMediaLabel({
     showImages: showImageMedia,
     showVideos: showVideoMedia,
-    showPosts: showPostMedia
+    showPosts: showPostMedia,
+    showAudio: showAudioMedia
   });
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
     densityViewport === 'mobile'
@@ -6251,7 +6319,7 @@ function CreatorProfilePage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.requestAnimationFrame(() => window.dispatchEvent(new Event('scroll')));
-  }, [artistTab, artistFeedSort, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch, showImageMedia, showVideoMedia, showPostMedia]);
+  }, [artistTab, artistFeedSort, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch, showImageMedia, showVideoMedia, showPostMedia, showAudioMedia]);
 
   useEffect(() => {
     if (densityViewport !== 'mobile' && !showCompactDiscoveryDock) {
@@ -6446,8 +6514,9 @@ function CreatorProfilePage({
     passesDiscoveryMediaFilter(item, {
       showImages: showImageMedia,
       showVideos: showVideoMedia,
-      showPosts: showPostMedia
-    })
+      showPosts: showPostMedia,
+    showAudio: showAudioMedia
+  })
     && passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
     && passesHeavyTopicFilter(item.effectiveHeavyTopics, {
       hideHeavyTopics,
@@ -6666,7 +6735,12 @@ function CreatorProfilePage({
             <button className={`discovery-pill-btn discovery-media-toggle-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
               <span className={`discovery-media-toggle-check${showPostMedia ? ' is-checked' : ''}`} aria-hidden="true" />
               <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />
-              <span>Posts</span>
+              <span>Stories</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => setShowAudioMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showAudioMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              <span>Audio</span>
             </button>
           </div>
         </div>

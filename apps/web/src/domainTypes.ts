@@ -17,6 +17,7 @@ export type DiscoveryDockSummary = {
   showImages: boolean;
   showVideos: boolean;
   showPosts: boolean;
+  showAudio: boolean;
   heavyLabel:
     | 'Heavy Shown'
     | 'Some Heavy'
@@ -52,7 +53,9 @@ export type CollectionSummary = {
 
 export type TrendingImage = {
   imageId: string;
-  assetType?: 'image' | 'video';
+  assetType?: 'image' | 'video' | 'audio';
+  postType?: 'image' | 'video' | 'story' | 'audio';
+  postFormat?: 'single' | 'multi' | 'short' | 'long';
   creatorId: string;
   creatorName: string;
   groupingId: string;

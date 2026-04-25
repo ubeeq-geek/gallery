@@ -1,6 +1,7 @@
 {
   "mediaDir": "media",
   "siteSettings": {
+    "stackName": "UbeeqStack",
     "siteName": "Ubeeq",
     "theme": "ubeeq",
     "logoKey": "branding/ubeeq-logo.svg",
@@ -151,7 +152,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Mile Marker Notes"
+            },
             {
               "type": "paragraph",
               "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
@@ -162,7 +167,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0001"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0002",
@@ -182,7 +189,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Roadside Stop" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Roadside Stop"
+            },
             {
               "type": "paragraph",
               "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
@@ -193,7 +204,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0002"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0003",
@@ -213,7 +226,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Noon Light" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Noon Light"
+            },
             {
               "type": "paragraph",
               "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
@@ -224,7 +241,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0003"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0004",
@@ -244,7 +263,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Cloud Break" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Cloud Break"
+            },
             {
               "type": "paragraph",
               "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
@@ -255,7 +278,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0004"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0005",
@@ -275,7 +300,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Unexpected Detour" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Unexpected Detour"
+            },
             {
               "type": "paragraph",
               "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
@@ -286,7 +315,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0005"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0006",
@@ -306,7 +337,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Mile Marker Notes"
+            },
             {
               "type": "paragraph",
               "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
@@ -317,7 +352,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0006"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0007",
@@ -337,7 +374,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Roadside Stop" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Roadside Stop"
+            },
             {
               "type": "paragraph",
               "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
@@ -348,7 +389,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0007"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0008",
@@ -368,7 +411,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Noon Light" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Noon Light"
+            },
             {
               "type": "paragraph",
               "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
@@ -379,7 +426,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0008"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0009",
@@ -399,7 +448,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Cloud Break" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Cloud Break"
+            },
             {
               "type": "paragraph",
               "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
@@ -410,7 +463,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0009"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0010",
@@ -430,7 +485,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Unexpected Detour" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Unexpected Detour"
+            },
             {
               "type": "paragraph",
               "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
@@ -441,7 +500,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0010"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0011",
@@ -461,7 +522,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Mile Marker Notes"
+            },
             {
               "type": "paragraph",
               "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
@@ -472,7 +537,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0011"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0012",
@@ -492,7 +559,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Roadside Stop" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Roadside Stop"
+            },
             {
               "type": "paragraph",
               "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
@@ -503,7 +574,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0012"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0013",
@@ -523,7 +596,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Noon Light" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Noon Light"
+            },
             {
               "type": "paragraph",
               "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
@@ -534,7 +611,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0013"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0014",
@@ -554,7 +633,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Cloud Break" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Cloud Break"
+            },
             {
               "type": "paragraph",
               "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
@@ -565,7 +648,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0014"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0015",
@@ -585,7 +670,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Unexpected Detour" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Unexpected Detour"
+            },
             {
               "type": "paragraph",
               "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
@@ -596,7 +685,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0015"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0016",
@@ -616,7 +707,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Mile Marker Notes"
+            },
             {
               "type": "paragraph",
               "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
@@ -627,7 +722,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0016"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0017",
@@ -647,7 +744,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Roadside Stop" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Roadside Stop"
+            },
             {
               "type": "paragraph",
               "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
@@ -658,7 +759,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0017"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0018",
@@ -678,7 +781,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Noon Light" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Noon Light"
+            },
             {
               "type": "paragraph",
               "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
@@ -689,7 +796,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0018"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0019",
@@ -709,7 +818,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Cloud Break" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Cloud Break"
+            },
             {
               "type": "paragraph",
               "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
@@ -720,7 +833,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0019"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0020",
@@ -740,7 +855,11 @@
             }
           ],
           "blocks": [
-            { "type": "heading", "level": 2, "text": "Unexpected Detour" },
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Unexpected Detour"
+            },
             {
               "type": "paragraph",
               "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
@@ -751,7 +870,9 @@
               "groupingSlug": "roadside-america-default",
               "caption": "Frame 0020"
             }
-          ]
+          ],
+          "postType": "image",
+          "postFormat": "single"
         }
       ]
     },
@@ -770,7 +891,7 @@
           }
         },
         "coverImage": {
-          "file": "amphoryn/hoichi/part-2-performance.jpg",
+          "file": "amphoryn/hoichi-2-1.jpg",
           "altText": "Illustrated shoreline from Hoichi the Earless",
           "focalPoint": {
             "x": 0.52,
@@ -818,7 +939,7 @@
           "groupingSlug": "hoichi-the-earless",
           "title": "Hoichi the Earless #1.2",
           "appearsInFeed": true
-        },        
+        },
         {
           "file": "amphoryn/hoichi-2-1.jpg",
           "groupingSlug": "hoichi-the-earless",
@@ -997,7 +1118,7 @@
                 {
                   "type": "paragraph",
                   "text": "Until the night when someone came for him."
-                }                
+                }
               ]
             },
             {
@@ -1373,7 +1494,7 @@
                 {
                   "type": "paragraph",
                   "text": "The figure moved closer. Hoichi heard the shift of armored weight, the soft displacement of air. Felt the presence of something immense and very old leaning over him."
-                },            
+                },
                 {
                   "type": "paragraph",
                   "text": "When the voice came again, it was almost to itself:"
@@ -1478,10 +1599,12 @@
                 {
                   "type": "paragraph",
                   "text": "And with each full moon, Hoichi would sit facing the cemetery with his biwa, and recite the opening passages of the tale — the temple bells of Gion, the blossoms of the sala trees — offering to the young Emperor what he could give, and the only thing the boy had never been given: a gentle story."
-                }                
+                }
               ]
             }
-          ]
+          ],
+          "postType": "story",
+          "postFormat": "long"
         }
       ]
     }

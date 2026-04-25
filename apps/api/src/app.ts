@@ -935,7 +935,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
   type TrendingImageItem = {
     imageId: string;
-    assetType: 'image' | 'video';
+    assetType: 'image' | 'video' | 'audio';
+    postType?: 'image' | 'video' | 'story' | 'audio';
+    postFormat?: 'single' | 'multi' | 'short' | 'long';
     surfaceType?: 'media' | 'post';
     postId?: string;
     postSlug?: string;
@@ -974,11 +976,44 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     score: number;
   };
 
-  type DiscoveryItemType = 'image' | 'video' | 'post';
+  type DiscoveryItemType = 'image' | 'video' | 'story' | 'audio';
   type DiscoveryItemTypeFilter = {
     image: boolean;
     video: boolean;
-    post: boolean;
+    story: boolean;
+    audio: boolean;
+  };
+
+  const normalizePostType = (post: Pick<Post, 'metadata' | 'blocks' | 'media' | 'primaryMediaId'>, mediaById?: Map<string, Pick<Media, 'mediaId' | 'assetType'>>): DiscoveryItemType => {
+    const raw = (post.metadata?.postType || post.metadata?.type || post.metadata?.kind || '').toLowerCase();
+    if (raw === 'image' || raw === 'images' || raw === 'photo' || raw === 'photos') return 'image';
+    if (raw === 'video' || raw === 'videos' || raw === 'short' || raw === 'shorts' || raw === 'reel' || raw === 'reels') return 'video';
+    if (raw === 'audio' || raw === 'track' || raw === 'album') return 'audio';
+    if (raw === 'story' || raw === 'stories' || raw === 'blocks' || raw === 'article' || raw === 'reading' || raw === 'fiction') return 'story';
+
+    const primaryId = post.primaryMediaId || post.media[0]?.mediaId;
+    const primary = primaryId ? mediaById?.get(primaryId) : undefined;
+    if (primary?.assetType === 'video') return 'video';
+    if (primary?.assetType === 'audio') return 'audio';
+    if (primary?.assetType === 'image' && post.blocks.length <= 2) return 'image';
+    if (post.blocks.some((block) => block.type === 'audio')) return 'audio';
+    if (post.blocks.some((block) => block.type === 'video')) return 'video';
+    return 'story';
+  };
+
+  const normalizePostFormat = (
+    post: Pick<Post, 'metadata' | 'blocks' | 'media'>,
+    postType: DiscoveryItemType
+  ): 'single' | 'multi' | 'short' | 'long' => {
+    const raw = (post.metadata?.postFormat || post.metadata?.format || '').toLowerCase();
+    if ((postType === 'image' || postType === 'audio') && (raw === 'single' || raw === 'multi' || raw === 'album')) {
+      return raw === 'album' ? 'multi' : raw;
+    }
+    if ((postType === 'video' || postType === 'story') && (raw === 'short' || raw === 'long')) return raw;
+    if (postType === 'story') return post.blocks.filter((block) => block.type === 'paragraph').length >= 6 ? 'long' : 'short';
+    if (postType === 'video') return post.metadata?.videoFormat === 'short' || post.metadata?.layout === 'short' ? 'short' : 'long';
+    if (postType === 'audio') return post.media.length > 1 ? 'multi' : 'single';
+    return post.media.length > 1 ? 'multi' : 'single';
   };
 
   const normalizeDiscoveryItemType = (value: string): DiscoveryItemType | null => {
@@ -986,7 +1021,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     if (!normalized) return null;
     if (normalized === 'image' || normalized === 'images') return 'image';
     if (normalized === 'video' || normalized === 'videos') return 'video';
-    if (normalized === 'post' || normalized === 'posts') return 'post';
+    if (normalized === 'story' || normalized === 'stories' || normalized === 'post' || normalized === 'posts') return 'story';
+    if (normalized === 'audio' || normalized === 'audios' || normalized === 'track' || normalized === 'tracks') return 'audio';
     return null;
   };
 
@@ -1005,7 +1041,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       .filter(Boolean);
 
     if (tokens.length === 0) {
-      return { image: true, video: true, post: true };
+      return { image: true, video: true, story: true, audio: true };
     }
 
     const selected = new Set<DiscoveryItemType>();
@@ -1015,14 +1051,37 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
 
     if (selected.size === 0) {
-      return { image: true, video: true, post: true };
+      return { image: true, video: true, story: true, audio: true };
     }
 
     return {
       image: selected.has('image'),
       video: selected.has('video'),
-      post: selected.has('post')
+      story: selected.has('story'),
+      audio: selected.has('audio')
     };
+  };
+
+  const sanitizePostMetadata = (value: unknown): Record<string, string> => (
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>)
+            .filter(([key, item]) => typeof key === 'string' && typeof item === 'string')
+            .map(([key, item]) => [key.slice(0, 120), String(item).slice(0, 1000)])
+        )
+      : {}
+  );
+
+  const metadataWithPostType = (body: unknown, existing?: Record<string, string>): Record<string, string> => {
+    const raw = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+    const metadata = raw.metadata !== undefined ? sanitizePostMetadata(raw.metadata) : { ...(existing || {}) };
+    const postType = typeof raw.postType === 'string' ? normalizeDiscoveryItemType(raw.postType) : null;
+    if (postType) metadata.postType = postType;
+    const postFormat = typeof raw.postFormat === 'string' ? raw.postFormat.trim().toLowerCase() : '';
+    if (postFormat === 'single' || postFormat === 'multi' || postFormat === 'short' || postFormat === 'long' || postFormat === 'album') {
+      metadata.postFormat = postFormat === 'album' ? 'multi' : postFormat;
+    }
+    return metadata;
   };
 
   const computeTrendingImages = async (
@@ -1044,8 +1103,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const period = opts?.period === 'hourly' ? 'hourly' : 'daily';
     const source: 'media' | 'post' | 'combined' = opts?.source === 'media' || opts?.source === 'post' || opts?.source === 'combined'
       ? opts.source
-      : 'combined';
-    const itemTypes = opts?.itemTypes || { image: true, video: true, post: true };
+      : 'post';
+    const itemTypes = opts?.itemTypes || { image: true, video: true, story: true, audio: true };
     const limit = Math.max(1, Math.min(60, Number(opts?.limit || 24)));
     const candidateLimit = Math.max(
       120,
@@ -1084,7 +1143,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const groupingById = new Map(allGalleries.map((grouping) => [grouping.groupingId, grouping]));
     const candidates: Array<{
       imageId: string;
-      assetType: 'image' | 'video';
+      assetType: 'image' | 'video' | 'audio';
+      postType?: DiscoveryItemType;
+      postFormat?: 'single' | 'multi' | 'short' | 'long';
       surfaceType: 'media' | 'post';
       creatorId: string;
       groupingId: string;
@@ -1112,71 +1173,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       aspectRatio: number;
     }> = [];
     const mediaPostLinks = new Map<string, Set<string>>();
-    if (source !== 'post') {
-      const mediaByGrouping = await Promise.all(
-        allGalleries.map(async (grouping) => ({ grouping, media: await store.getMediaByGrouping(grouping.groupingId) }))
-      );
-      for (const { grouping, media } of mediaByGrouping) {
-        for (const item of media) {
-          const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
-          if (assetType === 'image' && !itemTypes.image) continue;
-          if (assetType === 'video' && !itemTypes.video) continue;
-          if (item.appearsInFeed === false) continue;
-          if (isHiddenByVisibility(item.releaseVisibility)) continue;
-          if (!canViewBySchedule(item.publishAt || grouping.publishAt, item.publicReleaseAt || grouping.publicReleaseAt, nowMs, false)) {
-            continue;
-          }
-          const createdAtMs = asTime(item.createdAt) || nowMs;
-          const discoverSquareCropEnabled =
-            (creatorById.get(item.creatorId)?.discoverSquareCropEnabled ?? true) &&
-            (grouping.discoverSquareCropEnabled ?? true) &&
-            (item.discoverSquareCropEnabled ?? true);
-          const creatorProfile = creatorById.get(item.creatorId);
-          const effectiveContentRating = getEffectiveContentRating(item);
-          const effectiveAiDisclosure = getEffectiveAiDisclosure(item, grouping, creatorProfile);
-          const effectiveHeavyTopics = getEffectiveHeavyTopics(item, grouping, creatorProfile);
-          if (!isRatingAllowed(effectiveContentRating, viewerPolicy.maxAllowedContentRating)) continue;
-          if (!passesDisclosureFilter(effectiveAiDisclosure, effectiveHeavyTopics, viewerPolicy.disclosurePolicy)) continue;
-          candidates.push({
-            imageId: item.mediaId,
-            assetType,
-            surfaceType: 'media',
-            creatorId: item.creatorId,
-            groupingId: grouping.groupingId,
-            groupingSlug: grouping.slug,
-            groupingVisibility: grouping.visibility === 'preview' ? 'preview' : 'free',
-            relatedPostIds: [],
-            isPrimaryPostSurface: false,
-            discoverSquareCropEnabled,
-            effectiveContentRating,
-            effectiveAiDisclosure,
-            effectiveHeavyTopics,
-            title: item.title || grouping.title || 'Artwork',
-            thumbnailKeys: item.thumbnailKeys,
-            createdAt: item.createdAt,
-            createdAtMs,
-            recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
-            ...resolveTrendingPreviewKeys(item),
-            width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
-            height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
-            aspectRatio: (
-              Number.isFinite(item.width) && item.width > 0
-              && Number.isFinite(item.height) && item.height > 0
-            )
-              ? Number((item.width / item.height).toFixed(5))
-              : 1
-          });
-        }
-      }
-    }
     if (source !== 'media') {
-      if (!itemTypes.post) {
-        // Post surfaces explicitly excluded.
-      } else {
       const targetCreators = opts?.creatorId
         ? allCreators.filter((creator) => creator.creatorId === opts.creatorId && creator.status === 'active')
         : allCreators.filter((creator) => creator.status === 'active');
-      const perPostSurfaceLimit = 3;
+      const perPostSurfaceLimit = 1;
       for (const creatorProfile of targetCreators) {
         const [posts, creatorMedia] = await Promise.all([
           store.listPostsByCreatorId(creatorProfile.creatorId),
@@ -1205,6 +1206,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
         for (const post of posts) {
           if (post.status !== 'published') continue;
+          const postType = normalizePostType(post, mediaById);
+          const postFormat = normalizePostFormat(post, postType);
+          if (!itemTypes[postType]) continue;
           const sortedRefs = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
           for (const ref of sortedRefs) {
             if (!ref?.mediaId) continue;
@@ -1216,11 +1220,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             ? sortedRefs.find((ref) => ref.mediaId === post.primaryMediaId)
             : undefined;
           const selectedRefs = sortedRefs.filter((ref) => ref.discoverable !== false);
-          const refs = post.discovery.mode === 'all'
-            ? sortedRefs
-            : (post.discovery.mode === 'selected'
-              ? selectedRefs
-              : (primaryRef ? [primaryRef] : selectedRefs.slice(0, 1)));
+          const refs = primaryRef ? [primaryRef] : selectedRefs.slice(0, 1);
           const limitedRefs = refs.slice(0, perPostSurfaceLimit);
           for (let refIndex = 0; refIndex < limitedRefs.length; refIndex += 1) {
             const ref = limitedRefs[refIndex];
@@ -1238,7 +1238,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             if (!canViewBySchedule(item.publishAt || placedGrouping.publishAt, item.publicReleaseAt || placedGrouping.publicReleaseAt, nowMs, false)) {
               continue;
             }
-            const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
+            const assetType = item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image';
             const createdAtMs = asTime(item.createdAt) || nowMs;
             const discoverSquareCropEnabled =
               (creatorProfile.discoverSquareCropEnabled ?? true) &&
@@ -1252,6 +1252,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             candidates.push({
               imageId: item.mediaId,
               assetType,
+              postType,
+              postFormat,
               surfaceType: 'post',
               creatorId: item.creatorId,
               groupingId: placedGrouping.groupingId,
@@ -1284,7 +1286,6 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             });
           }
         }
-      }
       }
     }
     const postSurfaceMediaIds = new Set(
@@ -1321,6 +1322,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return {
         imageId: item.imageId,
         assetType: item.assetType,
+        postType: item.postType,
+        postFormat: item.postFormat,
         surfaceType: item.surfaceType,
         postId: item.postId,
         postSlug: item.postSlug,
@@ -2008,10 +2011,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   app.get('/discovery/trending-content', async (req, res) => {
     const startedAt = Date.now();
     const period: 'hourly' | 'daily' = req.query.period === 'hourly' ? 'hourly' : 'daily';
-    const source: 'media' | 'post' | 'combined' = req.query.source === 'post'
-      ? 'post'
-      : req.query.source === 'media'
-        ? 'media'
+    const requestedSource = typeof req.query.source === 'string' ? req.query.source : '';
+    const source: 'media' | 'post' | 'combined' =
+      requestedSource === 'media' || requestedSource === 'post' || requestedSource === 'combined'
+        ? requestedSource
         : 'combined';
     const itemTypes = parseDiscoveryItemTypes(req);
     const limit = Math.max(1, Math.min(60, Number(req.query.limit || 24)));
@@ -2024,7 +2027,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       `p:${viewerPolicy.disclosurePolicy.hidePoliticsPublicAffairs ? 1 : 0}`,
       `c:${viewerPolicy.disclosurePolicy.hideCrimeDisastersTragedy ? 1 : 0}`
     ].join(',');
-    const cacheKey = `viewer=${viewerPolicy.loggedIn ? 'auth' : 'anon'}:${viewerPolicy.matureEnabled ? 'm1' : 'm0'}:${viewerPolicy.maxAllowedContentRating}|${disclosureKey}|period=${period}|source=${source}|types=i${itemTypes.image ? 1 : 0}v${itemTypes.video ? 1 : 0}p${itemTypes.post ? 1 : 0}|limit=${limit}|cursor=${decodedCursor || ''}`;
+    const cacheKey = `viewer=${viewerPolicy.loggedIn ? 'auth' : 'anon'}:${viewerPolicy.matureEnabled ? 'm1' : 'm0'}:${viewerPolicy.maxAllowedContentRating}|${disclosureKey}|period=${period}|source=${source}|types=i${itemTypes.image ? 1 : 0}v${itemTypes.video ? 1 : 0}s${itemTypes.story ? 1 : 0}a${itemTypes.audio ? 1 : 0}|limit=${limit}|cursor=${decodedCursor || ''}`;
     const cached = readTrendingResponseCache<{
       body: { period: 'hourly' | 'daily'; items: Omit<TrendingImageItem, 'score'>[]; nextCursor?: string };
       source: 'materialized' | 'fallback';
@@ -2076,8 +2079,17 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             // Best-effort enrichment only.
           }
         }));
-        const items = await Promise.all(filtered.map(async (item) => {
+        const typedFiltered = filtered.filter((item) => {
           const post = item.postId ? postsById.get(item.postId) : undefined;
+          const itemType = post
+            ? normalizePostType(post)
+            : item.postType || (item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image');
+          return itemTypes[itemType];
+        });
+        const items = await Promise.all(typedFiltered.map(async (item) => {
+          const post = item.postId ? postsById.get(item.postId) : undefined;
+          const postType = post ? normalizePostType(post) : item.postType;
+          const postFormat = post && postType ? normalizePostFormat(post, postType) : item.postFormat;
           const effective = normalizeContentRating(item.effectiveContentRating);
           const contentProjection = projectContentRating(effective, viewerPolicy);
           const effectiveAi = normalizeAiDisclosure(item.effectiveAiDisclosure);
@@ -2085,8 +2097,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           const disclosureProjection = projectDisclosures(effectiveAi, effectiveHeavyTopics);
           return {
             imageId: item.imageId,
-            assetType: item.assetType === 'video' ? 'video' : 'image',
-            surfaceType: item.surfaceType === 'post_surface' || Boolean(item.postId) ? 'post' : 'media',
+            assetType: item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image',
+            postType,
+            postFormat,
+            surfaceType: 'post',
             postId: item.postId,
             postSlug: post?.slug,
             postTitle: post?.title,
@@ -2141,7 +2155,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         res.setHeader('x-trending-cache', 'MISS');
         res.setHeader('x-trending-ms', String(Date.now() - startedAt));
         res.setHeader('x-trending-candidates', String(feedPage.items.length));
-        res.setHeader('x-trending-scored', String(feedPage.items.length));
+        res.setHeader('x-trending-scored', String(typedFiltered.length));
         res.setHeader('x-trending-groupings', '0');
         return res.json(body);
       }
@@ -2203,15 +2217,15 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     if (!creator || creator.status !== 'active') {
       return res.status(404).json({ message: 'Creator not found' });
     }
-    const source: 'media' | 'post' | 'combined' = req.query.source === 'post'
-      ? 'post'
-      : req.query.source === 'media'
-        ? 'media'
+    const requestedSource = typeof req.query.source === 'string' ? req.query.source : '';
+    const source: 'media' | 'post' | 'combined' =
+      requestedSource === 'media' || requestedSource === 'post' || requestedSource === 'combined'
+        ? requestedSource
         : 'combined';
     const itemTypes = parseDiscoveryItemTypes(req);
     const result = await getDiscoveryCached(
       req,
-      `discovery:creator-trending:${creator.creatorId}:source=${source}:types=i${itemTypes.image ? 1 : 0}v${itemTypes.video ? 1 : 0}p${itemTypes.post ? 1 : 0}`,
+      `discovery:creator-trending:${creator.creatorId}:source=${source}:types=i${itemTypes.image ? 1 : 0}v${itemTypes.video ? 1 : 0}s${itemTypes.story ? 1 : 0}a${itemTypes.audio ? 1 : 0}`,
       () => computeTrendingImages(req, {
       period: req.query.period === 'hourly' ? 'hourly' : 'daily',
       cursor: typeof req.query.cursor === 'string' ? req.query.cursor : undefined,
@@ -4236,13 +4250,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             url: typeof req.body.destination.url === 'string' ? req.body.destination.url.slice(0, 2048) : ''
           }
         : null,
-      metadata: req.body?.metadata && typeof req.body.metadata === 'object' && !Array.isArray(req.body.metadata)
-        ? Object.fromEntries(
-            Object.entries(req.body.metadata as Record<string, unknown>)
-              .filter(([key, value]) => typeof key === 'string' && typeof value === 'string')
-              .map(([key, value]) => [key.slice(0, 120), String(value).slice(0, 1000)])
-          )
-        : {},
+      metadata: metadataWithPostType(req.body),
       createdAt: now,
       updatedAt: now,
       publishedAt: status === 'published' ? now : undefined
@@ -4299,16 +4307,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
               : null
           )
         : existing.destination,
-      metadata: req.body?.metadata !== undefined
-        ? (
-            req.body.metadata && typeof req.body.metadata === 'object' && !Array.isArray(req.body.metadata)
-              ? Object.fromEntries(
-                  Object.entries(req.body.metadata as Record<string, unknown>)
-                    .filter(([key, value]) => typeof key === 'string' && typeof value === 'string')
-                    .map(([key, value]) => [key.slice(0, 120), String(value).slice(0, 1000)])
-                )
-              : {}
-          )
+      metadata: req.body?.metadata !== undefined || req.body?.postType !== undefined || req.body?.postFormat !== undefined
+        ? metadataWithPostType(req.body, existing.metadata)
         : existing.metadata,
       updatedAt: new Date().toISOString(),
       publishedAt: nextStatus === 'published' ? (existing.publishedAt || new Date().toISOString()) : existing.publishedAt

@@ -168,6 +168,7 @@ export const api = {
       hideHeavyTopics?: boolean;
       hidePoliticsPublicAffairs?: boolean;
       hideCrimeDisastersTragedy?: boolean;
+      itemTypes?: string[];
     },
     source: 'combined' | 'media' | 'post' = 'combined'
   ) {
@@ -180,6 +181,7 @@ export const api = {
     if (filters?.hideHeavyTopics !== undefined) qs.set('hideHeavyTopics', String(Boolean(filters.hideHeavyTopics)));
     if (filters?.hidePoliticsPublicAffairs !== undefined) qs.set('hidePoliticsPublicAffairs', String(Boolean(filters.hidePoliticsPublicAffairs)));
     if (filters?.hideCrimeDisastersTragedy !== undefined) qs.set('hideCrimeDisastersTragedy', String(Boolean(filters.hideCrimeDisastersTragedy)));
+    if (filters?.itemTypes?.length) qs.set('itemTypes', filters.itemTypes.join(','));
     const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-content?${qs.toString()}`));
     return handleJson(response);
   },
@@ -476,6 +478,8 @@ export const api = {
     blocks?: Array<Record<string, unknown>>;
     media?: Array<{ mediaId: string; discoverable?: boolean; sortOrder?: number; caption?: string }>;
     primaryMediaId?: string;
+    postType?: 'image' | 'video' | 'story' | 'audio';
+    postFormat?: 'single' | 'multi' | 'short' | 'long';
     discoveryMode?: 'primary' | 'all' | 'selected';
     destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
     metadata?: Record<string, string>;
@@ -495,6 +499,8 @@ export const api = {
     blocks?: Array<Record<string, unknown>>;
     media?: Array<{ mediaId: string; discoverable?: boolean; sortOrder?: number; caption?: string }>;
     primaryMediaId?: string;
+    postType?: 'image' | 'video' | 'story' | 'audio';
+    postFormat?: 'single' | 'multi' | 'short' | 'long';
     discoveryMode?: 'primary' | 'all' | 'selected';
     destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
     metadata?: Record<string, string>;

@@ -20,6 +20,8 @@ import type {
   PostBlock,
   PostDestination,
   PostDiscoveryMode,
+  PostFormat,
+  PostType,
   SiteSettings
 } from '../domain';
 import { generateCreatorCoverRenditions, generateCreatorProfileRenditions, generateImageRenditions } from '../renditions';
@@ -169,6 +171,8 @@ type ScenarioPostSeed = {
   slug?: string;
   summary?: string;
   status?: 'draft' | 'published' | 'archived';
+  postType?: PostType;
+  postFormat?: PostFormat;
   serializationMode?: 'flat' | 'staged';
   totalSectionCount?: number;
   currentSectionCount?: number;
@@ -605,6 +609,20 @@ const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed 
   if (discoveryModeRaw && discoveryModeRaw !== 'primary' && discoveryModeRaw !== 'all' && discoveryModeRaw !== 'selected') {
     throw new Error(`Scenario field "${fieldName}.discoveryMode" must be primary, all, or selected`);
   }
+  const postTypeRaw = asOptionalString(value.postType);
+  if (postTypeRaw && postTypeRaw !== 'image' && postTypeRaw !== 'video' && postTypeRaw !== 'audio' && postTypeRaw !== 'story') {
+    throw new Error(`Scenario field "${fieldName}.postType" must be image, video, audio, or story`);
+  }
+  const postFormatRaw = asOptionalString(value.postFormat);
+  if (postFormatRaw && postFormatRaw !== 'single' && postFormatRaw !== 'multi' && postFormatRaw !== 'short' && postFormatRaw !== 'long') {
+    throw new Error(`Scenario field "${fieldName}.postFormat" must be single, multi, short, or long`);
+  }
+  if ((postTypeRaw === 'image' || postTypeRaw === 'audio') && postFormatRaw && postFormatRaw !== 'single' && postFormatRaw !== 'multi') {
+    throw new Error(`Scenario field "${fieldName}.postFormat" must be single or multi for ${postTypeRaw} posts`);
+  }
+  if ((postTypeRaw === 'video' || postTypeRaw === 'story') && postFormatRaw && postFormatRaw !== 'short' && postFormatRaw !== 'long') {
+    throw new Error(`Scenario field "${fieldName}.postFormat" must be short or long for ${postTypeRaw} posts`);
+  }
   const serializationModeRaw = asOptionalString(value.serializationMode);
   if (serializationModeRaw && serializationModeRaw !== 'flat' && serializationModeRaw !== 'staged') {
     throw new Error(`Scenario field "${fieldName}.serializationMode" must be flat or staged`);
@@ -733,6 +751,8 @@ const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed 
     slug,
     summary,
     status: statusRaw as 'draft' | 'published' | 'archived' | undefined,
+    postType: postTypeRaw as PostType | undefined,
+    postFormat: postFormatRaw as PostFormat | undefined,
     serializationMode: serializationModeRaw as 'flat' | 'staged' | undefined,
     totalSectionCount,
     currentSectionCount,
@@ -1950,6 +1970,8 @@ const main = async () => {
         const metadata: Record<string, string> = {
           ...(postSeed.metadata || {})
         };
+        if (postSeed.postType) metadata.postType = postSeed.postType;
+        if (postSeed.postFormat) metadata.postFormat = postSeed.postFormat;
         if (postSeed.serializationMode) metadata.serializationMode = postSeed.serializationMode;
         if (postSeed.totalSectionCount !== undefined) metadata.totalSectionCount = String(postSeed.totalSectionCount);
         if (postSeed.currentSectionCount !== undefined) metadata.currentSectionCount = String(postSeed.currentSectionCount);

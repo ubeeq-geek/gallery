@@ -522,14 +522,15 @@ export class InMemoryStore implements DataStore {
     options?: TrendingFeedQueryOptions
   ): Promise<{ items: TrendingFeedItem[]; nextCursor?: string }> {
     const source = options?.source || 'combined';
-    const itemTypes = options?.itemTypes || { image: true, video: true, post: true };
+    const itemTypes = options?.itemTypes || { image: true, video: true, story: true, audio: true };
     const matches = (item: TrendingFeedItem): boolean => {
       const isPostSurface = item.surfaceType === 'post_surface' || Boolean(item.postId);
       if (source === 'media' && isPostSurface) return false;
       if (source === 'post' && !isPostSurface) return false;
-      if (isPostSurface) return itemTypes.post;
-      if (item.assetType === 'video') return itemTypes.video;
-      return itemTypes.image;
+      const itemType = isPostSurface
+        ? item.postType || (item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image')
+        : (item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image');
+      return itemTypes[itemType];
     };
     const items = (this.trendingFeed.get(period) || []).filter(matches);
     const offset = cursor ? Number(cursor) || 0 : 0;

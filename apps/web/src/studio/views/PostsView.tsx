@@ -6,6 +6,19 @@ import { InspectorPanel } from '../components/InspectorPanel';
 import { Pill } from '../components/Pill';
 import type { StudioCreator, StudioPost } from '../types';
 
+const postTypeOptions = [
+  { value: 'image', label: 'Image' },
+  { value: 'video', label: 'Video' },
+  { value: 'story', label: 'Story' },
+  { value: 'audio', label: 'Audio' }
+] as const;
+
+const getPostType = (post: StudioPost): 'image' | 'video' | 'story' | 'audio' => {
+  const raw = post.postType || post.metadata?.postType;
+  if (raw === 'image' || raw === 'video' || raw === 'story' || raw === 'audio') return raw;
+  return post.primaryMediaId ? 'image' : 'story';
+};
+
 export function PostsView({
   posts,
   creators
@@ -15,16 +28,18 @@ export function PostsView({
 }) {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'image' | 'video' | 'story' | 'audio'>('all');
   const creatorById = new Map(creators.map((creator) => [creator.creatorId, creator]));
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return posts;
-    return posts.filter((post) =>
-      post.title.toLowerCase().includes(query)
-      || (post.summary || '').toLowerCase().includes(query)
-      || (creatorById.get(post.creatorId)?.name || '').toLowerCase().includes(query)
-    );
-  }, [creatorById, posts, search]);
+    return posts.filter((post) => {
+      if (typeFilter !== 'all' && getPostType(post) !== typeFilter) return false;
+      if (!query) return true;
+      return post.title.toLowerCase().includes(query)
+        || (post.summary || '').toLowerCase().includes(query)
+        || (creatorById.get(post.creatorId)?.name || '').toLowerCase().includes(query);
+    });
+  }, [creatorById, posts, search, typeFilter]);
 
   useEffect(() => {
     if (!filtered.length) {
@@ -42,7 +57,12 @@ export function PostsView({
     title: post.title,
     subtitle: creatorById.get(post.creatorId)?.name || post.creatorId,
     meta: `${post.media?.length || 0} media refs`,
-    badges: <Pill label={post.status} tone={post.status === 'published' ? 'success' : 'warning'} />
+    badges: (
+      <>
+        <Pill label={getPostType(post)} tone="info" />
+        <Pill label={post.status} tone={post.status === 'published' ? 'success' : 'warning'} />
+      </>
+    )
   }));
 
   return (
@@ -52,7 +72,21 @@ export function PostsView({
           search={search}
           onSearchChange={setSearch}
           searchPlaceholder="Search posts..."
-          primaryAction={<button type="button" className="auth-primary-btn">+ New Post</button>}
+          primaryAction={
+            <div className="studio-inline-actions">
+              <button type="button" className={`auth-secondary-btn${typeFilter === 'all' ? ' is-active' : ''}`} onClick={() => setTypeFilter('all')}>All</button>
+              {postTypeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`auth-secondary-btn${typeFilter === option.value ? ' is-active' : ''}`}
+                  onClick={() => setTypeFilter(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          }
         />
         <CrudTable rows={rows} selectedId={selected?.postId} onSelect={(row) => setSelectedId(row.id)} emptyMessage="No posts match this search." />
       </Card>
@@ -72,6 +106,7 @@ export function PostsView({
           >
             <div className="studio-inspector-list">
               <div><strong>Summary</strong><span>{selected.summary || 'No summary'}</span></div>
+              <div><strong>Type</strong><span>{getPostType(selected)}</span></div>
               <div><strong>Primary media</strong><span>{selected.primaryMediaId || 'None'}</span></div>
               <div><strong>Referenced media</strong><span>{selected.media?.length || 0}</span></div>
             </div>
