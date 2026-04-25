@@ -3,9 +3,18 @@ import { Link, useLocation } from 'react-router-dom';
 import type { CurrentUser } from '../cognitoAuth';
 import { DISCOVERY_FILTER_EVENT_NAME, type DiscoveryDockSummary, type DiscoveryFilterSection, type SiteSettings, type UserProfile } from '../domainTypes';
 
-type DiscoveryMediaKind = 'image' | 'video' | 'post';
+type DiscoveryMediaKind = 'image' | 'video' | 'post' | 'audio';
 
 const DiscoveryMediaIcon = ({ kind, className }: { kind: DiscoveryMediaKind; className?: string }) => {
+  if (kind === 'audio') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+        <path d="M8 14.2V5.4L15 4.2V13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="5.8" cy="14.2" r="2.1" stroke="currentColor" strokeWidth="1.6" />
+        <circle cx="12.8" cy="13" r="2.1" stroke="currentColor" strokeWidth="1.6" />
+      </svg>
+    );
+  }
   if (kind === 'video') {
     return (
       <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
@@ -37,16 +46,19 @@ const DiscoveryMediaIcon = ({ kind, className }: { kind: DiscoveryMediaKind; cla
 const DiscoveryMediaIndicator = ({
   showImages,
   showVideos,
-  showPosts
+  showPosts,
+  showAudio
 }: {
   showImages: boolean;
   showVideos: boolean;
   showPosts: boolean;
+  showAudio: boolean;
 }) => (
   <span className="discovery-media-indicator" aria-hidden="true">
     {showImages && <DiscoveryMediaIcon kind="image" className="discovery-media-icon" />}
     {showVideos && <DiscoveryMediaIcon kind="video" className="discovery-media-icon" />}
     {showPosts && <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />}
+    {showAudio && <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />}
   </span>
 );
 
@@ -149,6 +161,7 @@ export default function HeaderAuth({
                   showImages={discoveryDock.showImages}
                   showVideos={discoveryDock.showVideos}
                   showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
                 />
               </button>
               <div className="topbar-discovery-chip-list">
@@ -216,6 +229,7 @@ export default function HeaderAuth({
                     showImages={discoveryDock.showImages}
                     showVideos={discoveryDock.showVideos}
                     showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
                   />
                 )}
               </button>
@@ -268,6 +282,7 @@ export default function HeaderAuth({
                     showImages={discoveryDock.showImages}
                     showVideos={discoveryDock.showVideos}
                     showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
                   />
                 )}
               </button>

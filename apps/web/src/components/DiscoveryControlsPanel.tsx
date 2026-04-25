@@ -26,6 +26,7 @@ type DiscoveryControlsPanelProps = {
   showImageMedia: boolean;
   showVideoMedia: boolean;
   showPostMedia: boolean;
+  showAudioMedia: boolean;
   heavyTopicsExpanded: boolean;
   discoverySearch: string;
   currentUserPresent: boolean;
@@ -44,6 +45,7 @@ type DiscoveryControlsPanelProps = {
   onShowImageMediaChange: (enabled: boolean) => void;
   onShowVideoMediaChange: (enabled: boolean) => void;
   onShowPostMediaChange: (enabled: boolean) => void;
+  onShowAudioMediaChange: (enabled: boolean) => void;
   onHeavyTopicsExpandedChange: (expanded: boolean) => void;
   onDensitySliderChange: (value: number) => void;
   onDensityOptionChange: (density: FeedDensity) => void;
@@ -70,6 +72,7 @@ export default function DiscoveryControlsPanel({
   showImageMedia,
   showVideoMedia,
   showPostMedia,
+  showAudioMedia,
   heavyTopicsExpanded,
   discoverySearch,
   currentUserPresent,
@@ -88,6 +91,7 @@ export default function DiscoveryControlsPanel({
   onShowImageMediaChange,
   onShowVideoMediaChange,
   onShowPostMediaChange,
+  onShowAudioMediaChange,
   onHeavyTopicsExpandedChange,
   onDensitySliderChange,
   onDensityOptionChange,
@@ -130,7 +134,10 @@ export default function DiscoveryControlsPanel({
               🎬 Videos
             </button>
             <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => onShowPostMediaChange(!showPostMedia)}>
-              📝 Posts
+              📝 Stories
+            </button>
+            <button className={`discovery-pill-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => onShowAudioMediaChange(!showAudioMedia)}>
+              ♪ Audio
             </button>
           </div>
         </div>
@@ -328,7 +335,10 @@ export default function DiscoveryControlsPanel({
                     🎬 Videos
                   </button>
                   <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => onShowPostMediaChange(!showPostMedia)}>
-                    📝 Posts
+                    📝 Stories
+                  </button>
+                  <button className={`discovery-pill-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => onShowAudioMediaChange(!showAudioMedia)}>
+                    ♪ Audio
                   </button>
                 </div>
               </div>

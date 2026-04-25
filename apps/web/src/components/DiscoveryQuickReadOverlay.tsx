@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 
-type SurfaceAssetType = 'image' | 'video';
+type SurfaceAssetType = 'image' | 'video' | 'audio';
 
 type DiscoveryOverlayItem = {
   imageId: string;
   assetType?: SurfaceAssetType;
+  postType?: 'image' | 'video' | 'story' | 'audio';
+  postFormat?: 'single' | 'multi' | 'short' | 'long' | 'album';
   surfaceType?: 'media' | 'post';
   postId?: string;
   postSlug?: string;
@@ -98,7 +100,7 @@ type DiscoveryQuickReadOverlayProps = {
   onVideoVolumeChange: (video: HTMLVideoElement) => void;
 };
 
-type PostRenderKind = 'standard' | 'parody' | 'story';
+type PostRenderKind = 'standard' | 'story';
 
 const splitParagraphs = (text?: string): string[] => {
   if (!text) return [];
@@ -169,10 +171,8 @@ const inferPostRenderKind = (post: OverlayPost): PostRenderKind => {
   const template = (post.metadata?.template || '').toLowerCase();
   const layout = (post.metadata?.layout || '').toLowerCase();
   const kind = (post.metadata?.kind || '').toLowerCase();
-  if ([template, layout, kind].some((value) => value.includes('parody') || value.includes('profile') || value.includes('social'))) {
-    return 'parody';
-  }
-  if ([template, layout, kind].some((value) => value.includes('story') || value.includes('reading') || value.includes('fiction'))) {
+  const postType = (post.metadata?.postType || '').toLowerCase();
+  if (postType === 'story' || [template, layout, kind].some((value) => value.includes('story') || value.includes('reading') || value.includes('fiction'))) {
     return 'story';
   }
   const paragraphBlocks = post.blocks.filter((block) => block.type === 'paragraph').length;
@@ -182,6 +182,16 @@ const inferPostRenderKind = (post: OverlayPost): PostRenderKind => {
   if (paragraphBlocks >= 2 && headingBlocks >= 1) return 'story';
   if (longParagraphBlocks > 0) return 'story';
   return 'standard';
+};
+
+const getPostType = (post: OverlayPost): 'image' | 'video' | 'story' | 'audio' => {
+  const raw = (post.metadata?.postType || '').toLowerCase();
+  if (raw === 'image' || raw === 'video' || raw === 'story' || raw === 'audio') return raw;
+  const primary = post.primaryMediaId ? post.media.find((media) => media.mediaId === post.primaryMediaId) : post.media[0];
+  if (primary?.assetType === 'video') return 'video';
+  if (primary?.assetType === 'audio') return 'audio';
+  if (primary?.assetType === 'image' && post.blocks.length <= 2) return 'image';
+  return 'story';
 };
 
 const PostMetaHeader = ({ item, post, itemIndex, itemsCount }: { item: DiscoveryOverlayItem; post: OverlayPost | null; itemIndex: number; itemsCount: number }) => {
@@ -220,7 +230,11 @@ const renderMediaFigure = (
       className={`discovery-quickread-media-frame${hasDimensions ? ' has-ratio' : ' no-ratio'}`}
       style={frameStyle}
     >
-    {media.assetType === 'video' ? (
+    {media.assetType === 'audio' ? (
+      <audio controls preload="metadata" style={{ width: '100%' }}>
+        <source src={media.previewUrl} />
+      </audio>
+    ) : media.assetType === 'video' ? (
       <video controls playsInline preload="metadata" poster={media.previewPosterUrl} style={{ filter: blur ? 'blur(28px)' : undefined }}>
         <source src={media.previewUrl} />
       </video>
@@ -238,11 +252,16 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
   const mediaById = new Map(orderedMedia.map((media) => [media.mediaId, media]));
   const hasBlocks = post.blocks.length > 0;
   const primaryMedia = post.primaryMediaId ? mediaById.get(post.primaryMediaId) : undefined;
+  const postType = getPostType(post);
+  const shouldRenderPrimaryMediaTopBlock = Boolean(primaryMedia && postType !== 'story' && hasBlocks);
   const fallbackMedia = primaryMedia
     ? [primaryMedia, ...orderedMedia.filter((media) => media.mediaId !== primaryMedia.mediaId)]
     : orderedMedia;
   return (
     <div className="discovery-quickread-content-flow">
+      {shouldRenderPrimaryMediaTopBlock && primaryMedia
+        ? renderMediaFigure(primaryMedia, `primary-media-${primaryMedia.mediaId}`, item.blurred)
+        : null}
       {!hasBlocks ? (
         <>
           {post.summary ? <p>{post.summary}</p> : null}
@@ -315,30 +334,6 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
         }
         return null;
       })}
-    </div>
-  );
-};
-
-const ParodyPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
-  const profileSummary = post.blocks.filter((block) => block.type === 'paragraph').slice(0, 2);
-  const activity = post.blocks.filter((block) => block.type === 'quote').slice(0, 3);
-  return (
-    <div className="discovery-quickread-content-flow">
-      <section className="discovery-quickread-parody-profile panel">
-        <h3>Profile Snapshot</h3>
-        {profileSummary.length > 0 ? profileSummary.map((block, index) => (
-          <p key={`parody-summary-${block.blockId || index}`}>{block.text}</p>
-        )) : <p>{post.summary || 'Structured parody profile content is rendered here.'}</p>}
-      </section>
-      <section className="discovery-quickread-parody-activity panel">
-        <h3>Activity</h3>
-        {activity.length > 0 ? activity.map((block, index) => (
-          <blockquote key={`parody-activity-${block.blockId || index}`}>
-            {block.quote || block.text}
-          </blockquote>
-        )) : <p>No activity entries were supplied.</p>}
-      </section>
-      <StandardPostRenderer item={item} post={post} />
     </div>
   );
 };
@@ -534,15 +529,17 @@ export default function DiscoveryQuickReadOverlay({
                 <div className="discovery-quickread-loading-line" />
               </article>
             ) : post ? (
-              renderKind === 'parody'
-                ? <ParodyPostRenderer item={item} post={post} />
-                : renderKind === 'story'
-                  ? <StoryPostRenderer item={item} post={post} />
-                  : <StandardPostRenderer item={item} post={post} />
+              renderKind === 'story'
+                ? <StoryPostRenderer item={item} post={post} />
+                : <StandardPostRenderer item={item} post={post} />
             ) : (
               <article className="discovery-quickread-content-flow">
                 <div className="discovery-quickread-media-figure">
-                  {item.assetType === 'video' ? (
+                  {item.assetType === 'audio' ? (
+                    <audio controls preload="metadata" style={{ width: '100%' }}>
+                      <source src={item.previewUrl} />
+                    </audio>
+                  ) : item.assetType === 'video' ? (
                     <video
                       ref={videoRef}
                       controls

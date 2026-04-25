@@ -1051,33 +1051,24 @@ export class DynamoStore implements DataStore {
     options?: TrendingFeedQueryOptions
   ): Promise<{ items: TrendingFeedItem[]; nextCursor?: string }> {
     const source = options?.source || 'combined';
-    const itemTypes = options?.itemTypes || { image: true, video: true, post: true };
-    if (source === 'post' && !itemTypes.post) {
-      return { items: [] };
-    }
-    if (source === 'media' && !itemTypes.image && !itemTypes.video) {
+    const itemTypes = options?.itemTypes || { image: true, video: true, story: true, audio: true };
+    if (source === 'post' && !itemTypes.image && !itemTypes.video && !itemTypes.story && !itemTypes.audio) {
       return { items: [] };
     }
     const itemMatchesFilter = (row: Record<string, unknown>): boolean => {
       const isPostSurface = row.surfaceType === 'post_surface' || Boolean(row.postId);
-      if (source === 'post' && !isPostSurface) return false;
-      if (source === 'media' && isPostSurface) return false;
-      if (isPostSurface) return itemTypes.post;
-      const assetType = row.assetType === 'video' ? 'video' : 'image';
-      if (assetType === 'video') return itemTypes.video;
-      return itemTypes.image;
+      if (!isPostSurface) return false;
+      const postType = row.postType === 'story' || row.postType === 'video' || row.postType === 'audio' || row.postType === 'image'
+        ? row.postType
+        : (row.assetType === 'video' ? 'video' : row.assetType === 'audio' ? 'audio' : 'image');
+      return itemTypes[postType];
     };
-    const resolveSingleSurface = (): 'image' | 'video' | 'post' | null => {
-      if (source === 'post') return 'post';
-      if (source === 'media') {
-        if (itemTypes.image && !itemTypes.video) return 'image';
-        if (itemTypes.video && !itemTypes.image) return 'video';
-        return null;
-      }
-      const selected: Array<'image' | 'video' | 'post'> = [];
+    const resolveSingleSurface = (): 'image' | 'video' | 'story' | 'audio' | null => {
+      const selected: Array<'image' | 'video' | 'story' | 'audio'> = [];
       if (itemTypes.image) selected.push('image');
       if (itemTypes.video) selected.push('video');
-      if (itemTypes.post) selected.push('post');
+      if (itemTypes.story) selected.push('story');
+      if (itemTypes.audio) selected.push('audio');
       return selected.length === 1 ? selected[0] : null;
     };
     const decodedCursor = cursor
@@ -1093,6 +1084,12 @@ export class DynamoStore implements DataStore {
         surfaceType: row.surfaceType === 'post_surface' ? 'post_surface' : 'media_surface',
         imageId: String(row.imageId || ''),
         assetType: row.assetType === 'video' ? 'video' : row.assetType === 'audio' ? 'audio' : 'image',
+        postType: row.postType === 'story' || row.postType === 'video' || row.postType === 'audio' || row.postType === 'image'
+          ? row.postType
+          : undefined,
+        postFormat: row.postFormat === 'single' || row.postFormat === 'multi' || row.postFormat === 'short' || row.postFormat === 'long' || row.postFormat === 'album'
+          ? row.postFormat
+          : undefined,
         creatorId: String(row.creatorId || ''),
         creatorName: String(row.creatorName || ''),
         postId: row.postId ? String(row.postId) : undefined,
@@ -1195,7 +1192,7 @@ export class DynamoStore implements DataStore {
                 ...item,
                 period: partitionKey,
                 rankKey: `RANK#${rank.toString().padStart(8, '0')}#IMAGE#${item.imageId}`,
-                periodSurface: `PERIOD#${period}#SURFACE#${item.surfaceType === 'post_surface' || item.postId ? 'post' : item.assetType === 'video' ? 'video' : 'image'}`,
+                periodSurface: `PERIOD#${period}#SURFACE#${item.postType || (item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image')}`,
                 rank,
                 updatedAt: item.updatedAt || nowIso
               }

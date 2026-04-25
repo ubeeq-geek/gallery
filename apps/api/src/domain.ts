@@ -5,6 +5,8 @@ export type HeavyTopic = 'politics-public-affairs' | 'crime-disasters-tragedy';
 export type AiFilterPreference = 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
 export type PostStatus = 'draft' | 'published' | 'archived';
 export type PostDiscoveryMode = 'primary' | 'all' | 'selected';
+export type PostType = 'image' | 'video' | 'story' | 'audio';
+export type PostFormat = 'single' | 'multi' | 'short' | 'long' | 'album';
 export type CreatorGroupDisplayType = 'series' | 'grouping' | 'set';
 export type MediaType = 'image' | 'video' | 'audio';
 export type SourceFileKind = 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
@@ -518,6 +520,8 @@ export interface TrendingFeedItem {
   surfaceType?: 'media_surface' | 'post_surface';
   imageId: string;
   assetType: 'image' | 'video' | 'audio';
+  postType?: PostType;
+  postFormat?: PostFormat;
   creatorId: string;
   creatorName: string;
   postId?: string;

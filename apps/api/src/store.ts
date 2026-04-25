@@ -34,7 +34,8 @@ export interface TrendingFeedQueryOptions {
   itemTypes?: {
     image: boolean;
     video: boolean;
-    post: boolean;
+    story: boolean;
+    audio: boolean;
   };
 }
 

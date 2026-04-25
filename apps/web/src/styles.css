@@ -1702,6 +1702,19 @@
     pointer-events: none;
   }
 
+  .discovery-audio-preview {
+    @apply flex h-full w-full items-center justify-center;
+    background:
+      linear-gradient(135deg, rgba(13, 148, 136, 0.16), rgba(15, 23, 42, 0.08)),
+      color-mix(in srgb, var(--surface) 86%, #dbeafe 14%);
+  }
+
+  .discovery-audio-preview .discovery-media-icon {
+    width: clamp(2.5rem, 12vw, 5rem);
+    height: clamp(2.5rem, 12vw, 5rem);
+    color: #0f766e;
+  }
+
   .discovery-feature-media.large-crop img,
   .discovery-feature-media.large-crop video,
   .discovery-feature-media.can-square-crop img,
@@ -3912,6 +3925,10 @@
     border-color: #bfdbfe;
     background: #eff6ff;
     color: #1d4ed8;
+  }
+
+  .studio-inline-actions {
+    @apply flex flex-wrap gap-2;
   }
 
   .studio-inspector {
