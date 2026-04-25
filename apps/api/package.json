@@ -10,6 +10,7 @@
     "seed:core": "ts-node --transpile-only src/scripts/seedContentCore.ts",
     "migrate:core": "ts-node --transpile-only src/scripts/migrateToGalleryCore.ts",
     "verify:core": "ts-node --transpile-only src/scripts/verifyGalleryCore.ts",
+    "ensure:core-indexes": "ts-node --transpile-only src/scripts/ensureContentCoreIndexes.ts",
     "rank:trending": "ts-node --transpile-only src/trendingRanker.ts",
     "enqueue:video-posters": "ts-node --transpile-only src/scripts/enqueueVideoPosterBackfill.ts",
     "test": "jest",

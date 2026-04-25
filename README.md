@@ -75,8 +75,16 @@ npm --workspace @gallery/api run build
 ```bash
 npm --workspace @gallery/infra run deploy
 ```
-3. Configure web env var `VITE_API_BASE_URL` to deployed API URL.
-4. Configure Cognito social identity providers in AWS console/CDK extensions.
+3. If your API points at a pre-existing `CONTENT_CORE_TABLE` (legacy/shared table), ensure `GSI1` and `GSI2` exist:
+```bash
+# Preview only
+npm --workspace @gallery/api run ensure:core-indexes -- --dry-run --content-core-table <ContentCoreTableName> --region ca-central-1
+
+# Create any missing GSI1/GSI2 definitions
+npm --workspace @gallery/api run ensure:core-indexes -- --content-core-table <ContentCoreTableName> --region ca-central-1
+```
+4. Configure web env var `VITE_API_BASE_URL` to deployed API URL.
+5. Configure Cognito social identity providers in AWS console/CDK extensions.
 
 ## GroupingCore Migration
 
