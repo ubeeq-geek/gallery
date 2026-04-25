@@ -175,7 +175,11 @@ const inferPostRenderKind = (post: OverlayPost): PostRenderKind => {
   if ([template, layout, kind].some((value) => value.includes('story') || value.includes('reading') || value.includes('fiction'))) {
     return 'story';
   }
+  const paragraphBlocks = post.blocks.filter((block) => block.type === 'paragraph').length;
+  const headingBlocks = post.blocks.filter((block) => block.type === 'heading').length;
   const longParagraphBlocks = post.blocks.filter((block) => block.type === 'paragraph' && splitParagraphs(block.text).length > 1).length;
+  if (paragraphBlocks >= 4) return 'story';
+  if (paragraphBlocks >= 2 && headingBlocks >= 1) return 'story';
   if (longParagraphBlocks > 0) return 'story';
   return 'standard';
 };
