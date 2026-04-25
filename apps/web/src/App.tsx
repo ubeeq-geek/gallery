@@ -319,6 +319,20 @@ type TrendingImage = {
   favoriteCount: number;
   createdAt: string;
 };
+const normalizeTrendingImage = (item: Partial<TrendingImage> & {
+  creatorId?: string;
+  creatorName?: string;
+  groupingId?: string;
+  groupingSlug?: string;
+  groupingVisibility?: 'free' | 'preview' | 'premium';
+}): TrendingImage => ({
+  ...item,
+  artistId: item.artistId || item.creatorId || '',
+  artistName: item.artistName || item.creatorName || '',
+  galleryId: item.galleryId || item.groupingId || '',
+  gallerySlug: item.gallerySlug || item.groupingSlug || '',
+  galleryVisibility: item.galleryVisibility || item.groupingVisibility
+} as TrendingImage);
 
 type PostBlockType =
   | 'heading'
@@ -2421,9 +2435,10 @@ function HomePage({
           trendingBaseLimit,
           disclosureFilters
         ) as { items: TrendingImage[]; nextCursor?: string };
+        const normalizedItems = (trendingData.items || []).map((entry) => normalizeTrendingImage(entry));
         const nextItems = discoverySort === 'latest'
-          ? [...(trendingData.items || [])].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-          : (trendingData.items || []);
+          ? [...normalizedItems].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+          : normalizedItems;
         setTrendingImages(nextItems);
         setTrendingCursor(trendingData.nextCursor);
       } catch (e) {
@@ -2545,7 +2560,7 @@ function HomePage({
         disclosureFilters
       ) as { items: TrendingImage[]; nextCursor?: string };
       setTrendingImages((prev) => {
-        const merged = [...prev, ...(response.items || [])];
+        const merged = [...prev, ...(response.items || []).map((entry) => normalizeTrendingImage(entry))];
         if (discoverySort !== 'latest') return merged;
         return [...merged].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       });
