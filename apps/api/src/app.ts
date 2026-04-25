@@ -32,7 +32,14 @@ import type {
   UserCapabilities,
   UserProfile
 } from './domain';
-import { generateImageRenditions, type SquareCropInput } from './renditions';
+import {
+  generateCreatorCoverRenditions,
+  generateCreatorProfileRenditions,
+  generateImageRenditions,
+  type CoverCropInput,
+  type FocalPointInput,
+  type SquareCropInput
+} from './renditions';
 import { refreshTrendingFeeds } from './trendingFeed';
 import {
   getDisplayedRating,
@@ -105,6 +112,28 @@ const parseSquareCrop = (input: unknown): SquareCropInput | undefined => {
     return undefined;
   }
   return { x: Math.floor(x), y: Math.floor(y), size: Math.floor(size) };
+};
+
+const parseCoverCrop = (input: unknown): CoverCropInput | undefined => {
+  if (!input || typeof input !== 'object') return undefined;
+  const obj = input as Record<string, unknown>;
+  const x = Number(obj.x);
+  const y = Number(obj.y);
+  const width = Number(obj.width);
+  const height = Number(obj.height);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return undefined;
+  }
+  return { x: Math.floor(x), y: Math.floor(y), width: Math.floor(width), height: Math.floor(height) };
+};
+
+const parseFocalPoint = (input: unknown): FocalPointInput | undefined => {
+  if (!input || typeof input !== 'object') return undefined;
+  const obj = input as Record<string, unknown>;
+  const x = Number(obj.x);
+  const y = Number(obj.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) };
 };
 
 const OBJECTIONABLE_USERNAME_PARTS = [
@@ -1578,7 +1607,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           return {
             ...creator,
             latestGroupingId: recent.groupingId,
-            creatorThumbnailUrl: thumb.groupingThumbnailUrl,
+            creatorThumbnailUrl: await publicMediaUrl(
+              creator.branding?.profileImage?.thumbnailKeys?.square512
+              || creator.branding?.profileImage?.thumbnailKeys?.square256
+            ) || thumb.groupingThumbnailUrl,
             followerCount,
             groupingCount: creatorGroupings.length
           };
@@ -2521,6 +2553,28 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       slug: creator.slug,
       status: creator.status,
       defaultProfileTab: creator.defaultProfileTab === 'groupings' ? 'groupings' : 'feed',
+      branding: {
+        profileImage: creator.branding?.profileImage ? {
+          ...creator.branding.profileImage,
+          thumbnailUrls: creator.branding.profileImage.thumbnailKeys
+            ? Object.fromEntries(
+                await Promise.all(
+                  Object.entries(creator.branding.profileImage.thumbnailKeys).map(async ([name, key]) => [name, await publicMediaUrl(key)])
+                )
+              )
+            : undefined
+        } : undefined,
+        coverImage: creator.branding?.coverImage ? {
+          ...creator.branding.coverImage,
+          renditionUrls: creator.branding.coverImage.renditionKeys
+            ? Object.fromEntries(
+                await Promise.all(
+                  Object.entries(creator.branding.coverImage.renditionKeys).map(async ([name, key]) => [name, await publicMediaUrl(key)])
+                )
+              )
+            : undefined
+        } : undefined
+      },
       followerCount,
       imageCount,
       groupingCount: visibleGalleries.length,
@@ -3911,6 +3965,196 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
 
     await store.updateCreator(updated);
     return res.json(updated);
+  });
+
+  app.post('/studio/creators/:creatorId/branding/profile-image', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) return;
+    const creators = await store.listCreators();
+    const existing = creators.find((creator) => creator.creatorId === req.params.creatorId);
+    if (!existing) {
+      return res.status(404).json({ message: 'Creator not found' });
+    }
+    const sourceKey = sanitizeOptional(req.body?.sourceKey, 1024);
+    if (!sourceKey) return res.status(400).json({ message: 'sourceKey is required' });
+    const generated = await generateCreatorProfileRenditions({
+      s3: s3Client,
+      bucket: config.mediaBucket,
+      sourceKey,
+      targetPrefix: `${existing.creatorId}/branding/profile`,
+      squareCrop: parseSquareCrop(req.body?.squareCrop)
+    });
+    const updated: Creator = {
+      ...existing,
+      branding: {
+        ...(existing.branding || {}),
+        profileImage: {
+          sourceKey: generated.sourceKey,
+          thumbnailKeys: generated.thumbnailKeys,
+          squareCrop: generated.squareCrop,
+          altText: sanitizeOptional(req.body?.altText, 200),
+          updatedAt: new Date().toISOString()
+        }
+      }
+    };
+    await store.updateCreator(updated);
+    return res.status(201).json(updated.branding?.profileImage);
+  });
+
+  app.post('/studio/creators/:creatorId/branding/upload-url', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) return;
+    const creators = await store.listCreators();
+    const existing = creators.find((creator) => creator.creatorId === req.params.creatorId);
+    if (!existing) return res.status(404).json({ message: 'Creator not found' });
+    const contentType = req.body?.contentType ? String(req.body.contentType) : 'image/jpeg';
+    const extension = contentType.includes('png') ? 'png' : (contentType.includes('webp') ? 'webp' : 'jpg');
+    const kind = req.body?.kind === 'cover' ? 'cover' : 'profile';
+    const key = `${existing.creatorId}/branding/${kind}/source.${extension}`;
+    const uploadUrl = await getS3SignedUrl(
+      s3Client,
+      new PutObjectCommand({
+        Bucket: config.mediaBucket,
+        Key: key,
+        ContentType: contentType,
+        CacheControl: 'public, max-age=31536000, immutable'
+      }),
+      { expiresIn: 300 }
+    );
+    return res.status(201).json({ key, uploadUrl, contentType });
+  });
+
+  app.post('/studio/creators/:creatorId/branding/cover-image', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) return;
+    const creators = await store.listCreators();
+    const existing = creators.find((creator) => creator.creatorId === req.params.creatorId);
+    if (!existing) {
+      return res.status(404).json({ message: 'Creator not found' });
+    }
+    const sourceKey = sanitizeOptional(req.body?.sourceKey, 1024);
+    if (!sourceKey) return res.status(400).json({ message: 'sourceKey is required' });
+    const generated = await generateCreatorCoverRenditions({
+      s3: s3Client,
+      bucket: config.mediaBucket,
+      sourceKey,
+      targetPrefix: `${existing.creatorId}/branding/cover`,
+      focalPoint: parseFocalPoint(req.body?.focalPoint),
+      crops: {
+        desktop: parseCoverCrop(req.body?.crops?.desktop),
+        tablet: parseCoverCrop(req.body?.crops?.tablet),
+        mobile: parseCoverCrop(req.body?.crops?.mobile)
+      }
+    });
+    const updated: Creator = {
+      ...existing,
+      branding: {
+        ...(existing.branding || {}),
+        coverImage: {
+          sourceKey: generated.sourceKey,
+          renditionKeys: generated.renditionKeys,
+          crops: generated.crops,
+          focalPoint: generated.focalPoint,
+          altText: sanitizeOptional(req.body?.altText, 200),
+          updatedAt: new Date().toISOString()
+        }
+      }
+    };
+    await store.updateCreator(updated);
+    return res.status(201).json(updated.branding?.coverImage);
+  });
+
+  app.patch('/studio/creators/:creatorId/branding', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) return;
+    const creators = await store.listCreators();
+    const existing = creators.find((creator) => creator.creatorId === req.params.creatorId);
+    if (!existing) {
+      return res.status(404).json({ message: 'Creator not found' });
+    }
+    let updated: Creator = { ...existing, branding: { ...(existing.branding || {}) } };
+
+    if (req.body?.profileImage !== undefined && updated.branding?.profileImage) {
+      const nextCrop = parseSquareCrop(req.body?.profileImage?.squareCrop);
+      if (nextCrop && updated.branding.profileImage.sourceKey) {
+        const generated = await generateCreatorProfileRenditions({
+          s3: s3Client,
+          bucket: config.mediaBucket,
+          sourceKey: updated.branding.profileImage.sourceKey,
+          targetPrefix: `${existing.creatorId}/branding/profile`,
+          squareCrop: nextCrop
+        });
+        updated.branding.profileImage.thumbnailKeys = generated.thumbnailKeys;
+        updated.branding.profileImage.squareCrop = generated.squareCrop;
+      }
+      updated.branding.profileImage.altText = req.body.profileImage.altText !== undefined
+        ? sanitizeOptional(req.body.profileImage.altText, 200)
+        : updated.branding.profileImage.altText;
+      updated.branding.profileImage.updatedAt = new Date().toISOString();
+    }
+
+    if (req.body?.coverImage !== undefined && updated.branding?.coverImage) {
+      const nextFocalPoint = parseFocalPoint(req.body?.coverImage?.focalPoint) || updated.branding.coverImage.focalPoint;
+      const nextCrops = {
+        desktop: parseCoverCrop(req.body?.coverImage?.crops?.desktop) || updated.branding.coverImage.crops?.desktop,
+        tablet: parseCoverCrop(req.body?.coverImage?.crops?.tablet) || updated.branding.coverImage.crops?.tablet,
+        mobile: parseCoverCrop(req.body?.coverImage?.crops?.mobile) || updated.branding.coverImage.crops?.mobile
+      };
+      const shouldRegenerate = Boolean(
+        req.body?.coverImage?.focalPoint
+        || req.body?.coverImage?.crops?.desktop
+        || req.body?.coverImage?.crops?.tablet
+        || req.body?.coverImage?.crops?.mobile
+      );
+      if (shouldRegenerate && updated.branding.coverImage.sourceKey) {
+        const generated = await generateCreatorCoverRenditions({
+          s3: s3Client,
+          bucket: config.mediaBucket,
+          sourceKey: updated.branding.coverImage.sourceKey,
+          targetPrefix: `${existing.creatorId}/branding/cover`,
+          focalPoint: nextFocalPoint,
+          crops: nextCrops
+        });
+        updated.branding.coverImage.renditionKeys = generated.renditionKeys;
+        updated.branding.coverImage.crops = generated.crops;
+        updated.branding.coverImage.focalPoint = generated.focalPoint;
+      }
+      updated.branding.coverImage.altText = req.body.coverImage.altText !== undefined
+        ? sanitizeOptional(req.body.coverImage.altText, 200)
+        : updated.branding.coverImage.altText;
+      updated.branding.coverImage.updatedAt = new Date().toISOString();
+    }
+
+    await store.updateCreator(updated);
+    return res.json(updated.branding || {});
+  });
+
+  app.delete('/studio/creators/:creatorId/branding/profile-image', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) return;
+    const creators = await store.listCreators();
+    const existing = creators.find((creator) => creator.creatorId === req.params.creatorId);
+    if (!existing) return res.status(404).json({ message: 'Creator not found' });
+    const updated: Creator = {
+      ...existing,
+      branding: {
+        ...(existing.branding || {}),
+        profileImage: undefined
+      }
+    };
+    await store.updateCreator(updated);
+    return res.status(204).send();
+  });
+
+  app.delete('/studio/creators/:creatorId/branding/cover-image', requireAuth, async (req, res) => {
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) return;
+    const creators = await store.listCreators();
+    const existing = creators.find((creator) => creator.creatorId === req.params.creatorId);
+    if (!existing) return res.status(404).json({ message: 'Creator not found' });
+    const updated: Creator = {
+      ...existing,
+      branding: {
+        ...(existing.branding || {}),
+        coverImage: undefined
+      }
+    };
+    await store.updateCreator(updated);
+    return res.status(204).send();
   });
 
   app.delete('/studio/creators/:creatorId', requireAuth, async (req, res) => {

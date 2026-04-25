@@ -108,6 +108,36 @@ const splitParagraphs = (text?: string): string[] => {
     .filter(Boolean);
 };
 
+const renderInlineText = (text?: string) => {
+  if (!text) return '';
+  const normalized = text
+    .replace(/<\s*i\s*>/gi, '<em>')
+    .replace(/<\s*\/\s*i\s*>/gi, '</em>');
+  const segments = normalized.split(/(<\/?em>)/gi).filter(Boolean);
+  let italic = false;
+  const nodes: Array<string | JSX.Element> = [];
+  let key = 0;
+
+  for (const segment of segments) {
+    const lower = segment.toLowerCase();
+    if (lower === '<em>') {
+      italic = true;
+      continue;
+    }
+    if (lower === '</em>') {
+      italic = false;
+      continue;
+    }
+    if (!italic) {
+      nodes.push(segment);
+      continue;
+    }
+    nodes.push(<em key={`inline-em-${key++}`}>{segment}</em>);
+  }
+
+  return nodes.length > 0 ? nodes : normalized;
+};
+
 const normalizeDisclosureLine = (item?: {
   displayedAiDisclosure?: string;
   displayedHeavyTopics?: string[];
@@ -145,7 +175,11 @@ const inferPostRenderKind = (post: OverlayPost): PostRenderKind => {
   if ([template, layout, kind].some((value) => value.includes('story') || value.includes('reading') || value.includes('fiction'))) {
     return 'story';
   }
+  const paragraphBlocks = post.blocks.filter((block) => block.type === 'paragraph').length;
+  const headingBlocks = post.blocks.filter((block) => block.type === 'heading').length;
   const longParagraphBlocks = post.blocks.filter((block) => block.type === 'paragraph' && splitParagraphs(block.text).length > 1).length;
+  if (paragraphBlocks >= 4) return 'story';
+  if (paragraphBlocks >= 2 && headingBlocks >= 1) return 'story';
   if (longParagraphBlocks > 0) return 'story';
   return 'standard';
 };
@@ -199,7 +233,7 @@ const renderMediaFigure = (
   );
 };
 
-const StandardPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
+const StandardPostRenderer = ({ item, post, storyMode = false }: { item: DiscoveryOverlayItem; post: OverlayPost; storyMode?: boolean }) => {
   const orderedMedia = [...post.media].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const mediaById = new Map(orderedMedia.map((media) => [media.mediaId, media]));
   const hasBlocks = post.blocks.length > 0;
@@ -219,28 +253,28 @@ const StandardPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post
       ) : post.blocks.map((block, index) => {
         if (block.type === 'heading') {
           const level = Math.max(1, Math.min(6, block.level || 2));
-          if (level === 1) return <h1 key={block.blockId || index}>{block.text || ''}</h1>;
-          if (level === 2) return <h2 key={block.blockId || index}>{block.text || ''}</h2>;
-          if (level === 3) return <h3 key={block.blockId || index}>{block.text || ''}</h3>;
-          if (level === 4) return <h4 key={block.blockId || index}>{block.text || ''}</h4>;
-          if (level === 5) return <h5 key={block.blockId || index}>{block.text || ''}</h5>;
-          return <h6 key={block.blockId || index}>{block.text || ''}</h6>;
+          if (level === 1) return <h1 key={block.blockId || index}>{renderInlineText(block.text)}</h1>;
+          if (level === 2) return <h2 key={block.blockId || index} className={storyMode ? 'post-part-title' : undefined}>{renderInlineText(block.text)}</h2>;
+          if (level === 3) return <h3 key={block.blockId || index} className={storyMode ? 'post-part-label' : undefined}>{renderInlineText(block.text)}</h3>;
+          if (level === 4) return <h4 key={block.blockId || index}>{renderInlineText(block.text)}</h4>;
+          if (level === 5) return <h5 key={block.blockId || index}>{renderInlineText(block.text)}</h5>;
+          return <h6 key={block.blockId || index}>{renderInlineText(block.text)}</h6>;
         }
         if (block.type === 'paragraph') {
           const paragraphs = splitParagraphs(block.text);
           if (paragraphs.length === 0) return null;
           return (
-            <div key={block.blockId || index} className="discovery-quickread-paragraph-group">
+            <div key={block.blockId || index} className={`discovery-quickread-paragraph-group${storyMode ? ' post-body' : ''}`}>
               {paragraphs.map((paragraph, paragraphIndex) => (
-                <p key={`${block.blockId || index}-${paragraphIndex}`}>{paragraph}</p>
+                <p key={`${block.blockId || index}-${paragraphIndex}`}>{renderInlineText(paragraph)}</p>
               ))}
             </div>
           );
         }
         if (block.type === 'quote') {
           return (
-            <blockquote key={block.blockId || index} className="panel">
-              <p>{block.quote || block.text || ''}</p>
+            <blockquote key={block.blockId || index} className={storyMode ? 'post-inline-quote' : 'panel'}>
+              <p>{renderInlineText(block.quote || block.text || '')}</p>
               {block.author ? <footer className="small">— {block.author}</footer> : null}
             </blockquote>
           );
@@ -275,7 +309,7 @@ const StandardPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post
           return (
             <div key={block.blockId || index} className="panel">
               {block.url ? <a href={block.url} target="_blank" rel="noreferrer" className="no-underline">{block.title || block.url}</a> : null}
-              {block.text ? <p className="small mt-2">{block.text}</p> : null}
+              {block.text ? <p className="small mt-2">{renderInlineText(block.text)}</p> : null}
             </div>
           );
         }
@@ -311,8 +345,8 @@ const ParodyPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: 
 
 const StoryPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
   return (
-    <div className="discovery-quickread-content-flow discovery-quickread-story-flow">
-      <StandardPostRenderer item={item} post={post} />
+    <div className="discovery-quickread-content-flow discovery-quickread-story-flow post-reading">
+      <StandardPostRenderer item={item} post={post} storyMode />
     </div>
   );
 };

@@ -108,6 +108,20 @@ export function StudioWorkspace() {
             posts={posts}
             files={files}
             onCreateCreator={(payload) => api.studioCreateCreator(payload).then(() => load())}
+            onUploadProfileImage={async (creatorId, file) => {
+              const upload = await api.studioCreateCreatorBrandingUploadUrl(creatorId, { kind: 'profile', contentType: file.type || 'image/jpeg' });
+              await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': upload.contentType }, body: file });
+              await api.studioUploadCreatorProfileImage(creatorId, { sourceKey: upload.key });
+              await load();
+            }}
+            onUploadCoverImage={async (creatorId, file) => {
+              const upload = await api.studioCreateCreatorBrandingUploadUrl(creatorId, { kind: 'cover', contentType: file.type || 'image/jpeg' });
+              await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': upload.contentType }, body: file });
+              await api.studioUploadCreatorCoverImage(creatorId, { sourceKey: upload.key });
+              await load();
+            }}
+            onRemoveProfileImage={(creatorId) => api.studioDeleteCreatorProfileImage(creatorId).then(() => load())}
+            onRemoveCoverImage={(creatorId) => api.studioDeleteCreatorCoverImage(creatorId).then(() => load())}
           />
         );
       case 'files-media':

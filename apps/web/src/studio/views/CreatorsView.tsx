@@ -12,17 +12,28 @@ export function CreatorsView({
   creators,
   posts,
   files,
-  onCreateCreator
+  onCreateCreator,
+  onUploadProfileImage,
+  onUploadCoverImage,
+  onRemoveProfileImage,
+  onRemoveCoverImage
 }: {
   creators: StudioCreator[];
   posts: StudioPost[];
   files: StudioFile[];
   onCreateCreator: (payload: { name: string; slug: string }) => Promise<void>;
+  onUploadProfileImage: (creatorId: string, file: File) => Promise<void>;
+  onUploadCoverImage: (creatorId: string, file: File) => Promise<void>;
+  onRemoveProfileImage: (creatorId: string) => Promise<void>;
+  onRemoveCoverImage: (creatorId: string) => Promise<void>;
 }) {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string>('');
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
+  const [uploadingProfile, setUploadingProfile] = useState(false);
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [uploadError, setUploadError] = useState('');
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return creators;
@@ -59,6 +70,32 @@ export function CreatorsView({
     setSlug('');
   };
 
+  const uploadProfile = async (file?: File) => {
+    if (!selected || !file) return;
+    setUploadError('');
+    setUploadingProfile(true);
+    try {
+      await onUploadProfileImage(selected.creatorId, file);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Failed to upload profile image');
+    } finally {
+      setUploadingProfile(false);
+    }
+  };
+
+  const uploadCover = async (file?: File) => {
+    if (!selected || !file) return;
+    setUploadError('');
+    setUploadingCover(true);
+    try {
+      await onUploadCoverImage(selected.creatorId, file);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Failed to upload cover image');
+    } finally {
+      setUploadingCover(false);
+    }
+  };
+
   return (
     <section className="studio-surface-grid">
       <Card title="Creators" eyebrow="Ownership and identity">
@@ -93,6 +130,36 @@ export function CreatorsView({
               <div><strong>Posts</strong><span>{posts.filter((post) => post.creatorId === selected.creatorId).length}</span></div>
               <div><strong>Files</strong><span>{files.filter((file) => file.creatorId === selected.creatorId).length}</span></div>
             </div>
+            <div className="studio-inline-form" style={{ marginTop: '1rem', alignItems: 'center' }}>
+              <label>
+                <span className="small">Profile image/logo</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={uploadingProfile}
+                  onChange={(event) => void uploadProfile(event.target.files?.[0])}
+                />
+              </label>
+              <button type="button" className="auth-secondary-btn" disabled={uploadingProfile} onClick={() => void onRemoveProfileImage(selected.creatorId)}>
+                Remove profile
+              </button>
+            </div>
+            <div className="studio-inline-form" style={{ marginTop: '1rem', alignItems: 'center' }}>
+              <label>
+                <span className="small">Cover image</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={uploadingCover}
+                  onChange={(event) => void uploadCover(event.target.files?.[0])}
+                />
+              </label>
+              <button type="button" className="auth-secondary-btn" disabled={uploadingCover} onClick={() => void onRemoveCoverImage(selected.creatorId)}>
+                Remove cover
+              </button>
+            </div>
+            {(uploadingProfile || uploadingCover) && <p className="small">Uploading…</p>}
+            {uploadError && <p className="error">{uploadError}</p>}
           </InspectorPanel>
         ) : (
           <div className="studio-empty-state">Select a creator to inspect ownership and content counts.</div>
