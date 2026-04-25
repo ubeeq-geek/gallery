@@ -5,7 +5,7 @@ import { BatchWriteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand } fr
 import { createHash } from 'crypto';
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import path from 'path';
-import { Jimp } from 'jimp';
+import sharp from 'sharp';
 import { hashPassword } from '../unlock';
 import { loadConfig } from '../config';
 import { ContentCoreRepository } from '../contentCoreRepository';
@@ -161,7 +161,7 @@ type ScenarioPostSectionSeed = {
   title: string;
   slug?: string;
   sortOrder?: number;
-  status?: 'draft' | 'published' | 'archived';
+  status?: 'draft' | 'scheduled' | 'published' | 'archived';
   blocks?: ScenarioPostBlockSeed[];
 };
 type ScenarioPostSeed = {
@@ -472,6 +472,10 @@ const POST_BLOCK_TYPES = new Set([
   'html_fragment'
 ]);
 
+const normalizePostBlockType = (type: string): PostBlock['type'] => (
+  type === 'blockquote' ? 'quote' : type as PostBlock['type']
+);
+
 const parseOptionalContentRating = (value: unknown, fieldName: string): ContentRating | undefined => {
   const raw = asOptionalString(value);
   if (!raw) return undefined;
@@ -533,7 +537,8 @@ const parseScenarioPostBlock = (value: unknown, fieldName: string): ScenarioPost
   if (!isRecord(value)) {
     throw new Error(`Scenario field "${fieldName}" must be an object`);
   }
-  const type = asString(value.type, `${fieldName}.type`);
+  const rawType = asString(value.type, `${fieldName}.type`);
+  const type = normalizePostBlockType(rawType);
   if (!POST_BLOCK_TYPES.has(type)) {
     throw new Error(`Scenario field "${fieldName}.type" is invalid`);
   }
@@ -630,8 +635,8 @@ const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed 
           throw new Error(`Scenario field "${fieldName}.sections[${idx}].blocks" must be an array`);
         }
         const sectionStatusRaw = asOptionalString(item.status);
-        if (sectionStatusRaw && sectionStatusRaw !== 'draft' && sectionStatusRaw !== 'published' && sectionStatusRaw !== 'archived') {
-          throw new Error(`Scenario field "${fieldName}.sections[${idx}].status" must be draft, published, or archived`);
+        if (sectionStatusRaw && sectionStatusRaw !== 'draft' && sectionStatusRaw !== 'scheduled' && sectionStatusRaw !== 'published' && sectionStatusRaw !== 'archived') {
+          throw new Error(`Scenario field "${fieldName}.sections[${idx}].status" must be draft, scheduled, published, or archived`);
         }
         const sortOrderRaw = item.sortOrder;
         const sortOrder = typeof sortOrderRaw === 'number' && Number.isFinite(sortOrderRaw)
@@ -644,7 +649,7 @@ const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed 
           title: asString(item.title, `${fieldName}.sections[${idx}].title`),
           slug: asOptionalString(item.slug),
           sortOrder,
-          status: sectionStatusRaw as 'draft' | 'published' | 'archived' | undefined,
+          status: sectionStatusRaw as 'draft' | 'scheduled' | 'published' | 'archived' | undefined,
           blocks: sectionBlocks
         };
       })
@@ -1018,9 +1023,9 @@ const getImageDimensions = async (file: AssetFile): Promise<{ width: number; hei
   const cached = imageDimensionCache.get(file.absolutePath);
   if (cached) return cached;
   const headerDimensions = readImageDimensionsFromHeader(file.absolutePath);
-  const image = headerDimensions ? undefined : await Jimp.read(file.absolutePath);
-  const width = headerDimensions?.width ?? Number(image?.bitmap.width || 0);
-  const height = headerDimensions?.height ?? Number(image?.bitmap.height || 0);
+  const metadata = headerDimensions ? undefined : await sharp(file.absolutePath, { limitInputPixels: false }).metadata();
+  const width = headerDimensions?.width ?? metadata?.width ?? 0;
+  const height = headerDimensions?.height ?? metadata?.height ?? 0;
   if (width <= 0 || height <= 0) {
     throw new Error(`Could not determine image dimensions for ${file.absolutePath}`);
   }

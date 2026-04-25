@@ -1,5 +1,5 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { Jimp } from 'jimp';
+import sharp from 'sharp';
 
 export interface SquareCropInput {
   x: number;
@@ -60,8 +60,6 @@ const writeS3Object = async (s3: S3Client, bucket: string, key: string, body: Bu
   );
 };
 
-const toJpegBuffer = async (image: any): Promise<Buffer> => image.getBuffer('image/jpeg');
-
 export const generateImageRenditions = async (params: {
   s3: S3Client;
   bucket: string;
@@ -72,9 +70,13 @@ export const generateImageRenditions = async (params: {
   const { s3, bucket, sourceKey, targetPrefix, squareCrop } = params;
 
   const sourceBuffer = await readS3Object(s3, bucket, sourceKey);
-  const sourceImage = await Jimp.read(sourceBuffer);
-  const width = sourceImage.bitmap.width;
-  const height = sourceImage.bitmap.height;
+  const metadata = await sharp(sourceBuffer, { limitInputPixels: false }).metadata();
+  const width = metadata.width ?? 0;
+  const height = metadata.height ?? 0;
+
+  if (width <= 0 || height <= 0) {
+    throw new Error(`Could not determine source image dimensions for s3://${bucket}/${sourceKey}`);
+  }
 
   const crop = pickSquareCrop(width, height, squareCrop);
 
@@ -96,8 +98,10 @@ export const generateImageRenditions = async (params: {
   ];
 
   for (const [name, size] of longEdgeSteps) {
-    const resized = sourceImage.clone().scaleToFit({ w: size, h: size });
-    const output = await toJpegBuffer(resized);
+    const output = await sharp(sourceBuffer, { limitInputPixels: false })
+      .resize({ width: size, height: size, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 82, mozjpeg: true })
+      .toBuffer();
     await writeS3Object(s3, bucket, keys[name], output);
   }
 
@@ -108,8 +112,11 @@ export const generateImageRenditions = async (params: {
   ];
 
   for (const [name, size] of squareSteps) {
-    const squared = sourceImage.clone().crop({ x: crop.x, y: crop.y, w: crop.size, h: crop.size }).resize({ w: size, h: size });
-    const output = await toJpegBuffer(squared);
+    const output = await sharp(sourceBuffer, { limitInputPixels: false })
+      .extract({ left: crop.x, top: crop.y, width: crop.size, height: crop.size })
+      .resize(size, size)
+      .jpeg({ quality: 82, mozjpeg: true })
+      .toBuffer();
     await writeS3Object(s3, bucket, keys[name], output);
   }
 
