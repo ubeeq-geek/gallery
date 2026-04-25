@@ -2870,6 +2870,71 @@ function HomePage({
   const latestItems: DiscoveryGallery[] = latest;
   const risingArtists = artists.slice(0, 4);
   const trendingCollections = collections.slice(0, 3);
+  const discoveryTopics = ['For you', 'Challenges', 'Following', 'Photography', 'Design', 'Stories', 'Places'];
+  const challengeRows = [
+    {
+      id: 'sun-faded',
+      endsIn: '6d',
+      title: 'Sun Faded',
+      description: 'Capture the beauty of faded signs and colors.',
+      joinedLabel: '1.2k joined',
+      preview: trendingRenderable[0]?.previewPosterUrl || trendingRenderable[0]?.previewUrl || latestItems[0]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'blue-hour',
+      endsIn: '12d',
+      title: 'Blue Hour',
+      description: 'Show us the magic of twilight and transition.',
+      joinedLabel: '856 joined',
+      preview: trendingRenderable[1]?.previewPosterUrl || trendingRenderable[1]?.previewUrl || latestItems[1]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'roadside-reflections',
+      endsIn: '3d',
+      title: 'Roadside Reflections',
+      description: 'Reflections found in unexpected places.',
+      joinedLabel: '643 joined',
+      preview: trendingRenderable[2]?.previewPosterUrl || trendingRenderable[2]?.previewUrl || latestItems[2]?.galleryThumbnailUrl || ''
+    }
+  ];
+  const risingNowRows = [
+    {
+      id: 'neon-dreams',
+      title: 'Neon Dreams',
+      posts: 348,
+      preview: trendingRenderable[3]?.previewPosterUrl || trendingRenderable[3]?.previewUrl || latestItems[3]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'roadside-icons',
+      title: 'Roadside Icons',
+      posts: 512,
+      preview: trendingRenderable[4]?.previewPosterUrl || trendingRenderable[4]?.previewUrl || latestItems[4]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'forgotten-places',
+      title: 'Forgotten Places',
+      posts: 201,
+      preview: trendingRenderable[5]?.previewPosterUrl || trendingRenderable[5]?.previewUrl || latestItems[5]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'midday-light',
+      title: 'Midday Light',
+      posts: 309,
+      preview: trendingRenderable[6]?.previewPosterUrl || trendingRenderable[6]?.previewUrl || latestItems[6]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'backroad-america',
+      title: 'Backroad America',
+      posts: 621,
+      preview: trendingRenderable[7]?.previewPosterUrl || trendingRenderable[7]?.previewUrl || latestItems[7]?.galleryThumbnailUrl || ''
+    }
+  ];
+  const discoverySpotlightRows = trendingRenderable.slice(8, 12).map((item, index) => ({
+    id: item.imageId || `spotlight-${index}`,
+    title: item.title || item.postTitle || 'Untitled spotlight',
+    subtitle: item.artistName || 'Creator',
+    preview: item.previewPosterUrl || item.previewUrl
+  }));
   const showRisingArtistsSection = risingArtists.length >= 2;
   const showTrendingCollectionsSection = trendingCollections.length >= 2;
 
@@ -3449,7 +3514,6 @@ function HomePage({
             >
               Daily
             </button>
-            <Link className="discovery-pill-btn no-underline" to="/trending" onClick={closeCompactFilters}>View all</Link>
           </div>
         </div>
       );
@@ -3592,12 +3656,25 @@ function HomePage({
   return (
     <div className="layout discovery-layout">
       <section className="panel discovery-hero">
-        <div>
-          <h1>Discover trending artwork</h1>          
+        <div className="discovery-hero-copy">
+          <span className="discovery-hero-kicker">Welcome to Ubeeq</span>
+          <h1>Creativity. <span>Everywhere.</span></h1>
+          <p>Explore original perspectives from creators around the world. Curated by humans, powered by openness.</p>
+          <div className="discovery-hero-topics" role="tablist" aria-label="Discovery topics">
+            {discoveryTopics.map((topic, index) => (
+              <button
+                key={`discovery-topic-${topic}`}
+                type="button"
+                className={`discovery-hero-topic-pill${index === 0 ? ' is-active' : ''}`}
+              >
+                {topic}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="discovery-hero-actions">
           <a href="#rising-artists" className="auth-primary-btn no-underline">Browse Creators</a>
-          <a href="#latest-galleries" className="auth-secondary-btn no-underline">Latest Galleries</a>
+          <a href="#trending" className="auth-secondary-btn no-underline">Keep discovering</a>
         </div>
       </section>
 
@@ -3688,7 +3765,6 @@ function HomePage({
                   >
                     Daily
                   </button>
-                  <Link className="discovery-pill-btn no-underline" to="/trending">View all</Link>
                 </div>
               </div>
 
@@ -3850,6 +3926,132 @@ function HomePage({
         {!loadingTrending && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">No trending artwork yet.</p>}
       </section>
 
+      <section id="active-challenges" className="discovery-editorial-section discovery-special-row">
+        <div className="discovery-section-header">
+          <h2>Active challenges</h2>
+          <span className="text-sm font-semibold">Timed themes to spark creativity and connection.</span>
+        </div>
+        <div className="discovery-challenge-grid">
+          {challengeRows.map((challenge) => (
+            <article key={challenge.id} className="discovery-challenge-card">
+              <span className="discovery-challenge-kicker">ENDS IN {challenge.endsIn}</span>
+              <h3>{challenge.title}</h3>
+              <p>{challenge.description}</p>
+              <div className="discovery-challenge-footer">
+                <span>{challenge.joinedLabel}</span>
+                {challenge.preview && <img src={challenge.preview} alt="" loading="lazy" decoding="async" aria-hidden="true" />}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {continuationBlockOneHasItems && (
+        <section id="trending-block-three" className="discovery-trending-flow-section">
+          <div className={`discovery-density-transition${densityTransitionClass}`}>
+            {renderTrendingBlockContent(
+              smallContinuationBlockOne,
+              smallTopItemCount,
+              continuationBlockOneRows,
+              undefined,
+              { preloadAll: true }
+            )}
+          </div>
+        </section>
+      )}
+
+      {showRisingArtistsSection && (
+        <section id="rising-artists" className="discovery-editorial-section discovery-special-row">
+          <div className="discovery-section-header">
+            <h2>Rising Together</h2>
+            <span className="text-sm font-semibold">Fresh voices. Growing communities.</span>
+          </div>
+          <div className="discovery-rising-row">
+            {risingArtists.map((artist, i) => (
+              <article key={artist.artistId || artist.name || `artist-special-${i}`} className="discovery-rising-pill">
+                <div className="discovery-rising-avatar">
+                  {artist.artistThumbnailUrl
+                    ? <img src={artist.artistThumbnailUrl} alt={artist.name || 'Creator'} loading="lazy" decoding="async" />
+                    : <span>{(artist.name || 'Creator').split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')}</span>}
+                </div>
+                <div className="discovery-rising-meta">
+                  <div className="discovery-card-title">
+                    {artist.slug ? <Link to={`/creators/${artist.slug}`} className="no-underline">{artist.name || 'Creator Name'}</Link> : (artist.name || 'Creator Name')}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {continuationBlockTwoHasItems && (
+        <section id="trending-block-four" className="discovery-trending-flow-section">
+          <div className={`discovery-density-transition${densityTransitionClass}`}>
+            {renderTrendingBlockContent(
+              smallContinuationBlockTwo,
+              smallTopItemCount + smallContinuationBlockOne.length,
+              continuationBlockTwoRows,
+              undefined,
+              { preloadAll: true }
+            )}
+          </div>
+        </section>
+      )}
+
+      <section id="rising-now" className="discovery-editorial-section discovery-special-row">
+        <div className="discovery-section-header">
+          <h2>Rising Now</h2>
+          <span className="text-sm font-semibold">Fast-moving themes from the discovery stream.</span>
+        </div>
+        <div className="discovery-rising-now-row">
+          {risingNowRows.map((row) => (
+            <article key={row.id} className="discovery-rising-now-pill">
+              <div className="discovery-rising-now-avatar">
+                {row.preview
+                  ? <img src={row.preview} alt="" loading="lazy" decoding="async" aria-hidden="true" />
+                  : <div className="discovery-rising-now-placeholder" aria-hidden="true" />}
+              </div>
+              <div>
+                <div className="discovery-card-title">{row.title}</div>
+                <div className="discovery-card-subtitle">{row.posts} posts</div>
+              </div>
+            </article>
+          ))}
+          <button type="button" className="discovery-rising-now-next" aria-label="See more rising now rows">›</button>
+        </div>
+      </section>
+
+      <section id="discovery-spotlight" className="discovery-editorial-section discovery-special-row">
+        <div className="discovery-section-header">
+          <h2>Discovery spotlight</h2>
+          <span className="text-sm font-semibold">Fresh picks between rising trends and gallery drops.</span>
+        </div>
+        <div className="discovery-spotlight-grid">
+          {discoverySpotlightRows.map((row, index) => (
+            <article key={row.id} className="discovery-spotlight-card">
+              <div className="discovery-spotlight-media">
+                {row.preview
+                  ? <img src={row.preview} alt={row.title} loading={index === 0 ? 'eager' : 'lazy'} decoding="async" />
+                  : <div className="discovery-rising-now-placeholder" aria-hidden="true" />}
+              </div>
+              <div className="discovery-spotlight-meta">
+                <div className="discovery-card-title">{row.title}</div>
+                <div className="discovery-card-subtitle">by {row.subtitle}</div>
+              </div>
+            </article>
+          ))}
+          {discoverySpotlightRows.length === 0 && (
+            <article className="discovery-spotlight-card is-placeholder" aria-hidden="true">
+              <div className="discovery-spotlight-media"><div className="discovery-rising-now-placeholder" /></div>
+              <div className="discovery-spotlight-meta">
+                <div className="discovery-card-title">More discovery cards coming soon</div>
+              </div>
+            </article>
+          )}
+        </div>
+      </section>
+
       <section id="latest-galleries" className="discovery-editorial-section">
         <div className="discovery-section-header">
           <h2>Latest Galleries</h2>
@@ -3907,39 +4109,11 @@ function HomePage({
         {!loadingLatest && latestItems.length === 0 && <p className="small">No galleries yet.</p>}
       </section>
 
-      {continuationBlockOneHasItems && (
-        <section id="trending-block-three" className="discovery-trending-flow-section">
-          <div className={`discovery-density-transition${densityTransitionClass}`}>
-            {renderTrendingBlockContent(
-              smallContinuationBlockOne,
-              smallTopItemCount,
-              continuationBlockOneRows,
-              undefined,
-              { preloadAll: true }
-            )}
-          </div>
-        </section>
-      )}
-
-      {continuationBlockTwoHasItems && (
-        <section id="trending-block-four" className="discovery-trending-flow-section">
-          <div className={`discovery-density-transition${densityTransitionClass}`}>
-            {renderTrendingBlockContent(
-              smallContinuationBlockTwo,
-              smallTopItemCount + smallContinuationBlockOne.length,
-              continuationBlockTwoRows,
-              undefined,
-              { preloadAll: true }
-            )}
-          </div>
-        </section>
-      )}
-
       {showRisingArtistsSection && (
-        <section id="rising-artists" className="discovery-editorial-section">
+        <section id="rising-artists-grid" className="discovery-editorial-section">
           <div className="discovery-section-header">
             <h2>Rising Creators</h2>
-            <a href="#rising-artists" className="text-sm font-semibold no-underline">View all</a>
+            <a href="#rising-artists-grid" className="text-sm font-semibold no-underline">More creators</a>
           </div>
           <div className="discovery-artists-grid discovery-artists-grid-wide">
             {risingArtists.map((artist, i) => (
@@ -6787,6 +6961,7 @@ function PostPage() {
 
   const mediaById = new Map(post.media.map((item) => [item.mediaId, item]));
   const orderedMedia = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
+  const relatedSidebarMedia = orderedMedia.slice(0, 6);
   const destinationLabel = post.destination?.type === 'pdf'
     ? 'Open PDF'
     : post.destination?.type === 'external'
@@ -6884,66 +7059,95 @@ function PostPage() {
   };
 
   return (
-    <div className="layout">
-      <section className="panel">
-        <h1>{post.title}</h1>
-        <p className="small">
-          By {(post.creator || post.artist)
-            ? (
-              <Link
-                to={`/creators/${encodeURIComponent((post.creator || post.artist)!.slug)}`}
-                className="no-underline"
-              >
-                {(post.creator || post.artist)!.name}
-              </Link>
-            )
-            : 'Unknown creator'}
-          {' · '}
-          {post.status}
-          {' · '}
-          {post.discovery.mode}
-        </p>
-        {post.summary && <p>{post.summary}</p>}
-        {post.destination?.url && (
-          <p className="mt-3">
-            <a className="auth-primary-btn no-underline" href={post.destination.url} target="_blank" rel="noreferrer">
-              {destinationLabel}
-            </a>
+    <div className="layout post-detail-layout">
+      <div className="post-detail-main">
+        <section className="panel">
+          <h1>{post.title}</h1>
+          <p className="small">
+            By {(post.creator || post.artist)
+              ? (
+                <Link
+                  to={`/creators/${encodeURIComponent((post.creator || post.artist)!.slug)}`}
+                  className="no-underline"
+                >
+                  {(post.creator || post.artist)!.name}
+                </Link>
+              )
+              : 'Unknown creator'}
+            {' · '}
+            {post.status}
+            {' · '}
+            {post.discovery.mode}
           </p>
-        )}
-      </section>
+          {post.summary && <p>{post.summary}</p>}
+          {post.destination?.url && (
+            <p className="mt-3">
+              <a className="auth-primary-btn no-underline" href={post.destination.url} target="_blank" rel="noreferrer">
+                {destinationLabel}
+              </a>
+            </p>
+          )}
+        </section>
 
-      {orderedMedia.length > 0 && (
-        <section className="panel mt-4">
-          <h2>Media</h2>
-          <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': 2 } as any}>
-            {orderedMedia.map((media) => (
-              <article key={media.mediaId} className="discovery-feature-card gallery-discovery-card">
-                <div className="discovery-feature-media" style={{ aspectRatio: '1.15 / 1' }}>
-                  {media.assetType === 'video'
-                    ? <img src={media.previewPosterUrl || media.previewUrl} alt={media.title || media.mediaId} />
-                    : <img src={media.previewUrl} alt={media.title || media.mediaId} />}
-                </div>
-                <div className="discovery-feature-footer">
-                  <div className="discovery-feature-text">
-                    <h3 className="discovery-feature-title">{media.title || media.mediaId}</h3>
-                    {media.caption && <p className="discovery-feature-subtitle">{media.caption}</p>}
+        {orderedMedia.length > 0 && (
+          <section className="panel mt-4">
+            <h2>Media</h2>
+            <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': 2 } as any}>
+              {orderedMedia.map((media) => (
+                <article key={media.mediaId} className="discovery-feature-card gallery-discovery-card">
+                  <div className="discovery-feature-media" style={{ aspectRatio: '1.15 / 1' }}>
+                    {media.assetType === 'video'
+                      ? <img src={media.previewPosterUrl || media.previewUrl} alt={media.title || media.mediaId} />
+                      : <img src={media.previewUrl} alt={media.title || media.mediaId} />}
                   </div>
+                  <div className="discovery-feature-footer">
+                    <div className="discovery-feature-text">
+                      <h3 className="discovery-feature-title">{media.title || media.mediaId}</h3>
+                      {media.caption && <p className="discovery-feature-subtitle">{media.caption}</p>}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {post.blocks.length > 0 && (
+          <section className="panel mt-4">
+            <h2>Post Content</h2>
+            <div className="mt-3" style={{ display: 'grid', gap: '1rem' }}>
+              {post.blocks.map((block, idx) => renderBlock(block, idx))}
+            </div>
+          </section>
+        )}
+      </div>
+
+      <aside className="post-detail-sidebar">
+        <section className="panel">
+          <h3 className="m-0">Discover related</h3>
+          <p className="small mt-2 mb-0">More media and discovery context connected to this post.</p>
+        </section>
+        <section className="panel mt-4">
+          <h4 className="m-0">From this post</h4>
+          <div className="post-detail-sidebar-list mt-3">
+            {relatedSidebarMedia.length > 0 ? relatedSidebarMedia.map((media) => (
+              <article key={`related-media-${media.mediaId}`} className="post-detail-sidebar-card">
+                <div className="post-detail-sidebar-thumb">
+                  {media.assetType === 'video'
+                    ? <img src={media.previewPosterUrl || media.previewUrl} alt={media.title || media.mediaId} loading="lazy" decoding="async" />
+                    : <img src={media.previewUrl} alt={media.title || media.mediaId} loading="lazy" decoding="async" />}
+                </div>
+                <div>
+                  <div className="discovery-card-title">{media.title || media.mediaId}</div>
+                  <div className="discovery-card-subtitle">{media.assetType === 'video' ? 'Video' : 'Image'}</div>
                 </div>
               </article>
-            ))}
+            )) : (
+              <p className="small m-0">No related media yet.</p>
+            )}
           </div>
         </section>
-      )}
-
-      {post.blocks.length > 0 && (
-        <section className="panel mt-4">
-          <h2>Post Content</h2>
-          <div className="mt-3" style={{ display: 'grid', gap: '1rem' }}>
-            {post.blocks.map((block, idx) => renderBlock(block, idx))}
-          </div>
-        </section>
-      )}
+      </aside>
     </div>
   );
 }
