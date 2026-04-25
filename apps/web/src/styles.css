@@ -2262,7 +2262,12 @@
   }
 
   .discovery-quickread-layer .discovery-quickread-shell {
-    width: min(1280px, calc(100vw - clamp(2.5rem, 14vw, 16rem)));
+    --quickread-main-max: 1280px;
+    --quickread-rail-width: clamp(280px, 21vw, 360px);
+    width: min(
+      calc(var(--quickread-main-max) + var(--quickread-rail-width) + 2.35rem),
+      calc(100vw - clamp(1.2rem, 3vw, 2.4rem))
+    );
     height: calc(100vh - 1.8rem);
     max-height: calc(100vh - 1.8rem);
     border-radius: 1.9rem;
@@ -2280,15 +2285,19 @@
 
   .discovery-quickread-body {
     display: grid;
-    grid-template-columns: minmax(0, 1.68fr) minmax(22.5rem, 0.92fr);
+    grid-template-columns: minmax(0, 1fr) var(--quickread-rail-width);
     gap: 1.15rem;
     padding: 0.95rem;
     overflow: hidden;
     min-height: 0;
+    align-items: start;
   }
 
   .discovery-quickread-main {
     min-height: 0;
+    width: 100%;
+    max-width: var(--quickread-main-max);
+    justify-self: center;
     overflow-y: auto;
     border: 1px solid color-mix(in srgb, var(--line) 80%, white);
     border-radius: 1.35rem;
