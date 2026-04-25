@@ -2254,7 +2254,9 @@
   }
 
   .discovery-quickread-layer {
-    --quickread-left-offset: 14rem;
+    --quickread-main-max: 1280px;
+    --quickread-rail-width: clamp(280px, 21vw, 360px);
+    --quickread-left-offset: clamp(2rem, calc((100vw - var(--quickread-main-max)) / 2 + 2rem), 14rem);
     justify-content: flex-start;
     align-items: stretch;
     padding: 0.9rem 0.5rem 0.9rem 0.9rem;
@@ -2263,8 +2265,6 @@
   }
 
   .discovery-quickread-layer .discovery-quickread-shell {
-    --quickread-main-max: 1280px;
-    --quickread-rail-width: clamp(280px, 21vw, 360px);
     margin-left: var(--quickread-left-offset);
     width: min(
       calc(var(--quickread-main-max) + var(--quickread-rail-width) + 2.35rem),
