@@ -464,6 +464,24 @@ type CreatorProfilePayload = {
   name: string;
   slug: string;
   status: 'active' | 'inactive';
+  branding?: {
+    profileImage?: {
+      altText?: string;
+      thumbnailUrls?: {
+        square256?: string;
+        square512?: string;
+        square1024?: string;
+      };
+    };
+    coverImage?: {
+      altText?: string;
+      renditionUrls?: {
+        desktop?: string;
+        tablet?: string;
+        mobile?: string;
+      };
+    };
+  };
   defaultProfileTab?: 'feed' | 'galleries';
   followerCount: number;
   imageCount: number;
@@ -6516,6 +6534,13 @@ function CreatorProfilePage({
   const galleryLabel = `${profile.galleryCount} ${profile.galleryCount === 1 ? 'gallery' : 'galleries'}`;
   const imageLabel = `${profile.imageCount} ${profile.imageCount === 1 ? 'image' : 'images'}`;
   const creatorGroupings = profile.galleries || [];
+  const profileImageUrl = profile.branding?.profileImage?.thumbnailUrls?.square512
+    || profile.branding?.profileImage?.thumbnailUrls?.square256;
+  const profileImageAlt = profile.branding?.profileImage?.altText || `${profile.name} profile image`;
+  const coverDesktopUrl = profile.branding?.coverImage?.renditionUrls?.desktop;
+  const coverTabletUrl = profile.branding?.coverImage?.renditionUrls?.tablet;
+  const coverMobileUrl = profile.branding?.coverImage?.renditionUrls?.mobile;
+  const coverImageAlt = profile.branding?.coverImage?.altText || `${profile.name} cover image`;
   const latestPosts = [...creatorPosts].sort((a, b) => {
     const lhs = Date.parse(a.publishedAt || a.updatedAt || a.createdAt || '');
     const rhs = Date.parse(b.publishedAt || b.updatedAt || b.createdAt || '');
@@ -6757,8 +6782,29 @@ function CreatorProfilePage({
 
   return (
     <div className="layout discovery-layout">
+      {(coverDesktopUrl || coverTabletUrl || coverMobileUrl) && (
+        <section className="panel" style={{ padding: 0, overflow: 'hidden' }}>
+          <picture>
+            {coverMobileUrl && <source media="(max-width: 699px)" srcSet={coverMobileUrl} />}
+            {coverTabletUrl && <source media="(max-width: 1099px)" srcSet={coverTabletUrl} />}
+            <img
+              src={coverDesktopUrl || coverTabletUrl || coverMobileUrl || ''}
+              alt={coverImageAlt}
+              style={{ width: '100%', display: 'block', maxHeight: '380px', objectFit: 'cover' }}
+            />
+          </picture>
+        </section>
+      )}
       <section className="panel discovery-hero">
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          {profileImageUrl && (
+            <img
+              src={profileImageUrl}
+              alt={profileImageAlt}
+              style={{ width: '72px', height: '72px', borderRadius: '999px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.2)' }}
+            />
+          )}
+          <div>
           <h1>{profile.name}</h1>
           <p>
             {followerLabel}
@@ -6767,6 +6813,7 @@ function CreatorProfilePage({
             {' • '}
             <span>{imageLabel}</span>
           </p>
+          </div>
         </div>
         <div className="discovery-hero-actions">
           <button className="auth-primary-btn">Follow creator</button>
