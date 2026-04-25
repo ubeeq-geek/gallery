@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 
 type SurfaceAssetType = 'image' | 'video';
@@ -162,7 +163,6 @@ const PostMetaHeader = ({ item, post, itemIndex, itemsCount }: { item: Discovery
         {' · '}
         {Math.max(1, itemIndex + 1)} / {Math.max(1, itemsCount)}
       </p>
-      {post?.summary ? <p className="discovery-quickread-summary">{post.summary}</p> : (item.postSummary ? <p className="discovery-quickread-summary">{item.postSummary}</p> : null)}
     </header>
   );
 };
@@ -173,11 +173,18 @@ const renderMediaFigure = (
   blur?: boolean
  ) => {
   const hasDimensions = Boolean(media.width && media.height && media.width > 0 && media.height > 0);
+  const mediaAspect = hasDimensions ? media.width! / media.height! : 1;
+  const frameStyle = hasDimensions
+    ? {
+        aspectRatio: `${media.width} / ${media.height}`,
+        '--quickread-media-fit-width': `min(100%, ${mediaAspect * 70}vh, ${mediaAspect * 50}rem)`
+      } as CSSProperties
+    : undefined;
   return (
     <figure key={key} className="discovery-quickread-media-figure">
     <div
       className={`discovery-quickread-media-frame${hasDimensions ? ' has-ratio' : ' no-ratio'}`}
-      style={hasDimensions ? { aspectRatio: `${media.width} / ${media.height}` } : undefined}
+      style={frameStyle}
     >
     {media.assetType === 'video' ? (
       <video controls playsInline preload="metadata" poster={media.previewPosterUrl} style={{ filter: blur ? 'blur(28px)' : undefined }}>
@@ -506,7 +513,6 @@ export default function DiscoveryQuickReadOverlay({
                     <img src={item.previewUrl} alt={item.title || 'Discovery media'} style={{ filter: item.blurred ? 'blur(28px)' : undefined }} />
                   )}
                 </div>
-                {item.postSummary ? <p>{item.postSummary}</p> : null}
               </article>
             )}
             <div className="discovery-quickread-main-nav">

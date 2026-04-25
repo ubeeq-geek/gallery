@@ -1106,6 +1106,9 @@ export class DynamoStore implements DataStore {
         title: String(row.title || ''),
         previewKey: String(row.previewKey || ''),
         previewPosterKey: row.previewPosterKey ? String(row.previewPosterKey) : undefined,
+        thumbnailKeys: typeof row.thumbnailKeys === 'object' && row.thumbnailKeys !== null
+          ? row.thumbnailKeys as TrendingFeedItem['thumbnailKeys']
+          : undefined,
         width: Math.max(0, Number(row.width || 0)),
         height: Math.max(0, Number(row.height || 0)),
         aspectRatio: Math.max(0, Number(row.aspectRatio || 0)) || undefined,

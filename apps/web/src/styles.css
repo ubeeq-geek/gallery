@@ -2387,6 +2387,7 @@
   }
 
   .discovery-quickread-media-frame {
+    --quickread-media-max-height: min(70vh, 50rem);
     width: 100%;
     background: transparent;
     border-radius: 1.15rem;
@@ -2397,6 +2398,9 @@
   }
 
   .discovery-quickread-media-frame.has-ratio {
+    width: var(--quickread-media-fit-width, 100%);
+    max-height: var(--quickread-media-max-height);
+    justify-self: center;
     background: #020617;
   }
 
@@ -2422,7 +2426,7 @@
   .discovery-quickread-media-frame.has-ratio video {
     width: 100%;
     height: 100%;
-    max-height: none;
+    max-height: var(--quickread-media-max-height);
     background: #020617;
   }
 

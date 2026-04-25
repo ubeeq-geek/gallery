@@ -51,6 +51,7 @@ interface CandidateItem {
   title: string;
   previewKey: string;
   previewPosterKey?: string;
+  thumbnailKeys?: TrendingFeedItem['thumbnailKeys'];
   width: number;
   height: number;
   aspectRatio: number;
@@ -184,6 +185,7 @@ const buildCandidates = async (
       const assetType = (item.assetType || 'image');
       const normalizedAssetType = assetType === 'video' ? 'video' : assetType === 'image' ? 'image' : null;
       if (!normalizedAssetType) continue;
+      if (item.appearsInFeed === false) continue;
       if (isHiddenByVisibility(item.releaseVisibility)) continue;
       if (item.status && item.status !== 'published' && item.status !== 'scheduled') continue;
       if (!canViewBySchedule(item.publishAt || grouping.publishAt, item.publicReleaseAt || grouping.publicReleaseAt, nowMs, false)) {
@@ -216,6 +218,7 @@ const buildCandidates = async (
         title: item.title || grouping.title || 'Artwork',
         previewKey,
         previewPosterKey,
+        thumbnailKeys: item.thumbnailKeys,
         width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
         height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
         aspectRatio: (
@@ -280,6 +283,7 @@ const buildCandidates = async (
         const ref = limitedRefs[refIndex];
         const item = mediaById.get(ref.mediaId);
         if (!item) continue;
+        if (item.appearsInFeed === false) continue;
         if (isHiddenByVisibility(item.releaseVisibility)) continue;
         if (item.status && item.status !== 'published' && item.status !== 'scheduled') continue;
         const placements = placementByMediaId.get(item.mediaId) || [];
@@ -319,6 +323,7 @@ const buildCandidates = async (
           title: item.title || post.title || placedGrouping.title || 'Artwork',
           previewKey,
           previewPosterKey,
+          thumbnailKeys: item.thumbnailKeys,
           width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
           height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
           aspectRatio: (
@@ -565,6 +570,7 @@ export const buildTrendingFeedForPeriod = async (
     title: item.title,
     previewKey: item.previewKey,
     previewPosterKey: item.previewPosterKey,
+    thumbnailKeys: item.thumbnailKeys,
     width: item.width,
     height: item.height,
     aspectRatio: item.aspectRatio,

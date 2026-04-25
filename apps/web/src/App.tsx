@@ -304,12 +304,35 @@ type TrendingImage = {
   title: string;
   previewUrl: string;
   previewPosterUrl?: string;
+  thumbnailUrls?: {
+    w320?: string;
+    w640?: string;
+    w1280?: string;
+    w1920?: string;
+    square256?: string;
+    square512?: string;
+    square1024?: string;
+  };
   width?: number;
   height?: number;
   aspectRatio?: number;
   favoriteCount: number;
   createdAt: string;
 };
+const normalizeTrendingImage = (item: Partial<TrendingImage> & {
+  creatorId?: string;
+  creatorName?: string;
+  groupingId?: string;
+  groupingSlug?: string;
+  groupingVisibility?: 'free' | 'preview' | 'premium';
+}): TrendingImage => ({
+  ...item,
+  artistId: item.artistId || item.creatorId || '',
+  artistName: item.artistName || item.creatorName || '',
+  galleryId: item.galleryId || item.groupingId || '',
+  gallerySlug: item.gallerySlug || item.groupingSlug || '',
+  galleryVisibility: item.galleryVisibility || item.groupingVisibility
+} as TrendingImage);
 
 type PostBlockType =
   | 'heading'
@@ -326,6 +349,20 @@ type PostBlockType =
   | 'carousel'
   | 'pdf_preview'
   | 'html_fragment';
+
+const buildImageSrcSet = (thumbnailUrls?: TrendingImage['thumbnailUrls']): string | undefined => {
+  if (!thumbnailUrls) return undefined;
+  const entries: Array<[keyof NonNullable<TrendingImage['thumbnailUrls']>, number]> = [
+    ['w320', 320],
+    ['w640', 640],
+    ['w1280', 1280],
+    ['w1920', 1920]
+  ];
+  const parts = entries
+    .map(([key, width]) => thumbnailUrls[key] ? `${thumbnailUrls[key]} ${width}w` : '')
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : undefined;
+};
 
 type PostBlock = {
   blockId: string;
@@ -2398,9 +2435,10 @@ function HomePage({
           trendingBaseLimit,
           disclosureFilters
         ) as { items: TrendingImage[]; nextCursor?: string };
+        const normalizedItems = (trendingData.items || []).map((entry) => normalizeTrendingImage(entry));
         const nextItems = discoverySort === 'latest'
-          ? [...(trendingData.items || [])].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-          : (trendingData.items || []);
+          ? [...normalizedItems].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+          : normalizedItems;
         setTrendingImages(nextItems);
         setTrendingCursor(trendingData.nextCursor);
       } catch (e) {
@@ -2522,7 +2560,7 @@ function HomePage({
         disclosureFilters
       ) as { items: TrendingImage[]; nextCursor?: string };
       setTrendingImages((prev) => {
-        const merged = [...prev, ...(response.items || [])];
+        const merged = [...prev, ...(response.items || []).map((entry) => normalizeTrendingImage(entry))];
         if (discoverySort !== 'latest') return merged;
         return [...merged].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       });
@@ -3243,13 +3281,20 @@ function HomePage({
     const compactCard = Boolean(options?.compactCard);
     const preload = Boolean(options?.preload);
     const shouldSquareCrop = (feedDensity === 'small' || forceSquareFrame) && allowDiscoverSquareCrop;
-    const shouldLargeCrop = feedDensity === 'large' && allowDiscoverSquareCrop;
+    const shouldLargeCrop = false;
     const frameRatio = shouldSquareCrop ? 1 : ratio;
     const isSmallLandscape = feedDensity === 'small' && !shouldSquareCrop && ratio >= 1.25;
     const largeCardClass = feedDensity === 'large' ? ' density-large-card' : '';
     const compactCardClass = compactCard ? ' is-compact' : '';
     const largeCropClass = shouldLargeCrop ? ' large-crop' : '';
     const nonCropClass = !shouldSquareCrop && !shouldLargeCrop ? ' no-crop' : '';
+    const imageSrcSet = assetType === 'image' ? buildImageSrcSet(item.thumbnailUrls) : undefined;
+    const imageSizes = feedDensity === 'large'
+      ? '(min-width: 1100px) min(100vw, 1280px), 100vw'
+      : feedDensity === 'medium'
+        ? '(min-width: 1100px) 50vw, 100vw'
+        : '(min-width: 1100px) 33vw, 50vw';
+    const imageSrc = item.thumbnailUrls?.w1280 || item.thumbnailUrls?.w640 || item.previewUrl;
 
     return (
       <article
@@ -3282,10 +3327,11 @@ function HomePage({
               />
             ) : (
               <img
-                src={assetType === 'video' ? (effectivePosterUrl || '') : item.previewUrl}
+                src={assetType === 'video' ? (effectivePosterUrl || '') : imageSrc}
+                srcSet={assetType === 'image' ? imageSrcSet : undefined}
+                sizes={assetType === 'image' ? imageSizes : undefined}
                 alt={item.title || 'Artwork preview'}
                 loading={preload || cardIndex < 2 ? 'eager' : 'lazy'}
-                fetchPriority={preload || cardIndex < 2 ? 'high' : (cardIndex < 8 ? 'auto' : 'low')}
                 decoding="async"
                 style={{
                   objectPosition: 'center center',
@@ -4070,17 +4116,16 @@ function HomePage({
                   return (
                     <div className="discovery-stack discovery-stack-tall">
                       <div className="discovery-stack-layer discovery-stack-layer-back">
-                        <img src={backImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                        <img src={backImage} alt="" loading="lazy" decoding="async" aria-hidden="true" />
                       </div>
                       <div className="discovery-stack-layer discovery-stack-layer-mid">
-                        <img src={midImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                        <img src={midImage} alt="" loading="lazy" decoding="async" aria-hidden="true" />
                       </div>
                       <div className="discovery-stack-layer discovery-stack-layer-front">
                         <img
                           src={frontImage}
                           alt={gallery.title || 'Gallery cover'}
                           loading={i < 2 ? 'eager' : 'lazy'}
-                          fetchPriority={i < 2 ? 'high' : 'low'}
                           decoding="async"
                         />
                       </div>
@@ -4927,7 +4972,6 @@ function GalleryPage({
                   src={item.assetType === 'video' ? (fallbackPosterUrl || '') : item.previewUrl}
                   alt={item.title || item.imageId}
                   loading={cardIndex < 2 ? 'eager' : 'lazy'}
-                  fetchPriority={cardIndex < 2 ? 'high' : 'low'}
                   decoding="async"
                   style={{
                     objectPosition: 'center center',
@@ -6510,7 +6554,6 @@ function CreatorProfilePage({
                   src={item.assetType === 'video' ? (fallbackPosterUrl || '') : item.previewUrl}
                   alt={item.title || 'Artwork preview'}
                   loading={index < 2 ? 'eager' : 'lazy'}
-                  fetchPriority={index < 2 ? 'high' : 'low'}
                   decoding="async"
                   style={{ objectPosition: 'center center', filter: item.blurred ? 'blur(28px)' : undefined }}
                 />
@@ -6799,7 +6842,6 @@ function CreatorProfilePage({
                               src={preview.previewPosterUrl || preview.previewUrl}
                               alt={post.title}
                               loading={idx < 2 ? 'eager' : 'lazy'}
-                              fetchPriority={idx < 2 ? 'high' : 'low'}
                               decoding="async"
                               style={{ objectPosition: 'center center' }}
                             />
@@ -6809,7 +6851,6 @@ function CreatorProfilePage({
                               src={preview.previewUrl}
                               alt={post.title}
                               loading={idx < 2 ? 'eager' : 'lazy'}
-                              fetchPriority={idx < 2 ? 'high' : 'low'}
                               decoding="async"
                               style={{ objectPosition: 'center center' }}
                             />
