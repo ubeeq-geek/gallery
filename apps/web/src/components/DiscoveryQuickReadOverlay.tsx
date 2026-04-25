@@ -98,7 +98,7 @@ type DiscoveryQuickReadOverlayProps = {
   onVideoVolumeChange: (video: HTMLVideoElement) => void;
 };
 
-type PostRenderKind = 'standard' | 'parody' | 'story';
+type PostRenderKind = 'standard' | 'parody' | 'story' | 'short_story';
 
 const splitParagraphs = (text?: string): string[] => {
   if (!text) return [];
@@ -181,6 +181,7 @@ const inferPostRenderKind = (post: OverlayPost): PostRenderKind => {
   if (paragraphBlocks >= 4) return 'story';
   if (paragraphBlocks >= 2 && headingBlocks >= 1) return 'story';
   if (longParagraphBlocks > 0) return 'story';
+  if (paragraphBlocks > 0) return 'short_story';
   return 'standard';
 };
 
@@ -346,6 +347,14 @@ const ParodyPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: 
 const StoryPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
   return (
     <div className="discovery-quickread-content-flow discovery-quickread-story-flow post-reading">
+      <StandardPostRenderer item={item} post={post} storyMode />
+    </div>
+  );
+};
+
+const ShortStoryPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
+  return (
+    <div className="discovery-quickread-content-flow discovery-quickread-short-story-flow post-reading">
       <StandardPostRenderer item={item} post={post} storyMode />
     </div>
   );
@@ -538,6 +547,8 @@ export default function DiscoveryQuickReadOverlay({
                 ? <ParodyPostRenderer item={item} post={post} />
                 : renderKind === 'story'
                   ? <StoryPostRenderer item={item} post={post} />
+                  : renderKind === 'short_story'
+                    ? <ShortStoryPostRenderer item={item} post={post} />
                   : <StandardPostRenderer item={item} post={post} />
             ) : (
               <article className="discovery-quickread-content-flow">
