@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 type SurfaceAssetType = 'image' | 'video';
@@ -68,6 +69,8 @@ type OverlayPost = {
     previewPosterUrl?: string;
     caption?: string;
     sortOrder?: number;
+    width?: number;
+    height?: number;
   }>;
   primaryMediaId?: string;
   creator?: { name: string; slug: string };
@@ -119,6 +122,18 @@ const normalizeDisclosureLine = (item?: {
   return parts.join(' • ');
 };
 
+const collectPostInlineImageUrls = (post: OverlayPost): string[] => {
+  const mediaById = new Map(post.media.map((media) => [media.mediaId, media]));
+  const urls: string[] = [];
+  for (const block of post.blocks) {
+    if (block.type !== 'image' || !block.mediaId) continue;
+    const media = mediaById.get(block.mediaId);
+    if (!media || media.assetType !== 'image' || !media.previewUrl) continue;
+    urls.push(media.previewUrl);
+  }
+  return urls;
+};
+
 const inferPostRenderKind = (post: OverlayPost): PostRenderKind => {
   const template = (post.metadata?.template || '').toLowerCase();
   const layout = (post.metadata?.layout || '').toLowerCase();
@@ -153,21 +168,29 @@ const PostMetaHeader = ({ item, post, itemIndex, itemsCount }: { item: Discovery
 };
 
 const renderMediaFigure = (
-  media: { assetType: SurfaceAssetType; previewUrl: string; previewPosterUrl?: string; title?: string; caption?: string },
+  media: { assetType: SurfaceAssetType; previewUrl: string; previewPosterUrl?: string; title?: string; caption?: string; width?: number; height?: number },
   key: string,
   blur?: boolean
-) => (
-  <figure key={key} className="discovery-quickread-media-figure">
+ ) => {
+  const hasDimensions = Boolean(media.width && media.height && media.width > 0 && media.height > 0);
+  return (
+    <figure key={key} className="discovery-quickread-media-figure">
+    <div
+      className={`discovery-quickread-media-frame${hasDimensions ? ' has-ratio' : ' no-ratio'}`}
+      style={hasDimensions ? { aspectRatio: `${media.width} / ${media.height}` } : undefined}
+    >
     {media.assetType === 'video' ? (
       <video controls playsInline preload="metadata" poster={media.previewPosterUrl} style={{ filter: blur ? 'blur(28px)' : undefined }}>
         <source src={media.previewUrl} />
       </video>
     ) : (
-      <img src={media.previewUrl} alt={media.title || 'Post media'} style={{ filter: blur ? 'blur(28px)' : undefined }} />
+      <img src={media.previewUrl} alt={media.title || 'Post media'} loading="eager" decoding="async" style={{ filter: blur ? 'blur(28px)' : undefined }} />
     )}
+    </div>
     {media.caption ? <figcaption>{media.caption}</figcaption> : null}
   </figure>
-);
+  );
+};
 
 const StandardPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
   const orderedMedia = [...post.media].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
@@ -367,6 +390,47 @@ export default function DiscoveryQuickReadOverlay({
   onSelectStreamItem,
   onVideoVolumeChange
 }: DiscoveryQuickReadOverlayProps) {
+  const hasOverlayItem = Boolean(item);
+  const isPostSurface = item?.surfaceType === 'post' || Boolean(item?.postId);
+  const postInlineImageUrls = useMemo(() => (post ? collectPostInlineImageUrls(post) : []), [post]);
+  const [postInlineMediaReady, setPostInlineMediaReady] = useState(!isPostSurface);
+
+  useEffect(() => {
+    if (!open || !hasOverlayItem || !isPostSurface) {
+      setPostInlineMediaReady(true);
+      return;
+    }
+    if (!post) {
+      setPostInlineMediaReady(false);
+      return;
+    }
+    if (postInlineImageUrls.length === 0) {
+      setPostInlineMediaReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    let remaining = postInlineImageUrls.length;
+    setPostInlineMediaReady(false);
+
+    const done = () => {
+      if (cancelled) return;
+      remaining -= 1;
+      if (remaining <= 0) setPostInlineMediaReady(true);
+    };
+
+    for (const url of postInlineImageUrls) {
+      const image = new Image();
+      image.onload = done;
+      image.onerror = done;
+      image.src = url;
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, hasOverlayItem, isPostSurface, post, postInlineImageUrls]);
+
   if (!open || !item) return null;
 
   const renderKind = post ? inferPostRenderKind(post) : 'standard';
@@ -393,7 +457,16 @@ export default function DiscoveryQuickReadOverlay({
         <div className="discovery-quickread-body">
           <section className="discovery-quickread-main" aria-label="Post reading surface">
             <PostMetaHeader item={item} post={post} itemIndex={itemIndex} itemsCount={itemsCount} />
-            {post ? (
+            {isPostSurface && (!post || !postInlineMediaReady) ? (
+              <article className="discovery-quickread-content-flow">
+                <div className="discovery-quickread-loading-block" aria-live="polite">
+                  {post ? 'Preparing post content…' : 'Loading full post…'}
+                </div>
+                <div className="discovery-quickread-loading-line" />
+                <div className="discovery-quickread-loading-line is-wide" />
+                <div className="discovery-quickread-loading-line" />
+              </article>
+            ) : post ? (
               renderKind === 'parody'
                 ? <ParodyPostRenderer item={item} post={post} />
                 : renderKind === 'story'
@@ -422,6 +495,11 @@ export default function DiscoveryQuickReadOverlay({
                 {item.postSummary ? <p>{item.postSummary}</p> : null}
               </article>
             )}
+            <div className="discovery-quickread-main-nav">
+              <button type="button" className="auth-secondary-btn" disabled={!hasPrevious} onClick={onPrevious}>Previous</button>
+              <button type="button" className="auth-secondary-btn" disabled={!hasNext} onClick={onNext}>Next</button>
+              {post?.slug ? <Link className="auth-primary-btn no-underline" to={`/posts/${encodeURIComponent(post.slug)}`} onClick={onClose}>Open in post page</Link> : null}
+            </div>
           </section>
 
           <DiscoverySecondaryRail

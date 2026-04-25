@@ -2108,6 +2108,18 @@
     max-width: 76ch;
   }
 
+  .discovery-quickread-main-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1.1rem;
+    padding-top: 0.95rem;
+    border-top: 1px solid color-mix(in srgb, var(--line) 75%, white);
+    position: sticky;
+    bottom: 0;
+    background: color-mix(in srgb, var(--surface) 94%, white 6%);
+  }
+
   .discovery-quickread-content-flow h1,
   .discovery-quickread-content-flow h2,
   .discovery-quickread-content-flow h3,
@@ -2129,16 +2141,74 @@
     gap: 0.45rem;
   }
 
+  .discovery-quickread-media-frame {
+    width: 100%;
+    background: transparent;
+    border-radius: 1.15rem;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    min-height: 0;
+  }
+
+  .discovery-quickread-media-frame.has-ratio {
+    background: #020617;
+  }
+
+  .discovery-quickread-media-frame.no-ratio {
+    justify-content: center;
+  }
+
   .discovery-quickread-media-figure img,
   .discovery-quickread-media-figure video {
-    width: 100%;
+    width: auto;
     height: auto;
+    max-width: 100%;
     max-height: min(70vh, 50rem);
     border-radius: 1.15rem;
     object-fit: contain;
     object-position: center center;
-    background: #020617;
+    background: transparent;
     display: block;
+    margin-inline: auto;
+  }
+
+  .discovery-quickread-media-frame.has-ratio img,
+  .discovery-quickread-media-frame.has-ratio video {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    background: #020617;
+  }
+
+  .discovery-quickread-loading-block {
+    border: 1px solid color-mix(in srgb, var(--line) 80%, white);
+    background: color-mix(in srgb, var(--surface-muted) 74%, white);
+    border-radius: 0.95rem;
+    padding: 0.9rem;
+    font-size: 0.94rem;
+    color: var(--text-subtle);
+  }
+
+  .discovery-quickread-loading-line {
+    height: 0.95rem;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #e2e8f0 0%, #f1f5f9 50%, #e2e8f0 100%);
+    background-size: 220% 100%;
+    animation: discoveryQuickreadPulse 1.2s linear infinite;
+  }
+
+  .discovery-quickread-loading-line.is-wide {
+    width: 82%;
+  }
+
+  @keyframes discoveryQuickreadPulse {
+    from {
+      background-position: 0% 50%;
+    }
+    to {
+      background-position: 220% 50%;
+    }
   }
 
   .discovery-quickread-media-figure figcaption {
