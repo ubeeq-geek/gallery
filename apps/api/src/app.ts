@@ -928,6 +928,15 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     title: string;
     previewUrl: string;
     previewPosterUrl?: string;
+    thumbnailUrls?: {
+      w320?: string;
+      w640?: string;
+      w1280?: string;
+      w1920?: string;
+      square256?: string;
+      square512?: string;
+      square1024?: string;
+    };
     width?: number;
     height?: number;
     aspectRatio?: number;
@@ -1063,6 +1072,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       effectiveAiDisclosure: AiDisclosure;
       effectiveHeavyTopics: HeavyTopic[];
       title: string;
+      thumbnailKeys?: Media['thumbnailKeys'];
       createdAt: string;
       createdAtMs: number;
       recencyBoost: number;
@@ -1082,6 +1092,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
           if (assetType === 'image' && !itemTypes.image) continue;
           if (assetType === 'video' && !itemTypes.video) continue;
+          if (item.appearsInFeed === false) continue;
           if (isHiddenByVisibility(item.releaseVisibility)) continue;
           if (!canViewBySchedule(item.publishAt || grouping.publishAt, item.publicReleaseAt || grouping.publicReleaseAt, nowMs, false)) {
             continue;
@@ -1112,6 +1123,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             effectiveAiDisclosure,
             effectiveHeavyTopics,
             title: item.title || grouping.title || 'Artwork',
+            thumbnailKeys: item.thumbnailKeys,
             createdAt: item.createdAt,
             createdAtMs,
             recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
@@ -1185,6 +1197,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             const ref = limitedRefs[refIndex];
             const item = mediaById.get(ref.mediaId);
             if (!item) continue;
+            if (item.appearsInFeed === false) continue;
             if (isHiddenByVisibility(item.releaseVisibility)) continue;
             if (item.status && item.status !== 'published' && item.status !== 'scheduled') continue;
 
@@ -1226,6 +1239,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
               effectiveAiDisclosure,
               effectiveHeavyTopics,
               title: item.title || post.title || placedGrouping.title || 'Artwork',
+              thumbnailKeys: item.thumbnailKeys,
               createdAt: item.createdAt,
               createdAtMs,
               recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
@@ -1299,6 +1313,16 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         title: item.title,
         previewUrl: await publicMediaUrl(item.previewKey) || '',
         previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
+        thumbnailUrls: item.thumbnailKeys
+          ? Object.fromEntries(
+              await Promise.all(
+                Object.entries(item.thumbnailKeys).map(async ([name, key]) => [
+                  name,
+                  await publicMediaUrl(key)
+                ])
+              )
+            )
+          : undefined,
         width: item.width,
         height: item.height,
         aspectRatio: item.aspectRatio,
@@ -2051,6 +2075,16 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             title: post?.title || item.title,
             previewUrl: await publicMediaUrl(item.previewKey) || '',
             previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
+            thumbnailUrls: item.thumbnailKeys
+              ? Object.fromEntries(
+                  await Promise.all(
+                    Object.entries(item.thumbnailKeys).map(async ([name, key]) => [
+                      name,
+                      await publicMediaUrl(key)
+                    ])
+                  )
+                )
+              : undefined,
             width: item.width,
             height: item.height,
             aspectRatio: item.aspectRatio,
