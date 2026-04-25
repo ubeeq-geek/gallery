@@ -5,7 +5,7 @@ import { BatchWriteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand } fr
 import { createHash } from 'crypto';
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import path from 'path';
-import { Jimp } from 'jimp';
+import sharp from 'sharp';
 import { hashPassword } from '../unlock';
 import { loadConfig } from '../config';
 import { ContentCoreRepository } from '../contentCoreRepository';
@@ -890,9 +890,9 @@ const imageDimensionCache = new Map<string, { width: number; height: number }>()
 const getImageDimensions = async (file: AssetFile): Promise<{ width: number; height: number }> => {
   const cached = imageDimensionCache.get(file.absolutePath);
   if (cached) return cached;
-  const image = await Jimp.read(file.absolutePath);
-  const width = Number(image.bitmap.width || 0);
-  const height = Number(image.bitmap.height || 0);
+  const metadata = await sharp(file.absolutePath, { limitInputPixels: false }).metadata();
+  const width = Number(metadata.width || 0);
+  const height = Number(metadata.height || 0);
   if (width <= 0 || height <= 0) {
     throw new Error(`Could not determine image dimensions for ${file.absolutePath}`);
   }
