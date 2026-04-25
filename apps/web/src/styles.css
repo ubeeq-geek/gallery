@@ -2254,10 +2254,10 @@
   }
 
   .discovery-quickread-layer {
-    --quickread-left-offset: 12rem;
+    --quickread-left-offset: 14rem;
     justify-content: flex-start;
     align-items: stretch;
-    padding: 0.9rem 0.9rem 0.9rem var(--quickread-left-offset);
+    padding: 0.9rem 0.5rem 0.9rem var(--quickread-left-offset);
     background: rgb(15 23 42 / 0.32);
     backdrop-filter: blur(2px);
   }
@@ -2267,7 +2267,7 @@
     --quickread-rail-width: clamp(280px, 21vw, 360px);
     width: min(
       calc(var(--quickread-main-max) + var(--quickread-rail-width) + 2.35rem),
-      calc(100vw - var(--quickread-left-offset) - 1.2rem)
+      calc(100vw - var(--quickread-left-offset) - 0.5rem)
     );
     height: calc(100vh - 1.8rem);
     max-height: calc(100vh - 1.8rem);
