@@ -2486,9 +2486,9 @@
   }
 
   .post-reading {
-    max-width: 760px;
+    max-width: 920px;
     margin: 0 auto;
-    padding: 0 24px 80px;
+    padding: 0 12px 80px;
     animation: postReadingFadeIn 180ms ease-out;
   }
 
@@ -2530,7 +2530,7 @@
 
   .discovery-quickread-story-flow .post-body p {
     margin-bottom: 22px;
-    max-width: 36ch;
+    max-width: 48ch;
   }
 
   .discovery-quickread-story-flow .post-body p + p {
