@@ -2870,6 +2870,33 @@ function HomePage({
   const latestItems: DiscoveryGallery[] = latest;
   const risingArtists = artists.slice(0, 4);
   const trendingCollections = collections.slice(0, 3);
+  const discoveryTopics = ['For you', 'Following', 'Photography', 'Design', 'Stories', 'Places'];
+  const challengeRows = [
+    {
+      id: 'sun-faded',
+      endsIn: '6d',
+      title: 'Sun Faded',
+      description: 'Capture the beauty of faded signs and colors.',
+      joinedLabel: '1.2k joined',
+      preview: trendingRenderable[0]?.previewPosterUrl || trendingRenderable[0]?.previewUrl || latestItems[0]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'blue-hour',
+      endsIn: '12d',
+      title: 'Blue Hour',
+      description: 'Show us the magic of twilight and transition.',
+      joinedLabel: '856 joined',
+      preview: trendingRenderable[1]?.previewPosterUrl || trendingRenderable[1]?.previewUrl || latestItems[1]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'roadside-reflections',
+      endsIn: '3d',
+      title: 'Roadside Reflections',
+      description: 'Reflections found in unexpected places.',
+      joinedLabel: '643 joined',
+      preview: trendingRenderable[2]?.previewPosterUrl || trendingRenderable[2]?.previewUrl || latestItems[2]?.galleryThumbnailUrl || ''
+    }
+  ];
   const showRisingArtistsSection = risingArtists.length >= 2;
   const showTrendingCollectionsSection = trendingCollections.length >= 2;
 
@@ -3449,7 +3476,6 @@ function HomePage({
             >
               Daily
             </button>
-            <Link className="discovery-pill-btn no-underline" to="/trending" onClick={closeCompactFilters}>View all</Link>
           </div>
         </div>
       );
@@ -3592,12 +3618,25 @@ function HomePage({
   return (
     <div className="layout discovery-layout">
       <section className="panel discovery-hero">
-        <div>
-          <h1>Discover trending artwork</h1>          
+        <div className="discovery-hero-copy">
+          <span className="discovery-hero-kicker">Welcome to Ubeeq</span>
+          <h1>Creativity. <span>Everywhere.</span></h1>
+          <p>Explore original perspectives from creators around the world. Curated by humans, powered by openness.</p>
+          <div className="discovery-hero-topics" role="tablist" aria-label="Discovery topics">
+            {discoveryTopics.map((topic, index) => (
+              <button
+                key={`discovery-topic-${topic}`}
+                type="button"
+                className={`discovery-hero-topic-pill${index === 0 ? ' is-active' : ''}`}
+              >
+                {topic}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="discovery-hero-actions">
           <a href="#rising-artists" className="auth-primary-btn no-underline">Browse Creators</a>
-          <a href="#latest-galleries" className="auth-secondary-btn no-underline">Latest Galleries</a>
+          <a href="#trending" className="auth-secondary-btn no-underline">Keep discovering</a>
         </div>
       </section>
 
@@ -3688,7 +3727,6 @@ function HomePage({
                   >
                     Daily
                   </button>
-                  <Link className="discovery-pill-btn no-underline" to="/trending">View all</Link>
                 </div>
               </div>
 
@@ -3921,6 +3959,31 @@ function HomePage({
         </section>
       )}
 
+      {showRisingArtistsSection && (
+        <section id="rising-artists" className="discovery-editorial-section discovery-special-row">
+          <div className="discovery-section-header">
+            <h2>Rising Together</h2>
+            <span className="text-sm font-semibold">Fresh voices. Growing communities.</span>
+          </div>
+          <div className="discovery-rising-row">
+            {risingArtists.map((artist, i) => (
+              <article key={artist.artistId || artist.name || `artist-special-${i}`} className="discovery-rising-pill">
+                <div className="discovery-rising-avatar">
+                  {artist.artistThumbnailUrl
+                    ? <img src={artist.artistThumbnailUrl} alt={artist.name || 'Creator'} loading="lazy" decoding="async" />
+                    : <span>{(artist.name || 'Creator').split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')}</span>}
+                </div>
+                <div className="discovery-rising-meta">
+                  <div className="discovery-card-title">
+                    {artist.slug ? <Link to={`/creators/${artist.slug}`} className="no-underline">{artist.name || 'Creator Name'}</Link> : (artist.name || 'Creator Name')}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       {continuationBlockTwoHasItems && (
         <section id="trending-block-four" className="discovery-trending-flow-section">
           <div className={`discovery-density-transition${densityTransitionClass}`}>
@@ -3935,11 +3998,31 @@ function HomePage({
         </section>
       )}
 
+      <section id="active-challenges" className="discovery-editorial-section discovery-special-row">
+        <div className="discovery-section-header">
+          <h2>Active challenges</h2>
+          <span className="text-sm font-semibold">Timed themes to spark creativity and connection.</span>
+        </div>
+        <div className="discovery-challenge-grid">
+          {challengeRows.map((challenge) => (
+            <article key={challenge.id} className="discovery-challenge-card">
+              <span className="discovery-challenge-kicker">ENDS IN {challenge.endsIn}</span>
+              <h3>{challenge.title}</h3>
+              <p>{challenge.description}</p>
+              <div className="discovery-challenge-footer">
+                <span>{challenge.joinedLabel}</span>
+                {challenge.preview && <img src={challenge.preview} alt="" loading="lazy" decoding="async" aria-hidden="true" />}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
       {showRisingArtistsSection && (
-        <section id="rising-artists" className="discovery-editorial-section">
+        <section id="rising-artists-grid" className="discovery-editorial-section">
           <div className="discovery-section-header">
             <h2>Rising Creators</h2>
-            <a href="#rising-artists" className="text-sm font-semibold no-underline">View all</a>
+            <a href="#rising-artists-grid" className="text-sm font-semibold no-underline">More creators</a>
           </div>
           <div className="discovery-artists-grid discovery-artists-grid-wide">
             {risingArtists.map((artist, i) => (
