@@ -1981,6 +1981,41 @@
     }
   }
 
+  .discovery-spotlight-grid {
+    display: grid;
+    gap: 0.9rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .discovery-spotlight-card {
+    border: 1px solid #d7e2f1;
+    border-radius: 1rem;
+    background: #fff;
+    overflow: hidden;
+  }
+
+  .discovery-spotlight-media {
+    aspect-ratio: 1.25 / 1;
+    background: #ecf3ff;
+  }
+
+  .discovery-spotlight-media img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .discovery-spotlight-meta {
+    padding: 0.75rem 0.9rem 0.95rem;
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .discovery-spotlight-card.is-placeholder .discovery-spotlight-media {
+    min-height: 160px;
+  }
+
   .discovery-artist-tabs-only {
     margin-bottom: 0.75rem;
     padding-bottom: 0;

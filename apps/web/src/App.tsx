@@ -2870,7 +2870,7 @@ function HomePage({
   const latestItems: DiscoveryGallery[] = latest;
   const risingArtists = artists.slice(0, 4);
   const trendingCollections = collections.slice(0, 3);
-  const discoveryTopics = ['For you', 'Following', 'Photography', 'Design', 'Stories', 'Places'];
+  const discoveryTopics = ['For you', 'Challenges', 'Following', 'Photography', 'Design', 'Stories', 'Places'];
   const challengeRows = [
     {
       id: 'sun-faded',
@@ -2929,6 +2929,12 @@ function HomePage({
       preview: trendingRenderable[7]?.previewPosterUrl || trendingRenderable[7]?.previewUrl || latestItems[7]?.galleryThumbnailUrl || ''
     }
   ];
+  const discoverySpotlightRows = trendingRenderable.slice(8, 12).map((item, index) => ({
+    id: item.imageId || `spotlight-${index}`,
+    title: item.title || item.postTitle || 'Untitled spotlight',
+    subtitle: item.artistName || 'Creator',
+    preview: item.previewPosterUrl || item.previewUrl
+  }));
   const showRisingArtistsSection = risingArtists.length >= 2;
   const showTrendingCollectionsSection = trendingCollections.length >= 2;
 
@@ -4013,6 +4019,36 @@ function HomePage({
             </article>
           ))}
           <button type="button" className="discovery-rising-now-next" aria-label="See more rising now rows">›</button>
+        </div>
+      </section>
+
+      <section id="discovery-spotlight" className="discovery-editorial-section discovery-special-row">
+        <div className="discovery-section-header">
+          <h2>Discovery spotlight</h2>
+          <span className="text-sm font-semibold">Fresh picks between rising trends and gallery drops.</span>
+        </div>
+        <div className="discovery-spotlight-grid">
+          {discoverySpotlightRows.map((row, index) => (
+            <article key={row.id} className="discovery-spotlight-card">
+              <div className="discovery-spotlight-media">
+                {row.preview
+                  ? <img src={row.preview} alt={row.title} loading={index === 0 ? 'eager' : 'lazy'} decoding="async" />
+                  : <div className="discovery-rising-now-placeholder" aria-hidden="true" />}
+              </div>
+              <div className="discovery-spotlight-meta">
+                <div className="discovery-card-title">{row.title}</div>
+                <div className="discovery-card-subtitle">by {row.subtitle}</div>
+              </div>
+            </article>
+          ))}
+          {discoverySpotlightRows.length === 0 && (
+            <article className="discovery-spotlight-card is-placeholder" aria-hidden="true">
+              <div className="discovery-spotlight-media"><div className="discovery-rising-now-placeholder" /></div>
+              <div className="discovery-spotlight-meta">
+                <div className="discovery-card-title">More discovery cards coming soon</div>
+              </div>
+            </article>
+          )}
         </div>
       </section>
 
