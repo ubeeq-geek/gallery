@@ -316,7 +316,36 @@ export class UbeeqStack extends Stack {
 
     const api = new apigw.LambdaRestApi(this, 'UbeeqApi', {
       handler: apiFn,
-      proxy: true
+      proxy: true,
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigw.Cors.ALL_ORIGINS,
+        allowMethods: apigw.Cors.ALL_METHODS,
+        allowHeaders: [
+          'Authorization',
+          'Content-Type',
+          'If-None-Match',
+          'Cache-Control',
+          'Range',
+          'X-Grouping-Access-Token',
+          'X-Unlock-Token',
+          'X-Idempotency-Key'
+        ],
+        exposeHeaders: [
+          'Accept-Ranges',
+          'Content-Range',
+          'Content-Length',
+          'Content-Type',
+          'ETag',
+          'Server-Timing',
+          'X-Request-Id',
+          'X-Handler-Ms',
+          'X-Runtime-Uptime-Ms',
+          'X-Cold-Start',
+          'X-Store-Ms',
+          'X-Media-Ms'
+        ],
+        maxAge: Duration.minutes(10)
+      }
     });
 
     new CfnOutput(this, 'ApiUrl', { value: api.url });

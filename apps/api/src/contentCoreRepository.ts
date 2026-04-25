@@ -50,6 +50,18 @@ const uniqueValues = (values: Array<string | undefined>): string[] => {
   return result;
 };
 
+const isMissingIndexError = (error: unknown, indexName: 'GSI1' | 'GSI2'): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  const name = 'name' in error ? String((error as { name?: unknown }).name || '') : '';
+  const message = 'message' in error ? String((error as { message?: unknown }).message || '') : '';
+  if (name !== 'ValidationException') return false;
+  return (
+    message.includes(`index: ${indexName}`) ||
+    message.includes(`index ${indexName}`) ||
+    message.includes('does not have the specified index')
+  );
+};
+
 export class ContentCoreRepository {
   constructor(
     private readonly client: DynamoDBDocumentClient,
@@ -57,18 +69,31 @@ export class ContentCoreRepository {
   ) {}
 
   async listCreators(): Promise<Creator[]> {
-    const response = await this.client.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: 'GSI2',
-        KeyConditionExpression: 'GSI2PK = :pk',
-        ExpressionAttributeValues: {
-          ':pk': 'ENTITY#CREATOR'
-        }
-      })
-    );
-
-    return (response.Items || []).map((item) => stripEntityFields<Creator>(item));
+    try {
+      const response = await this.client.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          IndexName: 'GSI2',
+          KeyConditionExpression: 'GSI2PK = :pk',
+          ExpressionAttributeValues: {
+            ':pk': 'ENTITY#CREATOR'
+          }
+        })
+      );
+      return (response.Items || []).map((item) => stripEntityFields<Creator>(item));
+    } catch (error) {
+      if (!isMissingIndexError(error, 'GSI2')) throw error;
+      const response = await this.client.send(
+        new ScanCommand({
+          TableName: this.tableName,
+          FilterExpression: 'entityType = :entityType',
+          ExpressionAttributeValues: {
+            ':entityType': 'CREATOR'
+          }
+        })
+      );
+      return (response.Items || []).map((item) => stripEntityFields<Creator>(item));
+    }
   }
 
   async listAllSourceFiles(): Promise<SourceFile[]> {
@@ -404,27 +429,37 @@ export class ContentCoreRepository {
   }
 
   async getCreatorBySlug(slug: string): Promise<Creator | null> {
-    const response = await this.client.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: 'GSI1',
-        KeyConditionExpression: 'GSI1PK = :slugPk',
-        ExpressionAttributeValues: {
-          ':slugPk': `CREATOR#${slug}`
-        },
-        Limit: 1
-      })
-    );
+    try {
+      const response = await this.client.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          IndexName: 'GSI1',
+          KeyConditionExpression: 'GSI1PK = :slugPk',
+          ExpressionAttributeValues: {
+            ':slugPk': `CREATOR#${slug}`
+          },
+          Limit: 1
+        })
+      );
 
-    const item = response.Items?.[0];
-    if (!item) return null;
-    if (item.entityType === 'CREATOR') {
-      return stripEntityFields<Creator>(item);
+      const item = response.Items?.[0];
+      if (!item) return null;
+      if (item.entityType === 'CREATOR') {
+        return stripEntityFields<Creator>(item);
+      }
+      if (item.entityType === 'CREATOR' && typeof item.creatorId === 'string') {
+        return this.getCreatorProfileById(item.creatorId);
+      }
+      return null;
+    } catch (error) {
+      if (!isMissingIndexError(error, 'GSI1')) throw error;
+      const creators = await this.listCreators();
+      const normalized = slug.trim().toLowerCase();
+      return creators.find((creator) => {
+        if (creator.slug?.toLowerCase() === normalized) return true;
+        return (creator.slugHistory || []).some((entry) => entry.toLowerCase() === normalized);
+      }) || null;
     }
-    if (item.entityType === 'CREATOR' && typeof item.creatorId === 'string') {
-      return this.getCreatorProfileById(item.creatorId);
-    }
-    return null;
   }
 
   async listGroupingsByCreatorSlug(creatorSlug: string): Promise<Grouping[]> {
@@ -457,18 +492,33 @@ export class ContentCoreRepository {
   }
 
   async listPostsByCreatorId(creator: string): Promise<Post[]> {
-    const response = await this.client.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: 'GSI2',
-        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
-        ExpressionAttributeValues: {
-          ':pk': `CREATOR#${creator}`,
-          ':prefix': 'POST#'
-        }
-      })
-    );
-    return (response.Items || []).map((item) => stripEntityFields<Post>(item));
+    try {
+      const response = await this.client.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          IndexName: 'GSI2',
+          KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+          ExpressionAttributeValues: {
+            ':pk': `CREATOR#${creator}`,
+            ':prefix': 'POST#'
+          }
+        })
+      );
+      return (response.Items || []).map((item) => stripEntityFields<Post>(item));
+    } catch (error) {
+      if (!isMissingIndexError(error, 'GSI2')) throw error;
+      const response = await this.client.send(
+        new ScanCommand({
+          TableName: this.tableName,
+          FilterExpression: 'entityType = :entityType AND creatorId = :creatorId',
+          ExpressionAttributeValues: {
+            ':entityType': 'POST',
+            ':creatorId': creator
+          }
+        })
+      );
+      return (response.Items || []).map((item) => stripEntityFields<Post>(item));
+    }
   }
 
   async getGroupingBySlug(slug: string): Promise<Grouping | null> {
@@ -633,20 +683,35 @@ export class ContentCoreRepository {
   }
 
   async listSourceFilesByCreatorId(creatorId: string): Promise<SourceFile[]> {
-    const response = await this.client.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: 'GSI2',
-        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
-        ExpressionAttributeValues: {
-          ':pk': `CREATOR#${creatorId}`,
-          ':prefix': 'FILE#'
-        }
-      })
-    );
-    return (response.Items || [])
-      .filter((item) => item.entityType === 'SOURCE_FILE')
-      .map((item) => stripEntityFields<SourceFile>(item));
+    try {
+      const response = await this.client.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          IndexName: 'GSI2',
+          KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+          ExpressionAttributeValues: {
+            ':pk': `CREATOR#${creatorId}`,
+            ':prefix': 'FILE#'
+          }
+        })
+      );
+      return (response.Items || [])
+        .filter((item) => item.entityType === 'SOURCE_FILE')
+        .map((item) => stripEntityFields<SourceFile>(item));
+    } catch (error) {
+      if (!isMissingIndexError(error, 'GSI2')) throw error;
+      const response = await this.client.send(
+        new ScanCommand({
+          TableName: this.tableName,
+          FilterExpression: 'entityType = :entityType AND creatorId = :creatorId',
+          ExpressionAttributeValues: {
+            ':entityType': 'SOURCE_FILE',
+            ':creatorId': creatorId
+          }
+        })
+      );
+      return (response.Items || []).map((item) => stripEntityFields<SourceFile>(item));
+    }
   }
 
   async getSourceFileById(fileId: string): Promise<SourceFile | null> {
@@ -1055,21 +1120,37 @@ export class ContentCoreRepository {
   }
 
   async listCreatorsByUserId(userId: string): Promise<Creator[]> {
-    const memberships = await this.client.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: 'GSI1',
-        KeyConditionExpression: 'GSI1PK = :pk',
-        ExpressionAttributeValues: {
-          ':pk': `USER_CREATOR_MEMBER#${userId}`
-        }
-      })
-    );
+    const memberships = await (async () => {
+      try {
+        return await this.client.send(
+          new QueryCommand({
+            TableName: this.tableName,
+            IndexName: 'GSI1',
+            KeyConditionExpression: 'GSI1PK = :pk',
+            ExpressionAttributeValues: {
+              ':pk': `USER_CREATOR_MEMBER#${userId}`
+            }
+          })
+        );
+      } catch (error) {
+        if (!isMissingIndexError(error, 'GSI1')) throw error;
+        return this.client.send(
+          new ScanCommand({
+            TableName: this.tableName,
+            FilterExpression: 'entityType = :entityType AND userId = :userId',
+            ExpressionAttributeValues: {
+              ':entityType': 'CREATOR_MEMBER',
+              ':userId': userId
+            }
+          })
+        );
+      }
+    })();
 
     const creatorIds = Array.from(
       new Set(
         (memberships.Items || [])
-          .filter((item) => item.entityType === 'CREATOR' && typeof item.creatorId === 'string')
+          .filter((item) => item.entityType === 'CREATOR_MEMBER' && typeof item.creatorId === 'string')
           .map((item) => String(item.creatorId))
       )
     );
@@ -1153,16 +1234,31 @@ export class ContentCoreRepository {
   }
 
   async listUserProfiles(): Promise<UserProfile[]> {
-    const response = await this.client.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: 'GSI2',
-        KeyConditionExpression: 'GSI2PK = :pk',
-        ExpressionAttributeValues: {
-          ':pk': 'ENTITY#USER_PROFILE'
-        }
-      })
-    );
+    const response = await (async () => {
+      try {
+        return await this.client.send(
+          new QueryCommand({
+            TableName: this.tableName,
+            IndexName: 'GSI2',
+            KeyConditionExpression: 'GSI2PK = :pk',
+            ExpressionAttributeValues: {
+              ':pk': 'ENTITY#USER_PROFILE'
+            }
+          })
+        );
+      } catch (error) {
+        if (!isMissingIndexError(error, 'GSI2')) throw error;
+        return this.client.send(
+          new ScanCommand({
+            TableName: this.tableName,
+            FilterExpression: 'entityType = :entityType',
+            ExpressionAttributeValues: {
+              ':entityType': 'USER_PROFILE'
+            }
+          })
+        );
+      }
+    })();
     return (response.Items || [])
       .filter((item) => item.entityType === 'USER_PROFILE')
       .map((item) => stripEntityFields<UserProfile>(item));
@@ -1235,16 +1331,31 @@ export class ContentCoreRepository {
   }
 
   async listUserIdentities(): Promise<UserIdentity[]> {
-    const response = await this.client.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: 'GSI2',
-        KeyConditionExpression: 'GSI2PK = :pk',
-        ExpressionAttributeValues: {
-          ':pk': 'ENTITY#USER_IDENTITY'
-        }
-      })
-    );
+    const response = await (async () => {
+      try {
+        return await this.client.send(
+          new QueryCommand({
+            TableName: this.tableName,
+            IndexName: 'GSI2',
+            KeyConditionExpression: 'GSI2PK = :pk',
+            ExpressionAttributeValues: {
+              ':pk': 'ENTITY#USER_IDENTITY'
+            }
+          })
+        );
+      } catch (error) {
+        if (!isMissingIndexError(error, 'GSI2')) throw error;
+        return this.client.send(
+          new ScanCommand({
+            TableName: this.tableName,
+            FilterExpression: 'entityType = :entityType',
+            ExpressionAttributeValues: {
+              ':entityType': 'USER_IDENTITY'
+            }
+          })
+        );
+      }
+    })();
     return (response.Items || [])
       .filter((item) => item.entityType === 'USER_IDENTITY')
       .map((item) => stripEntityFields<UserIdentity>(item));
@@ -1507,16 +1618,31 @@ export class ContentCoreRepository {
   }
 
   async listContributionContexts(): Promise<ContributionContext[]> {
-    const response = await this.client.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: 'GSI2',
-        KeyConditionExpression: 'GSI2PK = :pk',
-        ExpressionAttributeValues: {
-          ':pk': 'ENTITY#CONTRIBUTION_CONTEXT'
-        }
-      })
-    );
+    const response = await (async () => {
+      try {
+        return await this.client.send(
+          new QueryCommand({
+            TableName: this.tableName,
+            IndexName: 'GSI2',
+            KeyConditionExpression: 'GSI2PK = :pk',
+            ExpressionAttributeValues: {
+              ':pk': 'ENTITY#CONTRIBUTION_CONTEXT'
+            }
+          })
+        );
+      } catch (error) {
+        if (!isMissingIndexError(error, 'GSI2')) throw error;
+        return this.client.send(
+          new ScanCommand({
+            TableName: this.tableName,
+            FilterExpression: 'entityType = :entityType',
+            ExpressionAttributeValues: {
+              ':entityType': 'CONTRIBUTION_CONTEXT'
+            }
+          })
+        );
+      }
+    })();
     return (response.Items || [])
       .filter((item) => item.entityType === 'CONTRIBUTION_CONTEXT')
       .map((item) => stripEntityFields<ContributionContext>(item))
@@ -1575,17 +1701,33 @@ export class ContentCoreRepository {
   }
 
   async listContextSubmissions(contextId: string): Promise<ContextSubmission[]> {
-    const response = await this.client.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: 'GSI2',
-        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
-        ExpressionAttributeValues: {
-          ':pk': `CONTEXT#${contextId}`,
-          ':prefix': 'SUBMISSION#'
-        }
-      })
-    );
+    const response = await (async () => {
+      try {
+        return await this.client.send(
+          new QueryCommand({
+            TableName: this.tableName,
+            IndexName: 'GSI2',
+            KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+            ExpressionAttributeValues: {
+              ':pk': `CONTEXT#${contextId}`,
+              ':prefix': 'SUBMISSION#'
+            }
+          })
+        );
+      } catch (error) {
+        if (!isMissingIndexError(error, 'GSI2')) throw error;
+        return this.client.send(
+          new ScanCommand({
+            TableName: this.tableName,
+            FilterExpression: 'entityType = :entityType AND contextId = :contextId',
+            ExpressionAttributeValues: {
+              ':entityType': 'CONTEXT_SUBMISSION',
+              ':contextId': contextId
+            }
+          })
+        );
+      }
+    })();
     return (response.Items || [])
       .filter((item) => item.entityType === 'CONTEXT_SUBMISSION')
       .map((item) => stripEntityFields<ContextSubmission>(item))

@@ -1,5 +1,5 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import sharp from 'sharp';
+import type sharpModule from 'sharp';
 
 export interface SquareCropInput {
   x: number;
@@ -87,7 +87,14 @@ const writeS3Object = async (s3: S3Client, bucket: string, key: string, body: Bu
   );
 };
 
-const readSourceMetadata = async (sourceBuffer: Buffer, bucket: string, sourceKey: string): Promise<{ width: number; height: number }> => {
+const loadSharp = async (): Promise<typeof sharpModule> => (await import('sharp')).default;
+
+const readSourceMetadata = async (
+  sharp: typeof sharpModule,
+  sourceBuffer: Buffer,
+  bucket: string,
+  sourceKey: string
+): Promise<{ width: number; height: number }> => {
   const metadata = await sharp(sourceBuffer, { limitInputPixels: false }).metadata();
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;
@@ -160,7 +167,8 @@ export const generateImageRenditions = async (params: {
 }): Promise<GeneratedRenditions> => {
   const { s3, bucket, sourceKey, targetPrefix, squareCrop } = params;
   const sourceBuffer = await readS3Object(s3, bucket, sourceKey);
-  const { width, height } = await readSourceMetadata(sourceBuffer, bucket, sourceKey);
+  const sharp = await loadSharp();
+  const { width, height } = await readSourceMetadata(sharp, sourceBuffer, bucket, sourceKey);
   const crop = pickSquareCrop(width, height, squareCrop);
 
   const keys = {
@@ -243,7 +251,8 @@ export const generateCreatorCoverRenditions = async (params: {
 }): Promise<GeneratedCreatorCoverRenditions> => {
   const { s3, bucket, sourceKey, targetPrefix, crops } = params;
   const sourceBuffer = await readS3Object(s3, bucket, sourceKey);
-  const { width, height } = await readSourceMetadata(sourceBuffer, bucket, sourceKey);
+  const sharp = await loadSharp();
+  const { width, height } = await readSourceMetadata(sharp, sourceBuffer, bucket, sourceKey);
   const focalPoint = {
     x: clamp(params.focalPoint?.x ?? 0.5, 0, 1),
     y: clamp(params.focalPoint?.y ?? 0.5, 0, 1)
