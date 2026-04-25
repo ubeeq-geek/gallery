@@ -563,7 +563,8 @@ export class ContentCoreRepository {
       return [];
     }
 
-    const mediaKeys = placements.map((item) => ({ PK: `MEDIA#${item.mediaId}`, SK: 'PROFILE' }));
+    const mediaKeys = Array.from(new Set(placements.map((item) => item.mediaId)))
+      .map((mediaId) => ({ PK: `MEDIA#${mediaId}`, SK: 'PROFILE' }));
     const mediaResponse = await this.client.send(
       new BatchGetCommand({
         RequestItems: {

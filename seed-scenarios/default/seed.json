@@ -802,7 +802,7 @@
         {
           "title": "Hoichi the Earless",
           "slug": "hoichi-the-earless",
-          "type": "series",
+          "kind": "free",
           "summary": "On the quiet shores of Dan-no-ura, a blind musician is summoned to play for a mysterious audience."
         }
       ],
@@ -817,14 +817,8 @@
           "file": "amphoryn/hoichi-1-2.jpg",
           "groupingSlug": "hoichi-the-earless",
           "title": "Hoichi the Earless #1.2",
-          "appearsInFeed": false
-        },
-        {
-          "file": "amphoryn/hoichi-1-3.jpg",
-          "groupingSlug": "hoichi-the-earless",
-          "title": "Hoichi the Earless #1.3",
-          "appearsInFeed": false
-        },
+          "appearsInFeed": true
+        },        
         {
           "file": "amphoryn/hoichi-2-1.jpg",
           "groupingSlug": "hoichi-the-earless",
@@ -847,6 +841,12 @@
           "file": "amphoryn/hoichi-3-2.jpg",
           "groupingSlug": "hoichi-the-earless",
           "title": "Hoichi the Earless #3.2",
+          "appearsInFeed": false
+        },
+        {
+          "file": "amphoryn/hoichi-3-3.jpg",
+          "groupingSlug": "hoichi-the-earless",
+          "title": "Hoichi the Earless #3.3",
           "appearsInFeed": false
         },
         {
@@ -886,12 +886,6 @@
             },
             {
               "file": "amphoryn/hoichi-1-2.jpg",
-              "groupingSlug": "hoichi-the-earless",
-              "discoverable": false,
-              "sectionSlug": "part-1-the-haunted-shore"
-            },
-            {
-              "file": "amphoryn/hoichi-1-3.jpg",
               "groupingSlug": "hoichi-the-earless",
               "discoverable": false,
               "sectionSlug": "part-1-the-haunted-shore"
@@ -941,13 +935,13 @@
               "status": "published",
               "publishedAt": "2026-04-24T09:00:00.000Z",
               "heroMedia": {
-                "file": "amphoryn/hoichi-1-0.jpg",
+                "file": "amphoryn/hoichi-1-1.jpg",
                 "groupingSlug": "hoichi-the-earless"
               },
               "blocks": [
                 {
                   "type": "image",
-                  "file": "amphoryn/hoichi-1-0.jpg",
+                  "file": "amphoryn/hoichi-1-1.jpg",
                   "groupingSlug": "hoichi-the-earless"
                 },
                 {
@@ -957,15 +951,15 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "More than seven hundred years ago, in the narrow straits at Dan-no-ura, two great clans met in a final, terrible battle—the Heike and the Genji. By its end, the Heike were destroyed. Warriors, nobles, women, and their young emperor were pulled beneath the waves."
+                  "text": "Many years ago, in the narrow straits at Dan-no-ura, two great clans met in a final, terrible battle. The Heike and the Genji. The Heike were destroyed, warriors and nobles pulled beneath the waves. And as their cries fell silent, the emperor's grandmother chose to drown her previous grandson, rather than let him be captured and humiliated by his enemy."
                 },
                 {
                   "type": "paragraph",
-                  "text": "The sea remembers."
+                  "text": "The sea remembers that day."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Fishermen still speak of strange lights drifting over the water at night—pale, flickering flames they call oni-bi. When storms roll in, the wind carries a sound like distant battle. And sometimes, in the quiet between waves, there are voices."
+                  "text": "Fishermen still speak of strange lights drifting over the water at night—pale, flickering flames they call <i>oni-bi</i>. When storms roll in, the wind carries a sound like distant battle. And sometimes, in the quiet between waves, there are voices."
                 },
                 {
                   "type": "paragraph",
@@ -973,37 +967,37 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "The prayers were offered daily."
+                  "text": "Prayers were offered daily."
                 },
                 {
                   "type": "paragraph",
-                  "text": "The dead were never entirely at peace."
+                  "text": "But still, the dead were never entirely at peace."
                 },
                 {
                   "type": "image",
-                  "file": "amphoryn/hoichi-1-1.jpg",
+                  "file": "amphoryn/hoichi-1-2.jpg",
                   "groupingSlug": "hoichi-the-earless"
                 },
                 {
                   "type": "paragraph",
-                  "text": "In this place lived Hoichi—blind from childhood, trained in the biwa and the recitation of history. His voice was clear, precise, expressive. When he sang of Dan-no-ura, listeners wept. It was said even spirits could not resist his telling."
+                  "text": "In this place lived Hoichi. Blind from childhood, he was trained in the biwa and the recitation of history. His voice was clear, precise, expressive. When he sang of Dan-no-ura, listeners wept. It was said even the spirits could not resist his telling."
                 },
                 {
                   "type": "paragraph",
-                  "text": "He had little at first. But the priest of Amidaji took pity on him—a room, food, shelter. In return, Hoichi played on quiet evenings."
+                  "text": "Hoichi had very little at first. But the priest of Amidaji took pity on him, providing a room, food, and shelter. In return, Hoichi played on quiet evenings, his flawless music and his perfect voice carrying over the narrow straits."
                 },
                 {
                   "type": "paragraph",
-                  "text": "A simple life."
+                  "text": "It was a simple life."
                 },
                 {
                   "type": "paragraph",
-                  "text": "A peaceful one."
+                  "text": "And a peaceful one."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Until the night someone came for him."
-                }
+                  "text": "Until the night when someone came for him."
+                }                
               ]
             },
             {
@@ -1013,15 +1007,14 @@
               "status": "published",
               "publishedAt": "2026-04-25T09:00:00.000Z",
               "heroMedia": {
-                "file": "amphoryn/hoichi/part-2-performance.jpg",
+                "file": "amphoryn/hoichi-2-1.jpg",
                 "groupingSlug": "hoichi-the-earless"
               },
               "blocks": [
                 {
                   "type": "image",
-                  "file": "amphoryn/hoichi/part-2-samurai-garden.jpg",
-                  "groupingSlug": "hoichi-the-earless",
-                  "caption": "The voice was deep. Commanding."
+                  "file": "amphoryn/hoichi-2-1.jpg",
+                  "groupingSlug": "hoichi-the-earless"
                 },
                 {
                   "type": "heading",
@@ -1030,7 +1023,7 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "It was a hot summer night."
+                  "text": "It was a hot night in summer, the air smelling of brine and kelp, and the cicadas sounding among the pines above the temple."
                 },
                 {
                   "type": "paragraph",
@@ -1038,35 +1031,35 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "Then footsteps."
+                  "text": "He heard footsteps approaching."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Not hesitant. Deliberate."
+                  "text": "They were not hesitant. They were heavy and deliberate."
                 },
                 {
                   "type": "paragraph",
                   "text": "They stopped directly in front of him."
                 },
                 {
-                  "type": "blockquote",
-                  "text": "Hoichi."
+                  "type": "paragraph",
+                  "text": "\"Hoichi.\""
                 },
                 {
                   "type": "paragraph",
-                  "text": "The voice was deep. Commanding."
-                },
-                {
-                  "type": "blockquote",
-                  "text": "I am blind. I cannot see who calls."
-                },
-                {
-                  "type": "blockquote",
-                  "text": "There is nothing to fear. My lord — a man of high rank — is staying nearby. He has heard of your skill. You will come with me and perform."
+                  "text": "The voice was deep and commanding."
                 },
                 {
                   "type": "paragraph",
-                  "text": "It was not a request."
+                  "text": "\"I am blind,\" Hoichi replied. \"I cannot see who calls.\""
+                },
+                {
+                  "type": "paragraph",
+                  "text": "\"There is nothing to fear. My lord, a man of high rank, is staying nearby. He has heard of your gifts, Hoichi. You will come with me and perform.\""
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Hoichi could tell that it was not a request. He was being summoned, and he dared not refuse."
                 },
                 {
                   "type": "paragraph",
@@ -1074,7 +1067,7 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "The grip on his arm was firm — unnaturally so. Metal shifted with each step. Armor. Fully armed."
+                  "text": "Metal shifted with each step of the summoner who walked in front of him. He was a warrior."
                 },
                 {
                   "type": "paragraph",
@@ -1082,25 +1075,28 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "Inside: a garden. Polished floors. Vast rooms."
+                  "text": "Hoichi listened with great care as they walked. The sounds of a garden. Then onward, into the sounds of an echoing hallway, their quick steps along polished floors."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Voices — soft, refined, unmistakably noble."
+                  "text": "He heard voices. They were soft and refined, and to his ears, unmistakably noble, the sing-song words of <i>Heian-kyō</i>, the words of old poems and courtly tales from the Imperial Capital."
                 },
                 {
                   "type": "paragraph",
-                  "text": "He was guided to a cushion in a large hall."
+                  "text": "Hoichi heard the voices grow louder as he was guided into a large hall. He was made to sit upon a cushion, elevated on what he was certain to be stage."
                 },
                 {
-                  "type": "blockquote",
-                  "text": "You will recite the story of the Battle of Dan-no-ura."
+                  "type": "paragraph",
+                  "text": "A woman spoke, her voice dignified and eternal:"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "\"You will recite for us the story of the Battle of Dan-no-ura.\""
                 },
                 {
                   "type": "image",
-                  "file": "amphoryn/hoichi/part-2-performance.jpg",
-                  "groupingSlug": "hoichi-the-earless",
-                  "caption": "The room held its breath."
+                  "file": "amphoryn/hoichi-2-2.jpg",
+                  "groupingSlug": "hoichi-the-earless"
                 },
                 {
                   "type": "paragraph",
@@ -1116,15 +1112,11 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "Then, softly at first — murmurs. Astonishment."
+                  "text": "At last, Hoichi reached the final scene. The last moments of the Emperor Antoku, at only six years old. The battle lost, the house of Heike defeated. And so, the once-mighty Kiyomori's widow carries her beloved grandson into the dark waters, telling him of a palace beneath the waves, choosing death over surrender to the Genji."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Then silence."
-                },
-                {
-                  "type": "paragraph",
-                  "text": "When he reached the end — the emperor carried under, the last cries of the Heike swallowed by the sea — the hall broke. Not into applause. Into grief. Open, unguarded, inconsolable."
+                  "text": "There was a silence at first from his audience. Then they fell into grief, an open, unguarded, and inconsolable weeping. The men as well as the women, and even the small wailing of a young child."
                 },
                 {
                   "type": "paragraph",
@@ -1135,16 +1127,16 @@
                   "text": "At last, the woman spoke again."
                 },
                 {
-                  "type": "blockquote",
-                  "text": "You will return tomorrow night. And the nights that follow."
+                  "type": "paragraph",
+                  "text": "\"You will return tomorrow night. You will recite the story again.\""
                 },
                 {
                   "type": "paragraph",
                   "text": "A pause."
                 },
                 {
-                  "type": "blockquote",
-                  "text": "Tell no one."
+                  "type": "paragraph",
+                  "text": "\"Tell no one.\""
                 },
                 {
                   "type": "paragraph",
@@ -1163,15 +1155,14 @@
               "status": "scheduled",
               "releaseAt": "2026-04-26T09:00:00.000Z",
               "heroMedia": {
-                "file": "amphoryn/hoichi/part-3-cemetery-performance.jpg",
+                "file": "amphoryn/hoichi-3-1.jpg",
                 "groupingSlug": "hoichi-the-earless"
               },
               "blocks": [
                 {
                   "type": "image",
-                  "file": "amphoryn/hoichi/part-3-priest-warning.jpg",
-                  "groupingSlug": "hoichi-the-earless",
-                  "caption": "The priest noticed."
+                  "file": "amphoryn/hoichi-3-1.jpg",
+                  "groupingSlug": "hoichi-the-earless"
                 },
                 {
                   "type": "heading",
@@ -1188,49 +1179,48 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "Each night Hoichi left. Each morning he returned quieter, his body worn at the edges in a way that sleep did not repair."
+                  "text": "Each night Hoichi left. And each morning he returned quieter, his body worn at the edges in a way that sleep did not repair."
                 },
                 {
                   "type": "paragraph",
-                  "text": "The priest noticed."
+                  "text": "The priest noticed the change. He could see his friend suffering."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Questions received careful, vague answers."
+                  "text": "But his questions received only careful, vague answers."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Servants were told to follow him."
+                  "text": "So the priest told two of his servants to follow him."
                 },
                 {
                   "type": "paragraph",
-                  "text": "One night, they did — and lost him almost immediately. He moved through the dark faster than a blind man should move, swallowed by streets they knew well and could not navigate after him."
+                  "text": "That night, they did, but lost him almost immediately. The sightless Hoichi moved through the dark faster than he should have been able."
                 },
                 {
                   "type": "paragraph",
-                  "text": "They searched."
+                  "text": "The servants searched."
                 },
                 {
                   "type": "paragraph",
-                  "text": "They found nothing."
+                  "text": "They found nothing. They turned back to tell their master."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Then, near the shore, they heard it: the sound of the biwa."
+                  "text": "But then, near the shore, they heard it: the sound of the biwa."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Fierce. Urgent."
+                  "text": "And they could hear the story of Dan-no-ura."
                 },
                 {
                   "type": "image",
-                  "file": "amphoryn/hoichi/part-3-cemetery-performance.jpg",
-                  "groupingSlug": "hoichi-the-earless",
-                  "caption": "And in their center: Hoichi."
+                  "file": "amphoryn/hoichi-3-2.jpg",
+                  "groupingSlug": "hoichi-the-earless"
                 },
                 {
                   "type": "paragraph",
-                  "text": "They followed it to the cemetery."
+                  "text": "They followed the sounds to the cemetery."
                 },
                 {
                   "type": "paragraph",
@@ -1238,15 +1228,15 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "Between the grave markers, the air was wrong. Not dark — lit. Dozens of pale flames drifted above the ground, hovering without wind, without source. More than any of them had counted. More than any had seen."
+                  "text": "Between the grave markers were of pale flames drifting above the ground, hovering without wind, without source. Countless lights."
                 },
                 {
                   "type": "paragraph",
-                  "text": "And in their center: Hoichi."
+                  "text": "And in their center, seated before the tomb of the drowned emperor, was Hoichi."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Rain falling around him. Seated before the tomb of the drowned emperor. His voice raised in full performance. His face turned toward nothing."
+                  "text": "The rain was falling around him. His voice was raised in full performance. His face turned toward nothing."
                 },
                 {
                   "type": "paragraph",
@@ -1254,39 +1244,44 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "They seized his shoulders, shouted his name. He fought them."
-                },
-                {
-                  "type": "blockquote",
-                  "text": "You must not interrupt — this is an august gathering!"
+                  "text": "The servants seized his shoulders, shouted his name. He fought them."
                 },
                 {
                   "type": "paragraph",
-                  "text": "They dragged him away."
+                  "text": "\"You must not interrupt,\" Hoichi said. \"This is an august gathering!\""
                 },
                 {
                   "type": "paragraph",
-                  "text": "Back to the temple. This time, he told everything."
+                  "text": "The servants dragged him away."
                 },
                 {
                   "type": "paragraph",
-                  "text": "The priest listened without speaking."
+                  "text": "Once back at the temple, before the priest, Hoichi recounted what had been happening to him."
+                },
+                {
+                  "type": "image",
+                  "file": "amphoryn/hoichi-3-3.jpg",
+                  "groupingSlug": "hoichi-the-earless"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The priest listened without speaking, focusing on every detail of Hoichi's account."
                 },
                 {
                   "type": "paragraph",
                   "text": "Then:"
                 },
                 {
-                  "type": "blockquote",
-                  "text": "You have not been visiting a lord's court."
+                  "type": "paragraph",
+                  "text": "\"You have not been visiting a lord's court,\" the priest said."
                 },
                 {
                   "type": "paragraph",
-                  "text": "A silence longer than comfort allows."
+                  "text": "Hoichi heard the priest pause, and almost hesitate."
                 },
                 {
-                  "type": "blockquote",
-                  "text": "You have been performing for the dead."
+                  "type": "paragraph",
+                  "text": "\"Hoichi... you have been performing for the dead of Dan-no-ura.\""
                 }
               ]
             },
@@ -1297,15 +1292,14 @@
               "status": "scheduled",
               "releaseAt": "2026-04-27T09:00:00.000Z",
               "heroMedia": {
-                "file": "amphoryn/hoichi/part-4-sutras.jpg",
+                "file": "amphoryn/hoichi-4-1.jpg",
                 "groupingSlug": "hoichi-the-earless"
               },
               "blocks": [
                 {
                   "type": "image",
-                  "file": "amphoryn/hoichi/part-4-sutras.jpg",
-                  "groupingSlug": "hoichi-the-earless",
-                  "caption": "The sutras had covered his body. Not his ears."
+                  "file": "amphoryn/hoichi-4-1.jpg",
+                  "groupingSlug": "hoichi-the-earless"
                 },
                 {
                   "type": "heading",
@@ -1314,31 +1308,31 @@
                 },
                 {
                   "type": "paragraph",
+                  "text": "The priest knew that the ghosts would continue this forever, that they would never let Hoichi stop."
+                },
+                {
+                  "type": "paragraph",
                   "text": "There was only one way to protect him."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Before nightfall, the priest and his assistant covered Hoichi's body in sacred text — sutras written in careful strokes across every surface. Chest, back, face, hands, feet, the backs of his fingers."
-                },
-                {
-                  "type": "blockquote",
-                  "text": "These will hide you. Do not speak. Do not move. No matter what you hear."
+                  "text": "Before nightfall, the priest and an assistant prepared Hoichi. They cut his hair and shaved his head. They then covered Hoichi's body in sacred text — sutras written in careful strokes across every surface. Chest, back, face, hands, feet, the backs of his fingers."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Night came."
+                  "text": "\"These will hide you\", the priest said. \"Do not speak. Do not move. No matter what you hear.\""
                 },
                 {
                   "type": "paragraph",
-                  "text": "Hoichi waited."
+                  "text": "The night came and Hoichi waited."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Still. Silent."
+                  "text": "He was still and silent, as the priest had instructed."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Footsteps."
+                  "text": "He heard the heavy footsteps."
                 },
                 {
                   "type": "paragraph",
@@ -1350,23 +1344,23 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "Directly in front of him."
-                },
-                {
-                  "type": "blockquote",
-                  "text": "Hoichi."
+                  "text": "And now, his summoner, directly in front of him."
                 },
                 {
                   "type": "paragraph",
-                  "text": "No answer."
-                },
-                {
-                  "type": "blockquote",
-                  "text": "Hoichi."
+                  "text": "\"Hoichi.\""
                 },
                 {
                   "type": "paragraph",
-                  "text": "Silence."
+                  "text": "He did not answer."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "\"Hoichi.\""
+                },
+                {
+                  "type": "paragraph",
+                  "text": "He was silent."
                 },
                 {
                   "type": "paragraph",
@@ -1374,71 +1368,63 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "Still nothing."
+                  "text": "Hoichi kept himself still."
                 },
                 {
                   "type": "paragraph",
                   "text": "The figure moved closer. Hoichi heard the shift of armored weight, the soft displacement of air. Felt the presence of something immense and very old leaning over him."
-                },
-                {
-                  "type": "paragraph",
-                  "text": "Then stillness."
-                },
-                {
-                  "type": "paragraph",
-                  "text": "A long pause."
-                },
+                },            
                 {
                   "type": "paragraph",
                   "text": "When the voice came again, it was almost to itself:"
                 },
                 {
-                  "type": "blockquote",
-                  "text": "I see the instrument…"
+                  "type": "paragraph",
+                  "text": "\"I see the instrument…\""
                 },
                 {
                   "type": "paragraph",
-                  "text": "Another pause."
-                },
-                {
-                  "type": "blockquote",
-                  "text": "…but the player—"
+                  "text": "A pause."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Something changed in the air. A recognition. A pivot."
+                  "text": "\"…but the player—\""
                 },
                 {
-                  "type": "blockquote",
-                  "text": "…there is nothing here."
+                  "type": "paragraph",
+                  "text": "Hoichi could feel something changed in the air."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "\"There is nothing here.\""
                 },
                 {
                   "type": "paragraph",
                   "text": "The pause that followed had the quality of a held breath."
                 },
                 {
-                  "type": "blockquote",
-                  "text": "…nothing—"
+                  "type": "paragraph",
+                  "text": "\"Nothing...\""
                 },
                 {
                   "type": "paragraph",
-                  "text": "Then:"
-                },
-                {
-                  "type": "blockquote",
-                  "text": "—except ears."
+                  "text": "Hoichi dared not take a breath."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Hands seized them."
+                  "text": "\"Aside from the ears.\""
                 },
                 {
                   "type": "paragraph",
-                  "text": "Hard. Violent. Final."
+                  "text": "Hoichi held firm as the summoner seized them."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Gone."
+                  "text": "It was hard. Violent. Final."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "And then they were gone."
                 },
                 {
                   "type": "paragraph",
@@ -1450,13 +1436,12 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "Eventually, the footsteps left."
+                  "text": "And the summoner left."
                 },
                 {
                   "type": "image",
-                  "file": "amphoryn/hoichi/part-4-hoichi-bandaged.jpg",
-                  "groupingSlug": "hoichi-the-earless",
-                  "caption": "Hoichi survived."
+                  "file": "amphoryn/hoichi-4-2.jpg",
+                  "groupingSlug": "hoichi-the-earless"
                 },
                 {
                   "type": "paragraph",
@@ -1464,7 +1449,7 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "The mistake was simple."
+                  "text": "The priest was his simple mistake."
                 },
                 {
                   "type": "paragraph",
@@ -1472,36 +1457,28 @@
                 },
                 {
                   "type": "paragraph",
-                  "text": "Not his ears."
+                  "text": "But not his ears."
                 },
                 {
                   "type": "paragraph",
-                  "text": "Hoichi survived."
+                  "text": "But Hoichi had survived, and his wounds healed."
                 },
                 {
                   "type": "paragraph",
-                  "text": "His wounds healed."
+                  "text": "People came from distant places to hear him — not just for the skill that had always been extraordinary, but for what that skill had cost."
                 },
                 {
                   "type": "paragraph",
-                  "text": "People came from distant places to hear him — not just for the skill that had always been extraordinary, but for what that skill had cost. There is something about a man who has been reached for in the dark, and held on, that makes an audience lean in differently."
+                  "text": "Hoichi was famous. He continued to recite <i>The Tale of the Heike</i>, and brought his listeners to tears when he recounted the Battle of Dan-no-ura, and told of the palace beneath the waves."
                 },
                 {
                   "type": "paragraph",
-                  "text": "He became famous."
+                  "text": "By that time, he was known by a new name: Hoichi the Earless."
                 },
                 {
                   "type": "paragraph",
-                  "text": "He lost something he could not get back."
-                },
-                {
-                  "type": "paragraph",
-                  "text": "From then on, he was known by a new name:"
-                },
-                {
-                  "type": "paragraph",
-                  "text": "Hoichi the Earless."
-                }
+                  "text": "And with each full moon, Hoichi would sit facing the cemetery with his biwa, and recite the opening passages of the tale — the temple bells of Gion, the blossoms of the sala trees — offering to the young Emperor what he could give, and the only thing the boy had never been given: a gentle story."
+                }                
               ]
             }
           ]

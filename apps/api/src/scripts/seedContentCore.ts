@@ -5,6 +5,7 @@ import { BatchWriteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand } fr
 import { createHash } from 'crypto';
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import path from 'path';
+import sharp from 'sharp';
 import { hashPassword } from '../unlock';
 import { loadConfig } from '../config';
 import { ContentCoreRepository } from '../contentCoreRepository';
@@ -156,16 +157,28 @@ type ScenarioPostBlockSeed = {
   html?: string;
   payload?: Record<string, unknown>;
 };
+type ScenarioPostSectionSeed = {
+  title: string;
+  slug?: string;
+  sortOrder?: number;
+  status?: 'draft' | 'scheduled' | 'published' | 'archived';
+  blocks?: ScenarioPostBlockSeed[];
+};
 type ScenarioPostSeed = {
   title: string;
   slug?: string;
   summary?: string;
   status?: 'draft' | 'published' | 'archived';
+  serializationMode?: 'flat' | 'staged';
+  totalSectionCount?: number;
+  currentSectionCount?: number;
   discoveryMode?: PostDiscoveryMode;
   media?: ScenarioPostMediaRefSeed[];
   blocks?: ScenarioPostBlockSeed[];
+  sections?: ScenarioPostSectionSeed[];
   primaryMediaId?: string;
   primaryMedia?: ScenarioPostPrimaryMediaSeed;
+  publishedAt?: string;
   destination?: ScenarioPostDestinationSeed | null;
   metadata?: Record<string, string>;
 };
@@ -412,6 +425,26 @@ const toSeedPostBlocks = (
   });
 };
 
+const toSeedPostBlocksFromSections = (
+  postSeed: ScenarioPostSeed,
+  mediaIdByComposite: Map<string, string>,
+  mediaIdsByFile: Map<string, string[]>,
+  postKey: string
+): PostBlock[] => {
+  if (!postSeed.sections?.length) return [];
+  const orderedSections = [...postSeed.sections].sort((a, b) => {
+    const left = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
+    const right = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
+    return left - right;
+  });
+  const publishedSections = orderedSections.filter((section) => (section.status || 'published') === 'published');
+  const selectedSections = postSeed.serializationMode === 'staged'
+    ? publishedSections.slice(0, postSeed.currentSectionCount || publishedSections.length)
+    : publishedSections;
+  const sectionBlocks = selectedSections.flatMap((section) => section.blocks || []);
+  return toSeedPostBlocks(sectionBlocks, mediaIdByComposite, mediaIdsByFile, postKey);
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
@@ -456,6 +489,10 @@ const POST_BLOCK_TYPES = new Set([
   'pdf_preview',
   'html_fragment'
 ]);
+
+const normalizePostBlockType = (type: string): PostBlock['type'] => (
+  type === 'blockquote' ? 'quote' : type as PostBlock['type']
+);
 
 const parseOptionalContentRating = (value: unknown, fieldName: string): ContentRating | undefined => {
   const raw = asOptionalString(value);
@@ -518,7 +555,8 @@ const parseScenarioPostBlock = (value: unknown, fieldName: string): ScenarioPost
   if (!isRecord(value)) {
     throw new Error(`Scenario field "${fieldName}" must be an object`);
   }
-  const type = asString(value.type, `${fieldName}.type`);
+  const rawType = asString(value.type, `${fieldName}.type`);
+  const type = normalizePostBlockType(rawType);
   if (!POST_BLOCK_TYPES.has(type)) {
     throw new Error(`Scenario field "${fieldName}.type" is invalid`);
   }
@@ -567,6 +605,24 @@ const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed 
   if (discoveryModeRaw && discoveryModeRaw !== 'primary' && discoveryModeRaw !== 'all' && discoveryModeRaw !== 'selected') {
     throw new Error(`Scenario field "${fieldName}.discoveryMode" must be primary, all, or selected`);
   }
+  const serializationModeRaw = asOptionalString(value.serializationMode);
+  if (serializationModeRaw && serializationModeRaw !== 'flat' && serializationModeRaw !== 'staged') {
+    throw new Error(`Scenario field "${fieldName}.serializationMode" must be flat or staged`);
+  }
+  const totalSectionCountRaw = value.totalSectionCount;
+  const totalSectionCount = typeof totalSectionCountRaw === 'number' && Number.isFinite(totalSectionCountRaw)
+    ? Math.max(0, Math.floor(totalSectionCountRaw))
+    : undefined;
+  if (totalSectionCountRaw !== undefined && totalSectionCount === undefined) {
+    throw new Error(`Scenario field "${fieldName}.totalSectionCount" must be a number`);
+  }
+  const currentSectionCountRaw = value.currentSectionCount;
+  const currentSectionCount = typeof currentSectionCountRaw === 'number' && Number.isFinite(currentSectionCountRaw)
+    ? Math.max(0, Math.floor(currentSectionCountRaw))
+    : undefined;
+  if (currentSectionCountRaw !== undefined && currentSectionCount === undefined) {
+    throw new Error(`Scenario field "${fieldName}.currentSectionCount" must be a number`);
+  }
 
   const mediaRaw = value.media;
   const media = Array.isArray(mediaRaw)
@@ -582,6 +638,42 @@ const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed 
     : undefined;
   if (blocksRaw !== undefined && !Array.isArray(blocksRaw)) {
     throw new Error(`Scenario field "${fieldName}.blocks" must be an array`);
+  }
+  const sectionsRaw = value.sections;
+  const sections = Array.isArray(sectionsRaw)
+    ? sectionsRaw.map((item, idx) => {
+        if (!isRecord(item)) {
+          throw new Error(`Scenario field "${fieldName}.sections[${idx}]" must be an object`);
+        }
+        const blocksRaw = item.blocks;
+        const sectionBlocks = Array.isArray(blocksRaw)
+          ? blocksRaw.map((block, blockIdx) => parseScenarioPostBlock(block, `${fieldName}.sections[${idx}].blocks[${blockIdx}]`))
+          : undefined;
+        if (blocksRaw !== undefined && !Array.isArray(blocksRaw)) {
+          throw new Error(`Scenario field "${fieldName}.sections[${idx}].blocks" must be an array`);
+        }
+        const sectionStatusRaw = asOptionalString(item.status);
+        if (sectionStatusRaw && sectionStatusRaw !== 'draft' && sectionStatusRaw !== 'scheduled' && sectionStatusRaw !== 'published' && sectionStatusRaw !== 'archived') {
+          throw new Error(`Scenario field "${fieldName}.sections[${idx}].status" must be draft, scheduled, published, or archived`);
+        }
+        const sortOrderRaw = item.sortOrder;
+        const sortOrder = typeof sortOrderRaw === 'number' && Number.isFinite(sortOrderRaw)
+          ? Math.floor(sortOrderRaw)
+          : undefined;
+        if (sortOrderRaw !== undefined && sortOrder === undefined) {
+          throw new Error(`Scenario field "${fieldName}.sections[${idx}].sortOrder" must be a number`);
+        }
+        return {
+          title: asString(item.title, `${fieldName}.sections[${idx}].title`),
+          slug: asOptionalString(item.slug),
+          sortOrder,
+          status: sectionStatusRaw as 'draft' | 'scheduled' | 'published' | 'archived' | undefined,
+          blocks: sectionBlocks
+        };
+      })
+    : undefined;
+  if (sectionsRaw !== undefined && !Array.isArray(sectionsRaw)) {
+    throw new Error(`Scenario field "${fieldName}.sections" must be an array`);
   }
 
   const primaryMediaId = asOptionalString(value.primaryMediaId);
@@ -641,11 +733,16 @@ const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed 
     slug,
     summary,
     status: statusRaw as 'draft' | 'published' | 'archived' | undefined,
+    serializationMode: serializationModeRaw as 'flat' | 'staged' | undefined,
+    totalSectionCount,
+    currentSectionCount,
     discoveryMode: discoveryModeRaw as PostDiscoveryMode | undefined,
     media,
     blocks,
+    sections,
     primaryMediaId,
     primaryMedia,
+    publishedAt: asOptionalString(value.publishedAt),
     destination,
     metadata
   };
@@ -905,11 +1002,52 @@ const readStackTargets = async (client: CloudFormationClient, stackName: string)
 
 const imageDimensionCache = new Map<string, { width: number; height: number }>();
 
+const readImageDimensionsFromHeader = (filePath: string): { width: number; height: number } | undefined => {
+  const buffer = readFileSync(filePath);
+
+  if (buffer.length >= 24 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+  }
+
+  if (buffer.length >= 4 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 9 < buffer.length) {
+      if (buffer[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      while (buffer[offset] === 0xff) offset += 1;
+      const marker = buffer[offset];
+      offset += 1;
+      if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+      if (offset + 2 > buffer.length) break;
+      const segmentLength = buffer.readUInt16BE(offset);
+      if (segmentLength < 2 || offset + segmentLength > buffer.length) break;
+      if (
+        marker === 0xc0 || marker === 0xc1 || marker === 0xc2 || marker === 0xc3 ||
+        marker === 0xc5 || marker === 0xc6 || marker === 0xc7 ||
+        marker === 0xc9 || marker === 0xca || marker === 0xcb ||
+        marker === 0xcd || marker === 0xce || marker === 0xcf
+      ) {
+        return { width: buffer.readUInt16BE(offset + 5), height: buffer.readUInt16BE(offset + 3) };
+      }
+      offset += segmentLength;
+    }
+  }
+
+  return undefined;
+};
+
 const getImageDimensions = async (file: AssetFile): Promise<{ width: number; height: number }> => {
   const cached = imageDimensionCache.get(file.absolutePath);
   if (cached) return cached;
-  const width = 1920;
-  const height = 1080;
+  const headerDimensions = readImageDimensionsFromHeader(file.absolutePath);
+  const metadata = headerDimensions ? undefined : await sharp(file.absolutePath, { limitInputPixels: false }).metadata();
+  const width = headerDimensions?.width ?? metadata?.width ?? 0;
+  const height = headerDimensions?.height ?? metadata?.height ?? 0;
+  if (width <= 0 || height <= 0) {
+    throw new Error(`Could not determine image dimensions for ${file.absolutePath}`);
+  }
   const value = { width, height };
   imageDimensionCache.set(file.absolutePath, value);
   return value;
@@ -1785,12 +1923,20 @@ const main = async () => {
         if (primaryMediaId && !postMedia.some((item) => item.mediaId === primaryMediaId)) {
           postMedia.unshift({ mediaId: primaryMediaId, discoverable: true, sortOrder: 0 });
         }
-        const blocks = toSeedPostBlocks(
+        const explicitBlocks = toSeedPostBlocks(
           postSeed.blocks,
           mediaIdByComposite,
           mediaIdsByFile,
           `creators[${idx}].posts[${postIndex}]`
         );
+        const blocks = explicitBlocks.length > 0
+          ? explicitBlocks
+          : toSeedPostBlocksFromSections(
+              postSeed,
+              mediaIdByComposite,
+              mediaIdsByFile,
+              `creators[${idx}].posts[${postIndex}]`
+            );
         const destination: PostDestination | null | undefined =
           postSeed.destination === null
             ? null
@@ -1800,6 +1946,13 @@ const main = async () => {
                   url: sanitizeOptional(postSeed.destination.url, 2048) || ''
                 }
               : undefined;
+
+        const metadata: Record<string, string> = {
+          ...(postSeed.metadata || {})
+        };
+        if (postSeed.serializationMode) metadata.serializationMode = postSeed.serializationMode;
+        if (postSeed.totalSectionCount !== undefined) metadata.totalSectionCount = String(postSeed.totalSectionCount);
+        if (postSeed.currentSectionCount !== undefined) metadata.currentSectionCount = String(postSeed.currentSectionCount);
 
         const post: Post = {
           postId: seedId('post', seed.slug, slug),
@@ -1816,10 +1969,10 @@ const main = async () => {
             mode: normalizeDiscoveryMode(postSeed.discoveryMode)
           },
           destination,
-          metadata: postSeed.metadata || {},
+          metadata,
           createdAt,
           updatedAt: createdAt,
-          publishedAt: status === 'published' ? createdAt : undefined
+          publishedAt: status === 'published' ? (sanitizeOptional(postSeed.publishedAt, 64) || createdAt) : undefined
         };
         posts.push(JSON.parse(JSON.stringify(post)) as Post);
       }

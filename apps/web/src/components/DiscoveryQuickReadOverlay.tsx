@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 
 type SurfaceAssetType = 'image' | 'video';
@@ -162,7 +163,6 @@ const PostMetaHeader = ({ item, post, itemIndex, itemsCount }: { item: Discovery
         {' · '}
         {Math.max(1, itemIndex + 1)} / {Math.max(1, itemsCount)}
       </p>
-      {post?.summary ? <p className="discovery-quickread-summary">{post.summary}</p> : (item.postSummary ? <p className="discovery-quickread-summary">{item.postSummary}</p> : null)}
     </header>
   );
 };
@@ -173,11 +173,18 @@ const renderMediaFigure = (
   blur?: boolean
  ) => {
   const hasDimensions = Boolean(media.width && media.height && media.width > 0 && media.height > 0);
+  const mediaAspect = hasDimensions ? media.width! / media.height! : 1;
+  const frameStyle = hasDimensions
+    ? {
+        aspectRatio: `${media.width} / ${media.height}`,
+        '--quickread-media-fit-width': `min(100%, ${mediaAspect * 70}vh, ${mediaAspect * 50}rem)`
+      } as CSSProperties
+    : undefined;
   return (
     <figure key={key} className="discovery-quickread-media-figure">
     <div
       className={`discovery-quickread-media-frame${hasDimensions ? ' has-ratio' : ' no-ratio'}`}
-      style={hasDimensions ? { aspectRatio: `${media.width} / ${media.height}` } : undefined}
+      style={frameStyle}
     >
     {media.assetType === 'video' ? (
       <video controls playsInline preload="metadata" poster={media.previewPosterUrl} style={{ filter: blur ? 'blur(28px)' : undefined }}>
@@ -195,9 +202,21 @@ const renderMediaFigure = (
 const StandardPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
   const orderedMedia = [...post.media].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const mediaById = new Map(orderedMedia.map((media) => [media.mediaId, media]));
+  const hasBlocks = post.blocks.length > 0;
+  const primaryMedia = post.primaryMediaId ? mediaById.get(post.primaryMediaId) : undefined;
+  const fallbackMedia = primaryMedia
+    ? [primaryMedia, ...orderedMedia.filter((media) => media.mediaId !== primaryMedia.mediaId)]
+    : orderedMedia;
   return (
     <div className="discovery-quickread-content-flow">
-      {post.blocks.map((block, index) => {
+      {!hasBlocks ? (
+        <>
+          {post.summary ? <p>{post.summary}</p> : null}
+          {fallbackMedia.map((media, index) =>
+            renderMediaFigure(media, `fallback-media-${media.mediaId || index}`, item.blurred)
+          )}
+        </>
+      ) : post.blocks.map((block, index) => {
         if (block.type === 'heading') {
           const level = Math.max(1, Math.min(6, block.level || 2));
           if (level === 1) return <h1 key={block.blockId || index}>{block.text || ''}</h1>;
@@ -506,7 +525,6 @@ export default function DiscoveryQuickReadOverlay({
                     <img src={item.previewUrl} alt={item.title || 'Discovery media'} style={{ filter: item.blurred ? 'blur(28px)' : undefined }} />
                   )}
                 </div>
-                {item.postSummary ? <p>{item.postSummary}</p> : null}
               </article>
             )}
             <div className="discovery-quickread-main-nav">
