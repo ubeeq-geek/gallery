@@ -2503,7 +2503,8 @@
     }
   }
 
-  .discovery-quickread-story-flow .post-part-label {
+  .discovery-quickread-story-flow .post-part-label,
+  .discovery-quickread-short-story-flow .post-part-label {
     font-family: 'Inter', system-ui, sans-serif;
     font-size: 12px;
     font-weight: 700;
@@ -2513,7 +2514,8 @@
     margin: 0 0 6px;
   }
 
-  .discovery-quickread-story-flow .post-part-title {
+  .discovery-quickread-story-flow .post-part-title,
+  .discovery-quickread-short-story-flow .post-part-title {
     font-family: 'Source Serif 4', Georgia, serif;
     font-size: clamp(1.5rem, 2.2vw, 1.75rem);
     line-height: 1.3;
@@ -2521,27 +2523,32 @@
     margin: 0 0 20px;
   }
 
-  .discovery-quickread-story-flow .post-body {
+  .discovery-quickread-story-flow .post-body,
+  .discovery-quickread-short-story-flow .post-body {
     font-family: 'Source Serif 4', Georgia, serif;
     font-size: clamp(1.125rem, 1.55vw, 1.25rem);
     line-height: 1.85;
     color: #111827;
   }
 
-  .discovery-quickread-story-flow .post-body p {
+  .discovery-quickread-story-flow .post-body p,
+  .discovery-quickread-short-story-flow .post-body p {
     margin-bottom: 22px;
     max-width: none;
   }
 
-  .discovery-quickread-story-flow .post-body p + p {
+  .discovery-quickread-story-flow .post-body p + p,
+  .discovery-quickread-short-story-flow .post-body p + p {
     margin-top: 0;
   }
 
-  .discovery-quickread-story-flow .post-body p:has(+ p:empty) {
+  .discovery-quickread-story-flow .post-body p:has(+ p:empty),
+  .discovery-quickread-short-story-flow .post-body p:has(+ p:empty) {
     margin-bottom: 32px;
   }
 
-  .discovery-quickread-story-flow .post-body em {
+  .discovery-quickread-story-flow .post-body em,
+  .discovery-quickread-short-story-flow .post-body em {
     font-style: italic;
     color: #1f2937;
   }
@@ -2557,14 +2564,16 @@
     color: #3b82f6;
   }
 
-  .discovery-quickread-story-flow .post-inline-quote {
+  .discovery-quickread-story-flow .post-inline-quote,
+  .discovery-quickread-short-story-flow .post-inline-quote {
     margin: 0;
     border-inline-start: 2px solid color-mix(in srgb, var(--line) 65%, white);
     padding-inline-start: 0.95rem;
     color: #334155;
   }
 
-  .discovery-quickread-story-flow .discovery-quickread-media-figure img {
+  .discovery-quickread-story-flow .discovery-quickread-media-figure img,
+  .discovery-quickread-short-story-flow .discovery-quickread-media-figure img {
     border-radius: 16px;
     margin-bottom: 4px;
   }
