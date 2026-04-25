@@ -371,6 +371,14 @@ const StoryPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: O
   );
 };
 
+const ShortStoryPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
+  return (
+    <div className="discovery-quickread-content-flow discovery-quickread-short-story-flow post-reading">
+      <StandardPostRenderer item={item} post={post} storyMode />
+    </div>
+  );
+};
+
 const DiscoverySecondaryRail = ({
   item,
   post,
