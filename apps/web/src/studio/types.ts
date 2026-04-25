@@ -60,7 +60,7 @@ export type StudioPost = {
   creatorId: string;
   metadata?: Record<string, string>;
   postType?: 'image' | 'video' | 'story' | 'audio';
-  postFormat?: 'single' | 'multi' | 'short' | 'long' | 'album';
+  postFormat?: 'single' | 'multi' | 'short' | 'long';
   summary?: string;
   updatedAt?: string;
   primaryMediaId?: string;

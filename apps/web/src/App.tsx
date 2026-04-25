@@ -34,6 +34,7 @@ type DiscoveryDockSummary = {
   showImages: boolean;
   showVideos: boolean;
   showPosts: boolean;
+  showAudio: boolean;
   heavyLabel:
     | 'Heavy Shown'
     | 'Some Heavy'
@@ -298,7 +299,7 @@ type TrendingImage = {
   imageId: string;
   assetType?: 'image' | 'video' | 'audio';
   postType?: 'image' | 'video' | 'story' | 'audio';
-  postFormat?: 'single' | 'multi' | 'short' | 'long' | 'album';
+  postFormat?: 'single' | 'multi' | 'short' | 'long';
   surfaceType?: 'media' | 'post';
   postId?: string;
   postSlug?: string;

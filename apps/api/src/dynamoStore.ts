@@ -1057,11 +1057,14 @@ export class DynamoStore implements DataStore {
     }
     const itemMatchesFilter = (row: Record<string, unknown>): boolean => {
       const isPostSurface = row.surfaceType === 'post_surface' || Boolean(row.postId);
-      if (!isPostSurface) return false;
-      const postType = row.postType === 'story' || row.postType === 'video' || row.postType === 'audio' || row.postType === 'image'
-        ? row.postType
+      if (source === 'media' && isPostSurface) return false;
+      if (source === 'post' && !isPostSurface) return false;
+      const itemType = isPostSurface
+        ? (row.postType === 'story' || row.postType === 'video' || row.postType === 'audio' || row.postType === 'image'
+            ? row.postType
+            : (row.assetType === 'video' ? 'video' : row.assetType === 'audio' ? 'audio' : 'image'))
         : (row.assetType === 'video' ? 'video' : row.assetType === 'audio' ? 'audio' : 'image');
-      return itemTypes[postType];
+      return itemTypes[itemType];
     };
     const resolveSingleSurface = (): 'image' | 'video' | 'story' | 'audio' | null => {
       const selected: Array<'image' | 'video' | 'story' | 'audio'> = [];
@@ -1087,7 +1090,7 @@ export class DynamoStore implements DataStore {
         postType: row.postType === 'story' || row.postType === 'video' || row.postType === 'audio' || row.postType === 'image'
           ? row.postType
           : undefined,
-        postFormat: row.postFormat === 'single' || row.postFormat === 'multi' || row.postFormat === 'short' || row.postFormat === 'long' || row.postFormat === 'album'
+        postFormat: row.postFormat === 'single' || row.postFormat === 'multi' || row.postFormat === 'short' || row.postFormat === 'long'
           ? row.postFormat
           : undefined,
         creatorId: String(row.creatorId || ''),
@@ -1131,7 +1134,7 @@ export class DynamoStore implements DataStore {
           ExclusiveStartKey: cursorKey
         })
       );
-      scanned = response.Items || [];
+      scanned = (response.Items || []).filter((row) => itemMatchesFilter(row as Record<string, unknown>));
       lastEvaluatedKey = response.LastEvaluatedKey as Record<string, unknown> | undefined;
     } else {
       const response = await this.client.send(

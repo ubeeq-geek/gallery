@@ -96,10 +96,13 @@ const normalizePostType = (post: Pick<Post, 'metadata' | 'blocks' | 'media' | 'p
 
 const normalizePostFormat = (post: Pick<Post, 'metadata' | 'blocks' | 'media'>, postType: PostType): PostFormat => {
   const raw = (post.metadata?.postFormat || post.metadata?.format || '').toLowerCase();
-  if (raw === 'single' || raw === 'multi' || raw === 'short' || raw === 'long' || raw === 'album') return raw;
+  if ((postType === 'image' || postType === 'audio') && (raw === 'single' || raw === 'multi' || raw === 'album')) {
+    return raw === 'album' ? 'multi' : raw;
+  }
+  if ((postType === 'video' || postType === 'story') && (raw === 'short' || raw === 'long')) return raw;
   if (postType === 'story') return post.blocks.filter((block) => block.type === 'paragraph').length >= 6 ? 'long' : 'short';
   if (postType === 'video') return post.metadata?.videoFormat === 'short' || post.metadata?.layout === 'short' ? 'short' : 'long';
-  if (postType === 'audio') return post.media.length > 1 ? 'album' : 'single';
+  if (postType === 'audio') return post.media.length > 1 ? 'multi' : 'single';
   return post.media.length > 1 ? 'multi' : 'single';
 };
 

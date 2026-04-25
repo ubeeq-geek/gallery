@@ -55,7 +55,7 @@ export type TrendingImage = {
   imageId: string;
   assetType?: 'image' | 'video' | 'audio';
   postType?: 'image' | 'video' | 'story' | 'audio';
-  postFormat?: 'single' | 'multi' | 'short' | 'long' | 'album';
+  postFormat?: 'single' | 'multi' | 'short' | 'long';
   creatorId: string;
   creatorName: string;
   groupingId: string;

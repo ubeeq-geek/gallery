@@ -2492,12 +2492,6 @@
     color: var(--text-subtle);
   }
 
-  .discovery-quickread-parody-profile,
-  .discovery-quickread-parody-activity {
-    display: grid;
-    gap: 0.65rem;
-  }
-
   .post-reading {
     max-width: 1040px;
     margin: 0 auto;

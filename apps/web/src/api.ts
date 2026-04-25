@@ -479,7 +479,7 @@ export const api = {
     media?: Array<{ mediaId: string; discoverable?: boolean; sortOrder?: number; caption?: string }>;
     primaryMediaId?: string;
     postType?: 'image' | 'video' | 'story' | 'audio';
-    postFormat?: 'single' | 'multi' | 'short' | 'long' | 'album';
+    postFormat?: 'single' | 'multi' | 'short' | 'long';
     discoveryMode?: 'primary' | 'all' | 'selected';
     destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
     metadata?: Record<string, string>;
@@ -500,7 +500,7 @@ export const api = {
     media?: Array<{ mediaId: string; discoverable?: boolean; sortOrder?: number; caption?: string }>;
     primaryMediaId?: string;
     postType?: 'image' | 'video' | 'story' | 'audio';
-    postFormat?: 'single' | 'multi' | 'short' | 'long' | 'album';
+    postFormat?: 'single' | 'multi' | 'short' | 'long';
     discoveryMode?: 'primary' | 'all' | 'selected';
     destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
     metadata?: Record<string, string>;

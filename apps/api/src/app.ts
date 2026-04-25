@@ -937,7 +937,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     imageId: string;
     assetType: 'image' | 'video' | 'audio';
     postType?: 'image' | 'video' | 'story' | 'audio';
-    postFormat?: 'single' | 'multi' | 'short' | 'long' | 'album';
+    postFormat?: 'single' | 'multi' | 'short' | 'long';
     surfaceType?: 'media' | 'post';
     postId?: string;
     postSlug?: string;
@@ -1004,12 +1004,15 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   const normalizePostFormat = (
     post: Pick<Post, 'metadata' | 'blocks' | 'media'>,
     postType: DiscoveryItemType
-  ): 'single' | 'multi' | 'short' | 'long' | 'album' => {
+  ): 'single' | 'multi' | 'short' | 'long' => {
     const raw = (post.metadata?.postFormat || post.metadata?.format || '').toLowerCase();
-    if (raw === 'single' || raw === 'multi' || raw === 'short' || raw === 'long' || raw === 'album') return raw;
+    if ((postType === 'image' || postType === 'audio') && (raw === 'single' || raw === 'multi' || raw === 'album')) {
+      return raw === 'album' ? 'multi' : raw;
+    }
+    if ((postType === 'video' || postType === 'story') && (raw === 'short' || raw === 'long')) return raw;
     if (postType === 'story') return post.blocks.filter((block) => block.type === 'paragraph').length >= 6 ? 'long' : 'short';
     if (postType === 'video') return post.metadata?.videoFormat === 'short' || post.metadata?.layout === 'short' ? 'short' : 'long';
-    if (postType === 'audio') return post.media.length > 1 ? 'album' : 'single';
+    if (postType === 'audio') return post.media.length > 1 ? 'multi' : 'single';
     return post.media.length > 1 ? 'multi' : 'single';
   };
 
@@ -1076,7 +1079,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     if (postType) metadata.postType = postType;
     const postFormat = typeof raw.postFormat === 'string' ? raw.postFormat.trim().toLowerCase() : '';
     if (postFormat === 'single' || postFormat === 'multi' || postFormat === 'short' || postFormat === 'long' || postFormat === 'album') {
-      metadata.postFormat = postFormat;
+      metadata.postFormat = postFormat === 'album' ? 'multi' : postFormat;
     }
     return metadata;
   };
@@ -1142,7 +1145,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       imageId: string;
       assetType: 'image' | 'video' | 'audio';
       postType?: DiscoveryItemType;
-      postFormat?: 'single' | 'multi' | 'short' | 'long' | 'album';
+      postFormat?: 'single' | 'multi' | 'short' | 'long';
       surfaceType: 'media' | 'post';
       creatorId: string;
       groupingId: string;
@@ -2008,7 +2011,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   app.get('/discovery/trending-content', async (req, res) => {
     const startedAt = Date.now();
     const period: 'hourly' | 'daily' = req.query.period === 'hourly' ? 'hourly' : 'daily';
-    const source: 'media' | 'post' | 'combined' = 'post';
+    const requestedSource = typeof req.query.source === 'string' ? req.query.source : '';
+    const source: 'media' | 'post' | 'combined' =
+      requestedSource === 'media' || requestedSource === 'post' || requestedSource === 'combined'
+        ? requestedSource
+        : 'combined';
     const itemTypes = parseDiscoveryItemTypes(req);
     const limit = Math.max(1, Math.min(60, Number(req.query.limit || 24)));
     const cursorToken = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
@@ -2074,8 +2081,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         }));
         const typedFiltered = filtered.filter((item) => {
           const post = item.postId ? postsById.get(item.postId) : undefined;
-          const postType = post ? normalizePostType(post) : item.postType;
-          return postType ? itemTypes[postType] : false;
+          const itemType = post
+            ? normalizePostType(post)
+            : item.postType || (item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image');
+          return itemTypes[itemType];
         });
         const items = await Promise.all(typedFiltered.map(async (item) => {
           const post = item.postId ? postsById.get(item.postId) : undefined;
@@ -2208,7 +2217,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     if (!creator || creator.status !== 'active') {
       return res.status(404).json({ message: 'Creator not found' });
     }
-    const source: 'media' | 'post' | 'combined' = 'post';
+    const requestedSource = typeof req.query.source === 'string' ? req.query.source : '';
+    const source: 'media' | 'post' | 'combined' =
+      requestedSource === 'media' || requestedSource === 'post' || requestedSource === 'combined'
+        ? requestedSource
+        : 'combined';
     const itemTypes = parseDiscoveryItemTypes(req);
     const result = await getDiscoveryCached(
       req,

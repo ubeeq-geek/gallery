@@ -3,12 +3,14 @@ import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 
 type SurfaceAssetType = 'image' | 'video' | 'audio';
+type PostType = 'image' | 'video' | 'story' | 'audio';
+type PostFormat = 'single' | 'multi' | 'short' | 'long';
 
 type DiscoveryOverlayItem = {
   imageId: string;
   assetType?: SurfaceAssetType;
-  postType?: 'image' | 'video' | 'story' | 'audio';
-  postFormat?: 'single' | 'multi' | 'short' | 'long' | 'album';
+  postType?: PostType;
+  postFormat?: PostFormat;
   surfaceType?: 'media' | 'post';
   postId?: string;
   postSlug?: string;
@@ -100,7 +102,7 @@ type DiscoveryQuickReadOverlayProps = {
   onVideoVolumeChange: (video: HTMLVideoElement) => void;
 };
 
-type PostRenderKind = 'standard' | 'story';
+type PostRenderKind = PostType;
 
 const splitParagraphs = (text?: string): string[] => {
   if (!text) return [];
@@ -167,12 +169,39 @@ const collectPostInlineImageUrls = (post: OverlayPost): string[] => {
   return urls;
 };
 
+const getPostType = (post: OverlayPost): PostType => {
+  const raw = (post.metadata?.postType || '').toLowerCase();
+  if (raw === 'image' || raw === 'images' || raw === 'photo' || raw === 'photos') return 'image';
+  if (raw === 'video' || raw === 'videos' || raw === 'short' || raw === 'shorts' || raw === 'reel' || raw === 'reels') return 'video';
+  if (raw === 'audio' || raw === 'track' || raw === 'tracks' || raw === 'album') return 'audio';
+  if (raw === 'story' || raw === 'stories' || raw === 'post' || raw === 'posts' || raw === 'article' || raw === 'reading' || raw === 'fiction') return 'story';
+  const primary = post.primaryMediaId ? post.media.find((media) => media.mediaId === post.primaryMediaId) : post.media[0];
+  if (primary?.assetType === 'video') return 'video';
+  if (primary?.assetType === 'audio') return 'audio';
+  if (primary?.assetType === 'image' && post.blocks.length <= 2) return 'image';
+  if (post.blocks.some((block) => block.type === 'audio')) return 'audio';
+  if (post.blocks.some((block) => block.type === 'video')) return 'video';
+  return 'story';
+};
+
+const getPostFormat = (post: OverlayPost, postType: PostType = getPostType(post)): PostFormat => {
+  const raw = (post.metadata?.postFormat || post.metadata?.format || '').toLowerCase();
+  if ((postType === 'image' || postType === 'audio') && (raw === 'single' || raw === 'multi' || raw === 'album')) {
+    return raw === 'album' ? 'multi' : raw;
+  }
+  if ((postType === 'video' || postType === 'story') && (raw === 'short' || raw === 'long')) return raw;
+  if (postType === 'video') return post.metadata?.videoFormat === 'short' || post.metadata?.layout === 'short' ? 'short' : 'long';
+  if (postType === 'story') return post.blocks.filter((block) => block.type === 'paragraph').length >= 6 ? 'long' : 'short';
+  return post.media.length > 1 ? 'multi' : 'single';
+};
+
 const inferPostRenderKind = (post: OverlayPost): PostRenderKind => {
+  const explicitType = getPostType(post);
+  if (explicitType !== 'image') return explicitType;
   const template = (post.metadata?.template || '').toLowerCase();
   const layout = (post.metadata?.layout || '').toLowerCase();
   const kind = (post.metadata?.kind || '').toLowerCase();
-  const postType = (post.metadata?.postType || '').toLowerCase();
-  if (postType === 'story' || [template, layout, kind].some((value) => value.includes('story') || value.includes('reading') || value.includes('fiction'))) {
+  if ([template, layout, kind].some((value) => value.includes('story') || value.includes('reading') || value.includes('fiction'))) {
     return 'story';
   }
   const paragraphBlocks = post.blocks.filter((block) => block.type === 'paragraph').length;
@@ -181,24 +210,19 @@ const inferPostRenderKind = (post: OverlayPost): PostRenderKind => {
   if (paragraphBlocks >= 4) return 'story';
   if (paragraphBlocks >= 2 && headingBlocks >= 1) return 'story';
   if (longParagraphBlocks > 0) return 'story';
-  return 'standard';
-};
-
-const getPostType = (post: OverlayPost): 'image' | 'video' | 'story' | 'audio' => {
-  const raw = (post.metadata?.postType || '').toLowerCase();
-  if (raw === 'image' || raw === 'video' || raw === 'story' || raw === 'audio') return raw;
-  const primary = post.primaryMediaId ? post.media.find((media) => media.mediaId === post.primaryMediaId) : post.media[0];
-  if (primary?.assetType === 'video') return 'video';
-  if (primary?.assetType === 'audio') return 'audio';
-  if (primary?.assetType === 'image' && post.blocks.length <= 2) return 'image';
-  return 'story';
+  return 'image';
 };
 
 const PostMetaHeader = ({ item, post, itemIndex, itemsCount }: { item: DiscoveryOverlayItem; post: OverlayPost | null; itemIndex: number; itemsCount: number }) => {
   const creator = post?.creator || post?.artist;
+  const postType = post ? getPostType(post) : null;
+  const postFormat = post && postType ? getPostFormat(post, postType) : null;
+  const kicker = post
+    ? `${postType} post${postFormat ? ` · ${postFormat}` : ''}`
+    : 'Media quick read';
   return (
     <header className="discovery-quickread-post-meta">
-      <div className="discovery-quickread-post-kicker">{post ? 'Post quick read' : 'Media quick read'}</div>
+      <div className="discovery-quickread-post-kicker">{kicker}</div>
       <h2>{post?.title || item.postTitle || item.title || 'Untitled'}</h2>
       <p className="small">
         by {creator?.name || item.artistName || 'Unknown creator'}
@@ -226,24 +250,24 @@ const renderMediaFigure = (
     : undefined;
   return (
     <figure key={key} className="discovery-quickread-media-figure">
-    <div
-      className={`discovery-quickread-media-frame${hasDimensions ? ' has-ratio' : ' no-ratio'}`}
-      style={frameStyle}
-    >
-    {media.assetType === 'audio' ? (
-      <audio controls preload="metadata" style={{ width: '100%' }}>
-        <source src={media.previewUrl} />
-      </audio>
-    ) : media.assetType === 'video' ? (
-      <video controls playsInline preload="metadata" poster={media.previewPosterUrl} style={{ filter: blur ? 'blur(28px)' : undefined }}>
-        <source src={media.previewUrl} />
-      </video>
-    ) : (
-      <img src={media.previewUrl} alt={media.title || 'Post media'} loading="eager" decoding="async" style={{ filter: blur ? 'blur(28px)' : undefined }} />
-    )}
-    </div>
-    {media.caption ? <figcaption>{media.caption}</figcaption> : null}
-  </figure>
+      <div
+        className={`discovery-quickread-media-frame${hasDimensions ? ' has-ratio' : ' no-ratio'}`}
+        style={frameStyle}
+      >
+        {media.assetType === 'audio' ? (
+          <audio controls preload="metadata" style={{ width: '100%' }}>
+            <source src={media.previewUrl} />
+          </audio>
+        ) : media.assetType === 'video' ? (
+          <video controls playsInline preload="metadata" poster={media.previewPosterUrl} style={{ filter: blur ? 'blur(28px)' : undefined }}>
+            <source src={media.previewUrl} />
+          </video>
+        ) : (
+          <img src={media.previewUrl} alt={media.title || 'Post media'} loading="eager" decoding="async" style={{ filter: blur ? 'blur(28px)' : undefined }} />
+        )}
+      </div>
+      {media.caption ? <figcaption>{media.caption}</figcaption> : null}
+    </figure>
   );
 };
 
@@ -253,12 +277,13 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
   const hasBlocks = post.blocks.length > 0;
   const primaryMedia = post.primaryMediaId ? mediaById.get(post.primaryMediaId) : undefined;
   const postType = getPostType(post);
+  const postFormat = getPostFormat(post, postType);
   const shouldRenderPrimaryMediaTopBlock = Boolean(primaryMedia && postType !== 'story' && hasBlocks);
   const fallbackMedia = primaryMedia
     ? [primaryMedia, ...orderedMedia.filter((media) => media.mediaId !== primaryMedia.mediaId)]
     : orderedMedia;
   return (
-    <div className="discovery-quickread-content-flow">
+    <div className={`discovery-quickread-content-flow discovery-quickread-${postType}-flow discovery-quickread-${postType}-${postFormat}-flow`}>
       {shouldRenderPrimaryMediaTopBlock && primaryMedia
         ? renderMediaFigure(primaryMedia, `primary-media-${primaryMedia.mediaId}`, item.blurred)
         : null}

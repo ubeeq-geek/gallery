@@ -527,9 +527,10 @@ export class InMemoryStore implements DataStore {
       const isPostSurface = item.surfaceType === 'post_surface' || Boolean(item.postId);
       if (source === 'media' && isPostSurface) return false;
       if (source === 'post' && !isPostSurface) return false;
-      if (!isPostSurface) return false;
-      const postType = item.postType || (item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image');
-      return itemTypes[postType];
+      const itemType = isPostSurface
+        ? item.postType || (item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image')
+        : (item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image');
+      return itemTypes[itemType];
     };
     const items = (this.trendingFeed.get(period) || []).filter(matches);
     const offset = cursor ? Number(cursor) || 0 : 0;

@@ -1,6 +1,7 @@
 {
   "mediaDir": "media",
   "siteSettings": {
+    "stackName": "UbeeqStack",
     "siteName": "Ubeeq",
     "theme": "ubeeq",
     "logoKey": "branding/ubeeq-logo.svg",
@@ -167,10 +168,8 @@
               "caption": "Frame 0001"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0002",
@@ -206,10 +205,8 @@
               "caption": "Frame 0002"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0003",
@@ -245,10 +242,8 @@
               "caption": "Frame 0003"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0004",
@@ -284,10 +279,8 @@
               "caption": "Frame 0004"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0005",
@@ -323,10 +316,8 @@
               "caption": "Frame 0005"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0006",
@@ -362,10 +353,8 @@
               "caption": "Frame 0006"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0007",
@@ -401,10 +390,8 @@
               "caption": "Frame 0007"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0008",
@@ -440,10 +427,8 @@
               "caption": "Frame 0008"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0009",
@@ -479,10 +464,8 @@
               "caption": "Frame 0009"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0010",
@@ -518,10 +501,8 @@
               "caption": "Frame 0010"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0011",
@@ -557,10 +538,8 @@
               "caption": "Frame 0011"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0012",
@@ -596,10 +575,8 @@
               "caption": "Frame 0012"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0013",
@@ -635,10 +612,8 @@
               "caption": "Frame 0013"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0014",
@@ -674,10 +649,8 @@
               "caption": "Frame 0014"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0015",
@@ -713,10 +686,8 @@
               "caption": "Frame 0015"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0016",
@@ -752,10 +723,8 @@
               "caption": "Frame 0016"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0017",
@@ -791,10 +760,8 @@
               "caption": "Frame 0017"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0018",
@@ -830,10 +797,8 @@
               "caption": "Frame 0018"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0019",
@@ -869,10 +834,8 @@
               "caption": "Frame 0019"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         },
         {
           "title": "Roadside Journal 0020",
@@ -908,10 +871,8 @@
               "caption": "Frame 0020"
             }
           ],
-          "metadata": {
-            "postType": "image",
-            "postFormat": "single"
-          }
+          "postType": "image",
+          "postFormat": "single"
         }
       ]
     },
@@ -930,7 +891,7 @@
           }
         },
         "coverImage": {
-          "file": "amphoryn/hoichi/part-2-performance.jpg",
+          "file": "amphoryn/hoichi-2-1.jpg",
           "altText": "Illustrated shoreline from Hoichi the Earless",
           "focalPoint": {
             "x": 0.52,
@@ -1642,10 +1603,8 @@
               ]
             }
           ],
-          "metadata": {
-            "postType": "story",
-            "postFormat": "long"
-          }
+          "postType": "story",
+          "postFormat": "long"
         }
       ]
     }
