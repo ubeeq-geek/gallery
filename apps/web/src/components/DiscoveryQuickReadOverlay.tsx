@@ -202,9 +202,21 @@ const renderMediaFigure = (
 const StandardPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
   const orderedMedia = [...post.media].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const mediaById = new Map(orderedMedia.map((media) => [media.mediaId, media]));
+  const hasBlocks = post.blocks.length > 0;
+  const primaryMedia = post.primaryMediaId ? mediaById.get(post.primaryMediaId) : undefined;
+  const fallbackMedia = primaryMedia
+    ? [primaryMedia, ...orderedMedia.filter((media) => media.mediaId !== primaryMedia.mediaId)]
+    : orderedMedia;
   return (
     <div className="discovery-quickread-content-flow">
-      {post.blocks.map((block, index) => {
+      {!hasBlocks ? (
+        <>
+          {post.summary ? <p>{post.summary}</p> : null}
+          {fallbackMedia.map((media, index) =>
+            renderMediaFigure(media, `fallback-media-${media.mediaId || index}`, item.blurred)
+          )}
+        </>
+      ) : post.blocks.map((block, index) => {
         if (block.type === 'heading') {
           const level = Math.max(1, Math.min(6, block.level || 2));
           if (level === 1) return <h1 key={block.blockId || index}>{block.text || ''}</h1>;

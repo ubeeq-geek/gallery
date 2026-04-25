@@ -70,12 +70,12 @@ export const generateImageRenditions = async (params: {
   const { s3, bucket, sourceKey, targetPrefix, squareCrop } = params;
 
   const sourceBuffer = await readS3Object(s3, bucket, sourceKey);
-  const sourceImage = sharp(sourceBuffer, { limitInputPixels: false });
-  const metadata = await sourceImage.metadata();
-  const width = metadata.width;
-  const height = metadata.height;
-  if (!width || !height) {
-    throw new Error(`Unable to determine image dimensions for s3://${bucket}/${sourceKey}`);
+  const metadata = await sharp(sourceBuffer, { limitInputPixels: false }).metadata();
+  const width = metadata.width ?? 0;
+  const height = metadata.height ?? 0;
+
+  if (width <= 0 || height <= 0) {
+    throw new Error(`Could not determine source image dimensions for s3://${bucket}/${sourceKey}`);
   }
 
   const crop = pickSquareCrop(width, height, squareCrop);
