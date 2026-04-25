@@ -6961,6 +6961,7 @@ function PostPage() {
 
   const mediaById = new Map(post.media.map((item) => [item.mediaId, item]));
   const orderedMedia = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
+  const relatedSidebarMedia = orderedMedia.slice(0, 6);
   const destinationLabel = post.destination?.type === 'pdf'
     ? 'Open PDF'
     : post.destination?.type === 'external'
@@ -7058,66 +7059,95 @@ function PostPage() {
   };
 
   return (
-    <div className="layout">
-      <section className="panel">
-        <h1>{post.title}</h1>
-        <p className="small">
-          By {(post.creator || post.artist)
-            ? (
-              <Link
-                to={`/creators/${encodeURIComponent((post.creator || post.artist)!.slug)}`}
-                className="no-underline"
-              >
-                {(post.creator || post.artist)!.name}
-              </Link>
-            )
-            : 'Unknown creator'}
-          {' · '}
-          {post.status}
-          {' · '}
-          {post.discovery.mode}
-        </p>
-        {post.summary && <p>{post.summary}</p>}
-        {post.destination?.url && (
-          <p className="mt-3">
-            <a className="auth-primary-btn no-underline" href={post.destination.url} target="_blank" rel="noreferrer">
-              {destinationLabel}
-            </a>
+    <div className="layout post-detail-layout">
+      <div className="post-detail-main">
+        <section className="panel">
+          <h1>{post.title}</h1>
+          <p className="small">
+            By {(post.creator || post.artist)
+              ? (
+                <Link
+                  to={`/creators/${encodeURIComponent((post.creator || post.artist)!.slug)}`}
+                  className="no-underline"
+                >
+                  {(post.creator || post.artist)!.name}
+                </Link>
+              )
+              : 'Unknown creator'}
+            {' · '}
+            {post.status}
+            {' · '}
+            {post.discovery.mode}
           </p>
-        )}
-      </section>
+          {post.summary && <p>{post.summary}</p>}
+          {post.destination?.url && (
+            <p className="mt-3">
+              <a className="auth-primary-btn no-underline" href={post.destination.url} target="_blank" rel="noreferrer">
+                {destinationLabel}
+              </a>
+            </p>
+          )}
+        </section>
 
-      {orderedMedia.length > 0 && (
-        <section className="panel mt-4">
-          <h2>Media</h2>
-          <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': 2 } as any}>
-            {orderedMedia.map((media) => (
-              <article key={media.mediaId} className="discovery-feature-card gallery-discovery-card">
-                <div className="discovery-feature-media" style={{ aspectRatio: '1.15 / 1' }}>
-                  {media.assetType === 'video'
-                    ? <img src={media.previewPosterUrl || media.previewUrl} alt={media.title || media.mediaId} />
-                    : <img src={media.previewUrl} alt={media.title || media.mediaId} />}
-                </div>
-                <div className="discovery-feature-footer">
-                  <div className="discovery-feature-text">
-                    <h3 className="discovery-feature-title">{media.title || media.mediaId}</h3>
-                    {media.caption && <p className="discovery-feature-subtitle">{media.caption}</p>}
+        {orderedMedia.length > 0 && (
+          <section className="panel mt-4">
+            <h2>Media</h2>
+            <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': 2 } as any}>
+              {orderedMedia.map((media) => (
+                <article key={media.mediaId} className="discovery-feature-card gallery-discovery-card">
+                  <div className="discovery-feature-media" style={{ aspectRatio: '1.15 / 1' }}>
+                    {media.assetType === 'video'
+                      ? <img src={media.previewPosterUrl || media.previewUrl} alt={media.title || media.mediaId} />
+                      : <img src={media.previewUrl} alt={media.title || media.mediaId} />}
                   </div>
+                  <div className="discovery-feature-footer">
+                    <div className="discovery-feature-text">
+                      <h3 className="discovery-feature-title">{media.title || media.mediaId}</h3>
+                      {media.caption && <p className="discovery-feature-subtitle">{media.caption}</p>}
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {post.blocks.length > 0 && (
+          <section className="panel mt-4">
+            <h2>Post Content</h2>
+            <div className="mt-3" style={{ display: 'grid', gap: '1rem' }}>
+              {post.blocks.map((block, idx) => renderBlock(block, idx))}
+            </div>
+          </section>
+        )}
+      </div>
+
+      <aside className="post-detail-sidebar">
+        <section className="panel">
+          <h3 className="m-0">Discover related</h3>
+          <p className="small mt-2 mb-0">More media and discovery context connected to this post.</p>
+        </section>
+        <section className="panel mt-4">
+          <h4 className="m-0">From this post</h4>
+          <div className="post-detail-sidebar-list mt-3">
+            {relatedSidebarMedia.length > 0 ? relatedSidebarMedia.map((media) => (
+              <article key={`related-media-${media.mediaId}`} className="post-detail-sidebar-card">
+                <div className="post-detail-sidebar-thumb">
+                  {media.assetType === 'video'
+                    ? <img src={media.previewPosterUrl || media.previewUrl} alt={media.title || media.mediaId} loading="lazy" decoding="async" />
+                    : <img src={media.previewUrl} alt={media.title || media.mediaId} loading="lazy" decoding="async" />}
+                </div>
+                <div>
+                  <div className="discovery-card-title">{media.title || media.mediaId}</div>
+                  <div className="discovery-card-subtitle">{media.assetType === 'video' ? 'Video' : 'Image'}</div>
                 </div>
               </article>
-            ))}
+            )) : (
+              <p className="small m-0">No related media yet.</p>
+            )}
           </div>
         </section>
-      )}
-
-      {post.blocks.length > 0 && (
-        <section className="panel mt-4">
-          <h2>Post Content</h2>
-          <div className="mt-3" style={{ display: 'grid', gap: '1rem' }}>
-            {post.blocks.map((block, idx) => renderBlock(block, idx))}
-          </div>
-        </section>
-      )}
+      </aside>
     </div>
   );
 }
