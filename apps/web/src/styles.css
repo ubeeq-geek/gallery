@@ -2330,6 +2330,8 @@
     font-size: clamp(1.62rem, 2.65vw, 2.35rem);
     line-height: 1.16;
     letter-spacing: -0.01em;
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Times New Roman", serif;
+    font-weight: 600;
   }
 
   .discovery-quickread-summary {
@@ -2473,7 +2475,51 @@
   }
 
   .discovery-quickread-story-flow p {
-    line-height: 1.95;
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Times New Roman", serif;
+    font-size: clamp(1.12rem, 1.25vw, 1.26rem);
+    line-height: 1.82;
+    letter-spacing: 0.002em;
+    color: color-mix(in srgb, var(--text) 90%, #0f172a 10%);
+  }
+
+  .discovery-quickread-story-flow h1,
+  .discovery-quickread-story-flow h2,
+  .discovery-quickread-story-flow h3 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Times New Roman", serif;
+    font-weight: 500;
+    letter-spacing: -0.012em;
+    line-height: 1.2;
+    color: color-mix(in srgb, var(--text) 94%, #020617 6%);
+  }
+
+  .discovery-quickread-story-flow h1 {
+    font-size: clamp(2rem, 3.15vw, 2.75rem);
+    margin-top: 0.4rem;
+  }
+
+  .discovery-quickread-story-flow h2 {
+    font-size: clamp(1.48rem, 2vw, 1.95rem);
+    margin-top: 0.35rem;
+  }
+
+  .discovery-quickread-story-flow h3 {
+    margin-top: 0.25rem;
+    font-size: clamp(1.15rem, 1.22vw, 1.32rem);
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    font-family: "Inter", "Avenir Next", "Segoe UI", sans-serif;
+    color: color-mix(in srgb, var(--brand) 78%, #4f46e5 22%);
+    font-weight: 700;
+  }
+
+  .discovery-quickread-story-flow .discovery-quickread-paragraph-group:first-of-type p:first-child::first-letter {
+    float: left;
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Times New Roman", serif;
+    font-size: 3.6em;
+    line-height: 0.84;
+    padding-right: 0.12em;
+    margin-top: 0.085em;
+    color: color-mix(in srgb, var(--brand) 80%, #4f46e5 20%);
   }
 
   .discovery-quickread-rail {
