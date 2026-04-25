@@ -11,26 +11,126 @@
       "name": "Roadside America",
       "slug": "roadside-america",
       "media": [
-        { "file": "roadside-america/ROAD-0001.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0001", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0002.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0002", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0003.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0003", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0004.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0004", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0005.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0005", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0006.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0006", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0007.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0007", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0008.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0008", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0009.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0009", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0010.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0010", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0011.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0011", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0012.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0012", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0013.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0013", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0014.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0014", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0015.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0015", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0016.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0016", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0017.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0017", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0018.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0018", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0019.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0019", "appearsInFeed": true },
-        { "file": "roadside-america/ROAD-0020.jpg", "groupingSlug": "roadside-america-default", "title": "Roadside Frame 0020", "appearsInFeed": true }
+        {
+          "file": "roadside-america/ROAD-0001.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0001",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0002.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0002",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0003.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0003",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0004.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0004",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0005.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0005",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0006.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0006",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0007.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0007",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0008.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0008",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0009.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0009",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0010.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0010",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0011.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0011",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0012.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0012",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0013.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0013",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0014.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0014",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0015.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0015",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0016.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0016",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0017.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0017",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0018.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0018",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0019.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0019",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-america/ROAD-0020.jpg",
+          "groupingSlug": "roadside-america-default",
+          "title": "Roadside Frame 0020",
+          "appearsInFeed": true
+        }
       ],
       "posts": [
         {
@@ -39,12 +139,29 @@
           "summary": "Pulled over just after sunrise and caught the first good light of the day.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0001.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0001.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0001.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0001.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
-            { "type": "paragraph", "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough." },
-            { "type": "image", "file": "roadside-america/ROAD-0001.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0001" }
+            {
+              "type": "paragraph",
+              "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0001.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0001"
+            }
           ]
         },
         {
@@ -53,12 +170,29 @@
           "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0002.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0002.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0002.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0002.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Roadside Stop" },
-            { "type": "paragraph", "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck." },
-            { "type": "image", "file": "roadside-america/ROAD-0002.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0002" }
+            {
+              "type": "paragraph",
+              "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0002.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0002"
+            }
           ]
         },
         {
@@ -67,12 +201,29 @@
           "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0003.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0003.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0003.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0003.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Noon Light" },
-            { "type": "paragraph", "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work." },
-            { "type": "image", "file": "roadside-america/ROAD-0003.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0003" }
+            {
+              "type": "paragraph",
+              "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0003.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0003"
+            }
           ]
         },
         {
@@ -81,12 +232,29 @@
           "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0004.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0004.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0004.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0004.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Cloud Break" },
-            { "type": "paragraph", "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up." },
-            { "type": "image", "file": "roadside-america/ROAD-0004.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0004" }
+            {
+              "type": "paragraph",
+              "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0004.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0004"
+            }
           ]
         },
         {
@@ -95,12 +263,29 @@
           "summary": "Backroad detour turned into the strongest scene of the afternoon.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0005.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0005.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0005.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0005.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Unexpected Detour" },
-            { "type": "paragraph", "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting." },
-            { "type": "image", "file": "roadside-america/ROAD-0005.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0005" }
+            {
+              "type": "paragraph",
+              "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0005.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0005"
+            }
           ]
         },
         {
@@ -109,12 +294,29 @@
           "summary": "Pulled over just after sunrise and caught the first good light of the day.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0006.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0006.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0006.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0006.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
-            { "type": "paragraph", "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough." },
-            { "type": "image", "file": "roadside-america/ROAD-0006.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0006" }
+            {
+              "type": "paragraph",
+              "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0006.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0006"
+            }
           ]
         },
         {
@@ -123,12 +325,29 @@
           "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0007.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0007.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0007.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0007.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Roadside Stop" },
-            { "type": "paragraph", "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck." },
-            { "type": "image", "file": "roadside-america/ROAD-0007.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0007" }
+            {
+              "type": "paragraph",
+              "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0007.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0007"
+            }
           ]
         },
         {
@@ -137,12 +356,29 @@
           "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0008.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0008.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0008.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0008.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Noon Light" },
-            { "type": "paragraph", "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work." },
-            { "type": "image", "file": "roadside-america/ROAD-0008.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0008" }
+            {
+              "type": "paragraph",
+              "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0008.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0008"
+            }
           ]
         },
         {
@@ -151,12 +387,29 @@
           "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0009.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0009.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0009.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0009.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Cloud Break" },
-            { "type": "paragraph", "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up." },
-            { "type": "image", "file": "roadside-america/ROAD-0009.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0009" }
+            {
+              "type": "paragraph",
+              "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0009.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0009"
+            }
           ]
         },
         {
@@ -165,12 +418,29 @@
           "summary": "Backroad detour turned into the strongest scene of the afternoon.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0010.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0010.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0010.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0010.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Unexpected Detour" },
-            { "type": "paragraph", "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting." },
-            { "type": "image", "file": "roadside-america/ROAD-0010.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0010" }
+            {
+              "type": "paragraph",
+              "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0010.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0010"
+            }
           ]
         },
         {
@@ -179,12 +449,29 @@
           "summary": "Pulled over just after sunrise and caught the first good light of the day.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0011.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0011.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0011.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0011.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
-            { "type": "paragraph", "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough." },
-            { "type": "image", "file": "roadside-america/ROAD-0011.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0011" }
+            {
+              "type": "paragraph",
+              "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0011.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0011"
+            }
           ]
         },
         {
@@ -193,12 +480,29 @@
           "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0012.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0012.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0012.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0012.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Roadside Stop" },
-            { "type": "paragraph", "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck." },
-            { "type": "image", "file": "roadside-america/ROAD-0012.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0012" }
+            {
+              "type": "paragraph",
+              "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0012.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0012"
+            }
           ]
         },
         {
@@ -207,12 +511,29 @@
           "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0013.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0013.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0013.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0013.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Noon Light" },
-            { "type": "paragraph", "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work." },
-            { "type": "image", "file": "roadside-america/ROAD-0013.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0013" }
+            {
+              "type": "paragraph",
+              "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0013.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0013"
+            }
           ]
         },
         {
@@ -221,12 +542,29 @@
           "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0014.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0014.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0014.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0014.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Cloud Break" },
-            { "type": "paragraph", "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up." },
-            { "type": "image", "file": "roadside-america/ROAD-0014.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0014" }
+            {
+              "type": "paragraph",
+              "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0014.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0014"
+            }
           ]
         },
         {
@@ -235,12 +573,29 @@
           "summary": "Backroad detour turned into the strongest scene of the afternoon.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0015.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0015.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0015.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0015.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Unexpected Detour" },
-            { "type": "paragraph", "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting." },
-            { "type": "image", "file": "roadside-america/ROAD-0015.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0015" }
+            {
+              "type": "paragraph",
+              "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0015.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0015"
+            }
           ]
         },
         {
@@ -249,12 +604,29 @@
           "summary": "Pulled over just after sunrise and caught the first good light of the day.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0016.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0016.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0016.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0016.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Mile Marker Notes" },
-            { "type": "paragraph", "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough." },
-            { "type": "image", "file": "roadside-america/ROAD-0016.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0016" }
+            {
+              "type": "paragraph",
+              "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0016.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0016"
+            }
           ]
         },
         {
@@ -263,12 +635,29 @@
           "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0017.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0017.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0017.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0017.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Roadside Stop" },
-            { "type": "paragraph", "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck." },
-            { "type": "image", "file": "roadside-america/ROAD-0017.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0017" }
+            {
+              "type": "paragraph",
+              "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0017.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0017"
+            }
           ]
         },
         {
@@ -277,12 +666,29 @@
           "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0018.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0018.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0018.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0018.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Noon Light" },
-            { "type": "paragraph", "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work." },
-            { "type": "image", "file": "roadside-america/ROAD-0018.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0018" }
+            {
+              "type": "paragraph",
+              "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0018.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0018"
+            }
           ]
         },
         {
@@ -291,12 +697,29 @@
           "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0019.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0019.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0019.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0019.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Cloud Break" },
-            { "type": "paragraph", "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up." },
-            { "type": "image", "file": "roadside-america/ROAD-0019.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0019" }
+            {
+              "type": "paragraph",
+              "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0019.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0019"
+            }
           ]
         },
         {
@@ -305,12 +728,743 @@
           "summary": "Backroad detour turned into the strongest scene of the afternoon.",
           "status": "published",
           "discoveryMode": "primary",
-          "primaryMedia": { "file": "roadside-america/ROAD-0020.jpg", "groupingSlug": "roadside-america-default" },
-          "media": [{ "file": "roadside-america/ROAD-0020.jpg", "groupingSlug": "roadside-america-default", "discoverable": true }],
+          "primaryMedia": {
+            "file": "roadside-america/ROAD-0020.jpg",
+            "groupingSlug": "roadside-america-default"
+          },
+          "media": [
+            {
+              "file": "roadside-america/ROAD-0020.jpg",
+              "groupingSlug": "roadside-america-default",
+              "discoverable": true
+            }
+          ],
           "blocks": [
             { "type": "heading", "level": 2, "text": "Unexpected Detour" },
-            { "type": "paragraph", "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting." },
-            { "type": "image", "file": "roadside-america/ROAD-0020.jpg", "groupingSlug": "roadside-america-default", "caption": "Frame 0020" }
+            {
+              "type": "paragraph",
+              "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
+            },
+            {
+              "type": "image",
+              "file": "roadside-america/ROAD-0020.jpg",
+              "groupingSlug": "roadside-america-default",
+              "caption": "Frame 0020"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Amphoryn",
+      "slug": "amphoryn",
+      "description": "Timeless stories, brought to light.",
+      "groupings": [
+        {
+          "title": "Hoichi the Earless",
+          "slug": "hoichi-the-earless",
+          "type": "series",
+          "summary": "On the quiet shores of Dan-no-ura, a blind musician is summoned to play for a mysterious audience."
+        }
+      ],
+      "media": [
+        {
+          "file": "amphoryn/hoichi-1-1.jpg",
+          "groupingSlug": "hoichi-the-earless",
+          "title": "Hoichi the Earless #1.1",
+          "appearsInFeed": true
+        },
+        {
+          "file": "amphoryn/hoichi-1-2.jpg",
+          "groupingSlug": "hoichi-the-earless",
+          "title": "Hoichi the Earless #1.2",
+          "appearsInFeed": false
+        },
+        {
+          "file": "amphoryn/hoichi-1-3.jpg",
+          "groupingSlug": "hoichi-the-earless",
+          "title": "Hoichi the Earless #1.3",
+          "appearsInFeed": false
+        },
+        {
+          "file": "amphoryn/hoichi-2-1.jpg",
+          "groupingSlug": "hoichi-the-earless",
+          "title": "Hoichi the Earless #2.1",
+          "appearsInFeed": true
+        },
+        {
+          "file": "amphoryn/hoichi-2-2.jpg",
+          "groupingSlug": "hoichi-the-earless",
+          "title": "Hoichi the Earless #2.2",
+          "appearsInFeed": false
+        },
+        {
+          "file": "amphoryn/hoichi-3-1.jpg",
+          "groupingSlug": "hoichi-the-earless",
+          "title": "Hoichi the Earless #3.1",
+          "appearsInFeed": false
+        },
+        {
+          "file": "amphoryn/hoichi-3-2.jpg",
+          "groupingSlug": "hoichi-the-earless",
+          "title": "Hoichi the Earless #3.2",
+          "appearsInFeed": false
+        },
+        {
+          "file": "amphoryn/hoichi-4-1.jpg",
+          "groupingSlug": "hoichi-the-earless",
+          "title": "Hoichi the Earless #4.1",
+          "appearsInFeed": false
+        },
+        {
+          "file": "amphoryn/hoichi-4-2.jpg",
+          "groupingSlug": "hoichi-the-earless",
+          "title": "Hoichi the Earless #4.2",
+          "appearsInFeed": false
+        }
+      ],
+      "posts": [
+        {
+          "title": "Hoichi the Earless",
+          "slug": "hoichi-the-earless",
+          "summary": "A blind musician is summoned to perform before a noble court. But the court is not of the living.",
+          "status": "published",
+          "serializationMode": "staged",
+          "discoveryMode": "primary",
+          "publishedAt": "2026-04-24T09:00:00.000Z",
+          "totalSectionCount": 4,
+          "currentSectionCount": 2,
+          "primaryMedia": {
+            "file": "amphoryn/hoichi-1-2.jpg",
+            "groupingSlug": "hoichi-the-earless"
+          },
+          "media": [
+            {
+              "file": "amphoryn/hoichi-1-1.jpg",
+              "groupingSlug": "hoichi-the-earless",
+              "discoverable": true,
+              "sectionSlug": "part-1-the-haunted-shore"
+            },
+            {
+              "file": "amphoryn/hoichi-1-2.jpg",
+              "groupingSlug": "hoichi-the-earless",
+              "discoverable": false,
+              "sectionSlug": "part-1-the-haunted-shore"
+            },
+            {
+              "file": "amphoryn/hoichi-1-3.jpg",
+              "groupingSlug": "hoichi-the-earless",
+              "discoverable": false,
+              "sectionSlug": "part-1-the-haunted-shore"
+            },
+            {
+              "file": "amphoryn/hoichi-2-1.jpg",
+              "groupingSlug": "hoichi-the-earless",
+              "discoverable": true,
+              "anchorSectionSlug": "part-2-the-summons"
+            },
+            {
+              "file": "amphoryn/hoichi-2-2.jpg",
+              "groupingSlug": "hoichi-the-earless",
+              "discoverable": false,
+              "anchorSectionSlug": "part-2-the-summons"
+            },
+            {
+              "file": "amphoryn/hoichi-3-1.jpg",
+              "groupingSlug": "hoichi-the-earless",
+              "discoverable": false,
+              "anchorSectionSlug": "part-3-the-truth-in-the-dark"
+            },
+            {
+              "file": "amphoryn/hoichi-3-2.jpg",
+              "groupingSlug": "hoichi-the-earless",
+              "discoverable": false,
+              "anchorSectionSlug": "part-3-the-truth-in-the-dark"
+            },
+            {
+              "file": "amphoryn/hoichi-4-1.jpg",
+              "groupingSlug": "hoichi-the-earless",
+              "discoverable": false,
+              "anchorSectionSlug": "part-4-the-price"
+            },
+            {
+              "file": "amphoryn/hoichi-4-2.jpg",
+              "groupingSlug": "hoichi-the-earless",
+              "discoverable": false,
+              "anchorSectionSlug": "part-4-the-price"
+            }
+          ],
+          "sections": [
+            {
+              "title": "Part 1 — The Haunted Shore",
+              "slug": "part-1-the-haunted-shore",
+              "sortOrder": 1,
+              "status": "published",
+              "publishedAt": "2026-04-24T09:00:00.000Z",
+              "heroMedia": {
+                "file": "amphoryn/hoichi-1-0.jpg",
+                "groupingSlug": "hoichi-the-earless"
+              },
+              "blocks": [
+                {
+                  "type": "image",
+                  "file": "amphoryn/hoichi-1-0.jpg",
+                  "groupingSlug": "hoichi-the-earless"
+                },
+                {
+                  "type": "heading",
+                  "level": 2,
+                  "text": "The Haunted Shore"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "More than seven hundred years ago, in the narrow straits at Dan-no-ura, two great clans met in a final, terrible battle—the Heike and the Genji. By its end, the Heike were destroyed. Warriors, nobles, women, and their young emperor were pulled beneath the waves."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The sea remembers."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Fishermen still speak of strange lights drifting over the water at night—pale, flickering flames they call oni-bi. When storms roll in, the wind carries a sound like distant battle. And sometimes, in the quiet between waves, there are voices."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "A temple was built to soothe the restless dead: Amidaji. Nearby, a cemetery marked the resting place of the fallen."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The prayers were offered daily."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The dead were never entirely at peace."
+                },
+                {
+                  "type": "image",
+                  "file": "amphoryn/hoichi-1-1.jpg",
+                  "groupingSlug": "hoichi-the-earless"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "In this place lived Hoichi—blind from childhood, trained in the biwa and the recitation of history. His voice was clear, precise, expressive. When he sang of Dan-no-ura, listeners wept. It was said even spirits could not resist his telling."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "He had little at first. But the priest of Amidaji took pity on him—a room, food, shelter. In return, Hoichi played on quiet evenings."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "A simple life."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "A peaceful one."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Until the night someone came for him."
+                }
+              ]
+            },
+            {
+              "title": "Part 2 — The Summons",
+              "slug": "part-2-the-summons",
+              "sortOrder": 2,
+              "status": "published",
+              "publishedAt": "2026-04-25T09:00:00.000Z",
+              "heroMedia": {
+                "file": "amphoryn/hoichi/part-2-performance.jpg",
+                "groupingSlug": "hoichi-the-earless"
+              },
+              "blocks": [
+                {
+                  "type": "image",
+                  "file": "amphoryn/hoichi/part-2-samurai-garden.jpg",
+                  "groupingSlug": "hoichi-the-earless",
+                  "caption": "The voice was deep. Commanding."
+                },
+                {
+                  "type": "heading",
+                  "level": 2,
+                  "text": "The Summons"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "It was a hot summer night."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The priest had been called away. Unable to sleep in the heavy air, Hoichi sat on the veranda, biwa across his lap, the garden beyond him perfectly still."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Then footsteps."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Not hesitant. Deliberate."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "They stopped directly in front of him."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "Hoichi."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The voice was deep. Commanding."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "I am blind. I cannot see who calls."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "There is nothing to fear. My lord — a man of high rank — is staying nearby. He has heard of your skill. You will come with me and perform."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "It was not a request."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Hoichi rose, took his instrument, and followed."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The grip on his arm was firm — unnaturally so. Metal shifted with each step. Armor. Fully armed."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "They moved quickly. Faster than Hoichi thought possible. Soon they passed through a great gate, which opened without a word."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Inside: a garden. Polished floors. Vast rooms."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Voices — soft, refined, unmistakably noble."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "He was guided to a cushion in a large hall."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "You will recite the story of the Battle of Dan-no-ura."
+                },
+                {
+                  "type": "image",
+                  "file": "amphoryn/hoichi/part-2-performance.jpg",
+                  "groupingSlug": "hoichi-the-earless",
+                  "caption": "The room held its breath."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "He began."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The biwa came alive beneath his hands — oars cutting water, arrows splitting air, ships colliding, steel ringing against steel. His voice carried the rise and fall of battle, the chaos, the grief of inevitable defeat."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The room held its breath."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Then, softly at first — murmurs. Astonishment."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Then silence."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "When he reached the end — the emperor carried under, the last cries of the Heike swallowed by the sea — the hall broke. Not into applause. Into grief. Open, unguarded, inconsolable."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Hoichi faltered. He had moved audiences before. He had never shaken a room like this."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "At last, the woman spoke again."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "You will return tomorrow night. And the nights that follow."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "A pause."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "Tell no one."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "He was led back before dawn."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "He said nothing."
+                }
+              ]
+            },
+            {
+              "title": "Part 3 — The Truth in the Dark",
+              "slug": "part-3-the-truth-in-the-dark",
+              "sortOrder": 3,
+              "status": "scheduled",
+              "releaseAt": "2026-04-26T09:00:00.000Z",
+              "heroMedia": {
+                "file": "amphoryn/hoichi/part-3-cemetery-performance.jpg",
+                "groupingSlug": "hoichi-the-earless"
+              },
+              "blocks": [
+                {
+                  "type": "image",
+                  "file": "amphoryn/hoichi/part-3-priest-warning.jpg",
+                  "groupingSlug": "hoichi-the-earless",
+                  "caption": "The priest noticed."
+                },
+                {
+                  "type": "heading",
+                  "level": 2,
+                  "text": "The Truth in the Dark"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The summons came again."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "And again."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Each night Hoichi left. Each morning he returned quieter, his body worn at the edges in a way that sleep did not repair."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The priest noticed."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Questions received careful, vague answers."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Servants were told to follow him."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "One night, they did — and lost him almost immediately. He moved through the dark faster than a blind man should move, swallowed by streets they knew well and could not navigate after him."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "They searched."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "They found nothing."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Then, near the shore, they heard it: the sound of the biwa."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Fierce. Urgent."
+                },
+                {
+                  "type": "image",
+                  "file": "amphoryn/hoichi/part-3-cemetery-performance.jpg",
+                  "groupingSlug": "hoichi-the-earless",
+                  "caption": "And in their center: Hoichi."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "They followed it to the cemetery."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Light from their lanterns fell over the headstones, and they stopped."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Between the grave markers, the air was wrong. Not dark — lit. Dozens of pale flames drifted above the ground, hovering without wind, without source. More than any of them had counted. More than any had seen."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "And in their center: Hoichi."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Rain falling around him. Seated before the tomb of the drowned emperor. His voice raised in full performance. His face turned toward nothing."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The dead were listening."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "They seized his shoulders, shouted his name. He fought them."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "You must not interrupt — this is an august gathering!"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "They dragged him away."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Back to the temple. This time, he told everything."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The priest listened without speaking."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Then:"
+                },
+                {
+                  "type": "blockquote",
+                  "text": "You have not been visiting a lord's court."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "A silence longer than comfort allows."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "You have been performing for the dead."
+                }
+              ]
+            },
+            {
+              "title": "Part 4 — The Price",
+              "slug": "part-4-the-price",
+              "sortOrder": 4,
+              "status": "scheduled",
+              "releaseAt": "2026-04-27T09:00:00.000Z",
+              "heroMedia": {
+                "file": "amphoryn/hoichi/part-4-sutras.jpg",
+                "groupingSlug": "hoichi-the-earless"
+              },
+              "blocks": [
+                {
+                  "type": "image",
+                  "file": "amphoryn/hoichi/part-4-sutras.jpg",
+                  "groupingSlug": "hoichi-the-earless",
+                  "caption": "The sutras had covered his body. Not his ears."
+                },
+                {
+                  "type": "heading",
+                  "level": 2,
+                  "text": "The Price"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "There was only one way to protect him."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Before nightfall, the priest and his assistant covered Hoichi's body in sacred text — sutras written in careful strokes across every surface. Chest, back, face, hands, feet, the backs of his fingers."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "These will hide you. Do not speak. Do not move. No matter what you hear."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Night came."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Hoichi waited."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Still. Silent."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Footsteps."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The gate."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The garden."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Directly in front of him."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "Hoichi."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "No answer."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "Hoichi."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Silence."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "A third time — sharper, irritated."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Still nothing."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The figure moved closer. Hoichi heard the shift of armored weight, the soft displacement of air. Felt the presence of something immense and very old leaning over him."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Then stillness."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "A long pause."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "When the voice came again, it was almost to itself:"
+                },
+                {
+                  "type": "blockquote",
+                  "text": "I see the instrument…"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Another pause."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "…but the player—"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Something changed in the air. A recognition. A pivot."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "…there is nothing here."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The pause that followed had the quality of a held breath."
+                },
+                {
+                  "type": "blockquote",
+                  "text": "…nothing—"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Then:"
+                },
+                {
+                  "type": "blockquote",
+                  "text": "—except ears."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Hands seized them."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Hard. Violent. Final."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Gone."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Hoichi did not cry out."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "He did not move."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Eventually, the footsteps left."
+                },
+                {
+                  "type": "image",
+                  "file": "amphoryn/hoichi/part-4-hoichi-bandaged.jpg",
+                  "groupingSlug": "hoichi-the-earless",
+                  "caption": "Hoichi survived."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "At dawn, the priest found him where he had been left — seated on the veranda, the floor beneath him dark and wet."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The mistake was simple."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "The sutras had covered his body."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Not his ears."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Hoichi survived."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "His wounds healed."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "People came from distant places to hear him — not just for the skill that had always been extraordinary, but for what that skill had cost. There is something about a man who has been reached for in the dark, and held on, that makes an audience lean in differently."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "He became famous."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "He lost something he could not get back."
+                },
+                {
+                  "type": "paragraph",
+                  "text": "From then on, he was known by a new name:"
+                },
+                {
+                  "type": "paragraph",
+                  "text": "Hoichi the Earless."
+                }
+              ]
+            }
           ]
         }
       ]

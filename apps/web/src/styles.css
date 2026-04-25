@@ -2113,7 +2113,8 @@
     place-items: center;
     min-height: 0;
     box-sizing: border-box;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
     padding: 0.2rem 0.2rem max(0.5rem, env(safe-area-inset-bottom));
     background: #020617;
   }
@@ -2292,15 +2293,18 @@
     padding: 0.95rem;
     overflow: hidden;
     min-height: 0;
-    align-items: start;
+    align-items: stretch;
   }
 
   .discovery-quickread-main {
     min-height: 0;
+    height: 100%;
     width: 100%;
     max-width: var(--quickread-main-max);
     justify-self: center;
     overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
     border: 1px solid color-mix(in srgb, var(--line) 80%, white);
     border-radius: 1.35rem;
     background: color-mix(in srgb, var(--surface) 94%, white 6%);
@@ -2470,6 +2474,7 @@
 
   .discovery-quickread-rail {
     min-height: 0;
+    max-height: 100%;
     overflow-y: auto;
     position: sticky;
     top: 0;
@@ -2611,19 +2616,40 @@
     }
 
     .discovery-quickread-body {
-      grid-template-columns: 1fr;
+      display: flex;
+      flex-direction: column;
       gap: 0.85rem;
       padding: 0.65rem;
+      overflow-y: auto;
+      overflow-x: hidden;
+      align-content: start;
+      align-items: stretch;
     }
 
     .discovery-quickread-main {
       padding: 0.95rem;
+      order: 1;
+      height: auto;
+      max-height: none;
+      overflow: visible;
+      max-width: none;
+      justify-self: stretch;
+    }
+
+    .discovery-quickread-main-nav {
+      position: static;
     }
 
     .discovery-quickread-rail {
-      position: static;
+      order: 2;
+      width: 100%;
+      position: static !important;
+      top: auto !important;
       max-height: none;
       overflow: visible;
+      align-self: auto;
+      margin-top: 0.2rem;
+      padding-right: 0;
     }
   }
 

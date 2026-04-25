@@ -390,10 +390,24 @@ export default function DiscoveryQuickReadOverlay({
   onSelectStreamItem,
   onVideoVolumeChange
 }: DiscoveryQuickReadOverlayProps) {
+  const [isStackedQuickReadLayout, setIsStackedQuickReadLayout] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth <= 1099;
+  });
   const hasOverlayItem = Boolean(item);
   const isPostSurface = item?.surfaceType === 'post' || Boolean(item?.postId);
   const postInlineImageUrls = useMemo(() => (post ? collectPostInlineImageUrls(post) : []), [post]);
   const [postInlineMediaReady, setPostInlineMediaReady] = useState(!isPostSurface);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => {
+      setIsStackedQuickReadLayout(window.innerWidth <= 1099);
+    };
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     if (!open || !hasOverlayItem || !isPostSurface) {
@@ -500,15 +514,26 @@ export default function DiscoveryQuickReadOverlay({
               <button type="button" className="auth-secondary-btn" disabled={!hasNext} onClick={onNext}>Next</button>
               {post?.slug ? <Link className="auth-primary-btn no-underline" to={`/posts/${encodeURIComponent(post.slug)}`} onClick={onClose}>Open in post page</Link> : null}
             </div>
+            {isStackedQuickReadLayout ? (
+              <DiscoverySecondaryRail
+                item={item}
+                post={post}
+                moreFromStream={moreFromStream}
+                onSelectStreamItem={onSelectStreamItem}
+                onClose={onClose}
+              />
+            ) : null}
           </section>
 
-          <DiscoverySecondaryRail
-            item={item}
-            post={post}
-            moreFromStream={moreFromStream}
-            onSelectStreamItem={onSelectStreamItem}
-            onClose={onClose}
-          />
+          {!isStackedQuickReadLayout ? (
+            <DiscoverySecondaryRail
+              item={item}
+              post={post}
+              moreFromStream={moreFromStream}
+              onSelectStreamItem={onSelectStreamItem}
+              onClose={onClose}
+            />
+          ) : null}
         </div>
       </div>
     </div>
