@@ -759,6 +759,45 @@
       "name": "Amphoryn",
       "slug": "amphoryn",
       "description": "Timeless stories, brought to light.",
+      "branding": {
+        "profileImage": {
+          "file": "amphoryn/hoichi-1-1.jpg",
+          "altText": "Amphoryn logo",
+          "squareCrop": {
+            "x": 120,
+            "y": 40,
+            "size": 760
+          }
+        },
+        "coverImage": {
+          "file": "amphoryn/hoichi/part-2-performance.jpg",
+          "altText": "Illustrated shoreline from Hoichi the Earless",
+          "focalPoint": {
+            "x": 0.52,
+            "y": 0.42
+          },
+          "crops": {
+            "desktop": {
+              "x": 0,
+              "y": 220,
+              "width": 2400,
+              "height": 900
+            },
+            "tablet": {
+              "x": 120,
+              "y": 180,
+              "width": 1600,
+              "height": 700
+            },
+            "mobile": {
+              "x": 520,
+              "y": 120,
+              "width": 900,
+              "height": 1200
+            }
+          }
+        }
+      },
       "groupings": [
         {
           "title": "Hoichi the Earless",

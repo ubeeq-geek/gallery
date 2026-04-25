@@ -92,6 +92,57 @@ export interface Creator {
   followerCount?: number;
   imageCount?: number;
   groupingCount?: number;
+  branding?: {
+    profileImage?: {
+      sourceKey: string;
+      thumbnailKeys?: {
+        square256?: string;
+        square512?: string;
+        square1024?: string;
+      };
+      squareCrop?: {
+        x: number;
+        y: number;
+        size: number;
+      };
+      altText?: string;
+      updatedAt: string;
+    };
+    coverImage?: {
+      sourceKey: string;
+      renditionKeys?: {
+        desktop?: string;
+        tablet?: string;
+        mobile?: string;
+      };
+      crops?: {
+        desktop?: {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        };
+        tablet?: {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        };
+        mobile?: {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        };
+      };
+      focalPoint?: {
+        x: number;
+        y: number;
+      };
+      altText?: string;
+      updatedAt: string;
+    };
+  };
   createdAt: string;
 }
 

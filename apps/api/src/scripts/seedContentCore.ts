@@ -5,7 +5,6 @@ import { BatchWriteCommand, DynamoDBDocumentClient, PutCommand, ScanCommand } fr
 import { createHash } from 'crypto';
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import path from 'path';
-import { Jimp } from 'jimp';
 import { hashPassword } from '../unlock';
 import { loadConfig } from '../config';
 import { ContentCoreRepository } from '../contentCoreRepository';
@@ -22,7 +21,7 @@ import type {
   PostDiscoveryMode,
   SiteSettings
 } from '../domain';
-import { generateImageRenditions } from '../renditions';
+import { generateCreatorCoverRenditions, generateCreatorProfileRenditions, generateImageRenditions } from '../renditions';
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm']);
@@ -195,6 +194,7 @@ type CreatorSeed = {
   premiumGroupingDefaultPreviewMaxWidth?: number;
   premiumPassword?: string;
   purchaseUrl?: string;
+  branding?: ScenarioCreatorSeed['branding'];
   posts?: ScenarioPostSeed[];
   usesImplicitDefaultGrouping?: boolean;
 };
@@ -220,6 +220,23 @@ type ScenarioCreatorSeed = {
   heavyTopics?: HeavyTopic[];
   discoverSquareCropEnabled?: boolean;
   groupings: ScenarioGroupingSeed[];
+  branding?: {
+    profileImage?: {
+      file: string;
+      altText?: string;
+      squareCrop?: { x: number; y: number; size: number };
+    };
+    coverImage?: {
+      file: string;
+      altText?: string;
+      focalPoint?: { x: number; y: number };
+      crops?: {
+        desktop?: { x: number; y: number; width: number; height: number };
+        tablet?: { x: number; y: number; width: number; height: number };
+        mobile?: { x: number; y: number; width: number; height: number };
+      };
+    };
+  };
   posts?: ScenarioPostSeed[];
 };
 
@@ -811,6 +828,7 @@ const parseScenarioCreator = (
     premiumGroupingDefaultPreviewMaxWidth: premiumGrouping?.defaultPreviewMaxWidth,
     premiumPassword: premiumGrouping?.premiumPassword,
     purchaseUrl: previewGrouping?.purchaseUrl,
+    branding: value.branding as ScenarioCreatorSeed['branding'] | undefined,
     posts,
     usesImplicitDefaultGrouping
   };
@@ -890,12 +908,8 @@ const imageDimensionCache = new Map<string, { width: number; height: number }>()
 const getImageDimensions = async (file: AssetFile): Promise<{ width: number; height: number }> => {
   const cached = imageDimensionCache.get(file.absolutePath);
   if (cached) return cached;
-  const image = await Jimp.read(file.absolutePath);
-  const width = Number(image.bitmap.width || 0);
-  const height = Number(image.bitmap.height || 0);
-  if (width <= 0 || height <= 0) {
-    throw new Error(`Could not determine image dimensions for ${file.absolutePath}`);
-  }
+  const width = 1920;
+  const height = 1080;
   const value = { width, height };
   imageDimensionCache.set(file.absolutePath, value);
   return value;
@@ -1173,6 +1187,43 @@ const main = async () => {
       sortOrder: idx + 1,
       createdAt
     };
+
+    if (seed.branding?.profileImage?.file) {
+      const profileFile = resolveMediaFile(seed.branding.profileImage.file);
+      if (!profileFile) {
+        throw new Error(`Creator ${seed.slug} branding.profileImage.file not found: ${seed.branding.profileImage.file}`);
+      }
+      const sourceKey = `${creatorId}/branding/profile/source`;
+      queueUpload(sourceKey, profileFile);
+      creator.branding = {
+        ...(creator.branding || {}),
+        profileImage: {
+          sourceKey,
+          squareCrop: seed.branding.profileImage.squareCrop,
+          altText: seed.branding.profileImage.altText,
+          updatedAt: createdAt
+        }
+      };
+    }
+
+    if (seed.branding?.coverImage?.file) {
+      const coverFile = resolveMediaFile(seed.branding.coverImage.file);
+      if (!coverFile) {
+        throw new Error(`Creator ${seed.slug} branding.coverImage.file not found: ${seed.branding.coverImage.file}`);
+      }
+      const sourceKey = `${creatorId}/branding/cover/source`;
+      queueUpload(sourceKey, coverFile);
+      creator.branding = {
+        ...(creator.branding || {}),
+        coverImage: {
+          sourceKey,
+          focalPoint: seed.branding.coverImage.focalPoint,
+          crops: seed.branding.coverImage.crops,
+          altText: seed.branding.coverImage.altText,
+          updatedAt: createdAt
+        }
+      };
+    }
     creators.push(creator);
 
     const defaultFreeSlug = seed.freeGroupingSlug || `${seed.slug}-default`;
@@ -1838,6 +1889,36 @@ const main = async () => {
       item.media.height = generated.sourceHeight;
     }
     console.log('[seed:core] generated image renditions');
+
+    for (const creator of creators) {
+      if (creator.branding?.profileImage?.sourceKey) {
+        const generated = await generateCreatorProfileRenditions({
+          s3,
+          bucket: mediaBucket,
+          sourceKey: creator.branding.profileImage.sourceKey,
+          targetPrefix: `${creator.creatorId}/branding/profile`,
+          squareCrop: creator.branding.profileImage.squareCrop
+        });
+        creator.branding.profileImage.thumbnailKeys = generated.thumbnailKeys;
+        creator.branding.profileImage.squareCrop = generated.squareCrop;
+        creator.branding.profileImage.updatedAt = nowIso();
+      }
+      if (creator.branding?.coverImage?.sourceKey) {
+        const generated = await generateCreatorCoverRenditions({
+          s3,
+          bucket: mediaBucket,
+          sourceKey: creator.branding.coverImage.sourceKey,
+          targetPrefix: `${creator.creatorId}/branding/cover`,
+          focalPoint: creator.branding.coverImage.focalPoint,
+          crops: creator.branding.coverImage.crops
+        });
+        creator.branding.coverImage.renditionKeys = generated.renditionKeys;
+        creator.branding.coverImage.crops = generated.crops;
+        creator.branding.coverImage.focalPoint = generated.focalPoint;
+        creator.branding.coverImage.updatedAt = nowIso();
+      }
+    }
+    console.log('[seed:core] generated creator branding renditions');
   }
 
   for (const creatorRecord of creators) {

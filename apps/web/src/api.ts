@@ -548,6 +548,57 @@ export const api = {
     });
     return handleJson(response);
   },
+  async studioUploadCreatorProfileImage(creator: string, payload: {
+    sourceKey: string;
+    altText?: string;
+    squareCrop?: { x: number; y: number; size: number };
+  }) {
+    const response = await fetch(`${API_BASE}/studio/creators/${encodeURIComponent(creator)}/branding/profile-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async studioCreateCreatorBrandingUploadUrl(creator: string, payload: { kind: 'profile' | 'cover'; contentType: string }) {
+    const response = await fetch(`${API_BASE}/studio/creators/${encodeURIComponent(creator)}/branding/upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response) as Promise<{ key: string; uploadUrl: string; contentType: string }>;
+  },
+  async studioUploadCreatorCoverImage(creator: string, payload: {
+    sourceKey: string;
+    altText?: string;
+    focalPoint?: { x: number; y: number };
+    crops?: {
+      desktop?: { x: number; y: number; width: number; height: number };
+      tablet?: { x: number; y: number; width: number; height: number };
+      mobile?: { x: number; y: number; width: number; height: number };
+    };
+  }) {
+    const response = await fetch(`${API_BASE}/studio/creators/${encodeURIComponent(creator)}/branding/cover-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async studioDeleteCreatorProfileImage(creator: string) {
+    const response = await fetch(`${API_BASE}/studio/creators/${encodeURIComponent(creator)}/branding/profile-image`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async studioDeleteCreatorCoverImage(creator: string) {
+    const response = await fetch(`${API_BASE}/studio/creators/${encodeURIComponent(creator)}/branding/cover-image`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
   async updateArtist(creatorId: string, payload: {
     name?: string;
     slug?: string;

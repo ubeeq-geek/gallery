@@ -16,6 +16,28 @@ export type StudioCreator = {
   slug: string;
   status?: 'active' | 'inactive';
   createdAt?: string;
+  branding?: {
+    profileImage?: {
+      sourceKey: string;
+      thumbnailKeys?: {
+        square256?: string;
+        square512?: string;
+        square1024?: string;
+      };
+      altText?: string;
+      updatedAt: string;
+    };
+    coverImage?: {
+      sourceKey: string;
+      renditionKeys?: {
+        desktop?: string;
+        tablet?: string;
+        mobile?: string;
+      };
+      altText?: string;
+      updatedAt: string;
+    };
+  };
 };
 
 export type StudioFile = {
