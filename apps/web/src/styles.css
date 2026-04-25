@@ -1917,6 +1917,70 @@
     border: 1px solid #dde5f2;
   }
 
+  .discovery-rising-now-row {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(150px, 1fr)) auto;
+    gap: 0.8rem;
+    align-items: center;
+  }
+
+  .discovery-rising-now-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: 999px;
+    background: #fff;
+    border: 1px solid #dbe4f2;
+    min-width: 0;
+  }
+
+  .discovery-rising-now-avatar {
+    width: 3.45rem;
+    height: 3.45rem;
+    border-radius: 999px;
+    overflow: hidden;
+    background: #e6eef9;
+    flex: 0 0 auto;
+  }
+
+  .discovery-rising-now-avatar img,
+  .discovery-rising-now-placeholder {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .discovery-rising-now-placeholder {
+    background: linear-gradient(135deg, #d7e3f5, #b8cdf0);
+  }
+
+  .discovery-rising-now-next {
+    width: 2.7rem;
+    height: 2.7rem;
+    border-radius: 999px;
+    border: 1px solid #d5dfef;
+    background: #fff;
+    color: #4a5568;
+    font-size: 1.7rem;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  @media (max-width: 1200px) {
+    .discovery-rising-now-row {
+      grid-template-columns: repeat(3, minmax(170px, 1fr));
+    }
+  }
+
+  @media (max-width: 760px) {
+    .discovery-rising-now-row {
+      grid-template-columns: repeat(2, minmax(150px, 1fr));
+    }
+  }
+
   .discovery-artist-tabs-only {
     margin-bottom: 0.75rem;
     padding-bottom: 0;

@@ -2897,6 +2897,38 @@ function HomePage({
       preview: trendingRenderable[2]?.previewPosterUrl || trendingRenderable[2]?.previewUrl || latestItems[2]?.galleryThumbnailUrl || ''
     }
   ];
+  const risingNowRows = [
+    {
+      id: 'neon-dreams',
+      title: 'Neon Dreams',
+      posts: 348,
+      preview: trendingRenderable[3]?.previewPosterUrl || trendingRenderable[3]?.previewUrl || latestItems[3]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'roadside-icons',
+      title: 'Roadside Icons',
+      posts: 512,
+      preview: trendingRenderable[4]?.previewPosterUrl || trendingRenderable[4]?.previewUrl || latestItems[4]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'forgotten-places',
+      title: 'Forgotten Places',
+      posts: 201,
+      preview: trendingRenderable[5]?.previewPosterUrl || trendingRenderable[5]?.previewUrl || latestItems[5]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'midday-light',
+      title: 'Midday Light',
+      posts: 309,
+      preview: trendingRenderable[6]?.previewPosterUrl || trendingRenderable[6]?.previewUrl || latestItems[6]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'backroad-america',
+      title: 'Backroad America',
+      posts: 621,
+      preview: trendingRenderable[7]?.previewPosterUrl || trendingRenderable[7]?.previewUrl || latestItems[7]?.galleryThumbnailUrl || ''
+    }
+  ];
   const showRisingArtistsSection = risingArtists.length >= 2;
   const showTrendingCollectionsSection = trendingCollections.length >= 2;
 
@@ -3888,61 +3920,24 @@ function HomePage({
         {!loadingTrending && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">No trending artwork yet.</p>}
       </section>
 
-      <section id="latest-galleries" className="discovery-editorial-section">
+      <section id="active-challenges" className="discovery-editorial-section discovery-special-row">
         <div className="discovery-section-header">
-          <h2>Latest Galleries</h2>
-          <a href="#latest-galleries" className="text-sm font-semibold no-underline">Browse all</a>
+          <h2>Active challenges</h2>
+          <span className="text-sm font-semibold">Timed themes to spark creativity and connection.</span>
         </div>
-
-        <div className="discovery-latest-row">
-          {latestItems.map((gallery, i) => (
-            <article key={gallery.galleryId} className="discovery-gallery-stack-card">
-              <Link to={gallery.slug ? `/gallery/${gallery.slug}` : '/'} className="no-underline">
-                {(() => {
-                  const layerSet = gallery.stackPreviewUrls || [];
-                  const frontImage = layerSet[0] || gallery.galleryThumbnailUrl;
-                  const midImage = layerSet[1] || layerSet[0] || gallery.galleryThumbnailUrl;
-                  const backImage = layerSet[2] || layerSet[1] || layerSet[0] || gallery.galleryThumbnailUrl;
-                  return (
-                    <div className="discovery-stack discovery-stack-tall">
-                      <div className="discovery-stack-layer discovery-stack-layer-back">
-                        <img src={backImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
-                      </div>
-                      <div className="discovery-stack-layer discovery-stack-layer-mid">
-                        <img src={midImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
-                      </div>
-                      <div className="discovery-stack-layer discovery-stack-layer-front">
-                        <img
-                          src={frontImage}
-                          alt={gallery.title || 'Gallery cover'}
-                          loading={i < 2 ? 'eager' : 'lazy'}
-                          fetchPriority={i < 2 ? 'high' : 'low'}
-                          decoding="async"
-                        />
-                      </div>
-                    </div>
-                  );
-                })()}
-                <div className="discovery-gallery-stack-meta">
-                  <div className="discovery-card-title">{gallery.title || 'Gallery title'}</div>
-                  <div className="discovery-card-subtitle">by {gallery.artistName || 'Creator Name'}</div>
-                </div>
-              </Link>
-              {currentUser && gallery.galleryId && (
-                <div className="mt-3">
-                  <button
-                    className="auth-secondary-btn discovery-inline-btn"
-                    onClick={() => void toggleGalleryFavorite(gallery.galleryId)}
-                  >
-                    {favoriteGalleryIds.has(gallery.galleryId) ? 'Unfavorite gallery' : 'Favorite gallery'}
-                  </button>
-                </div>
-              )}
+        <div className="discovery-challenge-grid">
+          {challengeRows.map((challenge) => (
+            <article key={challenge.id} className="discovery-challenge-card">
+              <span className="discovery-challenge-kicker">ENDS IN {challenge.endsIn}</span>
+              <h3>{challenge.title}</h3>
+              <p>{challenge.description}</p>
+              <div className="discovery-challenge-footer">
+                <span>{challenge.joinedLabel}</span>
+                {challenge.preview && <img src={challenge.preview} alt="" loading="lazy" decoding="async" aria-hidden="true" />}
+              </div>
             </article>
           ))}
         </div>
-        {loadingLatest && latestItems.length === 0 && <p className="small">Loading latest galleries...</p>}
-        {!loadingLatest && latestItems.length === 0 && <p className="small">No galleries yet.</p>}
       </section>
 
       {continuationBlockOneHasItems && (
@@ -3998,24 +3993,84 @@ function HomePage({
         </section>
       )}
 
-      <section id="active-challenges" className="discovery-editorial-section discovery-special-row">
+      <section id="rising-now" className="discovery-editorial-section discovery-special-row">
         <div className="discovery-section-header">
-          <h2>Active challenges</h2>
-          <span className="text-sm font-semibold">Timed themes to spark creativity and connection.</span>
+          <h2>Rising Now</h2>
+          <span className="text-sm font-semibold">Fast-moving themes from the discovery stream.</span>
         </div>
-        <div className="discovery-challenge-grid">
-          {challengeRows.map((challenge) => (
-            <article key={challenge.id} className="discovery-challenge-card">
-              <span className="discovery-challenge-kicker">ENDS IN {challenge.endsIn}</span>
-              <h3>{challenge.title}</h3>
-              <p>{challenge.description}</p>
-              <div className="discovery-challenge-footer">
-                <span>{challenge.joinedLabel}</span>
-                {challenge.preview && <img src={challenge.preview} alt="" loading="lazy" decoding="async" aria-hidden="true" />}
+        <div className="discovery-rising-now-row">
+          {risingNowRows.map((row) => (
+            <article key={row.id} className="discovery-rising-now-pill">
+              <div className="discovery-rising-now-avatar">
+                {row.preview
+                  ? <img src={row.preview} alt="" loading="lazy" decoding="async" aria-hidden="true" />
+                  : <div className="discovery-rising-now-placeholder" aria-hidden="true" />}
+              </div>
+              <div>
+                <div className="discovery-card-title">{row.title}</div>
+                <div className="discovery-card-subtitle">{row.posts} posts</div>
               </div>
             </article>
           ))}
+          <button type="button" className="discovery-rising-now-next" aria-label="See more rising now rows">›</button>
         </div>
+      </section>
+
+      <section id="latest-galleries" className="discovery-editorial-section">
+        <div className="discovery-section-header">
+          <h2>Latest Galleries</h2>
+          <a href="#latest-galleries" className="text-sm font-semibold no-underline">Browse all</a>
+        </div>
+
+        <div className="discovery-latest-row">
+          {latestItems.map((gallery, i) => (
+            <article key={gallery.galleryId} className="discovery-gallery-stack-card">
+              <Link to={gallery.slug ? `/gallery/${gallery.slug}` : '/'} className="no-underline">
+                {(() => {
+                  const layerSet = gallery.stackPreviewUrls || [];
+                  const frontImage = layerSet[0] || gallery.galleryThumbnailUrl;
+                  const midImage = layerSet[1] || layerSet[0] || gallery.galleryThumbnailUrl;
+                  const backImage = layerSet[2] || layerSet[1] || layerSet[0] || gallery.galleryThumbnailUrl;
+                  return (
+                    <div className="discovery-stack discovery-stack-tall">
+                      <div className="discovery-stack-layer discovery-stack-layer-back">
+                        <img src={backImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                      </div>
+                      <div className="discovery-stack-layer discovery-stack-layer-mid">
+                        <img src={midImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                      </div>
+                      <div className="discovery-stack-layer discovery-stack-layer-front">
+                        <img
+                          src={frontImage}
+                          alt={gallery.title || 'Gallery cover'}
+                          loading={i < 2 ? 'eager' : 'lazy'}
+                          fetchPriority={i < 2 ? 'high' : 'low'}
+                          decoding="async"
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+                <div className="discovery-gallery-stack-meta">
+                  <div className="discovery-card-title">{gallery.title || 'Gallery title'}</div>
+                  <div className="discovery-card-subtitle">by {gallery.artistName || 'Creator Name'}</div>
+                </div>
+              </Link>
+              {currentUser && gallery.galleryId && (
+                <div className="mt-3">
+                  <button
+                    className="auth-secondary-btn discovery-inline-btn"
+                    onClick={() => void toggleGalleryFavorite(gallery.galleryId)}
+                  >
+                    {favoriteGalleryIds.has(gallery.galleryId) ? 'Unfavorite gallery' : 'Favorite gallery'}
+                  </button>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+        {loadingLatest && latestItems.length === 0 && <p className="small">Loading latest galleries...</p>}
+        {!loadingLatest && latestItems.length === 0 && <p className="small">No galleries yet.</p>}
       </section>
 
       {showRisingArtistsSection && (
