@@ -560,7 +560,7 @@ type CreatorProfilePayload = {
     favoriteCount: number;
   }>;
 };
-type GallerySummary = {
+type GroupingSummary = {
   galleryId: string;
   title: string;
   slug: string;
@@ -570,7 +570,7 @@ type GallerySummary = {
   galleryThumbnailUrl?: string;
   stackPreviewUrls?: string[];
 };
-type GalleryAsset = {
+type GroupingAsset = {
   imageId: string;
   title?: string;
   postTitle?: string;
@@ -597,7 +597,7 @@ type GalleryAsset = {
   };
   favoriteCount: number;
 };
-type Gallery = {
+type GroupingDetail = {
   galleryId: string;
   title: string;
   artistName?: string;
@@ -626,7 +626,7 @@ type Gallery = {
     previewPosterUrl?: string;
   }>;
   favoriteCount: number;
-  media: GalleryAsset[];
+  media: GroupingAsset[];
 };
 type Comment = {
   commentId: string;
@@ -2195,7 +2195,7 @@ function HomePage({
     blocks: TrendingMediumBlock[];
     consumedBorrowedImageIds: Set<string>;
   };
-  type DiscoveryGallery = GallerySummary & { artistName: string; artistSlug: string; stackPreviewUrls?: string[] };
+  type DiscoveryGallery = GroupingSummary & { artistName: string; artistSlug: string; stackPreviewUrls?: string[] };
 
   const [artists, setArtists] = useState<Artist[]>([]);
   const [galleries, setGalleries] = useState<DiscoveryGallery[]>([]);
@@ -4366,7 +4366,7 @@ function GalleryPage({
   const { slug = '' } = useParams();
   const location = useLocation();
   const currentUser = getCurrentUser();
-  const [gallery, setGallery] = useState<Gallery | null>(null);
+  const [grouping, setGrouping] = useState<GroupingDetail | null>(null);
   const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
   const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
   const [favoriteGallerySelected, setFavoriteGallerySelected] = useState(false);
@@ -4418,7 +4418,7 @@ function GalleryPage({
   const [compactFilterSection, setCompactFilterSection] = useState<DiscoveryFilterSection>('period');
   const [compactHeavyTopicsExpanded, setCompactHeavyTopicsExpanded] = useState(true);
   const [focusedOpen, setFocusedOpen] = useState(false);
-  const [focusedItems, setFocusedItems] = useState<GalleryAsset[]>([]);
+  const [focusedItems, setFocusedItems] = useState<GroupingAsset[]>([]);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [focusedSectionTitle, setFocusedSectionTitle] = useState('Gallery');
   const [focusedVideoMuted, setFocusedVideoMuted] = useState(true);
@@ -4456,7 +4456,7 @@ function GalleryPage({
         setRememberToken(stored);
       }
       const [galleryData, commentData] = await Promise.all([api.getGallery(slug, stored || rememberToken), api.getGalleryComments(slug)]);
-      setGallery(galleryData);
+      setGrouping(galleryData);
       setComments(commentData);
       const serverAccess = galleryData.visibility !== 'premium' ? Boolean(galleryData.hasAccess ?? true) : Boolean(galleryData.hasAccess);
       setHasPremiumAccess(serverAccess);
@@ -4547,13 +4547,13 @@ function GalleryPage({
 
   useEffect(() => {
     const loadFavoritesAndCollections = async () => {
-      if (!currentUser || !gallery) return;
+      if (!currentUser || !grouping) return;
       try {
         const [favorites, collections] = await Promise.all([
           api.myFavorites(favoriteAsProfile) as Promise<ManagedFavorite[]>,
           api.myCollections(favoriteAsProfile) as Promise<ManagedCollection[]>
         ]);
-        setFavoriteGallerySelected((favorites || []).some((item) => item.targetType === 'gallery' && item.targetId === gallery.galleryId));
+        setFavoriteGallerySelected((favorites || []).some((item) => item.targetType === 'gallery' && item.targetId === grouping.galleryId));
         setFavoriteImageIds(new Set((favorites || []).filter((item) => item.targetType === 'image').map((item) => item.targetId)));
         setProfileCollections(collections || []);
       } catch {
@@ -4563,7 +4563,7 @@ function GalleryPage({
       }
     };
     void loadFavoritesAndCollections();
-  }, [currentUser?.username, favoriteIdentity, gallery?.galleryId]);
+  }, [currentUser?.username, favoriteIdentity, grouping?.galleryId]);
 
   const submitComment = async () => {
     try {
@@ -4602,16 +4602,16 @@ function GalleryPage({
   };
 
   const favoriteGallery = async () => {
-    if (!gallery) return;
+    if (!grouping) return;
     const wasFavorited = favoriteGallerySelected;
     setFavoriteGallerySelected(!wasFavorited);
-    setGallery((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? -1 : 1)) } : prev);
+    setGrouping((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? -1 : 1)) } : prev);
     try {
-      if (wasFavorited) await api.unfavorite('gallery', gallery.galleryId, favoriteAsProfile);
-      else await api.favorite('gallery', gallery.galleryId, 'public', favoriteAsProfile);
+      if (wasFavorited) await api.unfavorite('gallery', grouping.galleryId, favoriteAsProfile);
+      else await api.favorite('gallery', grouping.galleryId, 'public', favoriteAsProfile);
     } catch (e) {
       setFavoriteGallerySelected(wasFavorited);
-      setGallery((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? 1 : -1)) } : prev);
+      setGrouping((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? 1 : -1)) } : prev);
       setError((e as Error).message);
     }
   };
@@ -4624,7 +4624,7 @@ function GalleryPage({
       else next.add(imageId);
       return next;
     });
-    setGallery((prev) => prev ? ({
+    setGrouping((prev) => prev ? ({
       ...prev,
       media: prev.media.map((item) => item.imageId === imageId ? { ...item, favoriteCount: Math.max(0, item.favoriteCount + (wasFavorited ? -1 : 1)) } : item)
     }) : prev);
@@ -4638,7 +4638,7 @@ function GalleryPage({
         else next.delete(imageId);
         return next;
       });
-      setGallery((prev) => prev ? ({
+      setGrouping((prev) => prev ? ({
         ...prev,
         media: prev.media.map((item) => item.imageId === imageId ? { ...item, favoriteCount: Math.max(0, item.favoriteCount + (wasFavorited ? 1 : -1)) } : item)
       }) : prev);
@@ -4671,8 +4671,8 @@ function GalleryPage({
     setHideHeavyTopics(enabled && hidePoliticsPublicAffairs);
   };
 
-  const previewItems = gallery?.media || [];
-  const teaserItems: GalleryAsset[] = (gallery?.premiumTeaserMedia || []).map((item) => ({
+  const previewItems = grouping?.media || [];
+  const teaserItems: GroupingAsset[] = (grouping?.premiumTeaserMedia || []).map((item) => ({
     imageId: item.imageId,
     title: item.title,
     postTitle: item.postTitle,
@@ -4690,7 +4690,7 @@ function GalleryPage({
     previewPosterUrl: item.previewPosterUrl,
     favoriteCount: 0
   }));
-  const premiumItems: GalleryAsset[] = premiumImages.map((item) => ({
+  const premiumItems: GroupingAsset[] = premiumImages.map((item) => ({
     imageId: item.imageId,
     title: item.title,
     assetType: item.assetType,
@@ -4706,7 +4706,7 @@ function GalleryPage({
     favoriteCount: 0
   }));
 
-  const filterItems = (items: GalleryAsset[]): GalleryAsset[] => items.filter((item) => (
+  const filterItems = (items: GroupingAsset[]): GroupingAsset[] => items.filter((item) => (
     passesDiscoveryMediaFilter(item, {
       showImages: showImageMedia,
       showVideos: showVideoMedia,
@@ -4756,7 +4756,7 @@ function GalleryPage({
   })();
   const mediaAspect = feedDensity === 'small' ? 1 : (feedDensity === 'medium' ? 1.05 : 1.28);
   const pseudoViewCount = (index: number): string => `${(1.8 + (index % 8) * 0.19).toFixed(1)}k`;
-  const hasPremiumSegments = gallery ? (gallery.visibility !== 'free' || teaserItems.length > 0 || premiumItems.length > 0) : false;
+  const hasPremiumSegments = grouping ? (grouping.visibility !== 'free' || teaserItems.length > 0 || premiumItems.length > 0) : false;
   const showPreviewSection = true;
   const showPremiumSection = galleryScope === 'all' && hasPremiumSegments;
   const galleryScopeLabel = galleryScope === 'public' ? 'Free and previews' : 'All media';
@@ -4884,7 +4884,7 @@ function GalleryPage({
   }, [onDiscoveryDockChange]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !gallery) return;
+    if (typeof window === 'undefined' || !grouping) return;
     const imageId = new URLSearchParams(location.search).get('image')?.trim();
     if (!imageId) {
       deepLinkHandledRef.current = '';
@@ -4929,7 +4929,7 @@ function GalleryPage({
   }, [
     location.search,
     slug,
-    gallery?.galleryId,
+    grouping?.galleryId,
     galleryScope,
     discoverySearch,
     previewItems,
@@ -4937,7 +4937,7 @@ function GalleryPage({
     premiumItems
   ]);
 
-  const openFocusedViewer = (items: GalleryAsset[], imageId: string, sectionTitle: string) => {
+  const openFocusedViewer = (items: GroupingAsset[], imageId: string, sectionTitle: string) => {
     const available = items.filter((item) => Boolean(item.previewUrl));
     if (available.length === 0) return;
     setFocusedItems(available);
@@ -5014,21 +5014,21 @@ function GalleryPage({
     };
   }, [focusedOpen, focusedHasPrevious, focusedHasNext, focusedItems.length]);
 
-  if (!gallery) return <div className="layout">Loading...</div>;
-  const galleryArtistName = (gallery.artistName || '').trim() || guessArtistNameFromSlug(gallery.artistSlug) || 'Unknown Creator';
-  const discoverGalleryHeadingText = `Discover ${gallery.title} from ${galleryArtistName}`;
+  if (!grouping) return <div className="layout">Loading...</div>;
+  const galleryArtistName = (grouping.artistName || '').trim() || guessArtistNameFromSlug(grouping.artistSlug) || 'Unknown Creator';
+  const discoverGalleryHeadingText = `Discover ${grouping.title} from ${galleryArtistName}`;
   const discoverGalleryHeading = (
     <>
-      Discover {gallery.title} from {gallery.artistSlug
-        ? <Link to={`/creators/${gallery.artistSlug}`} className="no-underline">{galleryArtistName}</Link>
+      Discover {grouping.title} from {grouping.artistSlug
+        ? <Link to={`/creators/${grouping.artistSlug}`} className="no-underline">{galleryArtistName}</Link>
         : galleryArtistName}
     </>
   );
 
   const renderGalleryCard = (
-    item: GalleryAsset,
+    item: GroupingAsset,
     cardIndex: number,
-    sourceItems: GalleryAsset[],
+    sourceItems: GroupingAsset[],
     sectionTitle: string,
     sectionVisibility: 'free' | 'preview' | 'premium'
   ) => {
@@ -5286,7 +5286,7 @@ function GalleryPage({
     <div className="layout discovery-layout">
       <section className="panel discovery-hero">
         <div>
-          <h1>{gallery.title}</h1>
+          <h1>{grouping.title}</h1>
           <p>
             Discovery-style gallery browsing with focused view modal, filtering, and separate preview/premium media sections.
           </p>
@@ -5294,7 +5294,7 @@ function GalleryPage({
         <div className="discovery-hero-actions">
           <Link to="/" className="auth-secondary-btn no-underline">Back to discovery</Link>
           <button className="auth-primary-btn" onClick={favoriteGallery}>
-            {favoriteGallerySelected ? 'Unfavorite gallery' : 'Favorite gallery'} ({gallery.favoriteCount})
+            {favoriteGallerySelected ? 'Unfavorite gallery' : 'Favorite gallery'} ({grouping.favoriteCount})
           </button>
         </div>
       </section>
@@ -5537,14 +5537,14 @@ function GalleryPage({
               index,
               filteredPreviewItems,
               discoverGalleryHeadingText,
-              gallery.visibility === 'preview' ? 'preview' : 'free'
+              grouping.visibility === 'preview' ? 'preview' : 'free'
             ))}
           </div>
           {filteredPreviewItems.length === 0 && <p className="small">No preview media matches your filters.</p>}
         </section>
       )}
 
-      {showPremiumSection && gallery.visibility === 'preview' && !gallery.hasAccess && (
+      {showPremiumSection && grouping.visibility === 'preview' && !grouping.hasAccess && (
         <section className="discovery-editorial-section">
           <div className="gallery-section-break" aria-hidden="true">
             <span className="gallery-section-break-line" />
@@ -5575,7 +5575,7 @@ function GalleryPage({
             <h2>Premium Preview</h2>
           </div>
           <div className="premium-preview-cta">
-            <a href={gallery.purchaseUrl || '#'} target="_blank" rel="noreferrer" className="inline-block rounded-xl bg-black/80 px-8 py-4 text-white no-underline">
+            <a href={grouping.purchaseUrl || '#'} target="_blank" rel="noreferrer" className="inline-block rounded-xl bg-black/80 px-8 py-4 text-white no-underline">
               Purchase Premium Access
             </a>
           </div>
@@ -5586,7 +5586,7 @@ function GalleryPage({
         </section>
       )}
 
-      {showPremiumSection && gallery.visibility === 'premium' && (
+      {showPremiumSection && grouping.visibility === 'premium' && (
         <section className="discovery-editorial-section">
           <div className="discovery-section-header">
             <h2>Premium Content</h2>
@@ -5643,7 +5643,7 @@ function GalleryPage({
           <div className="discovery-focus-modal" role="dialog" aria-modal="true" aria-label="Focused media viewer" onClick={(e) => e.stopPropagation()}>
             <div className="discovery-focus-modal-header">
               <div className="discovery-focus-modal-title-wrap">
-                <span className="discovery-focus-modal-title-id">{focusedItem?.title || focusedItem?.imageId || gallery.title}</span>
+                <span className="discovery-focus-modal-title-id">{focusedItem?.title || focusedItem?.imageId || grouping.title}</span>
                 <span className="discovery-focus-modal-title-gallery">{focusedSectionTitle}</span>
               </div>
               <div className="discovery-focus-modal-meta">
@@ -6137,7 +6137,7 @@ function CreatorProfilePage({
   const [compactFilterSection, setCompactFilterSection] = useState<DiscoveryFilterSection>('period');
   const [compactHeavyTopicsExpanded, setCompactHeavyTopicsExpanded] = useState(true);
   const [focusedOpen, setFocusedOpen] = useState(false);
-  const [focusedItems, setFocusedItems] = useState<GalleryAsset[]>([]);
+  const [focusedItems, setFocusedItems] = useState<GroupingAsset[]>([]);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [focusedGallerySlug, setFocusedGallerySlug] = useState('');
   const [focusedGalleryTitle, setFocusedGalleryTitle] = useState('');
@@ -6453,7 +6453,7 @@ function CreatorProfilePage({
       const updates: Record<string, string[]> = {};
       await Promise.all((profile.galleries || []).map(async (gallery) => {
         try {
-          const response = await api.getGallery(gallery.slug) as Gallery;
+          const response = await api.getGallery(gallery.slug) as GroupingDetail;
           const cover = gallery.galleryThumbnailUrl || response.coverPreviewUrl || '';
           const candidateUrls = [
             ...(cover ? [cover] : []),
@@ -6498,7 +6498,7 @@ function CreatorProfilePage({
     setHideHeavyTopics(enabled && hidePoliticsPublicAffairs);
   };
 
-  const toFocusedAsset = (item: TrendingImage): GalleryAsset => ({
+  const toFocusedAsset = (item: TrendingImage): GroupingAsset => ({
     imageId: item.imageId,
     assetType: item.assetType === 'video' ? 'video' : 'image',
     effectiveContentRating: item.effectiveContentRating,
@@ -6529,7 +6529,7 @@ function CreatorProfilePage({
     focusedRequestRef.current = requestId;
     setFocusedLoading(true);
     try {
-      const response = await api.getGallery(item.gallerySlug) as Gallery;
+      const response = await api.getGallery(item.gallerySlug) as GroupingDetail;
       if (focusedRequestRef.current !== requestId) return;
       const media = (response.media || []).filter((asset) => Boolean(asset.previewUrl));
       const nextItems = media.length > 0 ? media : [fallback];
