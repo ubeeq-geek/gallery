@@ -573,7 +573,10 @@ type GallerySummary = {
 type GalleryAsset = {
   imageId: string;
   title?: string;
+  postTitle?: string;
   assetType: 'image' | 'video' | 'audio';
+  publishAt?: string;
+  publicReleaseAt?: string;
   effectiveContentRating?: ContentRating;
   displayedContentRating?: string;
   blurred?: boolean;
@@ -600,8 +603,6 @@ type Gallery = {
   artistName?: string;
   artistSlug?: string;
   visibility: 'free' | 'preview' | 'premium';
-  publishAt?: string;
-  publicReleaseAt?: string;
   hasAccess?: boolean;
   purchaseUrl?: string;
   coverMediaId?: string;
@@ -610,7 +611,10 @@ type Gallery = {
   premiumTeaserMedia?: Array<{
     imageId: string;
     title?: string;
+    postTitle?: string;
     assetType: 'image' | 'video' | 'audio';
+    publishAt?: string;
+    publicReleaseAt?: string;
     effectiveContentRating?: ContentRating;
     displayedContentRating?: string;
     blurred?: boolean;
@@ -4671,7 +4675,10 @@ function GalleryPage({
   const teaserItems: GalleryAsset[] = (gallery?.premiumTeaserMedia || []).map((item) => ({
     imageId: item.imageId,
     title: item.title,
+    postTitle: item.postTitle,
     assetType: item.assetType,
+    publishAt: item.publishAt,
+    publicReleaseAt: item.publicReleaseAt,
     effectiveContentRating: item.effectiveContentRating,
     displayedContentRating: item.displayedContentRating,
     blurred: item.blurred,
@@ -4724,9 +4731,12 @@ function GalleryPage({
   const filteredPreviewItems = filterItems(previewItems);
   const filteredTeaserItems = filterItems(teaserItems).slice(0, teaserLimit);
   const filteredPremiumItems = filterItems(premiumItems);
-  const toPublishAt = gallery?.publicReleaseAt || gallery?.publishAt;
+  const toPublishAt = filteredTeaserItems
+    .map((item) => item.publicReleaseAt || item.publishAt)
+    .find((value) => Boolean(value));
   const toPublishDate = toPublishAt ? new Date(toPublishAt) : null;
   const hasValidToPublishDate = Boolean(toPublishDate && Number.isFinite(toPublishDate.getTime()));
+  const toPublishSectionTitle = filteredTeaserItems[0]?.postTitle || filteredTeaserItems[0]?.title || 'Premium Content';
   const formattedToPublishDate = hasValidToPublishDate
     ? new Intl.DateTimeFormat(undefined, {
       month: 'long',
@@ -5553,7 +5563,7 @@ function GalleryPage({
             </div>
             <div className="gallery-to-publish-copy">
               <div className="gallery-to-publish-chip">Coming Soon</div>
-              <h3>Premium Content</h3>
+              <h3>{toPublishSectionTitle}</h3>
               <p>The next section will be available on:</p>
               {formattedToPublishDate && <strong>{formattedToPublishDate}</strong>}
               {!formattedToPublishDate && <strong>Publishing date to be announced</strong>}
