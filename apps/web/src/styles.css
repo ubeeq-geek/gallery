@@ -3466,6 +3466,126 @@
     @apply mb-4 text-center;
   }
 
+  .gallery-section-break {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    margin: 0 0 1.25rem;
+  }
+
+  .gallery-section-break-line {
+    flex: 1;
+    height: 1px;
+    background: color-mix(in srgb, var(--line) 72%, #dbe7ff);
+  }
+
+  .gallery-section-break-pill {
+    border-radius: 9999px;
+    padding: 0.4rem 1.15rem;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #516684;
+    background: color-mix(in srgb, #eef3fb 85%, white);
+  }
+
+  .gallery-to-publish-card {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 1.4rem;
+    align-items: center;
+    margin-bottom: 1.35rem;
+    padding: 1.35rem;
+    border-radius: 1.5rem;
+    border: 1px solid color-mix(in srgb, var(--line) 78%, #e6efff);
+    background: color-mix(in srgb, var(--surface) 94%, #f6f9ff);
+  }
+
+  .gallery-to-publish-icon {
+    width: 7.25rem;
+    height: 7.25rem;
+    border-radius: 9999px;
+    display: grid;
+    place-items: center;
+    color: #3b6fd7;
+    background: color-mix(in srgb, #dbeafe 76%, white);
+  }
+
+  .gallery-to-publish-icon svg {
+    width: 2.8rem;
+    height: 2.8rem;
+  }
+
+  .gallery-to-publish-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .gallery-to-publish-chip {
+    align-self: flex-start;
+    border-radius: 9999px;
+    padding: 0.3rem 0.85rem;
+    font-size: 0.88rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #2e67d3;
+    background: color-mix(in srgb, #c9ddff 76%, white);
+  }
+
+  .gallery-to-publish-copy h3 {
+    margin: 0;
+    font-size: clamp(1.4rem, 2vw, 2.4rem);
+    line-height: 1.15;
+  }
+
+  .gallery-to-publish-copy p {
+    margin: 0;
+    color: var(--muted);
+  }
+
+  .gallery-to-publish-copy strong {
+    font-size: clamp(1.6rem, 2.2vw, 2.9rem);
+    line-height: 1.12;
+    color: #3b82f6;
+    font-weight: 700;
+  }
+
+  .gallery-to-publish-local-time {
+    font-size: 0.95rem;
+  }
+
+  @media (max-width: 768px) {
+    .gallery-section-break {
+      gap: 0.65rem;
+      margin-bottom: 1rem;
+    }
+
+    .gallery-section-break-pill {
+      font-size: 0.75rem;
+      padding: 0.3rem 0.8rem;
+    }
+
+    .gallery-to-publish-card {
+      grid-template-columns: 1fr;
+      justify-items: center;
+      text-align: center;
+      padding: 1.1rem;
+      gap: 1rem;
+    }
+
+    .gallery-to-publish-icon {
+      width: 5.6rem;
+      height: 5.6rem;
+    }
+
+    .gallery-to-publish-copy {
+      align-items: center;
+    }
+  }
+
   .image-card {
     @apply rounded-2xl p-3;
     border: 1px solid var(--line);

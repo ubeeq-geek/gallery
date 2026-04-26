@@ -600,6 +600,8 @@ type Gallery = {
   artistName?: string;
   artistSlug?: string;
   visibility: 'free' | 'preview' | 'premium';
+  publishAt?: string;
+  publicReleaseAt?: string;
   hasAccess?: boolean;
   purchaseUrl?: string;
   coverMediaId?: string;
@@ -4722,6 +4724,18 @@ function GalleryPage({
   const filteredPreviewItems = filterItems(previewItems);
   const filteredTeaserItems = filterItems(teaserItems).slice(0, teaserLimit);
   const filteredPremiumItems = filterItems(premiumItems);
+  const toPublishAt = gallery?.publicReleaseAt || gallery?.publishAt;
+  const toPublishDate = toPublishAt ? new Date(toPublishAt) : null;
+  const hasValidToPublishDate = Boolean(toPublishDate && Number.isFinite(toPublishDate.getTime()));
+  const formattedToPublishDate = hasValidToPublishDate
+    ? new Intl.DateTimeFormat(undefined, {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    }).format(toPublishDate as Date)
+    : null;
 
   const mediaColumns = (() => {
     if (feedDensity === 'large') return 1;
@@ -5522,6 +5536,31 @@ function GalleryPage({
 
       {showPremiumSection && gallery.visibility === 'preview' && !gallery.hasAccess && (
         <section className="discovery-editorial-section">
+          <div className="gallery-section-break" aria-hidden="true">
+            <span className="gallery-section-break-line" />
+            <span className="gallery-section-break-pill">Section Break</span>
+            <span className="gallery-section-break-line" />
+          </div>
+
+          <article className="gallery-to-publish-card" aria-live="polite">
+            <div className="gallery-to-publish-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <rect x="4" y="5" width="16" height="15" rx="3" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M8 3.5V7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <path d="M16 3.5V7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <path d="M4 10H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </div>
+            <div className="gallery-to-publish-copy">
+              <div className="gallery-to-publish-chip">Coming Soon</div>
+              <h3>Premium Content</h3>
+              <p>The next section will be available on:</p>
+              {formattedToPublishDate && <strong>{formattedToPublishDate}</strong>}
+              {!formattedToPublishDate && <strong>Publishing date to be announced</strong>}
+              <p className="gallery-to-publish-local-time">(Your local time)</p>
+            </div>
+          </article>
+
           <div className="discovery-section-header">
             <h2>Premium Preview</h2>
           </div>
