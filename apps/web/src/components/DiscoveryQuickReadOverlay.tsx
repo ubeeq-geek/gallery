@@ -32,6 +32,7 @@ type DiscoveryOverlayItem = {
 type PostBlock = {
   blockId: string;
   type:
+    | 'section'
     | 'heading'
     | 'paragraph'
     | 'image'
@@ -55,6 +56,8 @@ type PostBlock = {
   url?: string;
   title?: string;
   html?: string;
+  payload?: Record<string, unknown>;
+  blocks?: PostBlock[];
 };
 
 type OverlayPost = {
@@ -140,6 +143,19 @@ const renderInlineText = (text?: string) => {
   }
 
   return nodes.length > 0 ? nodes : normalized;
+};
+
+const formatReleaseDate = (releaseAt?: unknown): string => {
+  if (typeof releaseAt !== 'string' || !releaseAt.trim()) return '';
+  const parsed = new Date(releaseAt);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(parsed);
 };
 
 const normalizeDisclosureLine = (item?: {
@@ -282,6 +298,112 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
   const fallbackMedia = primaryMedia
     ? [primaryMedia, ...orderedMedia.filter((media) => media.mediaId !== primaryMedia.mediaId)]
     : orderedMedia;
+  const renderBlock = (block: PostBlock, index: number, keyPrefix = 'block') => {
+    const key = `${keyPrefix}-${block.blockId || index}`;
+    if (block.type === 'section') {
+      const sectionStatus = typeof block.payload?.status === 'string' ? block.payload.status : 'published';
+      const isPreviewOnly = Boolean(block.payload?.previewOnly) || sectionStatus === 'scheduled' || sectionStatus === 'draft';
+      if (isPreviewOnly && !block.blocks?.length) {
+        const releaseDate = formatReleaseDate(block.payload?.releaseAt);
+        return (
+          <section key={key} className="discovery-quickread-section-block discovery-quickread-coming-soon">
+            <article className="gallery-to-publish-card" aria-live="polite">
+              <div className="gallery-to-publish-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <rect x="4" y="5" width="16" height="15" rx="3" stroke="currentColor" strokeWidth="1.8" />
+                  <path d="M8 3.5V7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  <path d="M16 3.5V7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  <path d="M4 10H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+              </div>
+              <div className="gallery-to-publish-copy">
+                <div className="gallery-to-publish-chip">Coming Soon</div>
+                <h3>{block.title || 'Next section'}</h3>
+                <p>The next section will be available on:</p>
+                {releaseDate ? <strong>{releaseDate}</strong> : <strong>Publishing date to be announced</strong>}
+                <p className="gallery-to-publish-local-time">(Your local time)</p>
+              </div>
+            </article>
+          </section>
+        );
+      }
+      return (
+        <section key={key} className={`discovery-quickread-section-block${storyMode ? ' story-section' : ''}`}>
+          {block.title ? <h2 className={storyMode ? 'post-part-title' : undefined}>{renderInlineText(block.title)}</h2> : null}
+          {block.text ? <p>{renderInlineText(block.text)}</p> : null}
+          {block.blocks?.length ? (
+            <div className="discovery-quickread-section-children">
+              {block.blocks.map((child, childIndex) => renderBlock(child, childIndex, key))}
+            </div>
+          ) : null}
+        </section>
+      );
+    }
+    if (block.type === 'heading') {
+      const level = Math.max(1, Math.min(6, block.level || 2));
+      if (level === 1) return <h1 key={key}>{renderInlineText(block.text)}</h1>;
+      if (level === 2) return <h2 key={key} className={storyMode ? 'post-part-title' : undefined}>{renderInlineText(block.text)}</h2>;
+      if (level === 3) return <h3 key={key} className={storyMode ? 'post-part-label' : undefined}>{renderInlineText(block.text)}</h3>;
+      if (level === 4) return <h4 key={key}>{renderInlineText(block.text)}</h4>;
+      if (level === 5) return <h5 key={key}>{renderInlineText(block.text)}</h5>;
+      return <h6 key={key}>{renderInlineText(block.text)}</h6>;
+    }
+    if (block.type === 'paragraph') {
+      const paragraphs = splitParagraphs(block.text);
+      if (paragraphs.length === 0) return null;
+      return (
+        <div key={key} className={`discovery-quickread-paragraph-group${storyMode ? ' post-body' : ''}`}>
+          {paragraphs.map((paragraph, paragraphIndex) => (
+            <p key={`${key}-${paragraphIndex}`}>{renderInlineText(paragraph)}</p>
+          ))}
+        </div>
+      );
+    }
+    if (block.type === 'quote') {
+      return (
+        <blockquote key={key} className={storyMode ? 'post-inline-quote' : 'panel'}>
+          <p>{renderInlineText(block.quote || block.text || '')}</p>
+          {block.author ? <footer className="small">— {block.author}</footer> : null}
+        </blockquote>
+      );
+    }
+    if (block.type === 'divider') {
+      return <hr key={key} />;
+    }
+    if (block.type === 'image' || block.type === 'video') {
+      const media = block.mediaId ? mediaById.get(block.mediaId) : undefined;
+      if (!media) return null;
+      return renderMediaFigure({ ...media, caption: block.caption || media.caption }, `media-${key}`, item.blurred);
+    }
+    if (block.type === 'audio') {
+      const media = block.mediaId ? mediaById.get(block.mediaId) : undefined;
+      if (!media) return null;
+      return (
+        <div key={key} className="panel">
+          <audio controls style={{ width: '100%' }}>
+            <source src={media.previewUrl} />
+          </audio>
+        </div>
+      );
+    }
+    if (block.type === 'html_fragment') {
+      return (
+        <pre key={key} className="panel small" style={{ overflowX: 'auto' }}>
+          {block.html || ''}
+        </pre>
+      );
+    }
+    if (block.url || block.text || block.title) {
+      return (
+        <div key={key} className="panel">
+          {block.url ? <a href={block.url} target="_blank" rel="noreferrer" className="no-underline">{block.title || block.url}</a> : null}
+          {block.text ? <p className="small mt-2">{renderInlineText(block.text)}</p> : null}
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className={`discovery-quickread-content-flow discovery-quickread-${postType}-flow discovery-quickread-${postType}-${postFormat}-flow`}>
       {shouldRenderPrimaryMediaTopBlock && primaryMedia
@@ -294,71 +416,7 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
             renderMediaFigure(media, `fallback-media-${media.mediaId || index}`, item.blurred)
           )}
         </>
-      ) : post.blocks.map((block, index) => {
-        if (block.type === 'heading') {
-          const level = Math.max(1, Math.min(6, block.level || 2));
-          if (level === 1) return <h1 key={block.blockId || index}>{renderInlineText(block.text)}</h1>;
-          if (level === 2) return <h2 key={block.blockId || index} className={storyMode ? 'post-part-title' : undefined}>{renderInlineText(block.text)}</h2>;
-          if (level === 3) return <h3 key={block.blockId || index} className={storyMode ? 'post-part-label' : undefined}>{renderInlineText(block.text)}</h3>;
-          if (level === 4) return <h4 key={block.blockId || index}>{renderInlineText(block.text)}</h4>;
-          if (level === 5) return <h5 key={block.blockId || index}>{renderInlineText(block.text)}</h5>;
-          return <h6 key={block.blockId || index}>{renderInlineText(block.text)}</h6>;
-        }
-        if (block.type === 'paragraph') {
-          const paragraphs = splitParagraphs(block.text);
-          if (paragraphs.length === 0) return null;
-          return (
-            <div key={block.blockId || index} className={`discovery-quickread-paragraph-group${storyMode ? ' post-body' : ''}`}>
-              {paragraphs.map((paragraph, paragraphIndex) => (
-                <p key={`${block.blockId || index}-${paragraphIndex}`}>{renderInlineText(paragraph)}</p>
-              ))}
-            </div>
-          );
-        }
-        if (block.type === 'quote') {
-          return (
-            <blockquote key={block.blockId || index} className={storyMode ? 'post-inline-quote' : 'panel'}>
-              <p>{renderInlineText(block.quote || block.text || '')}</p>
-              {block.author ? <footer className="small">— {block.author}</footer> : null}
-            </blockquote>
-          );
-        }
-        if (block.type === 'divider') {
-          return <hr key={block.blockId || index} />;
-        }
-        if (block.type === 'image' || block.type === 'video') {
-          const media = block.mediaId ? mediaById.get(block.mediaId) : undefined;
-          if (!media) return null;
-          return renderMediaFigure({ ...media, caption: block.caption || media.caption }, `media-${block.blockId || index}`, item.blurred);
-        }
-        if (block.type === 'audio') {
-          const media = block.mediaId ? mediaById.get(block.mediaId) : undefined;
-          if (!media) return null;
-          return (
-            <div key={block.blockId || index} className="panel">
-              <audio controls style={{ width: '100%' }}>
-                <source src={media.previewUrl} />
-              </audio>
-            </div>
-          );
-        }
-        if (block.type === 'html_fragment') {
-          return (
-            <pre key={block.blockId || index} className="panel small" style={{ overflowX: 'auto' }}>
-              {block.html || ''}
-            </pre>
-          );
-        }
-        if (block.url || block.text || block.title) {
-          return (
-            <div key={block.blockId || index} className="panel">
-              {block.url ? <a href={block.url} target="_blank" rel="noreferrer" className="no-underline">{block.title || block.url}</a> : null}
-              {block.text ? <p className="small mt-2">{renderInlineText(block.text)}</p> : null}
-            </div>
-          );
-        }
-        return null;
-      })}
+      ) : post.blocks.map((block, index) => renderBlock(block, index))}
     </div>
   );
 };

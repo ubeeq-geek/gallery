@@ -1064,12 +1064,7 @@
                   "type": "image",
                   "file": "amphoryn/hoichi-1-1.jpg",
                   "groupingSlug": "hoichi-the-earless"
-                },
-                {
-                  "type": "heading",
-                  "level": 2,
-                  "text": "The Haunted Shore"
-                },
+                },                
                 {
                   "type": "paragraph",
                   "text": "Many years ago, in the narrow straits at Dan-no-ura, two great clans met in a final, terrible battle. The Heike and the Genji. The Heike were destroyed, warriors and nobles pulled beneath the waves. And as their cries fell silent, the emperor's grandmother chose to drown her previous grandson, rather than let him be captured and humiliated by his enemy."
@@ -1136,12 +1131,7 @@
                   "type": "image",
                   "file": "amphoryn/hoichi-2-1.jpg",
                   "groupingSlug": "hoichi-the-earless"
-                },
-                {
-                  "type": "heading",
-                  "level": 2,
-                  "text": "The Summons"
-                },
+                },                
                 {
                   "type": "paragraph",
                   "text": "It was a hot night in summer, the air smelling of brine and kelp, and the cicadas sounding among the pines above the temple."
@@ -1284,12 +1274,7 @@
                   "type": "image",
                   "file": "amphoryn/hoichi-3-1.jpg",
                   "groupingSlug": "hoichi-the-earless"
-                },
-                {
-                  "type": "heading",
-                  "level": 2,
-                  "text": "The Truth in the Dark"
-                },
+                },               
                 {
                   "type": "paragraph",
                   "text": "The summons came again."
@@ -1421,11 +1406,6 @@
                   "type": "image",
                   "file": "amphoryn/hoichi-4-1.jpg",
                   "groupingSlug": "hoichi-the-earless"
-                },
-                {
-                  "type": "heading",
-                  "level": 2,
-                  "text": "The Price"
                 },
                 {
                   "type": "paragraph",

@@ -11,6 +11,7 @@ export type CreatorGroupDisplayType = 'series' | 'grouping' | 'set';
 export type MediaType = 'image' | 'video' | 'audio';
 export type SourceFileKind = 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
 export type PostBlockType =
+  | 'section'
   | 'heading'
   | 'paragraph'
   | 'image'
@@ -41,6 +42,7 @@ export interface PostBlock {
   title?: string;
   html?: string;
   payload?: Record<string, unknown>;
+  blocks?: PostBlock[];
 }
 
 export interface PostMediaRef {

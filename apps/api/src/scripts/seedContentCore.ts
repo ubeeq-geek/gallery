@@ -158,12 +158,16 @@ type ScenarioPostBlockSeed = {
   title?: string;
   html?: string;
   payload?: Record<string, unknown>;
+  blocks?: ScenarioPostBlockSeed[];
 };
 type ScenarioPostSectionSeed = {
   title: string;
   slug?: string;
   sortOrder?: number;
   status?: 'draft' | 'scheduled' | 'published' | 'archived';
+  publishedAt?: string;
+  releaseAt?: string;
+  heroMedia?: ScenarioPostPrimaryMediaSeed;
   blocks?: ScenarioPostBlockSeed[];
 };
 type ScenarioPostSeed = {
@@ -423,7 +427,13 @@ const toSeedPostBlocks = (
       mimeType: sanitizeOptional(block.mimeType, 255),
       title: sanitizeOptional(block.title, 300),
       html: sanitizeOptional(block.html, 50000),
-      payload: block.payload
+      payload: block.payload,
+      blocks: toSeedPostBlocks(
+        block.blocks,
+        mediaIdByComposite,
+        mediaIdsByFile,
+        `${postKey}.blocks[${index}]`
+      )
     };
     return JSON.parse(JSON.stringify(seedBlock)) as PostBlock;
   });
@@ -441,11 +451,21 @@ const toSeedPostBlocksFromSections = (
     const right = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
     return left - right;
   });
-  const publishedSections = orderedSections.filter((section) => (section.status || 'published') === 'published');
-  const selectedSections = postSeed.serializationMode === 'staged'
-    ? publishedSections.slice(0, postSeed.currentSectionCount || publishedSections.length)
-    : publishedSections;
-  const sectionBlocks = selectedSections.flatMap((section) => section.blocks || []);
+  const storedSections = orderedSections.filter((section) => (section.status || 'published') !== 'archived');
+  const sectionBlocks: ScenarioPostBlockSeed[] = storedSections.map((section, index) => ({
+    blockId: sanitizeOptional(section.slug, 128) || `section-${index + 1}`,
+    type: 'section',
+    title: section.title,
+    payload: {
+      slug: section.slug,
+      sortOrder: section.sortOrder ?? index,
+      status: section.status || 'published',
+      publishedAt: section.publishedAt,
+      releaseAt: section.releaseAt,
+      heroMedia: section.heroMedia
+    },
+    blocks: section.blocks || []
+  }));
   return toSeedPostBlocks(sectionBlocks, mediaIdByComposite, mediaIdsByFile, postKey);
 };
 
@@ -478,6 +498,7 @@ const CONTENT_RATINGS: ContentRating[] = ['general', 'suggestive', 'mature', 'se
 const AI_DISCLOSURES: AiDisclosure[] = ['none', 'ai-assisted', 'ai-generated'];
 const HEAVY_TOPICS: HeavyTopic[] = ['politics-public-affairs', 'crime-disasters-tragedy'];
 const POST_BLOCK_TYPES = new Set([
+  'section',
   'heading',
   'paragraph',
   'image',
@@ -575,6 +596,13 @@ const parseScenarioPostBlock = (value: unknown, fieldName: string): ScenarioPost
   if (payload !== undefined && (!isRecord(payload))) {
     throw new Error(`Scenario field "${fieldName}.payload" must be an object`);
   }
+  const blocksRaw = value.blocks;
+  const blocks = Array.isArray(blocksRaw)
+    ? blocksRaw.map((item, idx) => parseScenarioPostBlock(item, `${fieldName}.blocks[${idx}]`))
+    : undefined;
+  if (blocksRaw !== undefined && !Array.isArray(blocksRaw)) {
+    throw new Error(`Scenario field "${fieldName}.blocks" must be an array`);
+  }
   return {
     blockId: asOptionalString(value.blockId),
     type,
@@ -590,7 +618,8 @@ const parseScenarioPostBlock = (value: unknown, fieldName: string): ScenarioPost
     mimeType: asOptionalString(value.mimeType),
     title: asOptionalString(value.title),
     html: asOptionalString(value.html),
-    payload: payload as Record<string, unknown> | undefined
+    payload: payload as Record<string, unknown> | undefined,
+    blocks
   };
 };
 
@@ -686,6 +715,15 @@ const parseScenarioPost = (value: unknown, fieldName: string): ScenarioPostSeed 
           slug: asOptionalString(item.slug),
           sortOrder,
           status: sectionStatusRaw as 'draft' | 'scheduled' | 'published' | 'archived' | undefined,
+          publishedAt: asOptionalString(item.publishedAt),
+          releaseAt: asOptionalString(item.releaseAt),
+          heroMedia: isRecord(item.heroMedia)
+            ? {
+                mediaId: asOptionalString(item.heroMedia.mediaId),
+                file: asOptionalString(item.heroMedia.file),
+                groupingSlug: asOptionalString(item.heroMedia.groupingSlug)
+              }
+            : undefined,
           blocks: sectionBlocks
         };
       })

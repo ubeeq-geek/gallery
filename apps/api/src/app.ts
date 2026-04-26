@@ -190,6 +190,7 @@ const parseStringArray = (value: unknown): string[] => {
 };
 
 const POST_BLOCK_TYPES = new Set([
+  'section',
   'heading',
   'paragraph',
   'image',
@@ -231,9 +232,54 @@ const parsePostBlocks = (value: unknown): PostBlock[] => {
       if (row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)) {
         block.payload = row.payload as Record<string, unknown>;
       }
+      const childBlocks = parsePostBlocks(row.blocks);
+      if (childBlocks.length > 0) {
+        block.blocks = childBlocks;
+      }
       return block;
     })
     .filter((item): item is PostBlock => Boolean(item));
+};
+
+const isPublicPostBlock = (block: PostBlock): boolean => {
+  if (block.type !== 'section') return true;
+  const status = typeof block.payload?.status === 'string' ? block.payload.status : 'published';
+  // releaseAt is staged metadata for a future publisher/fan/patron gate; it does not publish by itself.
+  return status === 'published';
+};
+
+const postBlocksForViewer = (blocks: PostBlock[], includeUnreleased: boolean): PostBlock[] => {
+  if (includeUnreleased) return blocks;
+  const visibleBlocks: PostBlock[] = [];
+  let includedNextUnreleasedSection = false;
+
+  for (const block of blocks) {
+    if (!isPublicPostBlock(block)) {
+      if (block.type === 'section' && !includedNextUnreleasedSection) {
+        visibleBlocks.push({
+          ...block,
+          payload: {
+            ...(block.payload || {}),
+            previewOnly: true
+          },
+          blocks: []
+        });
+        includedNextUnreleasedSection = true;
+      }
+      continue;
+    }
+
+    visibleBlocks.push(
+      block.blocks?.length
+        ? {
+            ...block,
+            blocks: postBlocksForViewer(block.blocks, includeUnreleased)
+          }
+        : block
+    );
+  }
+
+  return visibleBlocks;
 };
 
 const parsePostMediaRefs = (value: unknown): Post['media'] => {
@@ -1823,6 +1869,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       .sort((a, b) => (b.publishedAt || b.updatedAt || b.createdAt).localeCompare(a.publishedAt || a.updatedAt || a.createdAt));
 
     const payload = await Promise.all(posts.map(async (post) => {
+      const visibleBlocks = postBlocksForViewer(post.blocks, includeDrafts);
       const sortedMediaRefs = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
       const selectedRefs = sortedMediaRefs.filter((item) => item.discoverable !== false);
       const discoveryRefs = post.discovery.mode === 'all'
@@ -1864,7 +1911,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         updatedAt: post.updatedAt,
         publishedAt: post.publishedAt,
         mediaCount: post.media.length,
-        blockCount: post.blocks.length,
+        blockCount: visibleBlocks.length,
         discoveryMediaIds,
         discoveryMedia: discoveryMedia.filter((item): item is NonNullable<typeof item> => Boolean(item)),
         primaryMedia: resolvedPrimary
@@ -1927,8 +1974,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       };
     }));
 
+    const visibleBlocks = postBlocksForViewer(post.blocks, canViewDraft);
+
     return res.json({
       ...post,
+      blocks: visibleBlocks,
       slugHistory: post.slugHistory || [],
       creator: {
         creatorId: creator.creatorId,
@@ -1979,8 +2029,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       };
     }));
 
+    const visibleBlocks = postBlocksForViewer(post.blocks, canViewDraft);
+
     return res.json({
       ...post,
+      blocks: visibleBlocks,
       slugHistory: post.slugHistory || [],
       creator: {
         creatorId: creator.creatorId,

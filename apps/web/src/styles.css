@@ -2405,6 +2405,24 @@
     gap: 0.95rem;
   }
 
+  .discovery-quickread-section-block,
+  .post-section-block {
+    display: grid;
+    gap: 1rem;
+    margin: 0.45rem 0 1.4rem;
+  }
+
+  .discovery-quickread-section-children,
+  .post-section-children {
+    display: grid;
+    gap: 1.05rem;
+  }
+
+  .discovery-quickread-section-block.story-section {
+    gap: 1.15rem;
+    margin-block: 0.75rem 2rem;
+  }
+
   .discovery-quickread-media-figure {
     margin: 0;
     display: grid;

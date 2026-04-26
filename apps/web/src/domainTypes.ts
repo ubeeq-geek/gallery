@@ -229,6 +229,7 @@ export type ManagedFavorite = {
 export type PostStatus = 'draft' | 'published' | 'archived';
 export type PostDiscoveryMode = 'primary' | 'all' | 'selected';
 export type PostBlockType =
+  | 'section'
   | 'heading'
   | 'paragraph'
   | 'image'
@@ -258,6 +259,7 @@ export type PostBlock = {
   title?: string;
   html?: string;
   payload?: Record<string, unknown>;
+  blocks?: PostBlock[];
 };
 
 export type PostMediaRef = {

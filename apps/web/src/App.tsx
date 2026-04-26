@@ -352,6 +352,7 @@ const normalizeTrendingImage = (item: Partial<TrendingImage> & {
 } as TrendingImage);
 
 type PostBlockType =
+  | 'section'
   | 'heading'
   | 'paragraph'
   | 'image'
@@ -395,6 +396,7 @@ type PostBlock = {
   title?: string;
   html?: string;
   payload?: Record<string, unknown>;
+  blocks?: PostBlock[];
 };
 
 type CreatorPostSummary = {
@@ -7199,39 +7201,52 @@ function PostPage() {
     );
   };
 
-  const renderBlock = (block: PostBlock, index: number) => {
+  const renderBlock = (block: PostBlock, index: number, keyPrefix = 'block') => {
+    const key = `${keyPrefix}-${block.blockId || index}`;
     switch (block.type) {
+      case 'section':
+        return (
+          <section key={key} className="post-section-block">
+            {block.title && <h2>{block.title}</h2>}
+            {block.text && <p>{block.text}</p>}
+            {block.blocks?.length ? (
+              <div className="post-section-children">
+                {block.blocks.map((child, childIndex) => renderBlock(child, childIndex, key))}
+              </div>
+            ) : null}
+          </section>
+        );
       case 'heading': {
         const level = Math.max(1, Math.min(6, block.level || 2));
-        if (level === 1) return <h1 key={block.blockId || index}>{block.text || ''}</h1>;
-        if (level === 2) return <h2 key={block.blockId || index}>{block.text || ''}</h2>;
-        if (level === 3) return <h3 key={block.blockId || index}>{block.text || ''}</h3>;
-        if (level === 4) return <h4 key={block.blockId || index}>{block.text || ''}</h4>;
-        if (level === 5) return <h5 key={block.blockId || index}>{block.text || ''}</h5>;
-        return <h6 key={block.blockId || index}>{block.text || ''}</h6>;
+        if (level === 1) return <h1 key={key}>{block.text || ''}</h1>;
+        if (level === 2) return <h2 key={key}>{block.text || ''}</h2>;
+        if (level === 3) return <h3 key={key}>{block.text || ''}</h3>;
+        if (level === 4) return <h4 key={key}>{block.text || ''}</h4>;
+        if (level === 5) return <h5 key={key}>{block.text || ''}</h5>;
+        return <h6 key={key}>{block.text || ''}</h6>;
       }
       case 'paragraph':
-        return <p key={block.blockId || index}>{block.text || ''}</p>;
+        return <p key={key}>{block.text || ''}</p>;
       case 'quote':
         return (
-          <blockquote key={block.blockId || index} className="panel">
+          <blockquote key={key} className="panel">
             <p>{block.quote || block.text || ''}</p>
             {block.author && <footer className="small">— {block.author}</footer>}
           </blockquote>
         );
       case 'divider':
-        return <hr key={block.blockId || index} />;
+        return <hr key={key} />;
       case 'image':
       case 'video':
         return (
-          <div key={block.blockId || index}>
+          <div key={key}>
             {renderMediaPreview(block.mediaId, block.title || block.text, block.caption)}
           </div>
         );
       case 'audio': {
         const audio = block.mediaId ? mediaById.get(block.mediaId) : undefined;
         return (
-          <div key={block.blockId || index} className="panel">
+          <div key={key} className="panel">
             {audio ? (
               <audio controls style={{ width: '100%' }}>
                 <source src={audio.previewUrl} />
@@ -7245,7 +7260,7 @@ function PostPage() {
       case 'file':
       case 'pdf_preview':
         return (
-          <div key={block.blockId || index} className="panel">
+          <div key={key} className="panel">
             <a href={block.url || '#'} target="_blank" rel="noreferrer" className="no-underline">
               {block.title || block.url || 'Open link'}
             </a>
@@ -7254,7 +7269,7 @@ function PostPage() {
         );
       case 'html_fragment':
         return (
-          <pre key={block.blockId || index} className="panel small" style={{ overflowX: 'auto' }}>
+          <pre key={key} className="panel small" style={{ overflowX: 'auto' }}>
             {block.html || ''}
           </pre>
         );
@@ -7262,7 +7277,7 @@ function PostPage() {
       case 'carousel':
       default:
         return (
-          <div key={block.blockId || index} className="panel">
+          <div key={key} className="panel">
             <p>{block.text || block.title || `Block: ${block.type}`}</p>
           </div>
         );
