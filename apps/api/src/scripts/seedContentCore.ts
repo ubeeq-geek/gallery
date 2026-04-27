@@ -156,6 +156,7 @@ type ScenarioPostBlockSeed = {
   url?: string;
   mimeType?: string;
   title?: string;
+  label?: string;
   html?: string;
   payload?: Record<string, unknown>;
   blocks?: ScenarioPostBlockSeed[];
@@ -426,6 +427,7 @@ const toSeedPostBlocks = (
       url: sanitizeOptional(block.url, 2048),
       mimeType: sanitizeOptional(block.mimeType, 255),
       title: sanitizeOptional(block.title, 300),
+      label: sanitizeOptional(block.label, 300),
       html: sanitizeOptional(block.html, 50000),
       payload: block.payload,
       blocks: toSeedPostBlocks(
@@ -509,6 +511,7 @@ const POST_BLOCK_TYPES = new Set([
   'embed',
   'file',
   'link',
+  'credit',
   'grouping',
   'carousel',
   'pdf_preview',
@@ -617,6 +620,7 @@ const parseScenarioPostBlock = (value: unknown, fieldName: string): ScenarioPost
     url: asOptionalString(value.url),
     mimeType: asOptionalString(value.mimeType),
     title: asOptionalString(value.title),
+    label: asOptionalString(value.label),
     html: asOptionalString(value.html),
     payload: payload as Record<string, unknown> | undefined,
     blocks

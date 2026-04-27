@@ -240,6 +240,7 @@ export type PostBlockType =
   | 'embed'
   | 'file'
   | 'link'
+  | 'credit'
   | 'grouping'
   | 'carousel'
   | 'pdf_preview'
@@ -257,6 +258,7 @@ export type PostBlock = {
   url?: string;
   mimeType?: string;
   title?: string;
+  label?: string;
   html?: string;
   payload?: Record<string, unknown>;
   blocks?: PostBlock[];

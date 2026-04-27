@@ -2377,20 +2377,76 @@
     font-size: 1.03rem;
     line-height: 1.78;
     color: color-mix(in srgb, var(--text) 76%, #334155 24%);
-    max-width: 74ch;
+    width: 100%;
+    max-width: none;
+  }
+
+  .discovery-quickread-credit-block {
+    display: grid;
+    gap: 0.45rem;
+    width: 100%;
+    max-width: none;
+    margin-top: -0.15rem;
+    padding: 0.85rem 1rem;
+    border-left: 3px solid color-mix(in srgb, var(--line) 72%, #94a3b8);
+    border-radius: 0.85rem;
+    background: color-mix(in srgb, var(--surface-muted) 72%, white);
+    color: #64748b;
+    font-size: 0.88rem;
+    line-height: 1.55;
+  }
+
+  .discovery-quickread-credit-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .discovery-quickread-credit-label {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #7c8aa5;
+  }
+
+  .discovery-quickread-credit-source {
+    color: #334155;
+    font-weight: 700;
+  }
+
+  .discovery-quickread-credit-block a {
+    color: #0f766e;
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .discovery-quickread-credit-block a:hover {
+    text-decoration: underline;
+  }
+
+  .discovery-quickread-credit-block p {
+    margin: 0;
+    font-size: 0.92rem;
+    line-height: 1.65;
+    color: #475569;
   }
 
   .discovery-quickread-content-flow {
     display: grid;
     gap: 1.05rem;
     align-content: start;
+    width: 100%;
   }
 
   .discovery-quickread-content-flow p {
     margin: 0;
     font-size: 1.03rem;
     line-height: 1.9;
-    max-width: 76ch;
+    width: 100%;
+    max-width: none;
   }
 
   .discovery-quickread-main-nav {
@@ -2423,6 +2479,7 @@
   .post-section-block {
     display: grid;
     gap: 1rem;
+    width: 100%;
     margin: 0.45rem 0 1.4rem;
   }
 
@@ -2430,6 +2487,7 @@
   .post-section-children {
     display: grid;
     gap: 1.05rem;
+    width: 100%;
   }
 
   .discovery-quickread-section-block.story-section {
@@ -2524,8 +2582,9 @@
   }
 
   .post-reading {
-    max-width: 1040px;
-    margin: 0 auto;
+    width: 100%;
+    max-width: none;
+    margin: 0;
     padding: 0 4px 80px;
     animation: postReadingFadeIn 180ms ease-out;
   }

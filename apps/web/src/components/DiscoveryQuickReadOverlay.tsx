@@ -43,6 +43,7 @@ type PostBlock = {
     | 'embed'
     | 'file'
     | 'link'
+    | 'credit'
     | 'gallery'
     | 'carousel'
     | 'pdf_preview'
@@ -55,6 +56,7 @@ type PostBlock = {
   author?: string;
   url?: string;
   title?: string;
+  label?: string;
   html?: string;
   payload?: Record<string, unknown>;
   blocks?: PostBlock[];
@@ -409,10 +411,29 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
         </pre>
       );
     }
+    if (block.type === 'credit') {
+      const creditText = block.text || '';
+      const sourceLabel = block.label || block.title || block.url || 'Source';
+      return (
+        <aside key={key} className="discovery-quickread-credit-block">
+          <div className="discovery-quickread-credit-heading">
+            <span className="discovery-quickread-credit-label">Credit</span>
+            {block.url ? (
+              <a href={block.url} target="_blank" rel="noreferrer">
+                {sourceLabel}
+              </a>
+            ) : (
+              <span className="discovery-quickread-credit-source">{sourceLabel}</span>
+            )}
+          </div>
+          {creditText ? <p>{renderInlineText(creditText)}</p> : null}
+        </aside>
+      );
+    }
     if (block.url || block.text || block.title) {
       return (
         <div key={key} className="panel">
-          {block.url ? <a href={block.url} target="_blank" rel="noreferrer" className="no-underline">{block.title || block.url}</a> : null}
+          {block.url ? <a href={block.url} target="_blank" rel="noreferrer" className="no-underline">{block.label || block.title || block.url}</a> : null}
           {block.text ? <p className="small mt-2">{renderInlineText(block.text)}</p> : null}
         </div>
       );

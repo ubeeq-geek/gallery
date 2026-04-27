@@ -9,861 +9,765 @@
   },
   "creators": [
     {
-      "name": "Roadside America",
-      "slug": "roadside-america",
+      "name": "Roadside Atlas",
+      "slug": "roadside-atlas",
       "media": [
         {
-          "file": "roadside-america/ROAD-0001.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0001.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0001",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0002.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0002.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0002",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0003.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0003.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0003",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0004.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0004.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0004",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0005.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0005.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0005",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0006.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0006.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0006",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0007.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0007.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0007",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0008.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0008.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0008",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0009.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0009.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0009",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0010.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0010.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0010",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0011.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0011.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0011",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0012.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0012.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0012",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0013.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0013.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0013",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0014.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0014.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0014",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0015.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0015.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0015",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0016.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0016.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0016",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0017.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0017.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0017",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0018.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0018.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0018",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0019.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0019.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0019",
           "appearsInFeed": true
         },
         {
-          "file": "roadside-america/ROAD-0020.jpg",
-          "groupingSlug": "roadside-america-default",
+          "file": "roadside-atlas/ROAD-0020.jpg",
+          "groupingSlug": "roadside-atlas-default",
           "title": "Roadside Frame 0020",
           "appearsInFeed": true
         }
       ],
       "posts": [
         {
-          "title": "Roadside Journal 0001",
-          "slug": "roadside-journal-0001",
-          "summary": "Pulled over just after sunrise and caught the first good light of the day.",
+          "title": "Roadside Atlas #1: Teapot Dome Gas Station — Zillah’s Political Landmark",
+          "slug": "roadside-atlas-0001",
+          "summary": "A 1922 teapot-shaped roadside landmark built in Zillah, Washintgon, as a reminder of the Teapot Dome scandal.",
           "status": "published",
           "discoveryMode": "primary",
           "primaryMedia": {
-            "file": "roadside-america/ROAD-0001.jpg",
-            "groupingSlug": "roadside-america-default"
+            "file": "roadside-atlas/ROAD-0001.jpg",
+            "groupingSlug": "roadside-atlas-default"
           },
           "media": [
             {
-              "file": "roadside-america/ROAD-0001.jpg",
-              "groupingSlug": "roadside-america-default",
+              "file": "roadside-atlas/ROAD-0001.jpg",
+              "groupingSlug": "roadside-atlas-default",
               "discoverable": true
             }
           ],
           "blocks": [
             {
-              "type": "heading",
-              "level": 2,
-              "text": "Mile Marker Notes"
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1987, this is the Teapot Dome Service Station in Zillah, Washington. Built in 1922 on U.S. Route 12, the teapot-shaped station was created as a visual reminder of the Teapot Dome scandal and is now located at 117 First Avenue."
+            },
+            {
+              "type": "credit",
+              "label": "John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division",
+              "url": "https://www.loc.gov/item/2017702117/"
+            }
+            
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #2: Wadhams Pagoda Station — Milwaukee’s Red-Roof Relic",
+          "slug": "roadside-atlas-0002",
+          "summary": "This 1930 Wadhams pagoda-style gas station in Milwaukee was later known as the Harley Sprague Mobil Station and became one of the city’s memorable roadside landmarks.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0002.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0002.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1977, this is the former Wadhams Oil Co. / Clinton Street Filling Station, later known as the Harley Sprague Mobil Station, in Milwaukee, Wisconsin. Built in 1930 and designed by architect Alexander C. Eschweiler, it was one of Wadhams’ distinctive pagoda-style gas stations, with a bright red roof that turned a small service station into a roadside landmark. The building was later moved to 430 S. 2nd Street, then disassembled in 2002; part of the roof eventually entered the Wisconsin Historical Society Museum collection."
             },
             {
               "type": "paragraph",
-              "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }       
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #3: Busan Sikdang — American and Korean Food on Route 27",
+          "slug": "roadside-atlas-0003",
+          "summary": "Busan Sikdang on Route 27 in Columbus, Georgia paired classic diner architecture with Korean signage and an American/Korean menu.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0003.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0003.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1982, this Columbus, Georgia diner combined classic American roadside architecture with Korean immigrant food culture. Its Korean window lettering reads Busan Sikdang—“Busan Restaurant”—while the hand-painted English signs advertise “American and Korean Food,” turning a small streamliner-style diner on Route 27 into a vivid record of roadside adaptation and cultural overlap."
             },
             {
-              "type": "image",
-              "file": "roadside-america/ROAD-0001.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0001"
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
             }
           ],
           "postType": "image",
           "postFormat": "single"
         },
         {
-          "title": "Roadside Journal 0002",
-          "slug": "roadside-journal-0002",
-          "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
+          "title": "Roadside Atlas #4: Lucy the Elephant — Margate’s Seaside Giant",
+          "slug": "roadside-atlas-0004",
+          "summary": "Lucy the Elephant is an 1881 elephant-shaped landmark in Margate City, New Jersey.",
           "status": "published",
           "discoveryMode": "primary",
           "primaryMedia": {
-            "file": "roadside-america/ROAD-0002.jpg",
-            "groupingSlug": "roadside-america-default"
+            "file": "roadside-atlas/ROAD-0004.jpg",
+            "groupingSlug": "roadside-atlas-default"
           },
           "media": [
             {
-              "file": "roadside-america/ROAD-0002.jpg",
-              "groupingSlug": "roadside-america-default",
+              "file": "roadside-atlas/ROAD-0004.jpg",
+              "groupingSlug": "roadside-atlas-default",
               "discoverable": true
             }
           ],
-          "blocks": [
+          "blocks": [           
             {
-              "type": "heading",
-              "level": 2,
-              "text": "Roadside Stop"
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1978, this is Lucy the Elephant in Margate City, New Jersey. Built in 1881 by James V. Lafferty, the elephant-shaped building became one of America’s most recognizable examples of novelty roadside architecture, part attraction, part landmark, and part seaside lookout."
             },
             {
               "type": "paragraph",
-              "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0002.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0002"
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
             }
           ],
           "postType": "image",
           "postFormat": "single"
         },
         {
-          "title": "Roadside Journal 0003",
-          "slug": "roadside-journal-0003",
-          "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
+          "title": "Roadside Atlas #5: Playland — Ocean City Boardwalk Fantasia",
+          "slug": "roadside-atlas-0005",
+          "summary": "Playland on the Ocean City, New Jersey boardwalk captures the bright, theatrical look of an Atlantic coast amusement landmark.",
           "status": "published",
           "discoveryMode": "primary",
           "primaryMedia": {
-            "file": "roadside-america/ROAD-0003.jpg",
-            "groupingSlug": "roadside-america-default"
+            "file": "roadside-atlas/ROAD-0005.jpg",
+            "groupingSlug": "roadside-atlas-default"
           },
           "media": [
             {
-              "file": "roadside-america/ROAD-0003.jpg",
-              "groupingSlug": "roadside-america-default",
+              "file": "roadside-atlas/ROAD-0005.jpg",
+              "groupingSlug": "roadside-atlas-default",
               "discoverable": true
             }
           ],
-          "blocks": [
+          "blocks": [           
             {
-              "type": "heading",
-              "level": 2,
-              "text": "Noon Light"
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1978, this is Playland on the boardwalk in Ocean City, New Jersey. The Library of Congress record identifies it as “Playland, Ocean City, New Jersey,” part of Margolies’s Roadside America documentation of Atlantic coast amusements and vernacular commercial architecture. The shuttered stands, painted dome, “King’s Tomb” sign, and boardwalk food counters capture the theatrical off-season face of a seaside amusement strip."
             },
             {
               "type": "paragraph",
-              "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0003.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0003"
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
             }
           ],
           "postType": "image",
           "postFormat": "single"
         },
         {
-          "title": "Roadside Journal 0004",
-          "slug": "roadside-journal-0004",
-          "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
+          "title": "Roadside Atlas #6: Barrel-N-Bun — Wildwood’s Barrel-Shaped Boardwalk Stand",
+          "slug": "roadside-atlas-0006",
+          "summary": "Barrel-N-Bun was a whimsical Wildwood boardwalk food stand, turning hot dogs and hamburgers into a playful seaside landmark.",
           "status": "published",
           "discoveryMode": "primary",
           "primaryMedia": {
-            "file": "roadside-america/ROAD-0004.jpg",
-            "groupingSlug": "roadside-america-default"
+            "file": "roadside-atlas/ROAD-0006.jpg",
+            "groupingSlug": "roadside-atlas-default"
           },
           "media": [
             {
-              "file": "roadside-america/ROAD-0004.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Cloud Break"
-            },
-            {
-              "type": "paragraph",
-              "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0004.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0004"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0005",
-          "slug": "roadside-journal-0005",
-          "summary": "Backroad detour turned into the strongest scene of the afternoon.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0005.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0005.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Unexpected Detour"
-            },
-            {
-              "type": "paragraph",
-              "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0005.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0005"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0006",
-          "slug": "roadside-journal-0006",
-          "summary": "Pulled over just after sunrise and caught the first good light of the day.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0006.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0006.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Mile Marker Notes"
-            },
-            {
-              "type": "paragraph",
-              "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0006.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0006"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0007",
-          "slug": "roadside-journal-0007",
-          "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0007.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0007.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Roadside Stop"
-            },
-            {
-              "type": "paragraph",
-              "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0007.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0007"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0008",
-          "slug": "roadside-journal-0008",
-          "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0008.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0008.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Noon Light"
-            },
-            {
-              "type": "paragraph",
-              "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0008.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0008"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0009",
-          "slug": "roadside-journal-0009",
-          "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0009.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0009.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Cloud Break"
-            },
-            {
-              "type": "paragraph",
-              "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0009.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0009"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0010",
-          "slug": "roadside-journal-0010",
-          "summary": "Backroad detour turned into the strongest scene of the afternoon.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0010.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0010.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Unexpected Detour"
-            },
-            {
-              "type": "paragraph",
-              "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0010.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0010"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0011",
-          "slug": "roadside-journal-0011",
-          "summary": "Pulled over just after sunrise and caught the first good light of the day.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0011.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0011.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Mile Marker Notes"
-            },
-            {
-              "type": "paragraph",
-              "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0011.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0011"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0012",
-          "slug": "roadside-journal-0012",
-          "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0012.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0012.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Roadside Stop"
-            },
-            {
-              "type": "paragraph",
-              "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0012.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0012"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0013",
-          "slug": "roadside-journal-0013",
-          "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0013.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0013.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Noon Light"
-            },
-            {
-              "type": "paragraph",
-              "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0013.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0013"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0014",
-          "slug": "roadside-journal-0014",
-          "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0014.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0014.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Cloud Break"
-            },
-            {
-              "type": "paragraph",
-              "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0014.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0014"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0015",
-          "slug": "roadside-journal-0015",
-          "summary": "Backroad detour turned into the strongest scene of the afternoon.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0015.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0015.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Unexpected Detour"
-            },
-            {
-              "type": "paragraph",
-              "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0015.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0015"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0016",
-          "slug": "roadside-journal-0016",
-          "summary": "Pulled over just after sunrise and caught the first good light of the day.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0016.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0016.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Mile Marker Notes"
-            },
-            {
-              "type": "paragraph",
-              "text": "Pulled over just after sunrise and caught the first good light of the day. The road was empty for maybe four minutes, and that was enough."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0016.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0016"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0017",
-          "slug": "roadside-journal-0017",
-          "summary": "Shot this from the shoulder while trucks rolled by and shook the camera bag.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0017.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0017.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Roadside Stop"
-            },
-            {
-              "type": "paragraph",
-              "text": "Shot this from the shoulder while trucks rolled by and shook the camera bag. The timing window was tiny, so this was mostly patience and luck."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0017.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0017"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0018",
-          "slug": "roadside-journal-0018",
-          "summary": "The sky flattened out at noon, but the geometry of the scene still carried it.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0018.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0018.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Noon Light"
-            },
-            {
-              "type": "paragraph",
-              "text": "The sky flattened out at noon, but the geometry of the scene still carried it. I stayed with a simple framing and let the lines do the work."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0018.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0018"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal 0019",
-          "slug": "roadside-journal-0019",
-          "summary": "Waited through a passing cloud break and got one clean frame before the light changed.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0019.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0019.jpg",
-              "groupingSlug": "roadside-america-default",
-              "discoverable": true
-            }
-          ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Cloud Break"
-            },
-            {
-              "type": "paragraph",
-              "text": "Waited through a passing cloud break and got one clean frame before the light changed. This was the take where the road and horizon finally lined up."
-            },
-            {
-              "type": "image",
-              "file": "roadside-america/ROAD-0019.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0019"
-            }
-          ],
-          "postType": "image",
-          "postFormat": "single"
-        },
-        {
-          "title": "Roadside Journal #20: The Conch — Midday Neon Relic",
-          "slug": "roadside-journal-0020",
-          "summary": "A sun-washed roadside diner stands frozen in time, its pastel facade and weathered neon signage hinting at a once-bustling stop along a quieter highway. The bold “FINE FOOD” marquee and promise of air conditioning evoke mid-century optimism, while the stillness of the scene suggests a slower, almost forgotten rhythm of travel.",
-          "status": "published",
-          "discoveryMode": "primary",
-          "primaryMedia": {
-            "file": "roadside-america/ROAD-0020.jpg",
-            "groupingSlug": "roadside-america-default"
-          },
-          "media": [
-            {
-              "file": "roadside-america/ROAD-0020.jpg",
-              "groupingSlug": "roadside-america-default",
+              "file": "roadside-atlas/ROAD-0006.jpg",
+              "groupingSlug": "roadside-atlas-default",
               "discoverable": true
             }
           ],
           "blocks": [            
             {
               "type": "paragraph",
-              "text": "A sun-washed roadside diner stands frozen in time, its pastel facade and weathered neon signage hinting at a once-bustling stop along a quieter highway. The bold “FINE FOOD” marquee and promise of air conditioning evoke mid-century optimism, while the stillness of the scene suggests a slower, almost forgotten rhythm of travel."
+              "text": "Photographed by John Margolies in 1978, this is the Barrel-N-Bun hot dog and hamburger stand on the Wildwood, New Jersey boardwalk. Its oversized barrel form, rooftop hot dog, Coca-Cola menu board, and boardwalk setting capture the novelty architecture Margolies documented across American roadside and seaside culture."
             },
             {
-              "type": "image",
-              "file": "roadside-america/ROAD-0020.jpg",
-              "groupingSlug": "roadside-america-default"
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }         
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #7: Glacier Theater — Main Street Afterlife",
+          "slug": "roadside-atlas-0007",
+          "summary": "Browning’s Glacier Theater shows a small-town movie house adapted into a video rental storefront.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0007.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0007.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
             }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1988, this is the Glacier Theater on Main Street in Browning, Montana. By the time Margolies documented it, the former theater facade had been repurposed for video rentals, preserving a transitional moment in movie culture: a small-town theater becoming part of the home-video era while still carrying the shape and signage of its earlier life."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }            
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #8: Rialto Theatre — Deer Lodge Movie Palace",
+          "slug": "roadside-atlas-0008",
+          "summary": "Deer Lodge’s Rialto Theatre is a 1921 Beaux-Arts movie palace, remembered for its ornate terra-cotta facade.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0008.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0008.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 2004, this is the Rialto Theatre at 418 Main Street in Deer Lodge, Montana. Built in 1921 by Arnold & Van Hausen, the Beaux-Arts theater was known for its white terra-cotta facade, red tile roof, ornate columns, murals, and 720-seat auditorium. A 2006 fire gutted much of the building, but the historic facade survived; after a community-led restoration, the Rialto reopened in 2012 as a multipurpose venue for films, concerts, and live events."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #9: Miss Bellows Falls Diner — Worcester Lunch Car #771",
+          "slug": "roadside-atlas-0009",
+          "summary": "Miss Bellows Falls Diner is Worcester Lunch Car #771, a 1941 barrel-roofed diner in Bellows Falls, Vermont, later listed on the National Register of Historic Places.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0009.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0009.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1978, this is the Miss Bellows Falls Diner in Bellows Falls, Vermont. Built in 1941 by the Worcester Lunch Car Company as car #771, the diner is a barrel-roofed metal structure at 90 Rockingham Street, known for its porcelain enamel panels, red lettering, booth-service signage, and classic lunch-car form. It was listed on the National Register of Historic Places in 1983 and remains one of Vermont’s notable surviving roadside diners."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #10: Fox Theater — Missoula’s Neon Tower",
+          "slug": "roadside-atlas-0010",
+          "summary": "Missoula’s Fox Theater is captured here through its bold vertical neon sign, a surviving trace of the city’s mid-century movie culture.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0010.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0010.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1987, this image focuses on the Fox Theater’s towering roadside-style neon sign rising above Front Street in Missoula, Montana. The bold orange-and-black “FOX” lettering, geometric metal supports, and yellow modernist marquee capture the theater less as a full building portrait than as a study in mid-century movie-house signage—built to be seen from a distance, glowing over the street like a landmark."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #11: Capt. Bob’s Bull — Ocean City’s Sunglassed Landmark",
+          "slug": "roadside-atlas-0011",
+          "summary": "This giant fiberglass bull once stood outside Captain Bob’s BBQ in Ocean City, Maryland.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0011.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0011.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1985, this giant fiberglass bull stood outside Captain Bob’s BBQ in Ocean City, Maryland, where its chef’s hat, sunglasses, and bright red scarf turned a steakhouse mascot into a Delmarva roadside icon. Now remembered as “Bob the Bull,” the statue later found a new home in Delaware, carrying a piece of Ocean City’s mid-century roadside culture with it."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #12: West Theater — Route 66 Star Tower",
+          "slug": "roadside-atlas-0012",
+          "summary": "The West Theater on Route 66 in Grants, New Mexico is captured through its bold vertical sign, starbursts, and mid-century marquee.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0012.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0012.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 2003, this is the West Theater on Route 66 in Grants, New Mexico. The image centers on the theater’s vertical “WEST” sign, with yellow letters, pale blue fins, and stacked starbursts rising against the desert sky. Rather than showing the full building, Margolies frames the theater through its sign and marquee: a piece of mid-century roadside movie-house design built for visibility, drama, and passing traffic."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #13: Stork Cafe — Route 66 Lunch Counter",
+          "slug": "roadside-atlas-0013",
+          "summary": "The Stork Cafe was a compact Route 66 diner in Winslow, Arizona, remembered for its bold cafe signs, rooftop stork, and classic roadside lunch-counter character.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0013.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0013.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [           
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1979, this is the Stork Cafe on 3rd Street along Route 66 in Winslow, Arizona. The compact roadside diner advertises hamburgers, hot dogs, sandwiches to go, and all-day breakfast beneath bold cafe signage, with a rooftop stork adding a bit of roadside whimsy."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #14: State Theater — Central Avenue Art Deco",
+          "slug": "roadside-atlas-0014",
+          "summary": "Photographed by John Margolies in 1979, Albuquerque’s State Theater on Central Avenue shows a Route 66 movie house defined by its Art Deco facade and tall vertical sign.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0014.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0014.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1979, this is the State Theater on Central Avenue, Route 66, in Albuquerque, New Mexico. The image frames the theater’s Art Deco facade and vertical red “STATE” sign, with stepped wall details, a broad marquee, and boarded entrance capturing a once-prominent movie house in a quieter later chapter."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #15: Hiland Theater — Central Avenue Streamline",
+          "slug": "roadside-atlas-0015",
+          "summary": "Albuquerque’s Hiland Theater captures a 1950 Route 66 movie house through its Streamline Moderne vertical sign and glass-block tower.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0015.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0015.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1987, this is the Hiland Theater on Central Avenue / Route 66 in Albuquerque, New Mexico. The image focuses on the theater’s vertical sign, with tall “HILAND” lettering, curved Streamline Moderne edges, and pale glass-block detailing set against the blue sky. Built in 1950, the Hiland was one of Albuquerque’s postwar Route 66 movie houses, designed for the automobile era with a large rear parking lot; it stopped screening films in 1995 and later reopened as a performing arts and dance venue."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #16: Ocean City Life-Saving Station — Boardwalk Rescue House",
+          "slug": "roadside-atlas-0016",
+          "summary": "the Ocean City Life-Saving Station Museum preserves an 1891 rescue station at the south end of the Ocean City, Maryland boardwalk.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0016.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0016.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies, this is the Ocean City Life-Saving Station Museum at the south end of the Ocean City, Maryland boardwalk. Built in 1891 for the U.S. Life-Saving Service, the station later served the U.S. Coast Guard until 1964 before being saved from demolition by local preservation efforts. Margolies’s image captures the restored white-and-red building as a seaside landmark, with its steep gables, lookout tower, boardwalk setting, and large anchor display emphasizing its maritime rescue history."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #17: El Rancho Theater — Pine Street Pueblo Revival",
+          "slug": "roadside-atlas-0017",
+          "summary": "Deming, NZ’s El Rancho Theater pairs Pueblo Revival details with a vivid desert marquee and weathered vertical sign.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0017.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0017.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1979, this is the El Rancho Theater on Pine Street in Deming, New Mexico. The image captures the theater’s Pueblo Revival facade, with stepped parapets, projecting vigas, a weathered vertical “EL RANCHO” sign, and a painted desert landscape across the marquee."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #18: Riviera Theatre — Muscatine’s Last Marquee",
+          "slug": "roadside-atlas-0018",
+          "summary": "Muscatine’s Riviera Theatre shows a former Uptown Theatre / Bosten Cinema near the end of its life, shortly before its 1990 closure and demolition.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0018.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0018.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1988, this is the Riviera Theatre in Muscatine, Iowa. The theater stood at 313 E. 3rd Street and had earlier operated as the Uptown Theatre and later Bosten Cinema before becoming the Riviera in 1983. Margolies’s image captures it near the end of its life: a brick movie house with an ornate marquee, gold scrollwork, poster cases, and “Betrayed” still listed on the sign. The theater closed in 1990 and was later demolished."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #19: Highway Diner — Route 66 Streamline",
+          "slug": "roadside-atlas-0019",
+          "summary": "Winslow’s Highway Diner is a streamlined Valentine diner on Route 66, preserved as a compact red-and-white survivor of old roadside food culture.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0019.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0019.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 2003, this is the Highway Diner on Route 66 in Winslow, Arizona. Margolies described it as a survivor of old Route 66, noting its streamlined Art Deco character and its connection to the Valentine Diner Company of Wichita, Kansas, a major supplier of small diner buildings in the West and Midwest. In the image, the red-and-white exterior, striped awnings, rooftop sign, and curved gooseneck lights make the compact building feel both practical and theatrical: a short-order diner designed to catch the eye from the road."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #20: Ziggie’s Conch — Fine Food in the Keys",
+          "slug": "roadside-atlas-0020",
+          "summary": "Ziggie’s the Conch was a beloved Islamorada roadside restaurant, remembered for its bright “FINE FOOD” sign and unmistakable Florida Keys character.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0020.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0020.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies in 1985, this is Ziggie’s the Conch Restaurant in Islamorada, Florida, a Florida Keys landmark remembered for its “FINE FOOD” neon sign, “Ziggie Your Host” lettering, lime green walls, mounted fish, and boat-shaped player piano. The building’s history traces back to the 1930s, before becoming Ziggie’s Conch after Ziggie Stocki purchased the property in 1962; it later became Ziggie & Mad Dog’s in 2006."
+            },
+            {
+              "type": "paragraph",
+              "text": "<em>John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division.</em>"
+            }
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Journal #21: Strömstadsvägen Service Stop, Sweden, 1930s (Colorized)",
+          "slug": "roadside-atlas-0021",
+          "summary": "This Strömstadsvägen fuel station in Uddevalla shows taxis lined up.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0021.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0021-col.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            },
+            {
+              "file": "roadside-atlas/ROAD-0021-bw.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true
+            }
+          ],
+          "blocks": [            
+            {
+              "type": "paragraph",
+              "text": "Photographed by Olof Einar Lindström, this image shows a fuel station on Strömstadsvägen in Uddevalla, Sweden, operated by Bilägarnas Inköpsförening, likely in the early-to-mid 1930s. The DigitaltMuseum record notes that taxis are lined up at the station and that the site was later succeeded by OK."
+            },
+            {
+              "type": "credit",
+              "label": "Olof Einar Lindström / Bohusläns museum, via DigitaltMuseum",
+              "url": "https://digitaltmuseum.se/011014496874/bensinstation-pa-stromstadsvagen-uddevalla"
+            }            
           ],
           "postType": "image",
           "postFormat": "single"

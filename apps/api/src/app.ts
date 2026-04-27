@@ -201,6 +201,7 @@ const POST_BLOCK_TYPES = new Set([
   'embed',
   'file',
   'link',
+  'credit',
   'grouping',
   'carousel',
   'pdf_preview',
@@ -228,6 +229,7 @@ const parsePostBlocks = (value: unknown): PostBlock[] => {
       if (typeof row.url === 'string') block.url = row.url.slice(0, 2048);
       if (typeof row.mimeType === 'string') block.mimeType = row.mimeType.slice(0, 255);
       if (typeof row.title === 'string') block.title = row.title.slice(0, 300);
+      if (typeof row.label === 'string') block.label = row.label.slice(0, 300);
       if (typeof row.html === 'string') block.html = row.html.slice(0, 50000);
       if (row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)) {
         block.payload = row.payload as Record<string, unknown>;

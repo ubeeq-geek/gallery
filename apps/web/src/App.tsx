@@ -363,6 +363,7 @@ type PostBlockType =
   | 'embed'
   | 'file'
   | 'link'
+  | 'credit'
   | 'gallery'
   | 'carousel'
   | 'pdf_preview'
@@ -394,6 +395,7 @@ type PostBlock = {
   url?: string;
   mimeType?: string;
   title?: string;
+  label?: string;
   html?: string;
   payload?: Record<string, unknown>;
   blocks?: PostBlock[];

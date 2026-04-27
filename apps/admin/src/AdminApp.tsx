@@ -1503,6 +1503,24 @@ export function StudioApp() {
                     onClick={() =>
                       appendPostBlockJson(
                         postEditForm.blocksJson,
+                        {
+                          blockId: `credit-${Date.now()}`,
+                          type: 'credit',
+                          text: 'Image courtesy of Example Archive',
+                          label: 'Example Archive',
+                          url: postEditForm.destinationUrl || 'https://example.com'
+                        },
+                        (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
+                      )
+                    }
+                  >
+                    Add credit block
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      appendPostBlockJson(
+                        postEditForm.blocksJson,
                         { blockId: `e-${Date.now()}`, type: 'embed', url: postEditForm.destinationUrl || 'https://example.com/embed' },
                         (next) => setPostEditForm({ ...postEditForm, blocksJson: next })
                       )
@@ -1686,6 +1704,24 @@ export function StudioApp() {
                 }
               >
                 Add link block
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  appendPostBlockJson(
+                    postForm.blocksJson,
+                    {
+                      blockId: `credit-${Date.now()}`,
+                      type: 'credit',
+                      text: 'Image courtesy of Example Archive',
+                      label: 'Example Archive',
+                      url: postForm.destinationUrl || 'https://example.com'
+                    },
+                    (next) => setPostForm({ ...postForm, blocksJson: next })
+                  )
+                }
+              >
+                Add credit block
               </button>
               <button
                 type="button"
