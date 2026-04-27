@@ -3400,7 +3400,7 @@
 
   .list-btn,
   .card-link,
-  button:not(.auth-primary-btn):not(.auth-secondary-btn):not(.discovery-feature-link-btn):not(.discovery-quick-view-btn):not(.discovery-focus-modal-close),
+  button:not(.auth-primary-btn):not(.auth-secondary-btn):not(.discovery-feature-link-btn):not(.discovery-quick-view-btn):not(.discovery-focus-modal-close):not(.topbar-discovery-chip),
   input,
   select,
   textarea {
@@ -3410,7 +3410,7 @@
     color: var(--text);
   }
 
-  button:not(.auth-primary-btn):not(.auth-secondary-btn):not(.discovery-feature-link-btn):not(.discovery-quick-view-btn):not(.discovery-focus-modal-close) {
+  button:not(.auth-primary-btn):not(.auth-secondary-btn):not(.discovery-feature-link-btn):not(.discovery-quick-view-btn):not(.discovery-focus-modal-close):not(.topbar-discovery-chip) {
     @apply font-medium;
     background: var(--surface-muted);
   }
