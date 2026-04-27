@@ -229,7 +229,19 @@ const inferPostRenderKind = (post: OverlayPost): PostRenderKind => {
   return 'image';
 };
 
-const PostMetaHeader = ({ item, post, itemIndex, itemsCount }: { item: DiscoveryOverlayItem; post: OverlayPost | null; itemIndex: number; itemsCount: number }) => {
+export const PostMetaHeader = ({
+  item,
+  post,
+  itemIndex,
+  itemsCount,
+  showPosition = true
+}: {
+  item: DiscoveryOverlayItem;
+  post: OverlayPost | null;
+  itemIndex: number;
+  itemsCount: number;
+  showPosition?: boolean;
+}) => {
   const creator = post?.creator || post?.artist;
   const postType = post ? getPostType(post) : null;
   const postFormat = post && postType ? getPostFormat(post, postType) : null;
@@ -244,8 +256,12 @@ const PostMetaHeader = ({ item, post, itemIndex, itemsCount }: { item: Discovery
         by {creator?.name || item.artistName || 'Unknown creator'}
         {' · '}
         {item.displayedContentRating || 'General'}
-        {' · '}
-        {Math.max(1, itemIndex + 1)} / {Math.max(1, itemsCount)}
+        {showPosition ? (
+          <>
+            {' · '}
+            {Math.max(1, itemIndex + 1)} / {Math.max(1, itemsCount)}
+          </>
+        ) : null}
       </p>
     </header>
   );
@@ -437,6 +453,13 @@ const ShortStoryPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; po
   );
 };
 
+export const RichPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
+  const renderKind = inferPostRenderKind(post);
+  return renderKind === 'story'
+    ? <StoryPostRenderer item={item} post={post} />
+    : <StandardPostRenderer item={item} post={post} />;
+};
+
 const DiscoverySecondaryRail = ({
   item,
   post,
@@ -586,7 +609,6 @@ export default function DiscoveryQuickReadOverlay({
 
   if (!open || !item) return null;
 
-  const renderKind = post ? inferPostRenderKind(post) : 'standard';
   const leftTitle = post ? 'Quick read' : 'Quick view';
 
   return (
@@ -620,9 +642,7 @@ export default function DiscoveryQuickReadOverlay({
                 <div className="discovery-quickread-loading-line" />
               </article>
             ) : post ? (
-              renderKind === 'story'
-                ? <StoryPostRenderer item={item} post={post} />
-                : <StandardPostRenderer item={item} post={post} />
+              <RichPostRenderer item={item} post={post} />
             ) : (
               <article className="discovery-quickread-content-flow">
                 <div className="discovery-quickread-media-figure">

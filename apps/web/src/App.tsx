@@ -3,7 +3,7 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } fr
 import { api } from './api';
 import { StudioWorkspace } from './StudioWorkspace';
 import { ForCreatorsPage } from './pages/ForCreatorsPage';
-import DiscoveryQuickReadOverlay, { type DiscoveryOverlayItem } from './components/DiscoveryQuickReadOverlay';
+import DiscoveryQuickReadOverlay, { PostMetaHeader, RichPostRenderer, type DiscoveryOverlayItem, type OverlayPost } from './components/DiscoveryQuickReadOverlay';
 import {
   changePassword,
   clearStoredAuthSession,
@@ -7172,9 +7172,31 @@ function PostPage() {
   if (loading && !post) return <div className="layout">Loading...</div>;
   if (!post) return <div className="layout">{error || 'Post not found'}</div>;
 
-  const mediaById = new Map(post.media.map((item) => [item.mediaId, item]));
   const orderedMedia = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
   const relatedSidebarMedia = orderedMedia.slice(0, 6);
+  const primaryMedia = post.primaryMediaId ? orderedMedia.find((media) => media.mediaId === post.primaryMediaId) : orderedMedia[0];
+  const creator = post.creator || post.artist;
+  const postRendererItem: DiscoveryOverlayItem = {
+    imageId: primaryMedia?.mediaId || post.postId,
+    assetType: primaryMedia?.assetType || 'image',
+    postType: (post.metadata?.postType as DiscoveryOverlayItem['postType']) || undefined,
+    postFormat: (post.metadata?.postFormat as DiscoveryOverlayItem['postFormat']) || undefined,
+    surfaceType: 'post',
+    postId: post.postId,
+    postSlug: post.slug,
+    postTitle: post.title,
+    postSummary: post.summary,
+    artistId: post.creator?.creatorId || post.artist?.artistId || post.artistId,
+    artistName: creator?.name || 'Unknown creator',
+    creatorSlug: creator?.slug,
+    title: post.title,
+    previewUrl: primaryMedia?.previewUrl || primaryMedia?.previewPosterUrl || '',
+    previewPosterUrl: primaryMedia?.previewPosterUrl,
+    displayedContentRating: 'General',
+    displayedHeavyTopics: [],
+    blurred: false
+  };
+  const rendererPost = post as OverlayPost;
   const destinationLabel = post.destination?.type === 'pdf'
     ? 'Open PDF'
     : post.destination?.type === 'external'
@@ -7183,129 +7205,12 @@ function PostPage() {
         ? 'Open internal destination'
         : 'Open destination';
 
-  const renderMediaPreview = (mediaId?: string, title?: string, caption?: string) => {
-    if (!mediaId) return null;
-    const media = mediaById.get(mediaId);
-    if (!media) return null;
-    return (
-      <figure className="panel">
-        {media.assetType === 'video'
-          ? (
-            <video controls playsInline poster={media.previewPosterUrl} style={{ width: '100%', borderRadius: '1rem' }}>
-              <source src={media.previewUrl} />
-            </video>
-          )
-          : <img src={media.previewUrl} alt={title || media.title || media.mediaId} style={{ width: '100%', borderRadius: '1rem' }} />}
-        {(caption || media.caption) && <figcaption className="small mt-2">{caption || media.caption}</figcaption>}
-      </figure>
-    );
-  };
-
-  const renderBlock = (block: PostBlock, index: number, keyPrefix = 'block') => {
-    const key = `${keyPrefix}-${block.blockId || index}`;
-    switch (block.type) {
-      case 'section':
-        return (
-          <section key={key} className="post-section-block">
-            {block.title && <h2>{block.title}</h2>}
-            {block.text && <p>{block.text}</p>}
-            {block.blocks?.length ? (
-              <div className="post-section-children">
-                {block.blocks.map((child, childIndex) => renderBlock(child, childIndex, key))}
-              </div>
-            ) : null}
-          </section>
-        );
-      case 'heading': {
-        const level = Math.max(1, Math.min(6, block.level || 2));
-        if (level === 1) return <h1 key={key}>{block.text || ''}</h1>;
-        if (level === 2) return <h2 key={key}>{block.text || ''}</h2>;
-        if (level === 3) return <h3 key={key}>{block.text || ''}</h3>;
-        if (level === 4) return <h4 key={key}>{block.text || ''}</h4>;
-        if (level === 5) return <h5 key={key}>{block.text || ''}</h5>;
-        return <h6 key={key}>{block.text || ''}</h6>;
-      }
-      case 'paragraph':
-        return <p key={key}>{block.text || ''}</p>;
-      case 'quote':
-        return (
-          <blockquote key={key} className="panel">
-            <p>{block.quote || block.text || ''}</p>
-            {block.author && <footer className="small">— {block.author}</footer>}
-          </blockquote>
-        );
-      case 'divider':
-        return <hr key={key} />;
-      case 'image':
-      case 'video':
-        return (
-          <div key={key}>
-            {renderMediaPreview(block.mediaId, block.title || block.text, block.caption)}
-          </div>
-        );
-      case 'audio': {
-        const audio = block.mediaId ? mediaById.get(block.mediaId) : undefined;
-        return (
-          <div key={key} className="panel">
-            {audio ? (
-              <audio controls style={{ width: '100%' }}>
-                <source src={audio.previewUrl} />
-              </audio>
-            ) : <p className="small">Audio media not found.</p>}
-          </div>
-        );
-      }
-      case 'link':
-      case 'embed':
-      case 'file':
-      case 'pdf_preview':
-        return (
-          <div key={key} className="panel">
-            <a href={block.url || '#'} target="_blank" rel="noreferrer" className="no-underline">
-              {block.title || block.url || 'Open link'}
-            </a>
-            {block.text && <p className="small mt-2">{block.text}</p>}
-          </div>
-        );
-      case 'html_fragment':
-        return (
-          <pre key={key} className="panel small" style={{ overflowX: 'auto' }}>
-            {block.html || ''}
-          </pre>
-        );
-      case 'gallery':
-      case 'carousel':
-      default:
-        return (
-          <div key={key} className="panel">
-            <p>{block.text || block.title || `Block: ${block.type}`}</p>
-          </div>
-        );
-    }
-  };
-
   return (
     <div className="layout post-detail-layout">
       <div className="post-detail-main">
         <section className="panel">
-          <h1>{post.title}</h1>
-          <p className="small">
-            By {(post.creator || post.artist)
-              ? (
-                <Link
-                  to={`/creators/${encodeURIComponent((post.creator || post.artist)!.slug)}`}
-                  className="no-underline"
-                >
-                  {(post.creator || post.artist)!.name}
-                </Link>
-              )
-              : 'Unknown creator'}
-            {' · '}
-            {post.status}
-            {' · '}
-            {post.discovery.mode}
-          </p>
-          {post.summary && <p>{post.summary}</p>}
+          <PostMetaHeader item={postRendererItem} post={rendererPost} itemIndex={0} itemsCount={1} showPosition={false} />
+          {post.summary && <p className="discovery-quickread-summary">{post.summary}</p>}
           {post.destination?.url && (
             <p className="mt-3">
               <a className="auth-primary-btn no-underline" href={post.destination.url} target="_blank" rel="noreferrer">
@@ -7315,37 +7220,9 @@ function PostPage() {
           )}
         </section>
 
-        {orderedMedia.length > 0 && (
-          <section className="panel mt-4">
-            <h2>Media</h2>
-            <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': 2 } as any}>
-              {orderedMedia.map((media) => (
-                <article key={media.mediaId} className="discovery-feature-card gallery-discovery-card">
-                  <div className="discovery-feature-media" style={{ aspectRatio: '1.15 / 1' }}>
-                    {media.assetType === 'video'
-                      ? <img src={media.previewPosterUrl || media.previewUrl} alt={media.title || media.mediaId} />
-                      : <img src={media.previewUrl} alt={media.title || media.mediaId} />}
-                  </div>
-                  <div className="discovery-feature-footer">
-                    <div className="discovery-feature-text">
-                      <h3 className="discovery-feature-title">{media.title || media.mediaId}</h3>
-                      {media.caption && <p className="discovery-feature-subtitle">{media.caption}</p>}
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {post.blocks.length > 0 && (
-          <section className="panel mt-4">
-            <h2>Post Content</h2>
-            <div className="mt-3" style={{ display: 'grid', gap: '1rem' }}>
-              {post.blocks.map((block, idx) => renderBlock(block, idx))}
-            </div>
-          </section>
-        )}
+        <section className="panel mt-4 post-detail-reader-panel">
+          <RichPostRenderer item={postRendererItem} post={rendererPost} />
+        </section>
       </div>
 
       <aside className="post-detail-sidebar">
