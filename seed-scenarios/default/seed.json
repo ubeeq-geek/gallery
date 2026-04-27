@@ -838,9 +838,9 @@
           "postFormat": "single"
         },
         {
-          "title": "Roadside Journal 0020",
+          "title": "Roadside Journal #20: The Conch — Midday Neon Relic",
           "slug": "roadside-journal-0020",
-          "summary": "Backroad detour turned into the strongest scene of the afternoon.",
+          "summary": "A sun-washed roadside diner stands frozen in time, its pastel facade and weathered neon signage hinting at a once-bustling stop along a quieter highway. The bold “FINE FOOD” marquee and promise of air conditioning evoke mid-century optimism, while the stillness of the scene suggests a slower, almost forgotten rhythm of travel.",
           "status": "published",
           "discoveryMode": "primary",
           "primaryMedia": {
@@ -854,21 +854,15 @@
               "discoverable": true
             }
           ],
-          "blocks": [
-            {
-              "type": "heading",
-              "level": 2,
-              "text": "Unexpected Detour"
-            },
+          "blocks": [            
             {
               "type": "paragraph",
-              "text": "Backroad detour turned into the strongest scene of the afternoon. The stop wasn’t planned, but the texture and color were exactly what I was hunting."
+              "text": "A sun-washed roadside diner stands frozen in time, its pastel facade and weathered neon signage hinting at a once-bustling stop along a quieter highway. The bold “FINE FOOD” marquee and promise of air conditioning evoke mid-century optimism, while the stillness of the scene suggests a slower, almost forgotten rhythm of travel."
             },
             {
               "type": "image",
               "file": "roadside-america/ROAD-0020.jpg",
-              "groupingSlug": "roadside-america-default",
-              "caption": "Frame 0020"
+              "groupingSlug": "roadside-america-default"
             }
           ],
           "postType": "image",
