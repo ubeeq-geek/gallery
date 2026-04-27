@@ -3427,7 +3427,7 @@ function HomePage({
             {isBlurredByRating && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
           </div>
         </button>
-        <div className="discovery-feature-footer">
+        <div className="discovery-feature-footer discovery-feature-footer-stacked">
           <div className="discovery-feature-text">
             <h3 className="discovery-feature-title">
               {item.gallerySlug ? (
@@ -3451,21 +3451,23 @@ function HomePage({
             {disclosureLine && !compactCard && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
           </div>
           {!compactCard && (
-            <div className="discovery-feature-stats">
-              <span>❤ {item.favoriteCount || 0}</span>
-              <span>👁 {trendingViewCount(cardIndex)}</span>
-              <span>{visibilityPill === 'Preview' ? 'Follower preview' : visibilityPill === 'Premium' ? 'Premium' : 'Public'}</span>
-              <span>{displayedRating}</span>
-            </div>
-          )}
-          {currentUser && !compactCard && (
-            <div className="discovery-feature-actions">
-              <button
-                className="auth-secondary-btn discovery-inline-btn"
-                onClick={() => void toggleImageFavorite(item.imageId)}
-              >
-                {isFavorite ? 'Unfavorite' : 'Favorite'}
-              </button>
+            <div className="discovery-feature-meta-row">
+              <div className="discovery-feature-stats">
+                <span>❤ {item.favoriteCount || 0}</span>
+                <span>👁 {trendingViewCount(cardIndex)}</span>
+                <span>{visibilityPill === 'Preview' ? 'Follower preview' : visibilityPill === 'Premium' ? 'Premium' : 'Public'}</span>
+                <span>{displayedRating}</span>
+              </div>
+              {currentUser && (
+                <div className="discovery-feature-actions">
+                  <button
+                    className="auth-secondary-btn discovery-inline-btn"
+                    onClick={() => void toggleImageFavorite(item.imageId)}
+                  >
+                    {isFavorite ? 'Unfavorite' : 'Favorite'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

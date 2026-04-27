@@ -1769,7 +1769,7 @@
   }
 
   .discovery-feature-text {
-    @apply min-w-0;
+    @apply min-w-0 w-full;
   }
 
   @media (min-width: 640px) {
@@ -1778,10 +1778,24 @@
     }
   }
 
+  .discovery-feature-footer-stacked {
+    @apply flex-col items-stretch justify-start;
+  }
+
+  @media (min-width: 640px) {
+    .discovery-feature-footer-stacked {
+      @apply flex-col items-stretch justify-start;
+    }
+  }
+
+  .discovery-feature-meta-row {
+    @apply flex flex-wrap items-center justify-between gap-2;
+  }
+
   .discovery-feature-stats {
-    @apply flex items-center gap-3 text-sm;
+    @apply flex flex-wrap items-center gap-3 text-sm;
     color: #64748b;
-    white-space: nowrap;
+    white-space: normal;
   }
 
   .discovery-feature-actions {
