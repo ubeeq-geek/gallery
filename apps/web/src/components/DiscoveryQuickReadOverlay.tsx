@@ -455,9 +455,13 @@ const ShortStoryPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; po
 
 export const RichPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
   const renderKind = inferPostRenderKind(post);
-  return renderKind === 'story'
-    ? <StoryPostRenderer item={item} post={post} />
-    : <StandardPostRenderer item={item} post={post} />;
+  if (renderKind !== 'story') {
+    return <StandardPostRenderer item={item} post={post} />;
+  }
+  const storyFormat = getPostFormat(post, 'story');
+  return storyFormat === 'short'
+    ? <ShortStoryPostRenderer item={item} post={post} />
+    : <StoryPostRenderer item={item} post={post} />;
 };
 
 const DiscoverySecondaryRail = ({
