@@ -455,6 +455,13 @@ const ShortStoryPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; po
 
 export const RichPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
   const renderKind = inferPostRenderKind(post);
+  if (renderKind === 'image') {
+    return (
+      <div className="discovery-quickread-content-flow discovery-quickread-story-flow post-reading">
+        <StandardPostRenderer item={item} post={post} storyMode />
+      </div>
+    );
+  }
   if (renderKind !== 'story') {
     return <StandardPostRenderer item={item} post={post} />;
   }
