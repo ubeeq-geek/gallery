@@ -72,6 +72,35 @@
             "template": "default",
             "layout": "standard"
           }
+        },
+        {
+          "title": "Anne YouTube Short",
+          "slug": "anne-youtube-short",
+          "summary": "Short-form video post backed by a YouTube Shorts embed.",
+          "discoveryMode": "selected",
+          "postType": "video",
+          "postFormat": "short",
+          "blocks": [
+            {
+              "type": "embed",
+              "url": "https://youtube.com/shorts/xQknAlRnaM4?si=OUE55670yoyutWwY",
+              "title": "YouTube short",
+              "caption": "Embedded from YouTube Shorts.",
+              "payload": {
+                "provider": "youtube",
+                "format": "short"
+              }
+            },
+            {
+              "type": "paragraph",
+              "text": "YouTube embeds can be used in short-form and long-form video posts without uploading a local video file."
+            }
+          ],
+          "metadata": {
+            "template": "default",
+            "layout": "video",
+            "videoFormat": "short"
+          }
         }
       ]
     },

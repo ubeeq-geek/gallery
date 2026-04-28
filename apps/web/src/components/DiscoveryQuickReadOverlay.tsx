@@ -182,6 +182,37 @@ type DiscoveryQuickReadOverlayProps = {
 
 type PostRenderKind = PostType;
 
+const getYouTubeEmbed = (url?: string): { src: string; isShort: boolean } | null => {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.replace(/^www\./, '').toLowerCase();
+    let videoId = '';
+    let isShort = false;
+
+    if (hostname === 'youtu.be') {
+      videoId = parsed.pathname.split('/').filter(Boolean)[0] || '';
+    } else if (hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'youtube-nocookie.com') {
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parts[0] === 'shorts') {
+        videoId = parts[1] || '';
+        isShort = true;
+      } else if (parts[0] === 'embed') {
+        videoId = parts[1] || '';
+      } else {
+        videoId = parsed.searchParams.get('v') || '';
+      }
+    }
+
+    if (!/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) return null;
+    const embed = new URL(`https://www.youtube-nocookie.com/embed/${videoId}`);
+    if (isShort) embed.searchParams.set('playsinline', '1');
+    return { src: embed.toString(), isShort };
+  } catch {
+    return null;
+  }
+};
+
 const splitParagraphs = (text?: string): string[] => {
   if (!text) return [];
   return text
@@ -653,6 +684,42 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
           </audio>
         </div>
       );
+    }
+    if (block.type === 'embed') {
+      const provider = typeof block.payload?.provider === 'string' ? block.payload.provider.toLowerCase() : '';
+      const youtube = provider === 'youtube' || provider === 'youtube-shorts' || !provider
+        ? getYouTubeEmbed(block.url)
+        : null;
+      const isShortEmbed = youtube?.isShort || block.payload?.format === 'short' || block.payload?.layout === 'short';
+      if (youtube) {
+        return (
+          <figure key={key} className={`discovery-quickread-embed-figure${isShortEmbed ? ' is-short' : ''}`}>
+            {block.title ? <figcaption>{block.title}</figcaption> : null}
+            <div className="discovery-quickread-embed-frame">
+              <iframe
+                src={youtube.src}
+                title={block.title || block.label || 'YouTube video'}
+                loading="lazy"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                allowFullScreen
+                referrerPolicy="strict-origin-when-cross-origin"
+              />
+            </div>
+            {block.text || block.caption ? <p className="small">{renderInlineText(block.caption || block.text)}</p> : null}
+          </figure>
+        );
+      }
+      if (block.url) {
+        return (
+          <div key={key} className="panel">
+            <a href={block.url} target="_blank" rel="noreferrer" className="no-underline">
+              {block.label || block.title || block.url}
+            </a>
+            {block.text ? <p className="small mt-2">{renderInlineText(block.text)}</p> : null}
+          </div>
+        );
+      }
+      return null;
     }
     if (block.type === 'html_fragment') {
       return (

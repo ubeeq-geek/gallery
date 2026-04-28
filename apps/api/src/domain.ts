@@ -558,6 +558,8 @@ export interface TrendingFeedItem {
   title: string;
   previewKey: string;
   previewPosterKey?: string;
+  externalPreviewUrl?: string;
+  externalPreviewPosterUrl?: string;
   thumbnailKeys?: Media['thumbnailKeys'];
   width?: number;
   height?: number;

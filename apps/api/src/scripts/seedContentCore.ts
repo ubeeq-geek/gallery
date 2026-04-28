@@ -1838,7 +1838,7 @@ const main = async () => {
       const creatorFiles = seed.filePrefix
         ? mediaFiles.filter((file) => normalize(file.filename).startsWith(normalize(seed.filePrefix as string)))
         : mediaFiles.filter((file) => normalize(file.relativePath.replace(/\\/g, '/')).startsWith(normalizedSlugPrefix));
-      if (!seed.filePrefix && creatorFiles.length === 0) {
+      if (!seed.filePrefix && creatorFiles.length === 0 && !seed.posts?.length) {
         throw new Error(`Creator ${seed.name} has no explicit media and no files under media/${seed.slug}/`);
       }
       const selectedCreatorFiles = seed.includePrefixes?.length

@@ -3414,6 +3414,7 @@ function HomePage({
     const shouldLargeCrop = false;
     const frameRatio = forceLandscapeFrame ? Math.max(1.35, ratio) : (shouldSquareCrop ? 1 : ratio);
     const isSmallLandscape = feedDensity === 'small' && !shouldSquareCrop && ratio >= 1.25;
+    const isShortVideoPoster = assetType === 'video' && (item.postFormat === 'short' || frameRatio < 0.8);
     const largeCardClass = feedDensity === 'large' ? ' density-large-card' : '';
     const compactCardClass = compactCard ? ' is-compact' : '';
     const largeCropClass = shouldLargeCrop ? ' large-crop' : '';
@@ -3438,7 +3439,7 @@ function HomePage({
           onClick={() => void openFocusedDiscovery(item)}
         >
           <div
-            className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}${nonCropClass}`}
+            className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}${nonCropClass}${isShortVideoPoster ? ' is-short-video-poster' : ''}`}
             style={{
               aspectRatio: `${frameRatio.toFixed(3)} / 1`
             }}

@@ -850,8 +850,8 @@
       "description": "Timeless stories, brought to light.",
       "branding": {
         "profileImage": {
-          "file": "amphoryn/hoichi-1-1.jpg",
-          "altText": "Amphoryn logo",
+          "file": "amphoryn/amphoryn-wordmark-square.jpg",
+          "altText": "Amphoryn",
           "squareCrop": {
             "x": 120,
             "y": 40,
@@ -1553,6 +1553,43 @@
           ],
           "postType": "story",
           "postFormat": "long"
+        }
+      ]
+    },
+    {
+      "name": "Incredible Earth",
+      "slug": "incredible-earth",
+      "description": "EARTH IS INCREDIBLE",
+      "posts": [
+        {
+          "title": "Nature Sounds",
+          "slug": "nature-sounds",
+          "summary": "Short-form video post backed by a YouTube Shorts embed.",
+          "groupingSlug": "incredible-earth-default",
+          "discoveryMode": "primary",
+          "postType": "video",
+          "postFormat": "short",
+          "blocks": [
+            {
+              "type": "embed",
+              "url": "https://youtube.com/shorts/QRhLdYWEPB0?si=pxXwEJol2TMfZSCo",
+              "title": "YouTube short",
+              "caption": "Embedded from YouTube Shorts.",
+              "payload": {
+                "provider": "youtube",
+                "format": "short"
+              }
+            },
+            {
+              "type": "paragraph",
+              "text": "YouTube embeds can be used in short-form and long-form video posts without uploading a local video file."
+            }
+          ],
+          "metadata": {
+            "template": "default",
+            "layout": "video",
+            "videoFormat": "short"
+          }
         }
       ]
     }

@@ -51,8 +51,10 @@ interface CandidateItem {
   effectiveAiDisclosure: AiDisclosure;
   effectiveHeavyTopics: HeavyTopic[];
   title: string;
-  previewKey: string;
+  previewKey?: string;
   previewPosterKey?: string;
+  externalPreviewUrl?: string;
+  externalPreviewPosterUrl?: string;
   thumbnailKeys?: TrendingFeedItem['thumbnailKeys'];
   width: number;
   height: number;
@@ -76,6 +78,59 @@ const resolveTrendingPreviewKeys = (
     previewKey: item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewKey,
     previewPosterKey: undefined
   };
+};
+
+const getYouTubeEmbedInfo = (url?: string): { videoId: string; thumbnailUrl: string; isShort: boolean } | null => {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.replace(/^www\./, '').toLowerCase();
+    let videoId = '';
+    let isShort = false;
+    if (hostname === 'youtu.be') {
+      videoId = parsed.pathname.split('/').filter(Boolean)[0] || '';
+    } else if (hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'youtube-nocookie.com') {
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parts[0] === 'shorts') {
+        videoId = parts[1] || '';
+        isShort = true;
+      } else if (parts[0] === 'embed') {
+        videoId = parts[1] || '';
+      } else {
+        videoId = parsed.searchParams.get('v') || '';
+      }
+    }
+    if (!/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) return null;
+    return {
+      videoId,
+      thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      isShort
+    };
+  } catch {
+    return null;
+  }
+};
+
+const findYouTubeEmbedInfo = (blocks: Post['blocks']): { videoId: string; thumbnailUrl: string; isShort: boolean } | null => {
+  for (const block of blocks) {
+    if (block.type === 'embed') {
+      const provider = typeof block.payload?.provider === 'string' ? block.payload.provider.toLowerCase() : '';
+      const info = provider === 'youtube' || provider === 'youtube-shorts' || !provider
+        ? getYouTubeEmbedInfo(block.url)
+        : null;
+      if (info) {
+        return {
+          ...info,
+          isShort: info.isShort || block.payload?.format === 'short' || block.payload?.layout === 'short'
+        };
+      }
+    }
+    if (block.blocks?.length) {
+      const child = findYouTubeEmbedInfo(block.blocks);
+      if (child) return child;
+    }
+  }
+  return null;
 };
 
 const normalizePostType = (post: Pick<Post, 'metadata' | 'blocks' | 'media' | 'primaryMediaId'>, mediaById?: Map<string, Pick<Media, 'mediaId' | 'assetType'>>): PostType => {
@@ -207,6 +262,10 @@ const buildCandidates = async (
 
   const mediaRows = await Promise.all(groupings.map(async (grouping) => ({ grouping, media: await store.getMediaByGrouping(grouping.groupingId) })));
   const groupingById = new Map(groupings.map((grouping) => [grouping.groupingId, grouping]));
+  const groupingByCreatorId = new Map<string, Grouping>();
+  for (const grouping of groupings) {
+    if (!groupingByCreatorId.has(grouping.creatorId)) groupingByCreatorId.set(grouping.creatorId, grouping);
+  }
   const candidates: CandidateItem[] = [];
 
   const perPostSurfaceLimit = 1;
@@ -246,6 +305,44 @@ const buildCandidates = async (
       const selectedRefs = sortedRefs.filter((ref) => ref.discoverable !== false);
       const refs = primaryRef ? [primaryRef] : selectedRefs.slice(0, 1);
       const limitedRefs = refs.slice(0, perPostSurfaceLimit);
+      if (limitedRefs.length === 0 && postType === 'video') {
+        const youtube = findYouTubeEmbedInfo(post.blocks);
+        const placedGrouping = groupingByCreatorId.get(creatorProfile.creatorId);
+        if (youtube && placedGrouping) {
+          const createdAtMs = asTime(post.publishedAt || post.createdAt) || nowMs;
+          candidates.push({
+            surfaceKey: `post:${post.postId}:youtube:${youtube.videoId}`,
+            surfaceType: 'post_surface',
+            postId: post.postId,
+            imageId: `youtube:${youtube.videoId}`,
+            relatedPostIds: [post.postId],
+            isPrimaryPostSurface: true,
+            assetType: 'video',
+            postType,
+            postFormat: youtube.isShort ? 'short' : postFormat,
+            creatorId: creatorProfile.creatorId,
+            creatorName: creatorProfile?.name || 'Creator',
+            groupingId: placedGrouping.groupingId,
+            groupingSlug: placedGrouping.slug,
+            groupingVisibility: placedGrouping.visibility === 'preview' ? 'preview' : 'free',
+            discoverSquareCropEnabled: false,
+            effectiveContentRating: 'general',
+            effectiveAiDisclosure: creatorProfile.defaultAiDisclosure || 'none',
+            effectiveHeavyTopics: creatorProfile.defaultHeavyTopics || [],
+            title: post.title || 'Video post',
+            previewKey: undefined,
+            previewPosterKey: undefined,
+            externalPreviewUrl: youtube.thumbnailUrl,
+            externalPreviewPosterUrl: youtube.thumbnailUrl,
+            width: youtube.isShort ? 1080 : 1280,
+            height: youtube.isShort ? 1920 : 720,
+            aspectRatio: youtube.isShort ? 0.5625 : 1.77778,
+            createdAt: post.publishedAt || post.createdAt,
+            createdAtMs,
+            recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs))
+          });
+        }
+      }
       for (let refIndex = 0; refIndex < limitedRefs.length; refIndex += 1) {
         const ref = limitedRefs[refIndex];
         const item = mediaById.get(ref.mediaId);
@@ -525,8 +622,10 @@ export const buildTrendingFeedForPeriod = async (
     effectiveAiDisclosure: item.effectiveAiDisclosure,
     effectiveHeavyTopics: item.effectiveHeavyTopics,
     title: item.title,
-    previewKey: item.previewKey,
+    previewKey: item.previewKey || '',
     previewPosterKey: item.previewPosterKey,
+    externalPreviewUrl: item.externalPreviewUrl,
+    externalPreviewPosterUrl: item.externalPreviewPosterUrl,
     thumbnailKeys: item.thumbnailKeys,
     width: item.width,
     height: item.height,

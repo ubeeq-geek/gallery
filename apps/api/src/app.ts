@@ -1184,6 +1184,59 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return post.media.length > 1 ? 'multi' : 'single';
   };
 
+  const getYouTubeEmbedInfo = (url?: string): { videoId: string; thumbnailUrl: string; isShort: boolean } | null => {
+    if (!url) return null;
+    try {
+      const parsed = new URL(url);
+      const hostname = parsed.hostname.replace(/^www\./, '').toLowerCase();
+      let videoId = '';
+      let isShort = false;
+      if (hostname === 'youtu.be') {
+        videoId = parsed.pathname.split('/').filter(Boolean)[0] || '';
+      } else if (hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'youtube-nocookie.com') {
+        const parts = parsed.pathname.split('/').filter(Boolean);
+        if (parts[0] === 'shorts') {
+          videoId = parts[1] || '';
+          isShort = true;
+        } else if (parts[0] === 'embed') {
+          videoId = parts[1] || '';
+        } else {
+          videoId = parsed.searchParams.get('v') || '';
+        }
+      }
+      if (!/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) return null;
+      return {
+        videoId,
+        thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        isShort
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const findYouTubeEmbedInfo = (blocks: Post['blocks']): { videoId: string; thumbnailUrl: string; isShort: boolean } | null => {
+    for (const block of blocks) {
+      if (block.type === 'embed') {
+        const provider = typeof block.payload?.provider === 'string' ? block.payload.provider.toLowerCase() : '';
+        const info = provider === 'youtube' || provider === 'youtube-shorts' || !provider
+          ? getYouTubeEmbedInfo(block.url)
+          : null;
+        if (info) {
+          return {
+            ...info,
+            isShort: info.isShort || block.payload?.format === 'short' || block.payload?.layout === 'short'
+          };
+        }
+      }
+      if (block.blocks?.length) {
+        const child = findYouTubeEmbedInfo(block.blocks);
+        if (child) return child;
+      }
+    }
+    return null;
+  };
+
   const normalizeDiscoveryItemType = (value: string): DiscoveryItemType | null => {
     const normalized = value.trim().toLowerCase();
     if (!normalized) return null;
@@ -1309,6 +1362,10 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return canViewBySchedule(grouping.publishAt, grouping.publicReleaseAt, nowMs, false);
     });
     const groupingById = new Map(allGalleries.map((grouping) => [grouping.groupingId, grouping]));
+    const groupingByCreatorId = new Map<string, Grouping>();
+    for (const grouping of allGalleries) {
+      if (!groupingByCreatorId.has(grouping.creatorId)) groupingByCreatorId.set(grouping.creatorId, grouping);
+    }
     const candidates: Array<{
       imageId: string;
       assetType: 'image' | 'video' | 'audio';
@@ -1336,6 +1393,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       recencyBoost: number;
       previewKey?: string;
       previewPosterKey?: string;
+      externalPreviewUrl?: string;
+      externalPreviewPosterUrl?: string;
       width: number;
       height: number;
       aspectRatio: number;
@@ -1390,6 +1449,46 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
           const selectedRefs = sortedRefs.filter((ref) => ref.discoverable !== false);
           const refs = primaryRef ? [primaryRef] : selectedRefs.slice(0, 1);
           const limitedRefs = refs.slice(0, perPostSurfaceLimit);
+          if (limitedRefs.length === 0 && postType === 'video') {
+            const youtube = findYouTubeEmbedInfo(post.blocks);
+            const placedGrouping = groupingByCreatorId.get(creatorProfile.creatorId);
+            if (youtube && placedGrouping) {
+              const createdAtMs = asTime(post.publishedAt || post.createdAt) || nowMs;
+              candidates.push({
+                imageId: `youtube:${youtube.videoId}`,
+                assetType: 'video',
+                postType,
+                postFormat: youtube.isShort ? 'short' : postFormat,
+                surfaceType: 'post',
+                creatorId: creatorProfile.creatorId,
+                groupingId: placedGrouping.groupingId,
+                groupingSlug: placedGrouping.slug,
+                groupingVisibility: placedGrouping.visibility === 'preview' ? 'preview' : 'free',
+                postId: post.postId,
+                postSlug: post.slug,
+                postTitle: post.title,
+                postSummary: post.summary,
+                relatedPostIds: [post.postId],
+                isPrimaryPostSurface: true,
+                discoverSquareCropEnabled: false,
+                effectiveContentRating: 'general',
+                effectiveAiDisclosure: creatorProfile.defaultAiDisclosure || 'none',
+                effectiveHeavyTopics: creatorProfile.defaultHeavyTopics || [],
+                title: post.title || 'Video post',
+                thumbnailKeys: undefined,
+                createdAt: post.publishedAt || post.createdAt,
+                createdAtMs,
+                recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs)),
+                previewKey: undefined,
+                previewPosterKey: undefined,
+                externalPreviewUrl: youtube.thumbnailUrl,
+                externalPreviewPosterUrl: youtube.thumbnailUrl,
+                width: youtube.isShort ? 1080 : 1280,
+                height: youtube.isShort ? 1920 : 720,
+                aspectRatio: youtube.isShort ? 0.5625 : 1.77778
+              });
+            }
+          }
           for (let refIndex = 0; refIndex < limitedRefs.length; refIndex += 1) {
             const ref = limitedRefs[refIndex];
             const item = mediaById.get(ref.mediaId);
@@ -1511,8 +1610,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         effectiveHeavyTopics: disclosureProjection.effectiveHeavyTopics,
         displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
         title: item.title,
-        previewUrl: await publicMediaUrl(item.previewKey) || '',
-        previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
+        previewUrl: item.externalPreviewUrl || await publicMediaUrl(item.previewKey) || '',
+        previewPosterUrl: item.externalPreviewPosterUrl || await publicMediaUrl(item.previewPosterKey),
         thumbnailUrls: item.thumbnailKeys
           ? Object.fromEntries(
               await Promise.all(
@@ -2258,8 +2357,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
             effectiveHeavyTopics: disclosureProjection.effectiveHeavyTopics,
             displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
             title: post?.title || item.title,
-            previewUrl: await publicMediaUrl(item.previewKey) || '',
-            previewPosterUrl: await publicMediaUrl(item.previewPosterKey),
+            previewUrl: item.externalPreviewUrl || await publicMediaUrl(item.previewKey) || '',
+            previewPosterUrl: item.externalPreviewPosterUrl || await publicMediaUrl(item.previewPosterKey),
             thumbnailUrls: item.thumbnailKeys
               ? Object.fromEntries(
                   await Promise.all(
