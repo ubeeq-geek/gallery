@@ -2219,7 +2219,8 @@ function HomePage({
   };
   type TrendingMediumBlock =
     | { kind: 'pair'; row: TrendingPairRow }
-    | { kind: 'pair-with-insets'; row: TrendingPairRow; insets: TrendingCardEntry[]; insetOn: 'left' | 'right' };
+    | { kind: 'pair-with-insets'; row: TrendingPairRow; insets: TrendingCardEntry[]; insetOn: 'left' | 'right' }
+    | { kind: 'post-landscape'; entry: TrendingCardEntry };
   type MediumBlockBuildResult = {
     blocks: TrendingMediumBlock[];
     consumedBorrowedImageIds: Set<string>;
@@ -2678,6 +2679,17 @@ function HomePage({
     return fallbackAspectRatios[index % fallbackAspectRatios.length];
   };
 
+  const getKnownTrendingRatio = (item: TrendingImage): number | null => {
+    const aspectRatio = Number(item.aspectRatio || 0);
+    if (Number.isFinite(aspectRatio) && aspectRatio > 0) return aspectRatio;
+    const width = Number(item.width || 0);
+    const height = Number(item.height || 0);
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      return width / height;
+    }
+    return null;
+  };
+
   const buildPairRows = (items: TrendingImage[]): TrendingPairRow[] => {
     const rows: TrendingPairRow[] = [];
     for (let i = 0; i < items.length; i += 2) {
@@ -2720,10 +2732,28 @@ function HomePage({
     const blocks: TrendingMediumBlock[] = [];
     const consumedBorrowedImageIds = new Set<string>();
     let remainingPrimaryEntries = primaryEntries.length;
+    let promotedLandscapePosts = 0;
     const maxLayoutPromotionOffset = 100;
+    const isPostEntry = (entry: TrendingCardEntry): boolean => (
+      entry.item.surfaceType === 'post' || Boolean(entry.item.postId)
+    );
     const isSquareEligible = (entry: TrendingCardEntry): boolean => (
       entry.item.discoverSquareCropEnabled !== false && getTrendingRatio(entry.item, entry.index) <= 0.95
     );
+    const isMediumLandscapePostEligible = (entry: TrendingCardEntry): boolean => (
+      isPostEntry(entry)
+      && entry.item.discoverSquareCropEnabled !== false
+      && (getKnownTrendingRatio(entry.item) || 0) >= 1.35
+    );
+    const shouldPromoteMediumPostLandscape = (entry: TrendingCardEntry): boolean => {
+      let hash = 2166136261;
+      const id = entry.item.postId || entry.item.imageId || String(entry.index);
+      for (let i = 0; i < id.length; i += 1) {
+        hash ^= id.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0) % 4 === 0;
+    };
     const canPromoteWithinWindow = (entry: TrendingCardEntry, baseIndex: number): boolean => (
       entry.index - baseIndex <= maxLayoutPromotionOffset
     );
@@ -2739,6 +2769,22 @@ function HomePage({
     };
 
     while (remainingPrimaryEntries > 0 && queue.length > 0) {
+      const first = queue[0]?.entry;
+      if (
+        first
+        && isMediumLandscapePostEligible(first)
+        && (promotedLandscapePosts === 0 || shouldPromoteMediumPostLandscape(first))
+      ) {
+        const entry = consumeAt(0);
+        if (!entry) break;
+        promotedLandscapePosts += 1;
+        blocks.push({
+          kind: 'post-landscape',
+          entry
+        });
+        continue;
+      }
+
       if (queue.length >= 3) {
         const left = queue[0]?.entry;
         const right = queue[1]?.entry;
@@ -3341,7 +3387,7 @@ function HomePage({
   const renderTrendingCard = (
     item: TrendingImage,
     cardIndex: number,
-    options?: { forceSquareFrame?: boolean; compactCard?: boolean; preload?: boolean }
+    options?: { forceSquareFrame?: boolean; forceLandscapeFrame?: boolean; compactCard?: boolean; preload?: boolean }
   ) => {
     const isPostSurface = item.surfaceType === 'post' || Boolean(item.postId);
     const assetType = item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image';
@@ -3361,11 +3407,12 @@ function HomePage({
     const ratio = displayAspectRatio(item, cardIndex);
     const allowDiscoverSquareCrop = item.discoverSquareCropEnabled !== false;
     const forceSquareFrame = Boolean(options?.forceSquareFrame);
+    const forceLandscapeFrame = Boolean(options?.forceLandscapeFrame);
     const compactCard = Boolean(options?.compactCard);
     const preload = Boolean(options?.preload);
     const shouldSquareCrop = (feedDensity === 'small' || forceSquareFrame) && allowDiscoverSquareCrop;
     const shouldLargeCrop = false;
-    const frameRatio = shouldSquareCrop ? 1 : ratio;
+    const frameRatio = forceLandscapeFrame ? Math.max(1.35, ratio) : (shouldSquareCrop ? 1 : ratio);
     const isSmallLandscape = feedDensity === 'small' && !shouldSquareCrop && ratio >= 1.25;
     const largeCardClass = feedDensity === 'large' ? ' density-large-card' : '';
     const compactCardClass = compactCard ? ' is-compact' : '';
@@ -3521,20 +3568,35 @@ function HomePage({
       const mediumBlocks = preparedMediumBlocks || stableMediumBlockBuild(rows).blocks;
       return (
         <div className="discovery-pair-feed density-medium-mixed">
-          {mediumBlocks.map((block, blockIndex) => (
-            block.kind === 'pair' ? (
-              <div
-                key={`medium-pair-${block.row.left.imageId}-${block.row.right?.imageId || 'single'}`}
-                className={`discovery-pair-row density-medium${block.row.right ? '' : ' single'}`}
-                style={{
-                  '--pair-cols-mobile': '1fr 1fr',
-                  '--pair-cols': pairTemplateColumns(block.row, 'medium')
-                } as any}
-              >
-                {renderTrendingCard(block.row.left, block.row.startIndex, { preload: preloadAll })}
-                {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1, { preload: preloadAll })}
-              </div>
-            ) : (
+          {mediumBlocks.map((block) => {
+            if (block.kind === 'pair') {
+              return (
+                <div
+                  key={`medium-pair-${block.row.left.imageId}-${block.row.right?.imageId || 'single'}`}
+                  className={`discovery-pair-row density-medium${block.row.right ? '' : ' single'}`}
+                  style={{
+                    '--pair-cols-mobile': '1fr 1fr',
+                    '--pair-cols': pairTemplateColumns(block.row, 'medium')
+                  } as any}
+                >
+                  {renderTrendingCard(block.row.left, block.row.startIndex, { preload: preloadAll })}
+                  {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1, { preload: preloadAll })}
+                </div>
+              );
+            }
+
+            if (block.kind === 'post-landscape') {
+              return (
+                <div
+                  key={`medium-post-landscape-${block.entry.item.imageId}`}
+                  className="discovery-pair-row density-medium single discovery-medium-post-landscape-row"
+                >
+                  {renderTrendingCard(block.entry.item, block.entry.index, { forceLandscapeFrame: true, preload: preloadAll })}
+                </div>
+              );
+            }
+
+            return (
               <div
                 key={`medium-pair-inset-${block.row.left.imageId}-${block.row.right?.imageId || 'single'}-${block.insets.map((entry) => entry.item.imageId).join('-')}`}
                 className="discovery-pair-row density-medium discovery-pair-row-with-inset"
@@ -3561,8 +3623,8 @@ function HomePage({
                   </>
                 )}
               </div>
-            )
-          ))}
+            );
+          })}
         </div>
       );
     }
@@ -3774,10 +3836,7 @@ function HomePage({
                 {densityLabel[option]}
               </button>
             ))}
-          </div>
-          <p className="small m-0 pt-4">
-            Small shows more items. Large makes each item bigger.
-          </p>
+          </div>          
         </div>
       );
     }
@@ -4020,10 +4079,7 @@ function HomePage({
                       {densityLabel[option]}
                     </button>
                   ))}
-                </div>
-                <p className="small m-0 pt-4">
-                  Small shows more items. Large makes each item bigger.
-                </p>
+                </div>                
               </div>
 
               <div className="discovery-search-card">

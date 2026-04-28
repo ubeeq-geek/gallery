@@ -222,10 +222,7 @@ export default function DiscoveryControlsPanel({
                 {densityLabel[option]}
               </button>
             ))}
-          </div>
-          <p className="small m-0 pt-4">
-            Small shows more items. Large makes each item bigger.
-          </p>
+          </div>          
         </div>
       );
     }
@@ -417,10 +414,7 @@ export default function DiscoveryControlsPanel({
                     {densityLabel[option]}
                   </button>
                 ))}
-              </div>
-              <p className="small m-0 pt-4">
-                Small shows more items. Large makes each item bigger.
-              </p>
+              </div>              
             </div>
 
             <div className="discovery-search-card">

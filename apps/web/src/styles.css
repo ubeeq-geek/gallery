@@ -1392,7 +1392,7 @@
   }
 
   .discovery-density-options button {
-    @apply rounded-2xl border px-3 py-3 text-sm font-semibold;
+    @apply rounded-2xl border px-3 py-2 text-sm font-semibold;
     border-color: #b6c7de;
     background: #f8fbff;
     color: #334155;
@@ -1566,7 +1566,7 @@
 
   .discovery-home-filter-shell .discovery-density-options button {
     border-radius: 0.8rem;
-    padding: 0.6rem;
+    padding: 0.38rem 0.6rem;
     font-size: 0.8rem;
   }
 
