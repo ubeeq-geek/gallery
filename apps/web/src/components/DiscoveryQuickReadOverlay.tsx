@@ -73,6 +73,15 @@ type OverlayPostMedia = {
   title?: string;
   previewUrl: string;
   previewPosterUrl?: string;
+  thumbnailUrls?: {
+    w320?: string;
+    w640?: string;
+    w1280?: string;
+    w1920?: string;
+    square256?: string;
+    square512?: string;
+    square1024?: string;
+  };
   caption?: string;
   credit?: OverlayMediaCredit;
   sortOrder?: number;
@@ -87,6 +96,53 @@ type OverlayPostMedia = {
       order?: number;
     };
   };
+};
+
+const getProgressiveImageUrls = (media: Pick<OverlayPostMedia, 'previewUrl' | 'thumbnailUrls'>) => ({
+  placeholder: media.thumbnailUrls?.w320 || media.thumbnailUrls?.w640 || media.previewUrl,
+  full: media.thumbnailUrls?.w1920 || media.thumbnailUrls?.w1280 || media.previewUrl
+});
+
+const ProgressivePostImage = ({
+  media,
+  alt,
+  className,
+  blur
+}: {
+  media: OverlayPostMedia;
+  alt: string;
+  className?: string;
+  blur?: boolean;
+}) => {
+  const { placeholder, full } = getProgressiveImageUrls(media);
+  const [src, setSrc] = useState(placeholder);
+  const [loadedFull, setLoadedFull] = useState(placeholder === full);
+
+  useEffect(() => {
+    setSrc(placeholder);
+    setLoadedFull(placeholder === full);
+    if (!full || full === placeholder) return undefined;
+    const image = new Image();
+    image.onload = () => {
+      setSrc(full);
+      setLoadedFull(true);
+    };
+    image.src = full;
+    return () => {
+      image.onload = null;
+    };
+  }, [full, placeholder]);
+
+  return (
+    <img
+      className={`${className || ''}${loadedFull ? ' is-loaded' : ' is-progressive'}`.trim()}
+      src={src}
+      alt={alt}
+      loading="eager"
+      decoding="async"
+      style={{ filter: blur ? 'blur(28px)' : undefined }}
+    />
+  );
 };
 
 type OverlayPost = {
@@ -316,7 +372,21 @@ const renderMediaFigure = (
             <source src={media.previewUrl} />
           </video>
         ) : (
-          <img src={media.previewUrl} alt={media.title || 'Post media'} loading="eager" decoding="async" style={{ filter: blur ? 'blur(28px)' : undefined }} />
+          <>
+            <ProgressivePostImage media={media} alt={media.title || 'Post media'} blur={blur} />
+            <button
+              type="button"
+              className="discovery-quickread-fullscreen-btn"
+              onClick={(event) => {
+                const frame = event.currentTarget.closest('.discovery-quickread-media-frame');
+                if (frame instanceof HTMLElement && frame.requestFullscreen) {
+                  void frame.requestFullscreen();
+                }
+              }}
+            >
+              Full screen
+            </button>
+          </>
         )}
       </div>
       {showMeta ? <MediaMeta media={media} /> : null}
@@ -370,22 +440,18 @@ const ComparisonSlider = ({ media, blur }: { media: OverlayPostMedia; blur?: boo
   return (
     <figure className="discovery-quickread-media-figure discovery-comparison-figure">
       <div className={`discovery-comparison-frame${hasDimensions ? ' has-ratio' : ' no-ratio'}`} style={comparisonStyle}>
-        <img
+        <ProgressivePostImage
+          media={baseMedia}
           className="discovery-comparison-img"
-          src={baseMedia.previewUrl}
           alt={baseMedia.title || 'Comparison base'}
-          loading="eager"
-          decoding="async"
-          style={{ filter: blur ? 'blur(28px)' : undefined }}
+          blur={blur}
         />
         <div className="discovery-comparison-overlay">
-          <img
+          <ProgressivePostImage
+            media={overlayMedia}
             className="discovery-comparison-img"
-            src={overlayMedia.previewUrl}
             alt={overlayMedia.title || 'Comparison overlay'}
-            loading="eager"
-            decoding="async"
-            style={{ filter: blur ? 'blur(28px)' : undefined }}
+            blur={blur}
           />
         </div>
         <div className="discovery-comparison-handle" aria-hidden="true" />
@@ -398,6 +464,18 @@ const ComparisonSlider = ({ media, blur }: { media: OverlayPostMedia; blur?: boo
           aria-label="Compare images"
           onChange={(event) => setPosition(Number(event.target.value))}
         />
+        <button
+          type="button"
+          className="discovery-quickread-fullscreen-btn"
+          onClick={(event) => {
+            const frame = event.currentTarget.closest('.discovery-comparison-frame');
+            if (frame instanceof HTMLElement && frame.requestFullscreen) {
+              void frame.requestFullscreen();
+            }
+          }}
+        >
+          Full screen
+        </button>
       </div>
       <div className="discovery-comparison-labels" aria-hidden="true">
         <span>{overlayMedia.comparison?.role || media.comparison?.role || 'Comparison'}</span>
@@ -412,6 +490,7 @@ const MediaCarousel = ({ media, blur }: { media: OverlayPostMedia[]; blur?: bool
   const orderedMedia = media.filter((item) => item.previewUrl).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const [activeIndex, setActiveIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [speedSeconds, setSpeedSeconds] = useState(4);
   const activeMedia = orderedMedia[activeIndex] || orderedMedia[0];
   const hasMultiple = orderedMedia.length > 1;
 
@@ -419,9 +498,9 @@ const MediaCarousel = ({ media, blur }: { media: OverlayPostMedia[]; blur?: bool
     if (!playing || !hasMultiple) return undefined;
     const timer = window.setInterval(() => {
       setActiveIndex((current) => (current + 1) % orderedMedia.length);
-    }, 4200);
+    }, speedSeconds * 1000);
     return () => window.clearInterval(timer);
-  }, [hasMultiple, orderedMedia.length, playing]);
+  }, [hasMultiple, orderedMedia.length, playing, speedSeconds]);
 
   if (!activeMedia) return null;
 
@@ -450,8 +529,21 @@ const MediaCarousel = ({ media, blur }: { media: OverlayPostMedia[]; blur?: bool
             className={`discovery-quickread-slideshow-btn${playing ? ' is-active' : ''}`}
             onClick={() => setPlaying((value) => !value)}
           >
-            {playing ? 'Pause slideshow' : 'Slideshow'}
+            {playing ? 'Pause' : 'Play'}
           </button>
+          <label className="discovery-quickread-speed-control">
+            <span>Speed</span>
+            <input
+              type="range"
+              min="1"
+              max="8"
+              step="0.5"
+              value={speedSeconds}
+              aria-label="Slideshow speed in seconds"
+              onChange={(event) => setSpeedSeconds(Number(event.target.value))}
+            />
+            <span>{speedSeconds.toFixed(speedSeconds % 1 === 0 ? 0 : 1)}s</span>
+          </label>
         </div>
       ) : null}
     </div>

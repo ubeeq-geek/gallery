@@ -663,12 +663,23 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const comparisonSource = ref.comparison?.comparisonItem?.mediaId
       ? mediaById.get(ref.comparison.comparisonItem.mediaId)
       : undefined;
+    const buildThumbnailUrls = async (thumbnailKeys?: Media['thumbnailKeys']) => thumbnailKeys
+      ? Object.fromEntries(
+          await Promise.all(
+            Object.entries(thumbnailKeys).map(async ([name, key]) => [
+              name,
+              await publicMediaUrl(key)
+            ])
+          )
+        )
+      : undefined;
     return {
       mediaId: source.mediaId,
       assetType: (source.assetType || 'image') as 'image' | 'video' | 'audio',
       title: source.title || source.originalFilename || source.mediaId,
       previewUrl: await publicMediaUrl(source.previewKey),
       previewPosterUrl: await publicMediaUrl(source.previewPosterKey),
+      thumbnailUrls: await buildThumbnailUrls(source.thumbnailKeys),
       width: source.width,
       height: source.height,
       discoverable: ref.discoverable !== false,
@@ -687,6 +698,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
                   title: comparisonSource.title || comparisonSource.originalFilename || comparisonSource.mediaId,
                   previewUrl: await publicMediaUrl(comparisonSource.previewKey),
                   previewPosterUrl: await publicMediaUrl(comparisonSource.previewPosterKey),
+                  thumbnailUrls: await buildThumbnailUrls(comparisonSource.thumbnailKeys),
                   width: comparisonSource.width,
                   height: comparisonSource.height,
                   role: ref.comparison.comparisonItem?.role,

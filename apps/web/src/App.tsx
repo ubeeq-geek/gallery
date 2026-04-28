@@ -248,7 +248,7 @@ const matchesDiscoverySearch = (needle: string, fields: Array<string | undefined
 };
 const getDensityRangeStyle = (sliderValue: number): CSSProperties => {
   const clamped = Math.max(0, Math.min(2, sliderValue));
-  const darkSegmentWidth = 64;
+  const darkSegmentWidth = 44.8;
   const start = (clamped / 2) * (100 - darkSegmentWidth);
   const end = start + darkSegmentWidth;
   return {
@@ -2233,7 +2233,7 @@ function HomePage({
   const [trendingReloadNonce, setTrendingReloadNonce] = useState(0);
   const [discoverySort, setDiscoverySort] = useState<'latest' | 'trending'>('trending');
   const [trendingPeriod, setTrendingPeriod] = useState<'hourly' | 'daily'>('daily');
-  const [feedDensity, setFeedDensity] = useState<FeedDensity>('large');
+  const [feedDensity, setFeedDensity] = useState<FeedDensity>('medium');
   const [densityViewport, setDensityViewport] = useState<DensityViewport>(() => {
     if (typeof window === 'undefined') return 'desktop';
     if (window.innerWidth >= 1100) return 'desktop';
@@ -3803,7 +3803,7 @@ function HomePage({
 
   return (
     <div className="layout discovery-layout">
-      <section className="panel discovery-hero">
+      <section className="panel discovery-hero discovery-home-hero">
         <div className="discovery-hero-copy">
           <span className="discovery-hero-kicker">Welcome to Ubeeq</span>
           <h1>Creativity. <span>Everywhere.</span></h1>
@@ -3883,7 +3883,7 @@ function HomePage({
       )}
 
       <section id="trending" aria-busy={densitySwitchLoading}>        
-        <div id="discovery-filter-panel" ref={discoveryFilterPanelRef} className="discovery-filter-shell">
+        <div id="discovery-filter-panel" ref={discoveryFilterPanelRef} className="discovery-filter-shell discovery-home-filter-shell">
           <div className="discovery-filter-grid">
             <div className="discovery-filter-left">
               <div>
