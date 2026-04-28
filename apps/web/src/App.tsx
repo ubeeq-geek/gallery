@@ -504,6 +504,31 @@ const isLikelyImageUrl = (url?: string): boolean => {
   if (!url) return false;
   return /\.(avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)(\?|#|$)/i.test(url);
 };
+
+const getYouTubeVideoIdFromDiscoveryItem = (item: Pick<TrendingImage, 'imageId' | 'previewUrl'>): string | null => {
+  if (item.imageId.startsWith('youtube:')) {
+    const id = item.imageId.slice('youtube:'.length);
+    return /^[A-Za-z0-9_-]{6,20}$/.test(id) ? id : null;
+  }
+  try {
+    const parsed = new URL(item.previewUrl);
+    if (parsed.hostname.replace(/^www\./, '').toLowerCase() !== 'i.ytimg.com') return null;
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const videoIndex = parts.indexOf('vi');
+    const id = videoIndex >= 0 ? parts[videoIndex + 1] : '';
+    return /^[A-Za-z0-9_-]{6,20}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+};
+
+const buildYouTubeAutoplayEmbedUrl = (videoId: string): string => {
+  const url = new URL(`https://www.youtube-nocookie.com/embed/${videoId}`);
+  url.searchParams.set('autoplay', '1');
+  url.searchParams.set('playsinline', '1');
+  url.searchParams.set('rel', '0');
+  return url.toString();
+};
 type CreatorProfilePayload = {
   artistId?: string;
   creatorId?: string;
@@ -2276,6 +2301,7 @@ function HomePage({
   const [focusedDiscoveryError, setFocusedDiscoveryError] = useState('');
   const [focusedDiscoveryVideoMuted, setFocusedDiscoveryVideoMuted] = useState(true);
   const [focusedDiscoveryVideoVolume, setFocusedDiscoveryVideoVolume] = useState(1);
+  const [inlineDiscoveryVideoId, setInlineDiscoveryVideoId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const densityTransitionTimersRef = useRef<number[]>([]);
   const densitySwitchRequestRef = useRef<number | null>(null);
@@ -3426,6 +3452,83 @@ function HomePage({
         ? '(min-width: 1100px) 50vw, 100vw'
         : '(min-width: 1100px) 33vw, 50vw';
     const imageSrc = item.thumbnailUrls?.w1280 || item.thumbnailUrls?.w640 || item.previewUrl;
+    const youtubeVideoId = assetType === 'video' ? getYouTubeVideoIdFromDiscoveryItem(item) : null;
+    const youtubeEmbedSrc = youtubeVideoId ? buildYouTubeAutoplayEmbedUrl(youtubeVideoId) : '';
+    const isInlineVideoPlaying = Boolean(youtubeVideoId && inlineDiscoveryVideoId === item.imageId);
+    const mediaFrame = (
+      <div
+        className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}${nonCropClass}${isShortVideoPoster ? ' is-short-video-poster' : ''}${isInlineVideoPlaying ? ' is-inline-playing' : ''}`}
+        style={{
+          aspectRatio: `${frameRatio.toFixed(3)} / 1`
+        }}
+      >
+        {isInlineVideoPlaying ? (
+          <iframe
+            src={youtubeEmbedSrc}
+            title={`${cardTitle} video`}
+            loading="lazy"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
+        ) : (assetType === 'audio') ? (
+          <div className="discovery-audio-preview" aria-label={item.title || 'Audio preview'}>
+            <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+          </div>
+        ) : (assetType === 'video' && !effectivePosterUrl) ? (
+          <video
+            src={item.previewUrl}
+            muted
+            playsInline
+            preload="metadata"
+            aria-label={item.title || 'Video preview'}
+            style={{
+              objectPosition: 'center center',
+              filter: isBlurredByRating ? 'blur(28px)' : undefined
+            }}
+          />
+        ) : (
+          <img
+            src={assetType === 'video' ? (effectivePosterUrl || '') : imageSrc}
+            srcSet={assetType === 'image' ? imageSrcSet : undefined}
+            sizes={assetType === 'image' ? imageSizes : undefined}
+            alt={item.title || 'Artwork preview'}
+            loading={preload || cardIndex < 2 ? 'eager' : 'lazy'}
+            decoding="async"
+            style={{
+              objectPosition: 'center center',
+              filter: isBlurredByRating ? 'blur(28px)' : undefined
+            }}
+          />
+        )}
+        {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
+        {isPostSurface && !isInlineVideoPlaying && (
+          <span
+            className="discovery-chip"
+            style={{ left: visibilityPill ? '6.1rem' : '1rem' }}
+          >
+            {(item.postType || 'story').toUpperCase()}
+          </span>
+        )}
+        {assetType === 'video' && !isInlineVideoPlaying && !isPostSurface && (
+          <span
+            className="discovery-chip"
+            style={{ left: 'unset', right: visibilityPill ? '8.2rem' : (isPostSurface ? '6rem' : '1rem') }}
+          >
+            Video
+          </span>
+        )}
+        {assetType === 'audio' && (
+          <span
+            className="discovery-chip"
+            style={{ left: 'unset', right: visibilityPill ? '8.2rem' : (isPostSurface ? '6rem' : '1rem') }}
+          >
+            Audio
+          </span>
+        )}
+        {isBlurredByRating && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
+      </div>
+    );
 
     return (
       <article
@@ -3433,75 +3536,41 @@ function HomePage({
         className={`discovery-feature-card${isSmallLandscape ? ' is-landscape' : ''}${largeCardClass}${compactCardClass}`}
         style={{ '--media-aspect': frameRatio.toFixed(4) } as any}
       >
-        <button
-          type="button"
-          className="discovery-feature-link discovery-feature-link-btn no-underline"
-          onClick={() => void openFocusedDiscovery(item)}
-        >
-          <div
-            className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}${nonCropClass}${isShortVideoPoster ? ' is-short-video-poster' : ''}`}
-            style={{
-              aspectRatio: `${frameRatio.toFixed(3)} / 1`
-            }}
-          >
-            {(assetType === 'audio') ? (
-              <div className="discovery-audio-preview" aria-label={item.title || 'Audio preview'}>
-                <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
-              </div>
-            ) : (assetType === 'video' && !effectivePosterUrl) ? (
-              <video
-                src={item.previewUrl}
-                muted
-                playsInline
-                preload="metadata"
-                aria-label={item.title || 'Video preview'}
-                style={{
-                  objectPosition: 'center center',
-                  filter: isBlurredByRating ? 'blur(28px)' : undefined
-                }}
-              />
-            ) : (
-              <img
-                src={assetType === 'video' ? (effectivePosterUrl || '') : imageSrc}
-                srcSet={assetType === 'image' ? imageSrcSet : undefined}
-                sizes={assetType === 'image' ? imageSizes : undefined}
-                alt={item.title || 'Artwork preview'}
-                loading={preload || cardIndex < 2 ? 'eager' : 'lazy'}
-                decoding="async"
-                style={{
-                  objectPosition: 'center center',
-                  filter: isBlurredByRating ? 'blur(28px)' : undefined
-                }}
-              />
-            )}
-            {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
-            {isPostSurface && (
-              <span
-                className="discovery-chip"
-                style={{ left: visibilityPill ? '6.1rem' : '1rem' }}
+        <div className="discovery-feature-link no-underline">
+          {isInlineVideoPlaying ? (
+            mediaFrame
+          ) : (
+            <>
+              <button
+                type="button"
+                className="discovery-feature-media-open"
+                onClick={() => void openFocusedDiscovery(item)}
+                aria-label={`Open ${cardTitle}`}
               >
-                {(item.postType || 'story').toUpperCase()}
-              </span>
-            )}
-            {assetType === 'video' && (
-              <span
-                className="discovery-chip"
-                style={{ left: 'unset', right: visibilityPill ? '8.2rem' : (isPostSurface ? '6rem' : '1rem') }}
-              >
-                Video
-              </span>
-            )}
-            {assetType === 'audio' && (
-              <span
-                className="discovery-chip"
-                style={{ left: 'unset', right: visibilityPill ? '8.2rem' : (isPostSurface ? '6rem' : '1rem') }}
-              >
-                Audio
-              </span>
-            )}
-            {isBlurredByRating && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
-          </div>
-        </button>
+                {mediaFrame}
+              </button>
+              {youtubeVideoId && !isBlurredByRating && (
+                <button
+                  type="button"
+                  className="discovery-video-play-overlay"
+                  style={{
+                    width: '5rem',
+                    height: '5rem',
+                    padding: 0,
+                    border: 0,
+                    borderRadius: '50%',
+                    backgroundColor: 'rgb(0 0 0 / 0.48)',
+                    boxShadow: 'none'
+                  }}
+                  onClick={() => setInlineDiscoveryVideoId(item.imageId)}
+                  aria-label={`Play ${cardTitle}`}
+                >
+                  <span aria-hidden="true" />
+                </button>
+              )}
+            </>
+          )}
+        </div>
         <div className="discovery-feature-footer discovery-feature-footer-stacked">
           <div className="discovery-feature-text">
             <h3 className="discovery-feature-title">

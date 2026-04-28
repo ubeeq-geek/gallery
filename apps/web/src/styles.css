@@ -1828,11 +1828,22 @@
   .discovery-feature-link {
     @apply flex items-center justify-center px-2 pt-2;
     flex: 0 0 auto;
+    position: relative;
   }
 
   .discovery-feature-link-btn {
     width: 100%;
     border: 0;
+    margin: 0;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .discovery-feature-media-open {
+    width: 100%;
+    border: 0;
+    padding: 0;
     margin: 0;
     background: transparent;
     cursor: pointer;
@@ -1851,12 +1862,14 @@
   }
 
   .discovery-feature-media img,
-  .discovery-feature-media video {
+  .discovery-feature-media video,
+  .discovery-feature-media iframe {
     @apply h-full w-full object-contain;
     position: relative;
     background: transparent;
     object-position: 50% 50%;
     display: block;
+    border: 0;
   }
 
   .discovery-feature-media video {
@@ -1921,6 +1934,53 @@
     transform: translate(-50%, -50%);
     object-fit: cover;
     object-position: 50% 50%;
+  }
+
+  .discovery-feature-media.is-inline-playing iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: #020617;
+  }
+
+  .discovery-video-play-overlay {
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: 5rem !important;
+    height: 5rem !important;
+    aspect-ratio: 1 / 1 !important;
+    padding: 0 !important;
+    transform: translate(-50%, -50%);
+    border: 0 !important;
+    border-radius: 50% !important;
+    appearance: none;
+    background: rgb(0 0 0 / 0.48) !important;
+    background-color: rgb(0 0 0 / 0.48) !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    display: grid;
+    place-items: center;
+    overflow: hidden !important;
+    cursor: pointer;
+    z-index: 5;
+    transition: transform 160ms ease, background-color 160ms ease;
+  }
+
+  .discovery-video-play-overlay:hover,
+  .discovery-video-play-overlay:focus-visible {
+    transform: translate(-50%, -50%) scale(1.06);
+    background: rgb(0 0 0 / 0.62) !important;
+    background-color: rgb(0 0 0 / 0.62) !important;
+  }
+
+  .discovery-video-play-overlay span {
+    width: 0;
+    height: 0;
+    border-top: 1rem solid transparent;
+    border-bottom: 1rem solid transparent;
+    border-left: 1.48rem solid white;
+    margin-left: 0.34rem;
   }
 
   @media (min-width: 700px) {
