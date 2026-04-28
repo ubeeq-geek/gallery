@@ -62,6 +62,33 @@ type PostBlock = {
   blocks?: PostBlock[];
 };
 
+type OverlayMediaCredit = {
+  label: string;
+  url?: string;
+};
+
+type OverlayPostMedia = {
+  mediaId: string;
+  assetType: SurfaceAssetType;
+  title?: string;
+  previewUrl: string;
+  previewPosterUrl?: string;
+  caption?: string;
+  credit?: OverlayMediaCredit;
+  sortOrder?: number;
+  width?: number;
+  height?: number;
+  comparison?: {
+    type?: string;
+    role?: string;
+    order?: number;
+    comparisonItem?: OverlayPostMedia & {
+      role?: string;
+      order?: number;
+    };
+  };
+};
+
 type OverlayPost = {
   postId: string;
   title: string;
@@ -71,17 +98,7 @@ type OverlayPost = {
   destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
   metadata?: Record<string, string>;
   blocks: PostBlock[];
-  media: Array<{
-    mediaId: string;
-    assetType: SurfaceAssetType;
-    title?: string;
-    previewUrl: string;
-    previewPosterUrl?: string;
-    caption?: string;
-    sortOrder?: number;
-    width?: number;
-    height?: number;
-  }>;
+  media: OverlayPostMedia[];
   primaryMediaId?: string;
   creator?: { name: string; slug: string };
   artist?: { name: string; slug: string };
@@ -270,10 +287,12 @@ export const PostMetaHeader = ({
 };
 
 const renderMediaFigure = (
-  media: { assetType: SurfaceAssetType; previewUrl: string; previewPosterUrl?: string; title?: string; caption?: string; width?: number; height?: number },
+  media: OverlayPostMedia,
   key: string,
-  blur?: boolean
+  blur?: boolean,
+  options: { showMeta?: boolean } = {}
  ) => {
+  const showMeta = options.showMeta !== false;
   const hasDimensions = Boolean(media.width && media.height && media.width > 0 && media.height > 0);
   const mediaAspect = hasDimensions ? media.width! / media.height! : 1;
   const frameStyle = hasDimensions
@@ -300,8 +319,142 @@ const renderMediaFigure = (
           <img src={media.previewUrl} alt={media.title || 'Post media'} loading="eager" decoding="async" style={{ filter: blur ? 'blur(28px)' : undefined }} />
         )}
       </div>
-      {media.caption ? <figcaption>{media.caption}</figcaption> : null}
+      {showMeta ? <MediaMeta media={media} /> : null}
     </figure>
+  );
+};
+
+const MediaMeta = ({ media }: { media: Pick<OverlayPostMedia, 'caption' | 'credit'> }) => {
+  if (!media.caption && !media.credit?.label) return null;
+  return (
+    <figcaption className="discovery-quickread-media-meta">
+      {media.caption ? <span className="discovery-quickread-media-caption">{media.caption}</span> : null}
+      {media.credit?.label ? (
+        <span className="discovery-quickread-media-credit">
+          <span>Credit: </span>
+          {media.credit.url ? (
+            <a href={media.credit.url} target="_blank" rel="noreferrer">
+              {media.credit.label}
+            </a>
+          ) : (
+            <span>{media.credit.label}</span>
+          )}
+        </span>
+      ) : null}
+    </figcaption>
+  );
+};
+
+const ComparisonSlider = ({ media, blur }: { media: OverlayPostMedia; blur?: boolean }) => {
+  const [position, setPosition] = useState(50);
+  const comparison = media.comparison?.comparisonItem;
+  const hasDimensions = Boolean(media.width && media.height && media.width > 0 && media.height > 0);
+  const mediaAspect = hasDimensions ? media.width! / media.height! : 1;
+  const frameStyle = hasDimensions
+    ? {
+        aspectRatio: `${media.width} / ${media.height}`,
+        '--quickread-media-fit-width': `min(100%, ${mediaAspect * 70}vh, ${mediaAspect * 50}rem)`
+      } as CSSProperties
+    : undefined;
+  const comparisonStyle = {
+    ...(frameStyle ?? {}),
+    '--comparison-position': `${position}%`
+  } as CSSProperties;
+
+  if (!comparison || media.assetType !== 'image' || comparison.assetType !== 'image') {
+    return renderMediaFigure(media, `comparison-fallback-${media.mediaId}`, blur);
+  }
+  const baseMedia = comparison;
+  const overlayMedia = media;
+
+  return (
+    <figure className="discovery-quickread-media-figure discovery-comparison-figure">
+      <div className={`discovery-comparison-frame${hasDimensions ? ' has-ratio' : ' no-ratio'}`} style={comparisonStyle}>
+        <img
+          className="discovery-comparison-img"
+          src={baseMedia.previewUrl}
+          alt={baseMedia.title || 'Comparison base'}
+          loading="eager"
+          decoding="async"
+          style={{ filter: blur ? 'blur(28px)' : undefined }}
+        />
+        <div className="discovery-comparison-overlay">
+          <img
+            className="discovery-comparison-img"
+            src={overlayMedia.previewUrl}
+            alt={overlayMedia.title || 'Comparison overlay'}
+            loading="eager"
+            decoding="async"
+            style={{ filter: blur ? 'blur(28px)' : undefined }}
+          />
+        </div>
+        <div className="discovery-comparison-handle" aria-hidden="true" />
+        <input
+          className="discovery-comparison-range"
+          type="range"
+          min="0"
+          max="100"
+          value={position}
+          aria-label="Compare images"
+          onChange={(event) => setPosition(Number(event.target.value))}
+        />
+      </div>
+      <div className="discovery-comparison-labels" aria-hidden="true">
+        <span>{overlayMedia.comparison?.role || media.comparison?.role || 'Comparison'}</span>
+        <span>{baseMedia.role || 'Original'}</span>
+      </div>
+      <MediaMeta media={media} />
+    </figure>
+  );
+};
+
+const MediaCarousel = ({ media, blur }: { media: OverlayPostMedia[]; blur?: boolean }) => {
+  const orderedMedia = media.filter((item) => item.previewUrl).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const activeMedia = orderedMedia[activeIndex] || orderedMedia[0];
+  const hasMultiple = orderedMedia.length > 1;
+
+  useEffect(() => {
+    if (!playing || !hasMultiple) return undefined;
+    const timer = window.setInterval(() => {
+      setActiveIndex((current) => (current + 1) % orderedMedia.length);
+    }, 4200);
+    return () => window.clearInterval(timer);
+  }, [hasMultiple, orderedMedia.length, playing]);
+
+  if (!activeMedia) return null;
+
+  const goPrevious = () => setActiveIndex((current) => (current - 1 + orderedMedia.length) % orderedMedia.length);
+  const goNext = () => setActiveIndex((current) => (current + 1) % orderedMedia.length);
+  const renderedMedia = activeMedia.comparison?.comparisonItem
+    ? <ComparisonSlider media={activeMedia} blur={blur} />
+    : renderMediaFigure(activeMedia, `carousel-media-${activeMedia.mediaId}`, blur);
+
+  return (
+    <div className="discovery-quickread-media-carousel">
+      {renderedMedia}
+      {hasMultiple ? (
+        <div className="discovery-quickread-media-nav" aria-label="Post media navigation">
+          <button type="button" className="discovery-quickread-media-chevron" onClick={goPrevious} aria-label="Previous media">
+            ‹
+          </button>
+          <div className="discovery-quickread-media-count">
+            {activeIndex + 1} / {orderedMedia.length}
+          </div>
+          <button type="button" className="discovery-quickread-media-chevron" onClick={goNext} aria-label="Next media">
+            ›
+          </button>
+          <button
+            type="button"
+            className={`discovery-quickread-slideshow-btn${playing ? ' is-active' : ''}`}
+            onClick={() => setPlaying((value) => !value)}
+          >
+            {playing ? 'Pause slideshow' : 'Slideshow'}
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 };
 
@@ -312,7 +465,9 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
   const primaryMedia = post.primaryMediaId ? mediaById.get(post.primaryMediaId) : undefined;
   const postType = getPostType(post);
   const postFormat = getPostFormat(post, postType);
-  const shouldRenderPrimaryMediaTopBlock = Boolean(primaryMedia && postType !== 'story' && hasBlocks);
+  const hasComparisonMedia = orderedMedia.some((media) => Boolean(media.comparison?.comparisonItem));
+  const shouldRenderMediaSet = postType !== 'story' && (postFormat === 'multi' || orderedMedia.length > 1 || hasComparisonMedia);
+  const shouldRenderPrimaryMediaTopBlock = Boolean(primaryMedia && postType !== 'story' && hasBlocks && !shouldRenderMediaSet);
   const fallbackMedia = primaryMedia
     ? [primaryMedia, ...orderedMedia.filter((media) => media.mediaId !== primaryMedia.mediaId)]
     : orderedMedia;
@@ -391,7 +546,10 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
     if (block.type === 'image' || block.type === 'video') {
       const media = block.mediaId ? mediaById.get(block.mediaId) : undefined;
       if (!media) return null;
-      return renderMediaFigure({ ...media, caption: block.caption || media.caption }, `media-${key}`, item.blurred);
+      const blockMedia = { ...media, caption: block.caption || media.caption };
+      return blockMedia.comparison?.comparisonItem
+        ? <ComparisonSlider key={`media-${key}`} media={blockMedia} blur={item.blurred} />
+        : renderMediaFigure(blockMedia, `media-${key}`, item.blurred);
     }
     if (block.type === 'audio') {
       const media = block.mediaId ? mediaById.get(block.mediaId) : undefined;
@@ -446,12 +604,15 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
       {shouldRenderPrimaryMediaTopBlock && primaryMedia
         ? renderMediaFigure(primaryMedia, `primary-media-${primaryMedia.mediaId}`, item.blurred)
         : null}
+      {shouldRenderMediaSet ? <MediaCarousel media={fallbackMedia} blur={item.blurred} /> : null}
       {!hasBlocks ? (
         <>
           {post.summary ? <p>{post.summary}</p> : null}
-          {fallbackMedia.map((media, index) =>
-            renderMediaFigure(media, `fallback-media-${media.mediaId || index}`, item.blurred)
-          )}
+          {!shouldRenderMediaSet ? fallbackMedia.map((media, index) =>
+            media.comparison?.comparisonItem
+              ? <ComparisonSlider key={`fallback-media-${media.mediaId || index}`} media={media} blur={item.blurred} />
+              : renderMediaFigure(media, `fallback-media-${media.mediaId || index}`, item.blurred)
+          ) : null}
         </>
       ) : post.blocks.map((block, index) => renderBlock(block, index))}
     </div>

@@ -132,6 +132,28 @@ type ScenarioPostMediaRefSeed = {
   discoverable?: boolean;
   sortOrder?: number;
   caption?: string;
+  credit?: {
+    label: string;
+    url?: string;
+  };
+  comparison?: {
+    type?: string;
+    role?: string;
+    order?: number;
+    comparisonItem?: {
+      mediaId?: string;
+      file?: string;
+      groupingSlug?: string;
+      discoverable?: boolean;
+      role?: string;
+      order?: number;
+      caption?: string;
+      credit?: {
+        label: string;
+        url?: string;
+      };
+    };
+  };
 };
 type ScenarioPostDestinationSeed = {
   type?: 'post' | 'pdf' | 'external' | 'internal';
@@ -487,6 +509,16 @@ const asOptionalString = (value: unknown): string | undefined =>
 const asOptionalBoolean = (value: unknown): boolean | undefined =>
   typeof value === 'boolean' ? value : undefined;
 
+const parseOptionalCredit = (value: unknown, fieldName: string): { label: string; url?: string } | undefined => {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) {
+    throw new Error(`Scenario field "${fieldName}" must be an object`);
+  }
+  const label = asString(value.label, `${fieldName}.label`).slice(0, 300);
+  const url = asOptionalString(value.url)?.slice(0, 2048);
+  return { label, url };
+};
+
 const parseOptionalStringArray = (value: unknown, fieldName: string): string[] | undefined => {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
@@ -569,13 +601,48 @@ const parseScenarioPostMediaRef = (value: unknown, fieldName: string): ScenarioP
   if (sortOrderRaw !== undefined && sortOrder === undefined) {
     throw new Error(`Scenario field "${fieldName}.sortOrder" must be a number >= 0`);
   }
+  const comparisonRaw = value.comparison;
+  let comparison: ScenarioPostMediaRefSeed['comparison'];
+  if (comparisonRaw !== undefined) {
+    if (!isRecord(comparisonRaw)) {
+      throw new Error(`Scenario field "${fieldName}.comparison" must be an object`);
+    }
+    const comparisonItemRaw = comparisonRaw.comparisonItem;
+    if (!isRecord(comparisonItemRaw)) {
+      throw new Error(`Scenario field "${fieldName}.comparison.comparisonItem" must be an object`);
+    }
+    const comparisonItemMediaId = asOptionalString(comparisonItemRaw.mediaId);
+    const comparisonItemFile = asOptionalString(comparisonItemRaw.file);
+    if (!comparisonItemMediaId && !comparisonItemFile) {
+      throw new Error(`Scenario field "${fieldName}.comparison.comparisonItem" must include mediaId or file`);
+    }
+    const comparisonOrderRaw = comparisonRaw.order;
+    const comparisonItemOrderRaw = comparisonItemRaw.order;
+    comparison = {
+      type: asOptionalString(comparisonRaw.type),
+      role: asOptionalString(comparisonRaw.role),
+      order: typeof comparisonOrderRaw === 'number' && Number.isFinite(comparisonOrderRaw) ? Math.max(0, Math.floor(comparisonOrderRaw)) : undefined,
+      comparisonItem: {
+        mediaId: comparisonItemMediaId,
+        file: comparisonItemFile,
+        groupingSlug: asOptionalString(comparisonItemRaw.groupingSlug),
+        discoverable: asOptionalBoolean(comparisonItemRaw.discoverable),
+        role: asOptionalString(comparisonItemRaw.role),
+        order: typeof comparisonItemOrderRaw === 'number' && Number.isFinite(comparisonItemOrderRaw) ? Math.max(0, Math.floor(comparisonItemOrderRaw)) : undefined,
+        caption: asOptionalString(comparisonItemRaw.caption),
+        credit: parseOptionalCredit(comparisonItemRaw.credit, `${fieldName}.comparison.comparisonItem.credit`)
+      }
+    };
+  }
   return {
     mediaId,
     file,
     groupingSlug: groupingSlugRaw ? slugify(groupingSlugRaw) : undefined,
     discoverable: asOptionalBoolean(value.discoverable),
     sortOrder,
-    caption: asOptionalString(value.caption)
+    caption: asOptionalString(value.caption),
+    credit: parseOptionalCredit(value.credit, `${fieldName}.credit`),
+    comparison
   };
 };
 
@@ -1572,6 +1639,91 @@ const main = async () => {
       pushMedia(grouping.groupingId, nextPosition, payload, placement);
       return grouping;
     };
+    const ensurePostMedia = async (
+      ref: { mediaId?: string; file?: string; groupingSlug?: string },
+      label: string
+    ): Promise<string | undefined> => {
+      const explicitMediaId = sanitizeOptional(ref.mediaId, 128);
+      if (explicitMediaId) return explicitMediaId;
+      const fileRef = sanitizeOptional(ref.file, 512);
+      if (!fileRef) return undefined;
+      const groupingSlug = ref.groupingSlug ? slugify(ref.groupingSlug) : undefined;
+      let existing: string | undefined;
+      try {
+        existing = resolveScenarioMediaId(ref, label, mediaIdByComposite, mediaIdsByFile);
+      } catch {
+        existing = undefined;
+      }
+      if (existing) return existing;
+      if (!groupingSlug) {
+        throw new Error(`Scenario ${label} references new media file "${fileRef}" but does not include groupingSlug`);
+      }
+      const file = resolveMediaFile(fileRef);
+      if (!file) {
+        throw new Error(`Scenario ${label} references missing media file "${fileRef}"`);
+      }
+      const grouping = groupingBySlug.get(groupingSlug);
+      if (!grouping) {
+        throw new Error(`Scenario ${label} references unknown groupingSlug "${groupingSlug}"`);
+      }
+      const ext = path.extname(file.filename).toLowerCase();
+      const assetType: 'image' | 'video' = VIDEO_EXT.has(ext) ? 'video' : 'image';
+      if (assetType === 'image' && !IMAGE_EXT.has(ext)) {
+        throw new Error(`Scenario ${label} media file "${file.filename}" is not an image or video`);
+      }
+      const mediaId = seedId('media', seed.slug, groupingSlug, file.relativePath.replace(/\\/g, '/'));
+      const title = titleFromFilename(file.filename);
+      const slug = slugify(title);
+      const objectKey = `${creatorId}/${mediaId}`;
+      const isPremiumGrouping = grouping.visibility === 'premium';
+      if (assetType === 'image') {
+        const dimensions = await getImageDimensions(file);
+        pushMediaToGroupingSlug(groupingSlug, {
+          mediaId,
+          creatorId,
+          assetType: 'image',
+          discoverSquareCropEnabled,
+          contentRating,
+          aiDisclosure,
+          heavyTopics,
+          appearsInFeed: false,
+          title,
+          slug,
+          slugHistory: [slug],
+          originalFilename: file.filename,
+          previewKey: objectKey,
+          premiumKey: isPremiumGrouping ? objectKey : undefined,
+          width: dimensions.width,
+          height: dimensions.height,
+          altText: title,
+          createdAt
+        });
+      } else {
+        pushMediaToGroupingSlug(groupingSlug, {
+          mediaId,
+          creatorId,
+          assetType: 'video',
+          discoverSquareCropEnabled,
+          contentRating,
+          aiDisclosure,
+          heavyTopics,
+          appearsInFeed: false,
+          title,
+          slug,
+          slugHistory: [slug],
+          originalFilename: file.filename,
+          previewKey: objectKey,
+          premiumKey: isPremiumGrouping ? objectKey : undefined,
+          width: 1920,
+          height: 1080,
+          durationSeconds: 20,
+          createdAt
+        });
+      }
+      queueUpload(objectKey, file);
+      registerMediaLookup(file, grouping.slug, mediaId);
+      return mediaId;
+    };
 
     if (seed.media?.length) {
       const posterFiles = mediaFiles.filter((file) => IMAGE_EXT.has(path.extname(file.filename).toLowerCase()) && isPoster(file.filename));
@@ -1958,29 +2110,67 @@ const main = async () => {
         const postSeed = seed.posts[postIndex];
         const status = normalizePostStatus(postSeed.status);
         const slug = slugify(postSeed.slug || postSeed.title);
-        const postMedia: Post['media'] = (postSeed.media || []).map((ref, mediaIndex) => ({
-          mediaId: resolveScenarioMediaId(
+        const postMedia: Post['media'] = [];
+        for (let mediaIndex = 0; mediaIndex < (postSeed.media || []).length; mediaIndex += 1) {
+          const ref = postSeed.media![mediaIndex];
+          const mediaId = await ensurePostMedia(
             { mediaId: ref.mediaId, file: ref.file, groupingSlug: ref.groupingSlug },
-            `creators[${idx}].posts[${postIndex}].media[${mediaIndex}]`,
-            mediaIdByComposite,
-            mediaIdsByFile
-          ) as string,
-          discoverable: ref.discoverable ?? true,
-          sortOrder: ref.sortOrder ?? mediaIndex,
-          caption: sanitizeOptional(ref.caption, 2000)
-        }));
+            `creators[${idx}].posts[${postIndex}].media[${mediaIndex}]`
+          );
+          if (!mediaId) continue;
+          const comparisonItemMediaId = ref.comparison?.comparisonItem
+            ? await ensurePostMedia(
+                {
+                  mediaId: ref.comparison.comparisonItem.mediaId,
+                  file: ref.comparison.comparisonItem.file,
+                  groupingSlug: ref.comparison.comparisonItem.groupingSlug || ref.groupingSlug
+                },
+                `creators[${idx}].posts[${postIndex}].media[${mediaIndex}].comparison.comparisonItem`
+              )
+            : undefined;
+          const comparison = ref.comparison && comparisonItemMediaId
+            ? {
+                type: sanitizeOptional(ref.comparison.type, 80),
+                role: sanitizeOptional(ref.comparison.role, 80),
+                order: ref.comparison.order,
+                comparisonItem: {
+                  mediaId: comparisonItemMediaId,
+                  role: sanitizeOptional(ref.comparison.comparisonItem?.role, 80),
+                  order: ref.comparison.comparisonItem?.order,
+                  caption: sanitizeOptional(ref.comparison.comparisonItem?.caption, 2000),
+                  credit: ref.comparison.comparisonItem?.credit
+                    ? {
+                        label: sanitizeOptional(ref.comparison.comparisonItem.credit.label, 300) || 'Credit',
+                        url: sanitizeOptional(ref.comparison.comparisonItem.credit.url, 2048)
+                      }
+                    : undefined
+                }
+              }
+            : undefined;
+          postMedia.push({
+            mediaId,
+            discoverable: ref.discoverable ?? true,
+            sortOrder: ref.sortOrder ?? mediaIndex,
+            caption: sanitizeOptional(ref.caption, 2000),
+            credit: ref.credit
+              ? {
+                  label: sanitizeOptional(ref.credit.label, 300) || 'Credit',
+                  url: sanitizeOptional(ref.credit.url, 2048)
+                }
+              : undefined,
+            comparison
+          });
+        }
         const primaryMediaId =
-          resolveScenarioMediaId(
+          await ensurePostMedia(
             postSeed.primaryMedia
               ? {
                   mediaId: postSeed.primaryMedia.mediaId,
                   file: postSeed.primaryMedia.file,
                   groupingSlug: postSeed.primaryMedia.groupingSlug
                 }
-              : (postSeed.primaryMediaId ? { mediaId: postSeed.primaryMediaId } : undefined),
-            `creators[${idx}].posts[${postIndex}].primaryMedia`,
-            mediaIdByComposite,
-            mediaIdsByFile
+              : { mediaId: postSeed.primaryMediaId },
+            `creators[${idx}].posts[${postIndex}].primaryMedia`
           ) || postMedia[0]?.mediaId;
         if (primaryMediaId && !postMedia.some((item) => item.mediaId === primaryMediaId)) {
           postMedia.unshift({ mediaId: primaryMediaId, discoverable: true, sortOrder: 0 });

@@ -293,11 +293,73 @@ const parsePostMediaRefs = (value: unknown): Post['media'] => {
     const mediaId = typeof row.mediaId === 'string' ? row.mediaId.trim() : '';
     if (!mediaId) continue;
     const sortOrderRaw = Number(row.sortOrder);
+    const creditRaw = row.credit;
+    const credit = creditRaw && typeof creditRaw === 'object' && !Array.isArray(creditRaw)
+      ? {
+          label: typeof (creditRaw as Record<string, unknown>).label === 'string'
+            ? String((creditRaw as Record<string, unknown>).label).trim().slice(0, 300)
+            : '',
+          url: typeof (creditRaw as Record<string, unknown>).url === 'string'
+            ? String((creditRaw as Record<string, unknown>).url).trim().slice(0, 2048)
+            : undefined
+        }
+      : undefined;
+    const comparisonRaw = row.comparison;
+    const comparisonItemRaw = comparisonRaw && typeof comparisonRaw === 'object' && !Array.isArray(comparisonRaw)
+      ? (comparisonRaw as Record<string, unknown>).comparisonItem
+      : undefined;
+    const comparisonItem = comparisonItemRaw && typeof comparisonItemRaw === 'object' && !Array.isArray(comparisonItemRaw)
+      ? (() => {
+          const rawComparisonItem = comparisonItemRaw as Record<string, unknown>;
+          const rawCredit = rawComparisonItem.credit;
+          const comparisonCredit = rawCredit && typeof rawCredit === 'object' && !Array.isArray(rawCredit)
+            ? {
+                label: typeof (rawCredit as Record<string, unknown>).label === 'string'
+                  ? String((rawCredit as Record<string, unknown>).label).trim().slice(0, 300)
+                  : '',
+                url: typeof (rawCredit as Record<string, unknown>).url === 'string'
+                  ? String((rawCredit as Record<string, unknown>).url).trim().slice(0, 2048)
+                  : undefined
+              }
+            : undefined;
+          return {
+            mediaId: typeof rawComparisonItem.mediaId === 'string'
+              ? String(rawComparisonItem.mediaId).trim()
+              : '',
+            role: typeof rawComparisonItem.role === 'string'
+              ? String(rawComparisonItem.role).trim().slice(0, 80)
+              : undefined,
+            order: Number.isFinite(Number(rawComparisonItem.order))
+              ? Math.max(0, Math.floor(Number(rawComparisonItem.order)))
+              : undefined,
+            caption: typeof rawComparisonItem.caption === 'string'
+              ? String(rawComparisonItem.caption).trim().slice(0, 2000)
+              : undefined,
+            credit: comparisonCredit?.label ? comparisonCredit : undefined
+          };
+        })()
+      : undefined;
+    const comparison = comparisonRaw && typeof comparisonRaw === 'object' && !Array.isArray(comparisonRaw) && comparisonItem?.mediaId
+      ? {
+          type: typeof (comparisonRaw as Record<string, unknown>).type === 'string'
+            ? String((comparisonRaw as Record<string, unknown>).type).trim().slice(0, 80)
+            : undefined,
+          role: typeof (comparisonRaw as Record<string, unknown>).role === 'string'
+            ? String((comparisonRaw as Record<string, unknown>).role).trim().slice(0, 80)
+            : undefined,
+          order: Number.isFinite(Number((comparisonRaw as Record<string, unknown>).order))
+            ? Math.max(0, Math.floor(Number((comparisonRaw as Record<string, unknown>).order)))
+            : undefined,
+          comparisonItem
+        }
+      : undefined;
     result.push({
       mediaId,
       discoverable: row.discoverable === undefined ? true : Boolean(row.discoverable),
       sortOrder: Number.isFinite(sortOrderRaw) ? Math.max(0, Math.floor(sortOrderRaw)) : undefined,
-      caption: typeof row.caption === 'string' ? row.caption.slice(0, 2000) : undefined
+      caption: typeof row.caption === 'string' ? row.caption.slice(0, 2000) : undefined,
+      credit: credit?.label ? credit : undefined,
+      comparison
     });
   }
   return result;
@@ -590,6 +652,52 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       new GetObjectCommand({ Bucket: config.mediaBucket, Key: key }),
       { expiresIn: config.signedUrlTtlSeconds }
     );
+  };
+
+  const buildPostMediaPayload = async (
+    ref: Post['media'][number],
+    mediaById: Map<string, Media>
+  ) => {
+    const source = mediaById.get(ref.mediaId);
+    if (!source) return null;
+    const comparisonSource = ref.comparison?.comparisonItem?.mediaId
+      ? mediaById.get(ref.comparison.comparisonItem.mediaId)
+      : undefined;
+    return {
+      mediaId: source.mediaId,
+      assetType: (source.assetType || 'image') as 'image' | 'video' | 'audio',
+      title: source.title || source.originalFilename || source.mediaId,
+      previewUrl: await publicMediaUrl(source.previewKey),
+      previewPosterUrl: await publicMediaUrl(source.previewPosterKey),
+      width: source.width,
+      height: source.height,
+      discoverable: ref.discoverable !== false,
+      sortOrder: ref.sortOrder ?? 0,
+      caption: ref.caption,
+      credit: ref.credit,
+      comparison: ref.comparison
+        ? {
+            type: ref.comparison.type,
+            role: ref.comparison.role,
+            order: ref.comparison.order,
+            comparisonItem: comparisonSource
+              ? {
+                  mediaId: comparisonSource.mediaId,
+                  assetType: (comparisonSource.assetType || 'image') as 'image' | 'video' | 'audio',
+                  title: comparisonSource.title || comparisonSource.originalFilename || comparisonSource.mediaId,
+                  previewUrl: await publicMediaUrl(comparisonSource.previewKey),
+                  previewPosterUrl: await publicMediaUrl(comparisonSource.previewPosterKey),
+                  width: comparisonSource.width,
+                  height: comparisonSource.height,
+                  role: ref.comparison.comparisonItem?.role,
+                  order: ref.comparison.comparisonItem?.order,
+                  caption: ref.comparison.comparisonItem?.caption,
+                  credit: ref.comparison.comparisonItem?.credit
+                }
+              : undefined
+          }
+        : undefined
+    };
   };
 
   const privateMediaUrl = async (key?: string): Promise<string | undefined> => {
@@ -1887,14 +1995,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         discoveryMediaIds.map(async (mediaId) => {
           const source = mediaById.get(mediaId);
           if (!source) return null;
-          return {
-            mediaId: source.mediaId,
-            assetType: (source.assetType || 'image') as 'image' | 'video',
-            previewUrl: await publicMediaUrl(source.previewKey),
-            previewPosterUrl: await publicMediaUrl(source.previewPosterKey),
-            width: source.width,
-            height: source.height
-          };
+          const ref = post.media.find((item) => item.mediaId === mediaId) || { mediaId };
+          return buildPostMediaPayload(ref, mediaById);
         })
       );
       return {
@@ -1959,22 +2061,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
 
     const mediaById = new Map((await store.listMediaByCreator(post.creatorId)).map((item) => [item.mediaId, item]));
-    const media = await Promise.all(post.media.map(async (ref) => {
-      const source = mediaById.get(ref.mediaId);
-      if (!source) return null;
-      return {
-        mediaId: source.mediaId,
-        assetType: (source.assetType || 'image') as 'image' | 'video',
-        title: source.title || source.originalFilename || source.mediaId,
-        previewUrl: await publicMediaUrl(source.previewKey),
-        previewPosterUrl: await publicMediaUrl(source.previewPosterKey),
-        width: source.width,
-        height: source.height,
-        discoverable: ref.discoverable !== false,
-        sortOrder: ref.sortOrder ?? 0,
-        caption: ref.caption
-      };
-    }));
+    const media = await Promise.all(post.media.map((ref) => buildPostMediaPayload(ref, mediaById)));
 
     const visibleBlocks = postBlocksForViewer(post.blocks, canViewDraft);
 
@@ -2014,22 +2101,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     }
 
     const mediaById = new Map((await store.listMediaByCreator(post.creatorId)).map((item) => [item.mediaId, item]));
-    const media = await Promise.all(post.media.map(async (ref) => {
-      const source = mediaById.get(ref.mediaId);
-      if (!source) return null;
-      return {
-        mediaId: source.mediaId,
-        assetType: (source.assetType || 'image') as 'image' | 'video',
-        title: source.title || source.originalFilename || source.mediaId,
-        previewUrl: await publicMediaUrl(source.previewKey),
-        previewPosterUrl: await publicMediaUrl(source.previewPosterKey),
-        width: source.width,
-        height: source.height,
-        discoverable: ref.discoverable !== false,
-        sortOrder: ref.sortOrder ?? 0,
-        caption: ref.caption
-      };
-    }));
+    const media = await Promise.all(post.media.map((ref) => buildPostMediaPayload(ref, mediaById)));
 
     const visibleBlocks = postBlocksForViewer(post.blocks, canViewDraft);
 

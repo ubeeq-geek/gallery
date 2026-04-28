@@ -15,122 +15,132 @@
         {
           "file": "roadside-atlas/ROAD-0001.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0001",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0002.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0002",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0003.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0003",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0004.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0004",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0005.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0005",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0006.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0006",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0007.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0007",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0008.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0008",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0009.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0009",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0010.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0010",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0011.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0011",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0012.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0012",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0013.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0013",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0014.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0014",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0015.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0015",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0016.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0016",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0017.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0017",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0018.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0018",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0019.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0019",
           "appearsInFeed": true
         },
         {
           "file": "roadside-atlas/ROAD-0020.jpg",
           "groupingSlug": "roadside-atlas-default",
-          "title": "Roadside Frame 0020",
           "appearsInFeed": true
+        },
+        {
+          "file": "roadside-atlas/ROAD-0021-col.jpg",
+          "groupingSlug": "roadside-atlas-default",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-atlas/ROAD-0021-bw.jpg",
+          "groupingSlug": "roadside-atlas-default",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-atlas/ROAD-0022-1.jpg",
+          "groupingSlug": "roadside-atlas-default",
+          "appearsInFeed": true
+        },
+        {
+          "file": "roadside-atlas/ROAD-0022-2.jpg",
+          "groupingSlug": "roadside-atlas-default",
+          "appearsInFeed": false
+        },
+        {
+          "file": "roadside-atlas/ROAD-0022-3.jpg",
+          "groupingSlug": "roadside-atlas-default",
+          "appearsInFeed": false
+        },
+        {
+          "file": "roadside-atlas/ROAD-0022-4.jpg",
+          "groupingSlug": "roadside-atlas-default",
+          "appearsInFeed": false
         }
       ],
       "posts": [
@@ -737,26 +747,33 @@
           "postFormat": "single"
         },
         {
-          "title": "Roadside Journal #21: Strömstadsvägen Service Stop, Sweden, 1930s (Colorized)",
+          "title": "Roadside Atlas #21: Strömstadsvägen Service Stop, Sweden, 1930s (Colorized)",
           "slug": "roadside-atlas-0021",
           "summary": "This Strömstadsvägen fuel station in Uddevalla shows taxis lined up.",
           "status": "published",
           "discoveryMode": "primary",
           "primaryMedia": {
-            "file": "roadside-atlas/ROAD-0021.jpg",
+            "file": "roadside-atlas/ROAD-0021-col.jpg",
             "groupingSlug": "roadside-atlas-default"
           },
           "media": [
             {
               "file": "roadside-atlas/ROAD-0021-col.jpg",
               "groupingSlug": "roadside-atlas-default",
-              "discoverable": true
-            },
-            {
-              "file": "roadside-atlas/ROAD-0021-bw.jpg",
-              "groupingSlug": "roadside-atlas-default",
-              "discoverable": true
-            }
+              "discoverable": true,
+              "comparison": {
+                "type": "colorization",
+                "role": "colorized",
+                "order": 1,
+                "comparisonItem": {       
+                    "role": "original",           
+                    "file": "roadside-atlas/ROAD-0021-bw.jpg",
+                    "groupingSlug": "roadside-atlas-default",
+                    "discoverable": false,
+                    "order": 2
+                }
+              }
+            }            
           ],
           "blocks": [            
             {
@@ -768,6 +785,59 @@
               "label": "Olof Einar Lindström / Bohusläns museum, via DigitaltMuseum",
               "url": "https://digitaltmuseum.se/011014496874/bensinstation-pa-stromstadsvagen-uddevalla"
             }            
+          ],
+          "postType": "image",
+          "postFormat": "single"
+        },
+        {
+          "title": "Roadside Atlas #22: St. Simons Lighthouse Museum — Keeper’s House and Coastal Beacon",
+          "slug": "roadside-atlas-0022",
+          "summary": "St. Simons Lighthouse Museum preserves an 1872 coastal beacon and keeper’s house on St. Simons Island, Georgia.",
+          "status": "published",
+          "discoveryMode": "primary",
+          "primaryMedia": {
+            "file": "roadside-atlas/ROAD-0022-1.jpg",
+            "groupingSlug": "roadside-atlas-default"
+          },
+          "media": [
+            {
+              "file": "roadside-atlas/ROAD-0022-1.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": true,
+              "caption": "A view from the water.",
+              "credit": {
+                "label": "Special Credit",
+                "url": "https://google.com"
+              }          
+            },
+            {
+              "file": "roadside-atlas/ROAD-0022-2.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": false,
+              "caption": "Another view."
+            },
+            {
+              "file": "roadside-atlas/ROAD-0022-3.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": false
+            },
+            {
+              "file": "roadside-atlas/ROAD-0022-4.jpg",
+              "groupingSlug": "roadside-atlas-default",
+              "discoverable": false
+            }
+          ],
+          "blocks": [
+            {
+              "type": "paragraph",
+              "text": "Photographed by John Margolies, this is the St. Simons Lighthouse Museum on St. Simons Island, Georgia. The lighthouse was first lit in 1872 and stands with the historic keeper’s dwelling, guiding ships into St. Simons Sound and marking the sandbar-filled waters off Georgia’s coast."
+            },
+            {
+              "type": "credit",
+              "label": "John Margolies Roadside America photograph archive, Library of Congress, Prints and Photographs Division",
+              "url": "https://www.loc.gov/item/2017702117/"
+            }
+            
           ],
           "postType": "image",
           "postFormat": "single"

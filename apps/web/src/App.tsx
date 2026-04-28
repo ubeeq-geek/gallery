@@ -461,6 +461,31 @@ type PostDetailPayload = {
     discoverable?: boolean;
     sortOrder?: number;
     caption?: string;
+    credit?: {
+      label: string;
+      url?: string;
+    };
+    comparison?: {
+      type?: string;
+      role?: string;
+      order?: number;
+      comparisonItem?: {
+        mediaId: string;
+        assetType: 'image' | 'video' | 'audio';
+        title?: string;
+        previewUrl: string;
+        previewPosterUrl?: string;
+        width?: number;
+        height?: number;
+        role?: string;
+        order?: number;
+        caption?: string;
+        credit?: {
+          label: string;
+          url?: string;
+        };
+      };
+    };
   }>;
   creator?: {
     artistId?: string;

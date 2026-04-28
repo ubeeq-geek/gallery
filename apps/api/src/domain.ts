@@ -52,6 +52,25 @@ export interface PostMediaRef {
   discoverable?: boolean;
   sortOrder?: number;
   caption?: string;
+  credit?: {
+    label: string;
+    url?: string;
+  };
+  comparison?: {
+    type?: 'colorization' | 'before-after' | 'retouch' | 'historical' | string;
+    role?: 'original' | 'colorized' | 'before' | 'after' | string;
+    order?: number;
+    comparisonItem?: {
+      mediaId: string;
+      role?: 'original' | 'colorized' | 'before' | 'after' | string;
+      order?: number;
+      caption?: string;
+      credit?: {
+        label: string;
+        url?: string;
+      };
+    };
+  };
 }
 
 export interface PostDestination {

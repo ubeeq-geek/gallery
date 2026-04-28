@@ -269,6 +269,25 @@ export type PostMediaRef = {
   discoverable?: boolean;
   sortOrder?: number;
   caption?: string;
+  credit?: {
+    label: string;
+    url?: string;
+  };
+  comparison?: {
+    type?: string;
+    role?: string;
+    order?: number;
+    comparisonItem?: {
+      mediaId: string;
+      role?: string;
+      order?: number;
+      caption?: string;
+      credit?: {
+        label: string;
+        url?: string;
+      };
+    };
+  };
 };
 
 export type PostDestination = {
