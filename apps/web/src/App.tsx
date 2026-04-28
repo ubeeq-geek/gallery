@@ -2752,7 +2752,7 @@ function HomePage({
         hash ^= id.charCodeAt(i);
         hash = Math.imul(hash, 16777619);
       }
-      return (hash >>> 0) % 4 === 0;
+      return (hash >>> 0) % 20 < 3;
     };
     const canPromoteWithinWindow = (entry: TrendingCardEntry, baseIndex: number): boolean => (
       entry.index - baseIndex <= maxLayoutPromotionOffset
