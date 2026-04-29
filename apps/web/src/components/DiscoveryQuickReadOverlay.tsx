@@ -182,7 +182,7 @@ type DiscoveryQuickReadOverlayProps = {
 
 type PostRenderKind = PostType;
 
-const getYouTubeEmbed = (url?: string): { src: string; isShort: boolean } | null => {
+const getYouTubeEmbed = (url?: string, options: { autoplay?: boolean; muted?: boolean } = {}): { src: string; isShort: boolean } | null => {
   if (!url) return null;
   try {
     const parsed = new URL(url);
@@ -206,7 +206,9 @@ const getYouTubeEmbed = (url?: string): { src: string; isShort: boolean } | null
 
     if (!/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) return null;
     const embed = new URL(`https://www.youtube-nocookie.com/embed/${videoId}`);
-    if (isShort) embed.searchParams.set('playsinline', '1');
+    if (options.autoplay) embed.searchParams.set('autoplay', '1');
+    embed.searchParams.set('mute', options.muted === false ? '0' : '1');
+    embed.searchParams.set('playsinline', '1');
     return { src: embed.toString(), isShort };
   } catch {
     return null;
@@ -373,11 +375,16 @@ export const PostMetaHeader = ({
   );
 };
 
+type VideoPlaybackOptions = {
+  videoMuted: boolean;
+  onVideoVolumeChange: (video: HTMLVideoElement) => void;
+};
+
 const renderMediaFigure = (
   media: OverlayPostMedia,
   key: string,
   blur?: boolean,
-  options: { showMeta?: boolean } = {}
+  options: { showMeta?: boolean; autoPlayVideo?: boolean; playback?: VideoPlaybackOptions } = {}
  ) => {
   const showMeta = options.showMeta !== false;
   const hasDimensions = Boolean(media.width && media.height && media.width > 0 && media.height > 0);
@@ -399,7 +406,17 @@ const renderMediaFigure = (
             <source src={media.previewUrl} />
           </audio>
         ) : media.assetType === 'video' ? (
-          <video controls playsInline preload="metadata" poster={media.previewPosterUrl} style={{ filter: blur ? 'blur(28px)' : undefined }}>
+          <video
+            key={media.mediaId}
+            controls
+            playsInline
+            autoPlay={Boolean(options.autoPlayVideo)}
+            muted={options.playback?.videoMuted ?? true}
+            preload="metadata"
+            poster={media.previewPosterUrl}
+            style={{ filter: blur ? 'blur(28px)' : undefined }}
+            onVolumeChange={options.playback ? (event) => options.playback?.onVideoVolumeChange(event.currentTarget) : undefined}
+          >
             <source src={media.previewUrl} />
           </video>
         ) : (
@@ -446,7 +463,7 @@ const MediaMeta = ({ media }: { media: Pick<OverlayPostMedia, 'caption' | 'credi
   );
 };
 
-const ComparisonSlider = ({ media, blur }: { media: OverlayPostMedia; blur?: boolean }) => {
+const ComparisonSlider = ({ media, blur, playback }: { media: OverlayPostMedia; blur?: boolean; playback?: VideoPlaybackOptions }) => {
   const [position, setPosition] = useState(50);
   const comparison = media.comparison?.comparisonItem;
   const hasDimensions = Boolean(media.width && media.height && media.width > 0 && media.height > 0);
@@ -463,7 +480,7 @@ const ComparisonSlider = ({ media, blur }: { media: OverlayPostMedia; blur?: boo
   } as CSSProperties;
 
   if (!comparison || media.assetType !== 'image' || comparison.assetType !== 'image') {
-    return renderMediaFigure(media, `comparison-fallback-${media.mediaId}`, blur);
+    return renderMediaFigure(media, `comparison-fallback-${media.mediaId}`, blur, { playback });
   }
   const baseMedia = comparison;
   const overlayMedia = media;
@@ -517,7 +534,7 @@ const ComparisonSlider = ({ media, blur }: { media: OverlayPostMedia; blur?: boo
   );
 };
 
-const MediaCarousel = ({ media, blur }: { media: OverlayPostMedia[]; blur?: boolean }) => {
+const MediaCarousel = ({ media, blur, playback }: { media: OverlayPostMedia[]; blur?: boolean; playback?: VideoPlaybackOptions }) => {
   const orderedMedia = media.filter((item) => item.previewUrl).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const [activeIndex, setActiveIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -538,8 +555,11 @@ const MediaCarousel = ({ media, blur }: { media: OverlayPostMedia[]; blur?: bool
   const goPrevious = () => setActiveIndex((current) => (current - 1 + orderedMedia.length) % orderedMedia.length);
   const goNext = () => setActiveIndex((current) => (current + 1) % orderedMedia.length);
   const renderedMedia = activeMedia.comparison?.comparisonItem
-    ? <ComparisonSlider media={activeMedia} blur={blur} />
-    : renderMediaFigure(activeMedia, `carousel-media-${activeMedia.mediaId}`, blur);
+    ? <ComparisonSlider media={activeMedia} blur={blur} playback={playback} />
+    : renderMediaFigure(activeMedia, `carousel-media-${activeMedia.mediaId}`, blur, {
+      autoPlayVideo: activeMedia.assetType === 'video',
+      playback
+    });
 
   return (
     <div className="discovery-quickread-media-carousel">
@@ -581,7 +601,17 @@ const MediaCarousel = ({ media, blur }: { media: OverlayPostMedia[]; blur?: bool
   );
 };
 
-const StandardPostRenderer = ({ item, post, storyMode = false }: { item: DiscoveryOverlayItem; post: OverlayPost; storyMode?: boolean }) => {
+const StandardPostRenderer = ({
+  item,
+  post,
+  storyMode = false,
+  playback
+}: {
+  item: DiscoveryOverlayItem;
+  post: OverlayPost;
+  storyMode?: boolean;
+  playback?: VideoPlaybackOptions;
+}) => {
   const orderedMedia = [...post.media].sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
   const mediaById = new Map(orderedMedia.map((media) => [media.mediaId, media]));
   const hasBlocks = post.blocks.length > 0;
@@ -671,8 +701,11 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
       if (!media) return null;
       const blockMedia = { ...media, caption: block.caption || media.caption };
       return blockMedia.comparison?.comparisonItem
-        ? <ComparisonSlider key={`media-${key}`} media={blockMedia} blur={item.blurred} />
-        : renderMediaFigure(blockMedia, `media-${key}`, item.blurred);
+        ? <ComparisonSlider key={`media-${key}`} media={blockMedia} blur={item.blurred} playback={playback} />
+        : renderMediaFigure(blockMedia, `media-${key}`, item.blurred, {
+          autoPlayVideo: blockMedia.assetType === 'video' && item.assetType === 'video',
+          playback
+        });
     }
     if (block.type === 'audio') {
       const media = block.mediaId ? mediaById.get(block.mediaId) : undefined;
@@ -688,7 +721,7 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
     if (block.type === 'embed') {
       const provider = typeof block.payload?.provider === 'string' ? block.payload.provider.toLowerCase() : '';
       const youtube = provider === 'youtube' || provider === 'youtube-shorts' || !provider
-        ? getYouTubeEmbed(block.url)
+        ? getYouTubeEmbed(block.url, { autoplay: item.assetType === 'video', muted: playback?.videoMuted })
         : null;
       const isShortEmbed = youtube?.isShort || block.payload?.format === 'short' || block.payload?.layout === 'short';
       if (youtube) {
@@ -761,16 +794,22 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
   return (
     <div className={`discovery-quickread-content-flow discovery-quickread-${postType}-flow discovery-quickread-${postType}-${postFormat}-flow`}>
       {shouldRenderPrimaryMediaTopBlock && primaryMedia
-        ? renderMediaFigure(primaryMedia, `primary-media-${primaryMedia.mediaId}`, item.blurred)
+        ? renderMediaFigure(primaryMedia, `primary-media-${primaryMedia.mediaId}`, item.blurred, {
+          autoPlayVideo: primaryMedia.assetType === 'video',
+          playback
+        })
         : null}
-      {shouldRenderMediaSet ? <MediaCarousel media={fallbackMedia} blur={item.blurred} /> : null}
+      {shouldRenderMediaSet ? <MediaCarousel media={fallbackMedia} blur={item.blurred} playback={playback} /> : null}
       {!hasBlocks ? (
         <>
           {post.summary ? <p>{post.summary}</p> : null}
           {!shouldRenderMediaSet ? fallbackMedia.map((media, index) =>
             media.comparison?.comparisonItem
-              ? <ComparisonSlider key={`fallback-media-${media.mediaId || index}`} media={media} blur={item.blurred} />
-              : renderMediaFigure(media, `fallback-media-${media.mediaId || index}`, item.blurred)
+              ? <ComparisonSlider key={`fallback-media-${media.mediaId || index}`} media={media} blur={item.blurred} playback={playback} />
+              : renderMediaFigure(media, `fallback-media-${media.mediaId || index}`, item.blurred, {
+                autoPlayVideo: media.assetType === 'video' && index === 0,
+                playback
+              })
           ) : null}
         </>
       ) : post.blocks.map((block, index) => renderBlock(block, index))}
@@ -778,38 +817,38 @@ const StandardPostRenderer = ({ item, post, storyMode = false }: { item: Discove
   );
 };
 
-const StoryPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
+const StoryPostRenderer = ({ item, post, playback }: { item: DiscoveryOverlayItem; post: OverlayPost; playback?: VideoPlaybackOptions }) => {
   return (
     <div className="discovery-quickread-content-flow discovery-quickread-story-flow post-reading">
-      <StandardPostRenderer item={item} post={post} storyMode />
+      <StandardPostRenderer item={item} post={post} storyMode playback={playback} />
     </div>
   );
 };
 
-const ShortStoryPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
+const ShortStoryPostRenderer = ({ item, post, playback }: { item: DiscoveryOverlayItem; post: OverlayPost; playback?: VideoPlaybackOptions }) => {
   return (
     <div className="discovery-quickread-content-flow discovery-quickread-short-story-flow post-reading">
-      <StandardPostRenderer item={item} post={post} storyMode />
+      <StandardPostRenderer item={item} post={post} storyMode playback={playback} />
     </div>
   );
 };
 
-export const RichPostRenderer = ({ item, post }: { item: DiscoveryOverlayItem; post: OverlayPost }) => {
+export const RichPostRenderer = ({ item, post, playback }: { item: DiscoveryOverlayItem; post: OverlayPost; playback?: VideoPlaybackOptions }) => {
   const renderKind = inferPostRenderKind(post);
   if (renderKind === 'image') {
     return (
       <div className="discovery-quickread-content-flow discovery-quickread-story-flow post-reading">
-        <StandardPostRenderer item={item} post={post} storyMode />
+        <StandardPostRenderer item={item} post={post} storyMode playback={playback} />
       </div>
     );
   }
   if (renderKind !== 'story') {
-    return <StandardPostRenderer item={item} post={post} />;
+    return <StandardPostRenderer item={item} post={post} playback={playback} />;
   }
   const storyFormat = getPostFormat(post, 'story');
   return storyFormat === 'short'
-    ? <ShortStoryPostRenderer item={item} post={post} />
-    : <StoryPostRenderer item={item} post={post} />;
+    ? <ShortStoryPostRenderer item={item} post={post} playback={playback} />
+    : <StoryPostRenderer item={item} post={post} playback={playback} />;
 };
 
 const DiscoverySecondaryRail = ({
@@ -994,7 +1033,11 @@ export default function DiscoveryQuickReadOverlay({
                 <div className="discovery-quickread-loading-line" />
               </article>
             ) : post ? (
-              <RichPostRenderer item={item} post={post} />
+              <RichPostRenderer
+                item={item}
+                post={post}
+                playback={{ videoMuted, onVideoVolumeChange }}
+              />
             ) : (
               <article className="discovery-quickread-content-flow">
                 <div className="discovery-quickread-media-figure">
@@ -1004,6 +1047,7 @@ export default function DiscoveryQuickReadOverlay({
                     </audio>
                   ) : item.assetType === 'video' ? (
                     <video
+                      key={item.imageId}
                       ref={videoRef}
                       controls
                       playsInline

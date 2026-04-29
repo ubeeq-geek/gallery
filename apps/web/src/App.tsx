@@ -24,6 +24,7 @@ type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'a
 type FeedDensity = 'small' | 'medium' | 'large';
 type DensityViewport = 'mobile' | 'tablet' | 'desktop';
 type DiscoveryFilterSection = 'period' | 'density' | 'media' | 'heavy' | 'search';
+type DiscoveryMediaRoute = 'audio' | 'video' | 'story' | 'image';
 type DiscoveryDockSummary = {
   active: boolean;
   viewport: DensityViewport;
@@ -505,30 +506,6 @@ const isLikelyImageUrl = (url?: string): boolean => {
   return /\.(avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)(\?|#|$)/i.test(url);
 };
 
-const getYouTubeVideoIdFromDiscoveryItem = (item: Pick<TrendingImage, 'imageId' | 'previewUrl'>): string | null => {
-  if (item.imageId.startsWith('youtube:')) {
-    const id = item.imageId.slice('youtube:'.length);
-    return /^[A-Za-z0-9_-]{6,20}$/.test(id) ? id : null;
-  }
-  try {
-    const parsed = new URL(item.previewUrl);
-    if (parsed.hostname.replace(/^www\./, '').toLowerCase() !== 'i.ytimg.com') return null;
-    const parts = parsed.pathname.split('/').filter(Boolean);
-    const videoIndex = parts.indexOf('vi');
-    const id = videoIndex >= 0 ? parts[videoIndex + 1] : '';
-    return /^[A-Za-z0-9_-]{6,20}$/.test(id) ? id : null;
-  } catch {
-    return null;
-  }
-};
-
-const buildYouTubeAutoplayEmbedUrl = (videoId: string): string => {
-  const url = new URL(`https://www.youtube-nocookie.com/embed/${videoId}`);
-  url.searchParams.set('autoplay', '1');
-  url.searchParams.set('playsinline', '1');
-  url.searchParams.set('rel', '0');
-  return url.toString();
-};
 type CreatorProfilePayload = {
   artistId?: string;
   creatorId?: string;
@@ -2225,9 +2202,11 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
 
 function HomePage({
   viewerProfile,
+  mediaRoute,
   onDiscoveryDockChange
 }: {
   viewerProfile?: UserProfile | null;
+  mediaRoute?: DiscoveryMediaRoute;
   onDiscoveryDockChange?: (state: DiscoveryDockSummary | null) => void;
 }) {
   const currentUser = getCurrentUser();
@@ -2259,7 +2238,7 @@ function HomePage({
   const [trendingReloadNonce, setTrendingReloadNonce] = useState(0);
   const [discoverySort, setDiscoverySort] = useState<'latest' | 'trending'>('trending');
   const [trendingPeriod, setTrendingPeriod] = useState<'hourly' | 'daily'>('daily');
-  const [feedDensity, setFeedDensity] = useState<FeedDensity>('medium');
+  const [feedDensity, setFeedDensity] = useState<FeedDensity>(() => (mediaRoute ? 'large' : 'medium'));
   const [densityViewport, setDensityViewport] = useState<DensityViewport>(() => {
     if (typeof window === 'undefined') return 'desktop';
     if (window.innerWidth >= 1100) return 'desktop';
@@ -2301,7 +2280,6 @@ function HomePage({
   const [focusedDiscoveryError, setFocusedDiscoveryError] = useState('');
   const [focusedDiscoveryVideoMuted, setFocusedDiscoveryVideoMuted] = useState(true);
   const [focusedDiscoveryVideoVolume, setFocusedDiscoveryVideoVolume] = useState(1);
-  const [inlineDiscoveryVideoId, setInlineDiscoveryVideoId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const densityTransitionTimersRef = useRef<number[]>([]);
   const densitySwitchRequestRef = useRef<number | null>(null);
@@ -2359,6 +2337,15 @@ function HomePage({
       : (heavyHidden ? 'Heavy Topics Hidden' : (someHeavyHidden ? 'Some Heavy Topics' : 'Heavy Topics Shown'))
   );
   const artistSlugById = new Map(artists.map((artist) => [artist.artistId, artist.slug]));
+
+  useEffect(() => {
+    if (!mediaRoute) return;
+    setFeedDensity('large');
+    setShowImageMedia(mediaRoute === 'image');
+    setShowVideoMedia(mediaRoute === 'video');
+    setShowPostMedia(mediaRoute === 'story');
+    setShowAudioMedia(mediaRoute === 'audio');
+  }, [mediaRoute]);
 
   const clearDensityTransitionTimers = () => {
     if (typeof window === 'undefined') return;
@@ -3410,6 +3397,22 @@ function HomePage({
     focusedDiscoveryContextItems.length
   ]);
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const pauseOtherVideos = (event: Event) => {
+      const activeVideo = event.target;
+      if (!(activeVideo instanceof HTMLVideoElement)) return;
+      document.querySelectorAll('video').forEach((video) => {
+        if (video !== activeVideo && !video.paused) {
+          video.pause();
+          video.currentTime = 0;
+        }
+      });
+    };
+    document.addEventListener('play', pauseOtherVideos, true);
+    return () => document.removeEventListener('play', pauseOtherVideos, true);
+  }, []);
+
   const renderTrendingCard = (
     item: TrendingImage,
     cardIndex: number,
@@ -3452,26 +3455,14 @@ function HomePage({
         ? '(min-width: 1100px) 50vw, 100vw'
         : '(min-width: 1100px) 33vw, 50vw';
     const imageSrc = item.thumbnailUrls?.w1280 || item.thumbnailUrls?.w640 || item.previewUrl;
-    const youtubeVideoId = assetType === 'video' ? getYouTubeVideoIdFromDiscoveryItem(item) : null;
-    const youtubeEmbedSrc = youtubeVideoId ? buildYouTubeAutoplayEmbedUrl(youtubeVideoId) : '';
-    const isInlineVideoPlaying = Boolean(youtubeVideoId && inlineDiscoveryVideoId === item.imageId);
     const mediaFrame = (
       <div
-        className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}${nonCropClass}${isShortVideoPoster ? ' is-short-video-poster' : ''}${isInlineVideoPlaying ? ' is-inline-playing' : ''}`}
+        className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}${nonCropClass}${isShortVideoPoster ? ' is-short-video-poster' : ''}`}
         style={{
           aspectRatio: `${frameRatio.toFixed(3)} / 1`
         }}
       >
-        {isInlineVideoPlaying ? (
-          <iframe
-            src={youtubeEmbedSrc}
-            title={`${cardTitle} video`}
-            loading="lazy"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
-            referrerPolicy="strict-origin-when-cross-origin"
-          />
-        ) : (assetType === 'audio') ? (
+        {assetType === 'audio' ? (
           <div className="discovery-audio-preview" aria-label={item.title || 'Audio preview'}>
             <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
           </div>
@@ -3502,7 +3493,7 @@ function HomePage({
           />
         )}
         {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
-        {isPostSurface && !isInlineVideoPlaying && (
+        {isPostSurface && (
           <span
             className="discovery-chip"
             style={{ left: visibilityPill ? '6.1rem' : '1rem' }}
@@ -3510,7 +3501,7 @@ function HomePage({
             {(item.postType || 'story').toUpperCase()}
           </span>
         )}
-        {assetType === 'video' && !isInlineVideoPlaying && !isPostSurface && (
+        {assetType === 'video' && !isPostSurface && (
           <span
             className="discovery-chip"
             style={{ left: 'unset', right: visibilityPill ? '8.2rem' : (isPostSurface ? '6rem' : '1rem') }}
@@ -3537,38 +3528,32 @@ function HomePage({
         style={{ '--media-aspect': frameRatio.toFixed(4) } as any}
       >
         <div className="discovery-feature-link no-underline">
-          {isInlineVideoPlaying ? (
-            mediaFrame
-          ) : (
-            <>
-              <button
-                type="button"
-                className="discovery-feature-media-open"
-                onClick={() => void openFocusedDiscovery(item)}
-                aria-label={`Open ${cardTitle}`}
-              >
-                {mediaFrame}
-              </button>
-              {youtubeVideoId && !isBlurredByRating && (
-                <button
-                  type="button"
-                  className="discovery-video-play-overlay"
-                  style={{
-                    width: '5rem',
-                    height: '5rem',
-                    padding: 0,
-                    border: 0,
-                    borderRadius: '50%',
-                    backgroundColor: 'rgb(0 0 0 / 0.48)',
-                    boxShadow: 'none'
-                  }}
-                  onClick={() => setInlineDiscoveryVideoId(item.imageId)}
-                  aria-label={`Play ${cardTitle}`}
-                >
-                  <span aria-hidden="true" />
-                </button>
-              )}
-            </>
+          <button
+            type="button"
+            className="discovery-feature-media-open"
+            onClick={() => void openFocusedDiscovery(item)}
+            aria-label={`Open ${cardTitle}`}
+          >
+            {mediaFrame}
+          </button>
+          {assetType === 'video' && !isBlurredByRating && (
+            <button
+              type="button"
+              className="discovery-video-play-overlay"
+              style={{
+                width: '5rem',
+                height: '5rem',
+                padding: 0,
+                border: 0,
+                borderRadius: '50%',
+                backgroundColor: 'rgb(0 0 0 / 0.48)',
+                boxShadow: 'none'
+              }}
+              onClick={() => void openFocusedDiscovery(item)}
+              aria-label={`Play ${cardTitle}`}
+            >
+              <span aria-hidden="true" />
+            </button>
           )}
         </div>
         <div className="discovery-feature-footer discovery-feature-footer-stacked">
@@ -7819,6 +7804,10 @@ export default function App() {
       />
       <Routes>
         <Route path="/" element={<HomePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/audio" element={<HomePage viewerProfile={myProfile} mediaRoute="audio" onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/video" element={<HomePage viewerProfile={myProfile} mediaRoute="video" onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/story" element={<HomePage viewerProfile={myProfile} mediaRoute="story" onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/image" element={<HomePage viewerProfile={myProfile} mediaRoute="image" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/trending" element={<TrendingPage viewerProfile={myProfile} />} />
         <Route path="/creators/:slug" element={<CreatorProfilePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/gallery/:slug" element={<GalleryPage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
