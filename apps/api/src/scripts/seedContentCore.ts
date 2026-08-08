@@ -28,6 +28,7 @@ import { generateCreatorCoverRenditions, generateCreatorProfileRenditions, gener
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm']);
+const AUDIO_EXT = new Set(['.mp3']);
 const SEED_UUID_NAMESPACE = '6ba7b811-9dad-11d1-80b4-00c04fd430c8';
 
 const getArgValue = (flagName: string): string | undefined => {
@@ -58,6 +59,7 @@ const contentTypeForFile = (filename: string): string => {
   if (ext === '.mp4') return 'video/mp4';
   if (ext === '.mov') return 'video/quicktime';
   if (ext === '.webm') return 'video/webm';
+  if (ext === '.mp3') return 'audio/mpeg';
   return 'application/octet-stream';
 };
 
@@ -1667,9 +1669,13 @@ const main = async () => {
         throw new Error(`Scenario ${label} references unknown groupingSlug "${groupingSlug}"`);
       }
       const ext = path.extname(file.filename).toLowerCase();
-      const assetType: 'image' | 'video' = VIDEO_EXT.has(ext) ? 'video' : 'image';
+      const assetType: 'image' | 'video' | 'audio' = VIDEO_EXT.has(ext)
+        ? 'video'
+        : AUDIO_EXT.has(ext)
+          ? 'audio'
+          : 'image';
       if (assetType === 'image' && !IMAGE_EXT.has(ext)) {
-        throw new Error(`Scenario ${label} media file "${file.filename}" is not an image or video`);
+        throw new Error(`Scenario ${label} media file "${file.filename}" is not an image, video, or audio file`);
       }
       const mediaId = seedId('media', seed.slug, groupingSlug, file.relativePath.replace(/\\/g, '/'));
       const title = titleFromFilename(file.filename);
@@ -1698,7 +1704,7 @@ const main = async () => {
           altText: title,
           createdAt
         });
-      } else {
+      } else if (assetType === 'video') {
         pushMediaToGroupingSlug(groupingSlug, {
           mediaId,
           creatorId,
@@ -1717,6 +1723,26 @@ const main = async () => {
           width: 1920,
           height: 1080,
           durationSeconds: 20,
+          createdAt
+        });
+      } else {
+        pushMediaToGroupingSlug(groupingSlug, {
+          mediaId,
+          creatorId,
+          assetType: 'audio',
+          discoverSquareCropEnabled,
+          contentRating,
+          aiDisclosure,
+          heavyTopics,
+          appearsInFeed: true,
+          title,
+          slug,
+          slugHistory: [slug],
+          originalFilename: file.filename,
+          previewKey: objectKey,
+          premiumKey: isPremiumGrouping ? objectKey : undefined,
+          width: 1,
+          height: 1,
           createdAt
         });
       }

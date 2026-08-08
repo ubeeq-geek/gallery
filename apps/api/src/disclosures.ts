@@ -31,9 +31,9 @@ export interface ViewerDisclosurePolicy {
 
 export const DEFAULT_VIEWER_DISCLOSURE_POLICY: ViewerDisclosurePolicy = {
   aiFilter: 'show-all',
-  hideHeavyTopics: false,
-  hidePoliticsPublicAffairs: false,
-  hideCrimeDisastersTragedy: false
+  hideHeavyTopics: true,
+  hidePoliticsPublicAffairs: true,
+  hideCrimeDisastersTragedy: true
 };
 
 export const normalizeAiDisclosure = (value: unknown): AiDisclosure => {
@@ -95,9 +95,9 @@ export const normalizeViewerDisclosurePolicy = (policy: Partial<ViewerDisclosure
 export const profileDisclosurePolicy = (profile?: UserProfile | null): ViewerDisclosurePolicy => (
   normalizeViewerDisclosurePolicy({
     aiFilter: profile?.aiFilter || 'show-all',
-    hideHeavyTopics: Boolean(profile?.hideHeavyTopics),
-    hidePoliticsPublicAffairs: Boolean(profile?.hidePoliticsPublicAffairs),
-    hideCrimeDisastersTragedy: Boolean(profile?.hideCrimeDisastersTragedy)
+    hideHeavyTopics: profile?.hideHeavyTopics ?? DEFAULT_VIEWER_DISCLOSURE_POLICY.hideHeavyTopics,
+    hidePoliticsPublicAffairs: profile?.hidePoliticsPublicAffairs ?? DEFAULT_VIEWER_DISCLOSURE_POLICY.hidePoliticsPublicAffairs,
+    hideCrimeDisastersTragedy: profile?.hideCrimeDisastersTragedy ?? DEFAULT_VIEWER_DISCLOSURE_POLICY.hideCrimeDisastersTragedy
   })
 );
 
@@ -150,4 +150,3 @@ export const passesDisclosureFilter = (
   passesAiFilter(aiDisclosure, policy.aiFilter) &&
   passesHeavyTopicFilter(heavyTopics, policy)
 );
-

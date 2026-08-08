@@ -19,7 +19,7 @@ import {
   type CurrentUser
 } from './cognitoAuth';
 
-type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string };
+type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string; creatorThumbnailUrl?: string };
 type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
 type FeedDensity = 'small' | 'medium' | 'large';
 type DensityViewport = 'mobile' | 'tablet' | 'desktop';
@@ -46,6 +46,7 @@ type DiscoveryDockSummary = {
   searchActive: boolean;
 };
 const DISCOVERY_FILTER_EVENT_NAME = 'ubeeq:discovery-filters';
+const DEFAULT_PROFILE_ICON_SRC = '/default-profile-icon.svg';
 const OTP_TRUST_DAYS = 30;
 const otpTrustStorageKey = (email: string) => `ubeeq.otpTrust.${email.trim().toLowerCase()}`;
 const hasValidOtpTrust = (email: string): boolean => {
@@ -123,6 +124,7 @@ const heavyTopicLabels: Record<HeavyTopic, string> = {
   'politics-public-affairs': 'Politics & Public Affairs',
   'crime-disasters-tragedy': 'Crime, Disasters & Tragedy'
 };
+const initialHeavyTopicPreference = (value?: boolean): boolean => value ?? true;
 const formatDisclosureLine = (item: {
   displayedAiDisclosure?: string;
   displayedHeavyTopics?: string[];
@@ -265,11 +267,17 @@ const guessArtistNameFromSlug = (slug?: string): string => {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
 };
+const creatorAvatarUrl = (artist: Artist): string | undefined => artist.creatorThumbnailUrl || artist.artistThumbnailUrl;
+const withAssetVersion = (url?: string, version?: string): string | undefined => {
+  if (!url || !version) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}`;
+};
 const normalizeCreatorProfilePayload = (raw: CreatorProfilePayload): CreatorProfilePayload => {
   const normalizedGalleries = raw.galleries || raw.groupings || [];
   return {
     ...raw,
     artistId: raw.artistId || raw.creatorId || '',
+    galleryCount: raw.galleryCount ?? raw.groupingCount ?? normalizedGalleries.length,
     galleries: normalizedGalleries,
     groupings: normalizedGalleries,
     publicFavoritesByType: {
@@ -351,6 +359,11 @@ const normalizeTrendingImage = (item: Partial<TrendingImage> & {
   gallerySlug: item.gallerySlug || item.groupingSlug || '',
   galleryVisibility: item.galleryVisibility || item.groupingVisibility
 } as TrendingImage);
+
+type CollectionDetail = CollectionSummary & {
+  imageIds?: string[];
+  items?: TrendingImage[];
+};
 
 type PostBlockType =
   | 'section'
@@ -515,6 +528,7 @@ type CreatorProfilePayload = {
   branding?: {
     profileImage?: {
       altText?: string;
+      updatedAt?: string;
       thumbnailUrls?: {
         square256?: string;
         square512?: string;
@@ -533,7 +547,8 @@ type CreatorProfilePayload = {
   defaultProfileTab?: 'feed' | 'galleries';
   followerCount: number;
   imageCount: number;
-  galleryCount: number;
+  galleryCount?: number;
+  groupingCount?: number;
   feedItems?: Array<{
     imageId: string;
     title: string;
@@ -659,6 +674,31 @@ type GroupingDetail = {
   favoriteCount: number;
   media: GroupingAsset[];
 };
+const normalizeGroupingAsset = (item: Partial<GroupingAsset> & { mediaId?: string }): GroupingAsset => ({
+  ...item,
+  imageId: item.imageId || item.mediaId || '',
+  title: item.title,
+  assetType: item.assetType || 'image',
+  previewUrl: item.previewUrl || '',
+  favoriteCount: item.favoriteCount || 0
+} as GroupingAsset);
+const normalizeGroupingDetail = (raw: Partial<GroupingDetail> & {
+  groupingId?: string;
+  sourceGroupingId?: string;
+  creatorName?: string;
+  creatorSlug?: string;
+  media?: Array<Partial<GroupingAsset> & { mediaId?: string }>;
+  premiumTeaserMedia?: Array<Partial<GroupingAsset> & { mediaId?: string }>;
+}): GroupingDetail => ({
+  ...raw,
+  galleryId: raw.galleryId || raw.groupingId || raw.sourceGroupingId || '',
+  artistName: raw.artistName || raw.creatorName,
+  artistSlug: raw.artistSlug || raw.creatorSlug,
+  visibility: raw.visibility || 'free',
+  favoriteCount: raw.favoriteCount || 0,
+  media: (raw.media || []).map(normalizeGroupingAsset),
+  premiumTeaserMedia: raw.premiumTeaserMedia?.map(normalizeGroupingAsset)
+} as GroupingDetail);
 type Comment = {
   commentId: string;
   authorProfileType?: 'user' | 'artist';
@@ -813,13 +853,6 @@ function HeaderAuth({
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
-  const initials = initialsSource
-    .split('@')[0]
-    .split(/[.\s_-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() || '')
-    .join('') || 'U';
   const normalizedGroups = (user?.groups || []).map((group) => group.toLowerCase());
   const isAdmin = normalizedGroups.includes('admin') || normalizedGroups.includes('admins');
   const primaryManagedArtist = (managedArtists || []).find((artist) => Boolean(artist.slug)) || managedArtists?.[0];
@@ -1025,7 +1058,9 @@ function HeaderAuth({
                   </>
                 )}
                 <details className="user-menu">
-                  <summary className="user-menu-trigger" aria-label="Open account menu">{initials}</summary>
+                  <summary className="user-menu-trigger" aria-label="Open account menu">
+                    <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
+                  </summary>
                   <div className="user-menu-items">
                     <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
                     {canAccessStudio && <Link to={artistProfileHref} onClick={closeUserMenus}>Creator</Link>}
@@ -1072,7 +1107,7 @@ function HeaderAuth({
                   </Link>
                 </div>
               </div>
-            )}
+              )}
           </section>
         </div>
       </header>
@@ -1092,7 +1127,7 @@ function HeaderAuth({
                   />
                 )}
               </button>
-            )}
+              )}
             {showCreatorNav && (
               canAccessStudio ? (
                 <Link to={compactNavHref} className="mobile-creator-dock-btn">
@@ -1118,7 +1153,9 @@ function HeaderAuth({
               <div className="user-menu-items">
                 <div className="user-menu-sheet-handle" />
                 <div className="user-menu-profile">
-                  <div className="user-menu-profile-avatar">{initials}</div>
+                  <div className="user-menu-profile-avatar">
+                    <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
+                  </div>
                   <div>
                     <div className="user-menu-profile-name">{displayName}</div>
                     <div className="user-menu-profile-email">{menuSecondaryLabel || displayName}</div>
@@ -2257,15 +2294,15 @@ function HomePage({
   const [loadingCollections, setLoadingCollections] = useState(false);
   const [deferredSectionsReady, setDeferredSectionsReady] = useState(false);
   const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
-  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
-  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   const [heavyTopicsExpanded, setHeavyTopicsExpanded] = useState(true);
   const [discoverySearch, setDiscoverySearch] = useState('');
-  const [showImageMedia, setShowImageMedia] = useState(true);
-  const [showVideoMedia, setShowVideoMedia] = useState(true);
-  const [showPostMedia, setShowPostMedia] = useState(true);
-  const [showAudioMedia, setShowAudioMedia] = useState(true);
+  const [showImageMedia, setShowImageMedia] = useState(() => (mediaRoute ? mediaRoute === 'image' : true));
+  const [showVideoMedia, setShowVideoMedia] = useState(() => (mediaRoute ? mediaRoute === 'video' : true));
+  const [showPostMedia, setShowPostMedia] = useState(() => (mediaRoute ? mediaRoute === 'story' : true));
+  const [showAudioMedia, setShowAudioMedia] = useState(() => (mediaRoute ? mediaRoute === 'audio' : true));
   const [showCompactDiscoveryDock, setShowCompactDiscoveryDock] = useState(false);
   const [compactFiltersOpen, setCompactFiltersOpen] = useState(false);
   const [compactFilterSection, setCompactFilterSection] = useState<DiscoveryFilterSection>('period');
@@ -2331,6 +2368,7 @@ function HomePage({
     showPosts: showPostMedia,
     showAudio: showAudioMedia
   });
+  const videoOnlyDiscovery = showVideoMedia && !showImageMedia && !showPostMedia && !showAudioMedia;
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
     densityViewport === 'mobile'
       ? (heavyHidden ? 'Heavy Hidden' : (someHeavyHidden ? 'Some Heavy' : 'Heavy Shown'))
@@ -2479,9 +2517,9 @@ function HomePage({
 
   useEffect(() => {
     setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
-    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
-    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+    setHideHeavyTopics(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   }, [
     viewerProfile?.aiFilter,
     viewerProfile?.hideHeavyTopics,
@@ -3430,6 +3468,13 @@ function HomePage({
     const isFavorite = favoriteImageIds.has(item.imageId);
     const displayedRating = item.displayedContentRating || 'General';
     const cardTitle = isPostSurface ? (item.postTitle || item.title || 'Untitled post') : (item.title || 'Artwork title');
+    const contentTypeLabel = isPostSurface
+      ? (item.postType || 'story')
+      : assetType === 'video'
+        ? 'video'
+        : assetType === 'audio'
+          ? 'audio'
+          : null;
     const cardSummary = isPostSurface ? (item.postSummary || '') : '';
     const disclosureLine = formatDisclosureLine(item);
     const isBlurredByRating = item.blurred === true;
@@ -3493,30 +3538,6 @@ function HomePage({
           />
         )}
         {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
-        {isPostSurface && (
-          <span
-            className="discovery-chip"
-            style={{ left: visibilityPill ? '6.1rem' : '1rem' }}
-          >
-            {(item.postType || 'story').toUpperCase()}
-          </span>
-        )}
-        {assetType === 'video' && !isPostSurface && (
-          <span
-            className="discovery-chip"
-            style={{ left: 'unset', right: visibilityPill ? '8.2rem' : (isPostSurface ? '6rem' : '1rem') }}
-          >
-            Video
-          </span>
-        )}
-        {assetType === 'audio' && (
-          <span
-            className="discovery-chip"
-            style={{ left: 'unset', right: visibilityPill ? '8.2rem' : (isPostSurface ? '6rem' : '1rem') }}
-          >
-            Audio
-          </span>
-        )}
         {isBlurredByRating && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
       </div>
     );
@@ -3558,6 +3579,7 @@ function HomePage({
         </div>
         <div className="discovery-feature-footer discovery-feature-footer-stacked">
           <div className="discovery-feature-text">
+            {contentTypeLabel && <span className="discovery-content-type-pill">{contentTypeLabel}</span>}
             <h3 className="discovery-feature-title">
               {item.gallerySlug ? (
                 <Link to={`/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}`} className="no-underline">
@@ -4234,9 +4256,9 @@ function HomePage({
             {risingArtists.map((artist, i) => (
               <article key={artist.artistId || artist.name || `artist-special-${i}`} className="discovery-rising-pill">
                 <div className="discovery-rising-avatar">
-                  {artist.artistThumbnailUrl
-                    ? <img src={artist.artistThumbnailUrl} alt={artist.name || 'Creator'} loading="lazy" decoding="async" />
-                    : <span>{(artist.name || 'Creator').split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')}</span>}
+                  {creatorAvatarUrl(artist)
+                    ? <img src={creatorAvatarUrl(artist)} alt={artist.name || 'Creator'} loading="lazy" decoding="async" />
+                    : <img src={DEFAULT_PROFILE_ICON_SRC} alt="" />}
                 </div>
                 <div className="discovery-rising-meta">
                   <div className="discovery-card-title">
@@ -4382,9 +4404,9 @@ function HomePage({
             {risingArtists.map((artist, i) => (
               <article key={artist.artistId || artist.name || `artist-${i}`} className="discovery-artist-card">
                 <div className="discovery-artist-avatar">
-                  {artist.artistThumbnailUrl
-                    ? <img src={artist.artistThumbnailUrl} alt={artist.name || 'Creator'} loading="lazy" decoding="async" />
-                    : <span className="discovery-artist-initials">{(artist.name || 'Creator').split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')}</span>}
+                  {creatorAvatarUrl(artist)
+                    ? <img src={creatorAvatarUrl(artist)} alt={artist.name || 'Creator'} loading="lazy" decoding="async" />
+                    : <img src={DEFAULT_PROFILE_ICON_SRC} alt="" />}
                 </div>
                 <div className="discovery-artist-meta">
                   <div className="discovery-card-title">
@@ -4473,6 +4495,7 @@ function HomePage({
         moreFromStream={focusedRelatedItems}
         videoMuted={focusedDiscoveryVideoMuted}
         videoRef={focusedDiscoveryVideoRef}
+        loopVideosUntilNext={videoOnlyDiscovery}
         onClose={closeFocusedDiscovery}
         onPrevious={() => setFocusedDiscoveryContextIndex((index) => Math.max(0, index - 1))}
         onNext={() => setFocusedDiscoveryContextIndex((index) => Math.min(focusedDiscoveryContextItems.length - 1, index + 1))}
@@ -4550,9 +4573,9 @@ function GalleryPage({
   const [showPostMedia, setShowPostMedia] = useState(true);
   const [showAudioMedia, setShowAudioMedia] = useState(true);
   const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
-  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
-  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   const [heavyTopicsExpanded, setHeavyTopicsExpanded] = useState(true);
   const [galleryScope, setGalleryScope] = useState<'all' | 'public'>('all');
   const [showCompactDiscoveryDock, setShowCompactDiscoveryDock] = useState(false);
@@ -4570,6 +4593,7 @@ function GalleryPage({
   const discoverySearchInputRef = useRef<HTMLInputElement | null>(null);
   const compactSearchInputRef = useRef<HTMLInputElement | null>(null);
   const deepLinkHandledRef = useRef<string>('');
+  const [loadingGallery, setLoadingGallery] = useState(true);
   const [error, setError] = useState<string>('');
 
   const densityLabel: Record<FeedDensity, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
@@ -4592,17 +4616,19 @@ function GalleryPage({
 
   const load = async () => {
     try {
+      setLoadingGallery(true);
       setError('');
       const stored = getStoredGalleryAccessToken(slug);
       if (stored && stored !== rememberToken) {
         setRememberToken(stored);
       }
       const [galleryData, commentData] = await Promise.all([api.getGallery(slug, stored || rememberToken), api.getGalleryComments(slug)]);
-      setGrouping(galleryData);
+      const normalizedGallery = normalizeGroupingDetail(galleryData);
+      setGrouping(normalizedGallery);
       setComments(commentData);
-      const serverAccess = galleryData.visibility !== 'premium' ? Boolean(galleryData.hasAccess ?? true) : Boolean(galleryData.hasAccess);
+      const serverAccess = normalizedGallery.visibility !== 'premium' ? Boolean(normalizedGallery.hasAccess ?? true) : Boolean(normalizedGallery.hasAccess);
       setHasPremiumAccess(serverAccess);
-      if (galleryData.visibility === 'premium' && serverAccess) {
+      if (normalizedGallery.visibility === 'premium' && serverAccess) {
         try {
           if (stored || rememberToken) {
             const premium = await api.getPremiumImagesWithRemember(slug, stored || rememberToken);
@@ -4620,6 +4646,9 @@ function GalleryPage({
       }
     } catch (e) {
       setError((e as Error).message);
+      setGrouping(null);
+    } finally {
+      setLoadingGallery(false);
     }
   };
 
@@ -4652,9 +4681,9 @@ function GalleryPage({
 
   useEffect(() => {
     setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
-    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
-    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+    setHideHeavyTopics(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   }, [
     viewerProfile?.aiFilter,
     viewerProfile?.hideHeavyTopics,
@@ -5156,7 +5185,20 @@ function GalleryPage({
     };
   }, [focusedOpen, focusedHasPrevious, focusedHasNext, focusedItems.length]);
 
-  if (!grouping) return <div className="layout">Loading...</div>;
+  if (!grouping) {
+    return (
+      <div className="layout">
+        {loadingGallery ? (
+          <p>Loading...</p>
+        ) : (
+          <>
+            <h1>Gallery unavailable</h1>
+            <p className="error">{error || 'Unable to load this gallery.'}</p>
+          </>
+        )}
+      </div>
+    );
+  }
   const galleryArtistName = (grouping.artistName || '').trim() || guessArtistNameFromSlug(grouping.artistSlug) || 'Unknown Creator';
   const discoverGalleryHeadingText = `Discover ${grouping.title} from ${galleryArtistName}`;
   const discoverGalleryHeading = (
@@ -5181,6 +5223,7 @@ function GalleryPage({
       : sectionVisibility === 'premium'
         ? 'Premium'
         : null;
+    const contentTypeLabel = item.assetType === 'video' ? 'video' : null;
     return (
       <article
         id={`gallery-media-${item.imageId}`}
@@ -5220,12 +5263,12 @@ function GalleryPage({
                 />
               )}
             {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
-            {item.assetType === 'video' && <span className="discovery-chip" style={{ left: 'unset', right: visibilityPill ? '8.2rem' : '1rem' }}>Video</span>}
             {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
           </div>
         </button>
         <div className="discovery-feature-footer">
           <div className="discovery-feature-text">
+            {contentTypeLabel && <span className="discovery-content-type-pill">{contentTypeLabel}</span>}
             <h3 className="discovery-feature-title">{item.title || item.imageId}</h3>
             <p className="discovery-feature-subtitle">{item.displayedContentRating || 'General'}</p>
             {disclosureLine && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
@@ -5840,6 +5883,12 @@ function GalleryPage({
                       <source src={focusedItem.previewUrl} />
                     </video>
                   )
+                  : focusedItem.assetType === 'audio'
+                    ? (
+                      <audio controls autoPlay preload="metadata" style={{ width: 'min(100%, 42rem)' }}>
+                        <source src={focusedItem.previewUrl} />
+                      </audio>
+                    )
                   : (
                     <img
                       src={focusedItem.thumbnailUrls?.w1280 || focusedItem.thumbnailUrls?.w640 || focusedItem.previewUrl}
@@ -5923,15 +5972,18 @@ function CollectionDetailPage() {
   const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
   const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
   const [isFavorited, setIsFavorited] = useState(false);
-  const [collection, setCollection] = useState<(CollectionSummary & { imageIds?: string[] }) | null>(null);
+  const [collection, setCollection] = useState<CollectionDetail | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
     const load = async () => {
       try {
         setError('');
-        const result = await api.getCollection(collectionId) as CollectionSummary & { imageIds?: string[] };
-        setCollection(result);
+        const result = await api.getCollection(collectionId) as CollectionSummary & { imageIds?: string[]; items?: Array<Partial<TrendingImage> & { creatorId?: string; creatorName?: string; groupingId?: string; groupingSlug?: string }> };
+        setCollection({
+          ...result,
+          items: (result.items || []).map(normalizeTrendingImage)
+        });
       } catch (e) {
         setError((e as Error).message);
       }
@@ -5992,6 +6044,48 @@ function CollectionDetailPage() {
   };
 
   if (!collection) return <div className="layout">Loading...</div>;
+  const collectionItems = collection.items || [];
+  const renderCollectionItem = (item: TrendingImage, index: number) => {
+    const imageSource = item.assetType === 'video' ? (item.previewPosterUrl || item.previewUrl) : item.previewUrl;
+    return (
+      <article key={item.imageId} className="discovery-feature-card collection-detail-card">
+        <div className="discovery-feature-media no-crop collection-detail-media">
+          {item.assetType === 'video' && !item.previewPosterUrl ? (
+            <video
+              src={item.previewUrl}
+              muted
+              playsInline
+              preload="metadata"
+              style={{ filter: item.blurred ? 'blur(28px)' : undefined }}
+            />
+          ) : item.assetType === 'audio' ? (
+            <div className="discovery-audio-preview">
+              <span className="collection-detail-audio-label">Audio</span>
+            </div>
+          ) : (
+            <img
+              src={imageSource}
+              alt={item.title || item.imageId}
+              loading={index < 3 ? 'eager' : 'lazy'}
+              decoding="async"
+              style={{ filter: item.blurred ? 'blur(28px)' : undefined }}
+            />
+          )}
+          {item.blurred && <span className="discovery-chip">Mature Content</span>}
+        </div>
+        <div className="discovery-feature-footer">
+          <div className="discovery-feature-text">
+            <h3 className="discovery-feature-title">{item.title || item.imageId}</h3>
+            <p className="discovery-feature-subtitle">{item.artistName}</p>
+          </div>
+          <div className="discovery-feature-stats">
+            <span>{item.assetType || 'image'}</span>
+            <span>{item.favoriteCount || 0} favorites</span>
+          </div>
+        </div>
+      </article>
+    );
+  };
 
   return (
     <div className="layout">
@@ -6021,6 +6115,19 @@ function CollectionDetailPage() {
       >
         {isFavorited ? 'Unfavorite Collection' : 'Favorite Collection'}
       </button>
+      <section className="collection-detail-section">
+        <div className="discovery-section-header">
+          <h2>Items</h2>
+          <p className="small">{collectionItems.length} shown</p>
+        </div>
+        {collectionItems.length > 0 ? (
+          <div className="collection-detail-grid">
+            {collectionItems.map(renderCollectionItem)}
+          </div>
+        ) : (
+          <p className="small">No items in this collection yet.</p>
+        )}
+      </section>
       {error && <p className="error">{error}</p>}
     </div>
   );
@@ -6037,9 +6144,9 @@ function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null })
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [aiFilter, setAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
-  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
-  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
   const masonryHeights = [220, 260, 300, 340, 380];
   const disclosureFilters = {
@@ -6051,9 +6158,9 @@ function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null })
 
   useEffect(() => {
     setAiFilter(viewerProfile?.aiFilter || 'show-all');
-    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
-    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+    setHideHeavyTopics(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   }, [
     viewerProfile?.aiFilter,
     viewerProfile?.hideHeavyTopics,
@@ -6270,9 +6377,9 @@ function CreatorProfilePage({
   const [showPostMedia, setShowPostMedia] = useState(true);
   const [showAudioMedia, setShowAudioMedia] = useState(true);
   const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
-  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
-  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   const [heavyTopicsExpanded, setHeavyTopicsExpanded] = useState(true);
   const [showCompactDiscoveryDock, setShowCompactDiscoveryDock] = useState(false);
   const [compactFiltersOpen, setCompactFiltersOpen] = useState(false);
@@ -6290,6 +6397,7 @@ function CreatorProfilePage({
   const [galleryStackLayersById, setGalleryStackLayersById] = useState<Record<string, string[]>>({});
   const focusedVideoRef = useRef<HTMLVideoElement | null>(null);
   const focusedRequestRef = useRef(0);
+  const galleryRailRef = useRef<HTMLDivElement | null>(null);
   const discoveryFilterPanelRef = useRef<HTMLDivElement | null>(null);
   const discoverySearchInputRef = useRef<HTMLInputElement | null>(null);
   const compactSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -6342,7 +6450,7 @@ function CreatorProfilePage({
     const galleryId = primaryGallery?.galleryId || item?.galleryId || '';
     return {
       imageId: item.imageId,
-      assetType: item.assetType === 'video' ? 'video' : 'image',
+      assetType: item.assetType === 'video' || item.assetType === 'audio' ? item.assetType : 'image',
       artistId: item.artistId || artistId,
       artistName: item.artistName || artistName,
       galleryId,
@@ -6462,9 +6570,9 @@ function CreatorProfilePage({
 
   useEffect(() => {
     setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
-    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
-    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+    setHideHeavyTopics(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   }, [
     viewerProfile?.aiFilter,
     viewerProfile?.hideHeavyTopics,
@@ -6578,7 +6686,7 @@ function CreatorProfilePage({
   }, [onDiscoveryDockChange]);
 
   useEffect(() => {
-    if (artistTab !== 'galleries' || !profile?.galleries?.length) return;
+    if (!profile?.galleries?.length) return;
     let cancelled = false;
 
     setGalleryStackLayersById((prev) => {
@@ -6624,7 +6732,7 @@ function CreatorProfilePage({
     return () => {
       cancelled = true;
     };
-  }, [artistTab, profile?.artistId, profile?.galleries]);
+  }, [profile?.artistId, profile?.galleries]);
 
   const applyHideAllHeavyTopics = (enabled: boolean) => {
     setHideHeavyTopics(enabled);
@@ -6642,7 +6750,7 @@ function CreatorProfilePage({
 
   const toFocusedAsset = (item: TrendingImage): GroupingAsset => ({
     imageId: item.imageId,
-    assetType: item.assetType === 'video' ? 'video' : 'image',
+    assetType: item.assetType === 'video' || item.assetType === 'audio' ? item.assetType : 'image',
     effectiveContentRating: item.effectiveContentRating,
     displayedContentRating: item.displayedContentRating,
     blurred: item.blurred,
@@ -6699,6 +6807,11 @@ function CreatorProfilePage({
   const scrollToArtistFilters = () => {
     document.getElementById('artist-discovery-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     closeFocusedViewer();
+  };
+  const pageGalleryRail = (direction: -1 | 1) => {
+    const rail = galleryRailRef.current;
+    if (!rail) return;
+    rail.scrollBy({ left: direction * rail.clientWidth * 0.82, behavior: 'smooth' });
   };
 
   const filteredFeedItems = feedItems.filter((item) => (
@@ -6791,30 +6904,28 @@ function CreatorProfilePage({
   if (!profile) return <div className="layout">{error || 'Creator not found'}</div>;
 
   const followerLabel = `${profile.followerCount} ${profile.followerCount === 1 ? 'follower' : 'followers'}`;
-  const galleryLabel = `${profile.galleryCount} ${profile.galleryCount === 1 ? 'gallery' : 'galleries'}`;
-  const imageLabel = `${profile.imageCount} ${profile.imageCount === 1 ? 'image' : 'images'}`;
   const creatorGroupings = profile.galleries || [];
+  const galleryCount = profile.galleryCount ?? profile.groupingCount ?? creatorGroupings.length;
+  const galleryLabel = `${galleryCount} ${galleryCount === 1 ? 'gallery' : 'galleries'}`;
+  const imageLabel = `${profile.imageCount} ${profile.imageCount === 1 ? 'image' : 'images'}`;
   const profileImageUrl = profile.branding?.profileImage?.thumbnailUrls?.square512
     || profile.branding?.profileImage?.thumbnailUrls?.square256;
+  const profileImageSrc = withAssetVersion(profileImageUrl, profile.branding?.profileImage?.updatedAt);
   const profileImageAlt = profile.branding?.profileImage?.altText || `${profile.name} profile image`;
   const coverDesktopUrl = profile.branding?.coverImage?.renditionUrls?.desktop;
   const coverTabletUrl = profile.branding?.coverImage?.renditionUrls?.tablet;
   const coverMobileUrl = profile.branding?.coverImage?.renditionUrls?.mobile;
   const coverImageAlt = profile.branding?.coverImage?.altText || `${profile.name} cover image`;
-  const latestPosts = [...creatorPosts].sort((a, b) => {
-    const lhs = Date.parse(a.publishedAt || a.updatedAt || a.createdAt || '');
-    const rhs = Date.parse(b.publishedAt || b.updatedAt || b.createdAt || '');
-    return (Number.isFinite(rhs) ? rhs : 0) - (Number.isFinite(lhs) ? lhs : 0);
-  });
-
   const renderArtistCard = (item: TrendingImage, index: number) => {
-    const fallbackPosterUrl = item.previewPosterUrl || (item.assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
+    const assetType = item.assetType || 'image';
+    const fallbackPosterUrl = item.previewPosterUrl || (assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
     const disclosureLine = formatDisclosureLine(item);
     const visibilityPill = item.galleryVisibility === 'preview'
       ? 'Preview'
       : item.galleryVisibility === 'premium'
         ? 'Premium'
         : null;
+    const contentTypeLabel = assetType === 'video' || assetType === 'audio' ? assetType : null;
     const linkedPost = creatorPostByMediaId[item.imageId];
     return (
       <article key={item.imageId} className="discovery-feature-card gallery-discovery-card" style={{ '--media-aspect': cardAspect.toFixed(3) } as any}>
@@ -6824,7 +6935,13 @@ function CreatorProfilePage({
           onClick={() => void openFocusedViewer(item)}
         >
           <div className="discovery-feature-media no-crop" style={{ aspectRatio: `${cardAspect} / 1` }}>
-            {(item.assetType === 'video' && !fallbackPosterUrl)
+            {assetType === 'audio'
+              ? (
+                <div className="discovery-audio-preview" aria-label={item.title || 'Audio preview'}>
+                  <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+                </div>
+              )
+              : (assetType === 'video' && !fallbackPosterUrl)
               ? (
                 <video
                   src={item.previewUrl}
@@ -6836,7 +6953,7 @@ function CreatorProfilePage({
               )
               : (
                 <img
-                  src={item.assetType === 'video' ? (fallbackPosterUrl || '') : item.previewUrl}
+                  src={assetType === 'video' ? (fallbackPosterUrl || '') : item.previewUrl}
                   alt={item.title || 'Artwork preview'}
                   loading={index < 2 ? 'eager' : 'lazy'}
                   decoding="async"
@@ -6844,12 +6961,12 @@ function CreatorProfilePage({
                 />
               )}
             {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
-            {item.assetType === 'video' && <span className="discovery-chip" style={{ left: 'unset', right: visibilityPill ? '8.2rem' : '1rem' }}>Video</span>}
             {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
           </div>
         </button>
         <div className="discovery-feature-footer">
           <div className="discovery-feature-text">
+            {contentTypeLabel && <span className="discovery-content-type-pill">{contentTypeLabel}</span>}
             <h3 className="discovery-feature-title">
               {linkedPost ? <Link to={`/posts/${linkedPost.slug}`} className="no-underline">{item.title || item.imageId}</Link> : (item.title || item.imageId)}
             </h3>
@@ -7062,13 +7179,11 @@ function CreatorProfilePage({
       )}
       <section className="panel discovery-hero">
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          {profileImageUrl && (
-            <img
-              src={profileImageUrl}
-              alt={profileImageAlt}
-              style={{ width: '72px', height: '72px', borderRadius: '999px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.2)' }}
-            />
-          )}
+          <img
+            src={profileImageSrc || DEFAULT_PROFILE_ICON_SRC}
+            alt={profileImageSrc ? profileImageAlt : ''}
+            style={{ width: '72px', height: '72px', borderRadius: '999px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.2)' }}
+          />
           <div>
           <h1>{profile.name}</h1>
           <p>
@@ -7086,94 +7201,44 @@ function CreatorProfilePage({
         </div>
       </section>
 
-      <section id="creator-groupings-section" className="discovery-editorial-section">
-        <div className="discovery-section-header">
-          <h2>{profile.name} Groupings</h2>
+      <section id="creator-groupings-section" className="creator-collection-rail-section">
+        <div className="creator-section-heading">
+          <div>
+            <p className="creator-section-kicker">Collections</p>
+            <h2>{profile.name}'s galleries & albums</h2>
+          </div>
+          {creatorGroupings.length > 1 && (
+            <div className="creator-gallery-rail-controls">
+              <button type="button" className="creator-gallery-rail-page-btn" onClick={() => pageGalleryRail(-1)} aria-label="Previous galleries">‹</button>
+              <button type="button" className="creator-gallery-rail-page-btn" onClick={() => pageGalleryRail(1)} aria-label="Next galleries">›</button>
+            </div>
+          )}
         </div>
         {creatorGroupings.length > 0 ? (
-          <div style={{ display: 'flex', gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
-            {creatorGroupings.map((grouping, i) => (
-              <article key={`${grouping.galleryId}-grouping-${i}`} className="discovery-latest-item" style={{ minWidth: '280px', maxWidth: '340px' }}>
-                <Link to={`/gallery/${grouping.slug}`} className="no-underline">
-                  <div className="discovery-stack discovery-stack-tall">
-                    {(() => {
-                      const layers = galleryStackLayersById[grouping.galleryId] || [];
-                      const front = layers[0] || grouping.galleryThumbnailUrl;
-                      const mid = layers[1];
-                      const back = layers[2];
-                      return (
-                        <>
-                          <div className="discovery-stack-layer discovery-stack-layer-back">
-                            {back
-                              ? <img src={back} alt="" loading="lazy" aria-hidden="true" />
-                              : <div className="discovery-stack-placeholder" aria-hidden="true" />}
-                          </div>
-                          <div className="discovery-stack-layer discovery-stack-layer-mid">
-                            {mid
-                              ? <img src={mid} alt="" loading="lazy" aria-hidden="true" />
-                              : <div className="discovery-stack-placeholder" aria-hidden="true" />}
-                          </div>
-                          <div className="discovery-stack-layer discovery-stack-layer-front">
-                            {front
-                              ? <img src={front} alt={grouping.title || 'Grouping cover'} loading="lazy" />
-                              : <div className="discovery-swatch" style={{ backgroundColor: swatches[(i + 2) % swatches.length] }} />}
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                  <div className="discovery-latest-meta">
-                    <div className="discovery-card-title">{grouping.title}</div>
-                    <div className="discovery-card-subtitle">{grouping.imageCount} images • ❤ {grouping.favoriteCount}</div>
-                  </div>
-                </Link>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <p className="small">No published groupings yet.</p>
-        )}
-      </section>
-
-      <section className="discovery-editorial-section">
-        <div className="discovery-section-header">
-          <h2>{latestPosts.length > 0 ? `Latest Posts by ${profile.name}` : `Latest Media by ${profile.name}`}</h2>
-        </div>
-        {latestPosts.length > 0 ? (
-          <div className="discovery-latest-grid">
-            {latestPosts.map((post, idx) => {
-              const preview = post.primaryMedia || post.discoveryMedia?.[0];
+          <div ref={galleryRailRef} className="creator-gallery-rail">
+            {creatorGroupings.map((grouping, i) => {
+              const layers = galleryStackLayersById[grouping.galleryId] || [];
+              const front = layers[0] || grouping.galleryThumbnailUrl;
+              const mid = layers[1] || front;
+              const back = layers[2] || mid;
               return (
-                <article key={post.postId} className="discovery-latest-item">
-                  <Link to={`/posts/${post.slug}`} className="no-underline">
-                    <div className="discovery-feature-media" style={{ aspectRatio: `${cardAspect} / 1` }}>
-                      {preview ? (
-                        preview.assetType === 'video'
-                          ? (
-                            <img
-                              src={preview.previewPosterUrl || preview.previewUrl}
-                              alt={post.title}
-                              loading={idx < 2 ? 'eager' : 'lazy'}
-                              decoding="async"
-                              style={{ objectPosition: 'center center' }}
-                            />
-                          )
-                          : (
-                            <img
-                              src={preview.previewUrl}
-                              alt={post.title}
-                              loading={idx < 2 ? 'eager' : 'lazy'}
-                              decoding="async"
-                              style={{ objectPosition: 'center center' }}
-                            />
-                          )
-                      ) : <div className="discovery-swatch" style={{ backgroundColor: swatches[idx % swatches.length] }} />}
-                      <span className="discovery-chip">{post.discovery.mode}</span>
+                <article key={`${grouping.galleryId}-grouping-${i}`} className="creator-gallery-rail-card">
+                  <Link to={`/gallery/${grouping.slug}`} className="no-underline">
+                    <div className="discovery-stack creator-gallery-rail-stack">
+                      <div className="discovery-stack-layer discovery-stack-layer-back">
+                        {back ? <img src={back} alt="" loading="lazy" decoding="async" aria-hidden="true" /> : <div className="discovery-stack-placeholder" aria-hidden="true" />}
+                      </div>
+                      <div className="discovery-stack-layer discovery-stack-layer-mid">
+                        {mid ? <img src={mid} alt="" loading="lazy" decoding="async" aria-hidden="true" /> : <div className="discovery-stack-placeholder" aria-hidden="true" />}
+                      </div>
+                      <div className="discovery-stack-layer discovery-stack-layer-front">
+                        {front ? <img src={front} alt={grouping.title || 'Gallery cover'} loading={i < 2 ? 'eager' : 'lazy'} decoding="async" /> : <div className="discovery-swatch" style={{ backgroundColor: swatches[(i + 2) % swatches.length] }} />}
+                      </div>
                     </div>
-                    <div className="discovery-latest-meta">
-                      <div className="discovery-card-title">{post.title}</div>
-                      <div className="discovery-card-subtitle">{post.mediaCount} media • {post.blockCount} blocks</div>
-                      {post.summary && <p className="small">{post.summary}</p>}
+                    <div className="creator-gallery-rail-meta">
+                      <span className="creator-gallery-visibility">{grouping.visibility === 'premium' ? 'Premium' : grouping.visibility === 'preview' ? 'Preview' : 'Public'}</span>
+                      <h3>{grouping.title || 'Untitled gallery'}</h3>
+                      <p>{grouping.imageCount} creations · {grouping.favoriteCount} favorites</p>
                     </div>
                   </Link>
                 </article>
@@ -7181,14 +7246,23 @@ function CreatorProfilePage({
             })}
           </div>
         ) : (
-          <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
-            {filteredFeedItems.map((item, i) => renderArtistCard(item, i))}
+          <p className="small">No published galleries or albums yet.</p>
+        )}
+      </section>
+
+      <section id="creator-discovery-feed" className="creator-discovery-feed-section">
+        <div className="creator-section-heading">
+          <div>
+            <p className="creator-section-kicker">Discovery feed</p>
+            <h2>All creations by {profile.name}</h2>
           </div>
-        )}
-        {latestPosts.length === 0 && filteredFeedItems.length === 0 && (
-          <p className="small">No published posts or media yet.</p>
-        )}
-        {latestPosts.length === 0 && <AutoLoadSentinel enabled={Boolean(feedCursor)} loading={feedLoading} onLoadMore={() => loadFeed(true)} />}
+          <span className="creator-feed-count">{filteredFeedItems.length} shown</span>
+        </div>
+        <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
+          {filteredFeedItems.map((item, i) => renderArtistCard(item, i))}
+        </div>
+        {filteredFeedItems.length === 0 && <p className="small">No creations match the current discovery preferences.</p>}
+        <AutoLoadSentinel enabled={Boolean(feedCursor)} loading={feedLoading} onLoadMore={() => loadFeed(true)} />
       </section>
 
       {focusedOpen && (

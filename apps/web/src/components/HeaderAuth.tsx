@@ -4,6 +4,7 @@ import type { CurrentUser } from '../cognitoAuth';
 import { DISCOVERY_FILTER_EVENT_NAME, type DiscoveryDockSummary, type DiscoveryFilterSection, type SiteSettings, type UserProfile } from '../domainTypes';
 
 type DiscoveryMediaKind = 'image' | 'video' | 'post' | 'audio';
+const DEFAULT_PROFILE_ICON_SRC = '/default-profile-icon.svg';
 
 const DiscoveryMediaIcon = ({ kind, className }: { kind: DiscoveryMediaKind; className?: string }) => {
   if (kind === 'audio') {
@@ -94,13 +95,6 @@ export default function HeaderAuth({
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
-  const initials = initialsSource
-    .split('@')[0]
-    .split(/[.\s_-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() || '')
-    .join('') || 'U';
   const showMobileDiscoveryButton = discoveryDock?.viewport === 'mobile';
   const openDiscoveryFilters = (section: DiscoveryFilterSection = 'period') => {
     if (typeof window === 'undefined') return;
@@ -187,7 +181,9 @@ export default function HeaderAuth({
             {user ? (
               <div className="auth-line">
                 <details className="user-menu">
-                  <summary className="user-menu-trigger" aria-label="Open account menu">{initials}</summary>
+                  <summary className="user-menu-trigger" aria-label="Open account menu">
+                    <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
+                  </summary>
                   <div className="user-menu-items">
                     <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
                     <Link to="/settings" onClick={closeUserMenus}>Settings</Link>
@@ -241,7 +237,9 @@ export default function HeaderAuth({
               <div className="user-menu-items">
                 <div className="user-menu-sheet-handle" />
                 <div className="user-menu-profile">
-                  <div className="user-menu-profile-avatar">{initials}</div>
+                  <div className="user-menu-profile-avatar">
+                    <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
+                  </div>
                   <div>
                     <div className="user-menu-profile-name">{displayName}</div>
                     <div className="user-menu-profile-email">{menuSecondaryLabel || displayName}</div>

@@ -23,6 +23,7 @@ import type {
   Grouping,
   HeavyTopic,
   Media,
+  Collection,
   PlatformRole,
   Post,
   PostBlock,
@@ -52,6 +53,7 @@ import {
 } from './contentRating';
 import {
   AI_DISCLOSURE_LABEL,
+  DEFAULT_VIEWER_DISCLOSURE_POLICY,
   HEAVY_TOPIC_LABEL,
   getEffectiveAiDisclosure,
   getEffectiveHeavyTopics,
@@ -282,6 +284,39 @@ const postBlocksForViewer = (blocks: PostBlock[], includeUnreleased: boolean): P
   }
 
   return visibleBlocks;
+};
+
+const collectPostBlockMediaIds = (blocks: PostBlock[] = []): Set<string> => {
+  const mediaIds = new Set<string>();
+  for (const block of blocks) {
+    if (block.mediaId) mediaIds.add(block.mediaId);
+    const heroMedia = block.type === 'section' && block.payload?.heroMedia && typeof block.payload.heroMedia === 'object'
+      ? block.payload.heroMedia as Record<string, unknown>
+      : undefined;
+    if (typeof heroMedia?.mediaId === 'string' && heroMedia.mediaId.trim()) {
+      mediaIds.add(heroMedia.mediaId.trim());
+    }
+    for (const childMediaId of collectPostBlockMediaIds(block.blocks || [])) {
+      mediaIds.add(childMediaId);
+    }
+  }
+  return mediaIds;
+};
+
+const firstSectionMediaIdsForStoryPost = (post: Post): Set<string> | null => {
+  if ((post.metadata?.postType || '').toLowerCase() !== 'story') return null;
+  const sections = post.blocks
+    .filter((block) => block.type === 'section')
+    .sort((a, b) => {
+      const left = Number(a.payload?.sortOrder);
+      const right = Number(b.payload?.sortOrder);
+      const normalizedLeft = Number.isFinite(left) ? left : Number.MAX_SAFE_INTEGER;
+      const normalizedRight = Number.isFinite(right) ? right : Number.MAX_SAFE_INTEGER;
+      if (normalizedLeft !== normalizedRight) return normalizedLeft - normalizedRight;
+      return (a.blockId || '').localeCompare(b.blockId || '');
+    });
+  if (sections.length === 0) return null;
+  return collectPostBlockMediaIds([sections[0]]);
 };
 
 const parsePostMediaRefs = (value: unknown): Post['media'] => {
@@ -762,9 +797,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       matureContentEnabled: false,
       maxAllowedContentRating: 'graphic',
       aiFilter: 'show-all',
-      hideHeavyTopics: false,
-      hidePoliticsPublicAffairs: false,
-      hideCrimeDisastersTragedy: false,
+      hideHeavyTopics: DEFAULT_VIEWER_DISCLOSURE_POLICY.hideHeavyTopics,
+      hidePoliticsPublicAffairs: DEFAULT_VIEWER_DISCLOSURE_POLICY.hidePoliticsPublicAffairs,
+      hideCrimeDisastersTragedy: DEFAULT_VIEWER_DISCLOSURE_POLICY.hideCrimeDisastersTragedy,
       createdAt: now,
       updatedAt: now
     };
@@ -810,9 +845,9 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
         maxAllowedContentRating: queryMax || 'graphic',
         disclosurePolicy: normalizeViewerDisclosurePolicy({
           aiFilter: queryAiFilter || 'show-all',
-          hideHeavyTopics: queryHideHeavyTopics ?? false,
-          hidePoliticsPublicAffairs: queryHidePolitics ?? false,
-          hideCrimeDisastersTragedy: queryHideCrime ?? false
+          hideHeavyTopics: queryHideHeavyTopics ?? DEFAULT_VIEWER_DISCLOSURE_POLICY.hideHeavyTopics,
+          hidePoliticsPublicAffairs: queryHidePolitics ?? DEFAULT_VIEWER_DISCLOSURE_POLICY.hidePoliticsPublicAffairs,
+          hideCrimeDisastersTragedy: queryHideCrime ?? DEFAULT_VIEWER_DISCLOSURE_POLICY.hideCrimeDisastersTragedy
         })
       };
     }
@@ -1142,6 +1177,104 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     favoriteCount: number;
     createdAt: string;
     score: number;
+  };
+
+  const hydrateCollectionItems = async (
+    collection: Collection,
+    imageIds: string[],
+    viewerPolicy: ViewerContentPolicy
+  ): Promise<Array<Omit<TrendingImageItem, 'score'>>> => {
+    const orderedIds = imageIds.filter(Boolean);
+    if (!orderedIds.length) return [];
+
+    const wantedIds = new Set(orderedIds);
+    const mediaById = new Map<string, Media>();
+    const placementById = new Map<string, { groupingId: string }>();
+
+    const creators = await store.listCreators();
+    const creatorById = new Map(creators.map((creator) => [creator.creatorId, creator]));
+    const creatorIds = collection.ownerProfileType === 'creator' && collection.ownerProfileId
+      ? [collection.ownerProfileId]
+      : creators.map((creator) => creator.creatorId);
+
+    await Promise.all(creatorIds.map(async (creatorId) => {
+      const mediaItems = await store.listMediaByCreator(creatorId);
+      for (const item of mediaItems) {
+        if (wantedIds.has(item.mediaId)) mediaById.set(item.mediaId, item);
+      }
+    }));
+
+    await Promise.all(orderedIds.map(async (imageId) => {
+      const placements = await store.listMediaGroupingPlacements(imageId);
+      const firstPlacement = placements[0];
+      if (firstPlacement) placementById.set(imageId, { groupingId: firstPlacement.groupingId });
+      if (mediaById.has(imageId) || !firstPlacement) return;
+      const groupingMedia = await store.getMediaByGrouping(firstPlacement.groupingId);
+      const media = groupingMedia.find((item) => item.mediaId === imageId);
+      if (media) mediaById.set(imageId, media);
+    }));
+
+    const groupingIds = Array.from(new Set(Array.from(placementById.values()).map((item) => item.groupingId).filter(Boolean)));
+    const groupingById = new Map<string, Grouping>();
+    if (groupingIds.length) {
+      const groupings = await store.listAllGroupings();
+      for (const grouping of groupings) {
+        if (groupingIds.includes(grouping.groupingId)) groupingById.set(grouping.groupingId, grouping);
+      }
+    }
+
+    const favoriteCounts = await store.getImageFavoriteCounts(orderedIds);
+    const thumbnailUrlsFor = async (thumbnailKeys?: Media['thumbnailKeys']) => thumbnailKeys
+      ? Object.fromEntries(
+          await Promise.all(
+            Object.entries(thumbnailKeys).map(async ([name, key]) => [
+              name,
+              key ? await publicMediaUrl(key) : undefined
+            ])
+          )
+        )
+      : undefined;
+
+    const items: Array<Omit<TrendingImageItem, 'score'> | null> = await Promise.all(orderedIds.map(async (imageId): Promise<Omit<TrendingImageItem, 'score'> | null> => {
+      const media = mediaById.get(imageId);
+      if (!media) return null;
+      const placement = placementById.get(imageId);
+      const grouping = placement?.groupingId ? groupingById.get(placement.groupingId) : undefined;
+      const creator = creatorById.get(media.creatorId);
+      const effectiveContentRating = getEffectiveContentRating(media);
+      const contentProjection = projectContentRating(effectiveContentRating, viewerPolicy);
+      const disclosureProjection = projectDisclosures(getEffectiveAiDisclosure(media, grouping), getEffectiveHeavyTopics(media, grouping));
+      const previewUrl = await publicMediaUrl(media.previewKey);
+      if (!previewUrl) return null;
+      return {
+        imageId: media.mediaId,
+        assetType: (media.assetType || 'image') as 'image' | 'video' | 'audio',
+        creatorId: media.creatorId,
+        creatorName: creator?.name || media.creatorId,
+        groupingId: grouping?.groupingId || placement?.groupingId || '',
+        groupingSlug: grouping?.slug || '',
+        groupingVisibility: grouping?.visibility === 'premium' ? 'preview' : (grouping?.visibility || 'free'),
+        discoverSquareCropEnabled: Boolean(media.discoverSquareCropEnabled || grouping?.discoverSquareCropEnabled),
+        effectiveContentRating: contentProjection.effectiveContentRating,
+        displayedContentRating: contentProjection.displayedContentRating,
+        blurred: contentProjection.blurred,
+        effectiveAiDisclosure: disclosureProjection.effectiveAiDisclosure,
+        displayedAiDisclosure: disclosureProjection.displayedAiDisclosure,
+        effectiveHeavyTopics: disclosureProjection.effectiveHeavyTopics,
+        displayedHeavyTopics: disclosureProjection.displayedHeavyTopics,
+        title: media.title || media.originalFilename || media.mediaId,
+        previewUrl,
+        previewPosterUrl: await publicMediaUrl(media.previewPosterKey),
+        thumbnailUrls: await thumbnailUrlsFor(media.thumbnailKeys),
+        width: media.width,
+        height: media.height,
+        aspectRatio: media.width && media.height ? media.width / media.height : undefined,
+        favoriteCount: Math.max(0, Number(favoriteCounts[media.mediaId] || 0)),
+        createdAt: media.createdAt
+      };
+    }));
+
+    return items.filter((item): item is Omit<TrendingImageItem, 'score'> => Boolean(item));
   };
 
   type DiscoveryItemType = 'image' | 'video' | 'story' | 'audio';
@@ -1915,8 +2048,28 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     const isFollowerOrAdmin = isAdminRequest(req) || isFollower;
     const viewerPolicy = await resolveViewerContentPolicy(req);
 
+    const sectionedStoryMediaIds = new Set<string>();
+    const firstSectionStoryMediaIds = new Set<string>();
+    const creatorPosts = await store.listPostsByCreatorSlug(creator.slug);
+    for (const post of creatorPosts) {
+      if (post.status !== 'published') continue;
+      const visiblePost = {
+        ...post,
+        blocks: postBlocksForViewer(post.blocks || [], isFollowerOrAdmin)
+      };
+      const firstSectionMediaIds = firstSectionMediaIdsForStoryPost(visiblePost);
+      if (!firstSectionMediaIds) continue;
+      for (const ref of post.media || []) {
+        sectionedStoryMediaIds.add(ref.mediaId);
+      }
+      for (const mediaId of firstSectionMediaIds) {
+        firstSectionStoryMediaIds.add(mediaId);
+      }
+    }
+
     const media = (await store.listMediaByCreator(creator.creatorId))
       .filter((item) => item.appearsInFeed !== false)
+      .filter((item) => !sectionedStoryMediaIds.has(item.mediaId) || firstSectionStoryMediaIds.has(item.mediaId))
       .filter((item) => !isHiddenByVisibility(item.releaseVisibility))
       .filter((item) => {
         if (item.status && item.status !== 'published' && item.status !== 'scheduled') return false;
@@ -3600,9 +3753,12 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return res.status(404).json({ message: 'Collection not found' });
     }
     const imageIds = await store.listCollectionImageIds(collection.collectionId);
+    const viewerPolicy = await resolveViewerContentPolicy(req);
+    const items = await hydrateCollectionItems(collection, imageIds, viewerPolicy);
     return res.json({
       ...collection,
       imageIds,
+      items,
       favoriteCount: await store.countFavorites('collection', collection.collectionId)
     });
   });

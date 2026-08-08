@@ -79,6 +79,11 @@ export type TrendingImage = {
   createdAt: string;
 };
 
+export type CollectionDetail = CollectionSummary & {
+  imageIds?: string[];
+  items?: TrendingImage[];
+};
+
 export type CreatorProfilePayload = {
   creatorId: string;
   name: string;

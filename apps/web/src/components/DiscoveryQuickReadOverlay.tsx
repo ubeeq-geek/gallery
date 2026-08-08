@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -173,6 +173,7 @@ type DiscoveryQuickReadOverlayProps = {
   moreFromStream: DiscoveryOverlayItem[];
   videoMuted: boolean;
   videoRef: React.RefObject<HTMLVideoElement>;
+  loopVideosUntilNext?: boolean;
   onClose: () => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -209,6 +210,8 @@ const getYouTubeEmbed = (url?: string, options: { autoplay?: boolean; muted?: bo
     if (options.autoplay) embed.searchParams.set('autoplay', '1');
     embed.searchParams.set('mute', options.muted === false ? '0' : '1');
     embed.searchParams.set('playsinline', '1');
+    embed.searchParams.set('enablejsapi', '1');
+    if (typeof window !== 'undefined') embed.searchParams.set('origin', window.location.origin);
     return { src: embed.toString(), isShort };
   } catch {
     return null;
@@ -377,7 +380,167 @@ export const PostMetaHeader = ({
 
 type VideoPlaybackOptions = {
   videoMuted: boolean;
+  loopVideoUntilNext?: boolean;
+  hasNext?: boolean;
+  onNext?: () => void;
   onVideoVolumeChange: (video: HTMLVideoElement) => void;
+};
+
+const QuickReadVideo = ({
+  src,
+  poster,
+  blur,
+  autoPlay,
+  playback,
+  videoRef
+}: {
+  src: string;
+  poster?: string;
+  blur?: boolean;
+  autoPlay?: boolean;
+  playback?: VideoPlaybackOptions;
+  videoRef?: React.RefObject<HTMLVideoElement>;
+}) => {
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [ended, setEnded] = useState(false);
+  const resolvedVideoRef = videoRef || localVideoRef;
+
+  useEffect(() => {
+    setEnded(false);
+  }, [src]);
+
+  return (
+    <div className="discovery-quickread-video-wrap">
+      <video
+        ref={resolvedVideoRef}
+        controls
+        playsInline
+        autoPlay={Boolean(autoPlay)}
+        muted={playback?.videoMuted ?? true}
+        preload="metadata"
+        poster={poster}
+        style={{ filter: blur ? 'blur(28px)' : undefined }}
+        onEnded={(event) => {
+          setEnded(true);
+          if (!playback?.loopVideoUntilNext) return;
+          const video = event.currentTarget;
+          video.currentTime = 0;
+          const replay = video.play();
+          if (replay && typeof replay.catch === 'function') {
+            replay.catch(() => undefined);
+          }
+        }}
+        onVolumeChange={playback ? (event) => playback.onVideoVolumeChange(event.currentTarget) : undefined}
+      >
+        <source src={src} />
+      </video>
+      {ended && playback?.loopVideoUntilNext && playback.hasNext && playback.onNext ? (
+        <button
+          type="button"
+          className="discovery-quickread-next-video-btn"
+          onClick={() => {
+            setEnded(false);
+            playback.onNext?.();
+          }}
+        >
+          Next video
+        </button>
+      ) : null}
+    </div>
+  );
+};
+
+const sendYouTubeCommand = (iframe: HTMLIFrameElement | null, func: string, args: unknown[] = []) => {
+  iframe?.contentWindow?.postMessage(JSON.stringify({
+    event: 'command',
+    func,
+    args
+  }), '*');
+};
+
+const QuickReadYouTubeEmbed = ({
+  src,
+  title,
+  playback
+}: {
+  src: string;
+  title: string;
+  playback?: VideoPlaybackOptions;
+}) => {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [ended, setEnded] = useState(false);
+
+  useEffect(() => {
+    setEnded(false);
+  }, [src]);
+
+  useEffect(() => {
+    if (playback?.videoMuted) {
+      sendYouTubeCommand(iframeRef.current, 'mute');
+    } else {
+      sendYouTubeCommand(iframeRef.current, 'setVolume', [100]);
+      sendYouTubeCommand(iframeRef.current, 'unMute');
+    }
+  }, [playback?.videoMuted, src]);
+
+  useEffect(() => {
+    if (!playback?.loopVideoUntilNext) return undefined;
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      let data: unknown = event.data;
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data) as unknown;
+        } catch {
+          return;
+        }
+      }
+      if (!data || typeof data !== 'object') return;
+      const info = (data as { info?: { playerState?: number } }).info;
+      if (info?.playerState !== 0) return;
+      setEnded(true);
+      window.setTimeout(() => {
+        sendYouTubeCommand(iframeRef.current, 'seekTo', [0, true]);
+        sendYouTubeCommand(iframeRef.current, 'playVideo');
+      }, 150);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [playback?.loopVideoUntilNext, src]);
+
+  return (
+    <>
+      <iframe
+        ref={iframeRef}
+        src={src}
+        title={title}
+        loading="lazy"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowFullScreen
+        referrerPolicy="strict-origin-when-cross-origin"
+        onLoad={(event) => {
+          sendYouTubeCommand(event.currentTarget, 'playVideo');
+          if (playback?.videoMuted) sendYouTubeCommand(event.currentTarget, 'mute');
+          else {
+            sendYouTubeCommand(event.currentTarget, 'setVolume', [100]);
+            sendYouTubeCommand(event.currentTarget, 'unMute');
+          }
+        }}
+      />
+      {ended && playback?.loopVideoUntilNext && playback.hasNext && playback.onNext ? (
+        <button
+          type="button"
+          className="discovery-quickread-next-video-btn"
+          onClick={() => {
+            setEnded(false);
+            playback.onNext?.();
+          }}
+        >
+          Next video
+        </button>
+      ) : null}
+    </>
+  );
 };
 
 const renderMediaFigure = (
@@ -406,19 +569,14 @@ const renderMediaFigure = (
             <source src={media.previewUrl} />
           </audio>
         ) : media.assetType === 'video' ? (
-          <video
+          <QuickReadVideo
             key={media.mediaId}
-            controls
-            playsInline
             autoPlay={Boolean(options.autoPlayVideo)}
-            muted={options.playback?.videoMuted ?? true}
-            preload="metadata"
+            src={media.previewUrl}
             poster={media.previewPosterUrl}
-            style={{ filter: blur ? 'blur(28px)' : undefined }}
-            onVolumeChange={options.playback ? (event) => options.playback?.onVideoVolumeChange(event.currentTarget) : undefined}
-          >
-            <source src={media.previewUrl} />
-          </video>
+            blur={blur}
+            playback={options.playback}
+          />
         ) : (
           <>
             <ProgressivePostImage media={media} alt={media.title || 'Post media'} blur={blur} />
@@ -729,13 +887,10 @@ const StandardPostRenderer = ({
           <figure key={key} className={`discovery-quickread-embed-figure${isShortEmbed ? ' is-short' : ''}`}>
             {block.title ? <figcaption>{block.title}</figcaption> : null}
             <div className="discovery-quickread-embed-frame">
-              <iframe
+              <QuickReadYouTubeEmbed
                 src={youtube.src}
                 title={block.title || block.label || 'YouTube video'}
-                loading="lazy"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                allowFullScreen
-                referrerPolicy="strict-origin-when-cross-origin"
+                playback={playback}
               />
             </div>
             {block.text || block.caption ? <p className="small">{renderInlineText(block.caption || block.text)}</p> : null}
@@ -937,6 +1092,7 @@ export default function DiscoveryQuickReadOverlay({
   moreFromStream,
   videoMuted,
   videoRef,
+  loopVideosUntilNext,
   onClose,
   onPrevious,
   onNext,
@@ -1001,6 +1157,13 @@ export default function DiscoveryQuickReadOverlay({
   if (!open || !item) return null;
 
   const leftTitle = post ? 'Quick read' : 'Quick view';
+  const videoPlayback = {
+    videoMuted,
+    loopVideoUntilNext: loopVideosUntilNext,
+    hasNext,
+    onNext,
+    onVideoVolumeChange
+  };
 
   return (
     <div className="discovery-focus-modal-layer discovery-quickread-layer" onClick={onClose}>
@@ -1036,7 +1199,7 @@ export default function DiscoveryQuickReadOverlay({
               <RichPostRenderer
                 item={item}
                 post={post}
-                playback={{ videoMuted, onVideoVolumeChange }}
+                playback={videoPlayback}
               />
             ) : (
               <article className="discovery-quickread-content-flow">
@@ -1046,19 +1209,15 @@ export default function DiscoveryQuickReadOverlay({
                       <source src={item.previewUrl} />
                     </audio>
                   ) : item.assetType === 'video' ? (
-                    <video
+                    <QuickReadVideo
                       key={item.imageId}
-                      ref={videoRef}
-                      controls
-                      playsInline
+                      videoRef={videoRef}
                       autoPlay
-                      muted={videoMuted}
+                      src={item.previewUrl}
                       poster={item.previewPosterUrl}
-                      style={{ filter: item.blurred ? 'blur(28px)' : undefined }}
-                      onVolumeChange={(event) => onVideoVolumeChange(event.currentTarget)}
-                    >
-                      <source src={item.previewUrl} />
-                    </video>
+                      blur={item.blurred}
+                      playback={videoPlayback}
+                    />
                   ) : (
                     <img src={item.previewUrl} alt={item.title || 'Discovery media'} style={{ filter: item.blurred ? 'blur(28px)' : undefined }} />
                   )}

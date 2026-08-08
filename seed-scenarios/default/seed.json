@@ -849,12 +849,7 @@
       "branding": {
         "profileImage": {
           "file": "amphoryn/amphoryn-wordmark-square.jpg",
-          "altText": "Amphoryn",
-          "squareCrop": {
-            "x": 120,
-            "y": 40,
-            "size": 760
-          }
+          "altText": "Amphoryn"
         },
         "coverImage": {
           "file": "amphoryn/hoichi-2-1.jpg",
@@ -1707,6 +1702,31 @@
             "template": "default",
             "layout": "video",
             "videoFormat": "short"
+          }
+        }
+      ]
+    },
+    {
+      "name": "I Have Some Music",
+      "slug": "i-have-some-music",
+      "description": "",
+      "posts": [
+        {
+          "title": "This Is Why It's You",
+          "slug": "this-is-why-its-you",
+          "groupingSlug": "i-have-some-music-default",
+          "discoveryMode": "primary",
+          "postType": "audio",
+          "media": [
+            {
+              "file": "i-have-some-music/This Is Why It's You.mp3",
+              "groupingSlug": "i-have-some-music-default",
+              "discoverable": true
+            }
+          ],
+          "metadata": {
+            "template": "default",
+            "layout": "audio"
           }
         }
       ]
