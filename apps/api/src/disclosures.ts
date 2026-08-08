@@ -1,4 +1,4 @@
-import type { AiDisclosure, AiFilterPreference, Artist, Gallery, HeavyTopic, Media, UserProfile } from './domain';
+import type { AiDisclosure, AiFilterPreference, Creator, Grouping, HeavyTopic, Media, UserProfile } from './domain';
 
 export const AI_DISCLOSURE_LEVEL: Record<AiDisclosure, number> = {
   none: 0,
@@ -31,9 +31,9 @@ export interface ViewerDisclosurePolicy {
 
 export const DEFAULT_VIEWER_DISCLOSURE_POLICY: ViewerDisclosurePolicy = {
   aiFilter: 'show-all',
-  hideHeavyTopics: false,
-  hidePoliticsPublicAffairs: false,
-  hideCrimeDisastersTragedy: false
+  hideHeavyTopics: true,
+  hidePoliticsPublicAffairs: true,
+  hideCrimeDisastersTragedy: true
 };
 
 export const normalizeAiDisclosure = (value: unknown): AiDisclosure => {
@@ -95,33 +95,33 @@ export const normalizeViewerDisclosurePolicy = (policy: Partial<ViewerDisclosure
 export const profileDisclosurePolicy = (profile?: UserProfile | null): ViewerDisclosurePolicy => (
   normalizeViewerDisclosurePolicy({
     aiFilter: profile?.aiFilter || 'show-all',
-    hideHeavyTopics: Boolean(profile?.hideHeavyTopics),
-    hidePoliticsPublicAffairs: Boolean(profile?.hidePoliticsPublicAffairs),
-    hideCrimeDisastersTragedy: Boolean(profile?.hideCrimeDisastersTragedy)
+    hideHeavyTopics: profile?.hideHeavyTopics ?? DEFAULT_VIEWER_DISCLOSURE_POLICY.hideHeavyTopics,
+    hidePoliticsPublicAffairs: profile?.hidePoliticsPublicAffairs ?? DEFAULT_VIEWER_DISCLOSURE_POLICY.hidePoliticsPublicAffairs,
+    hideCrimeDisastersTragedy: profile?.hideCrimeDisastersTragedy ?? DEFAULT_VIEWER_DISCLOSURE_POLICY.hideCrimeDisastersTragedy
   })
 );
 
 export const getEffectiveAiDisclosure = (
   media: Pick<Media, 'aiDisclosure' | 'moderatorAiDisclosure'>,
-  gallery?: Pick<Gallery, 'defaultAiDisclosure'> | null,
-  artist?: Pick<Artist, 'defaultAiDisclosure'> | null
+  grouping?: Pick<Grouping, 'defaultAiDisclosure'> | null,
+  creator?: Pick<Creator, 'defaultAiDisclosure'> | null
 ): AiDisclosure => (
   parseOptionalAiDisclosure(media.moderatorAiDisclosure)
   ?? parseOptionalAiDisclosure(media.aiDisclosure)
-  ?? parseOptionalAiDisclosure(gallery?.defaultAiDisclosure)
-  ?? parseOptionalAiDisclosure(artist?.defaultAiDisclosure)
+  ?? parseOptionalAiDisclosure(grouping?.defaultAiDisclosure)
+  ?? parseOptionalAiDisclosure(creator?.defaultAiDisclosure)
   ?? 'none'
 );
 
 export const getEffectiveHeavyTopics = (
   media: Pick<Media, 'heavyTopics' | 'moderatorHeavyTopics'>,
-  gallery?: Pick<Gallery, 'defaultHeavyTopics'> | null,
-  artist?: Pick<Artist, 'defaultHeavyTopics'> | null
+  grouping?: Pick<Grouping, 'defaultHeavyTopics'> | null,
+  creator?: Pick<Creator, 'defaultHeavyTopics'> | null
 ): HeavyTopic[] => (
   parseOptionalHeavyTopics(media.moderatorHeavyTopics)
   ?? parseOptionalHeavyTopics(media.heavyTopics)
-  ?? parseOptionalHeavyTopics(gallery?.defaultHeavyTopics)
-  ?? parseOptionalHeavyTopics(artist?.defaultHeavyTopics)
+  ?? parseOptionalHeavyTopics(grouping?.defaultHeavyTopics)
+  ?? parseOptionalHeavyTopics(creator?.defaultHeavyTopics)
   ?? []
 );
 
@@ -150,4 +150,3 @@ export const passesDisclosureFilter = (
   passesAiFilter(aiDisclosure, policy.aiFilter) &&
   passesHeavyTopicFilter(heavyTopics, policy)
 );
-

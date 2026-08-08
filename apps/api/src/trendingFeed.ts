@@ -1,5 +1,5 @@
 import type { AppConfig } from './config';
-import type { AiDisclosure, Artist, Gallery, GalleryMediaView, HeavyTopic, TrendingFeedItem, TrendingPeriod } from './domain';
+import type { AiDisclosure, Creator, Grouping, GroupingMediaView, HeavyTopic, Media, Post, PostFormat, PostType, TrendingFeedItem, TrendingPeriod } from './domain';
 import type { DataStore } from './store';
 import { getEffectiveContentRating } from './contentRating';
 import { getEffectiveAiDisclosure, getEffectiveHeavyTopics } from './disclosures';
@@ -32,20 +32,30 @@ const isHiddenByVisibility = (visibility?: 'public' | 'hidden' | 'removed'): boo
 );
 
 interface CandidateItem {
+  surfaceKey: string;
+  surfaceType: 'media_surface' | 'post_surface';
+  postId?: string;
+  relatedPostIds: string[];
+  isPrimaryPostSurface: boolean;
   imageId: string;
-  assetType: 'image' | 'video';
-  artistId: string;
-  artistName: string;
-  galleryId: string;
-  gallerySlug: string;
-  galleryVisibility: 'free' | 'preview';
+  assetType: 'image' | 'video' | 'audio';
+  postType?: PostType;
+  postFormat?: PostFormat;
+  creatorId: string;
+  creatorName: string;
+  groupingId: string;
+  groupingSlug: string;
+  groupingVisibility: 'free' | 'preview';
   discoverSquareCropEnabled: boolean;
   effectiveContentRating: TrendingFeedItem['effectiveContentRating'];
   effectiveAiDisclosure: AiDisclosure;
   effectiveHeavyTopics: HeavyTopic[];
   title: string;
-  previewKey: string;
+  previewKey?: string;
   previewPosterKey?: string;
+  externalPreviewUrl?: string;
+  externalPreviewPosterUrl?: string;
+  thumbnailKeys?: TrendingFeedItem['thumbnailKeys'];
   width: number;
   height: number;
   aspectRatio: number;
@@ -53,6 +63,103 @@ interface CandidateItem {
   createdAtMs: number;
   recencyBoost: number;
 }
+
+const resolveTrendingPreviewKeys = (
+  item: Pick<GroupingMediaView, 'assetType' | 'thumbnailKeys' | 'previewPosterKey' | 'previewKey'>
+): { previewKey?: string; previewPosterKey?: string } => {
+  const assetType = (item.assetType || 'image') === 'video' ? 'video' : 'image';
+  if (assetType === 'video') {
+    return {
+      previewKey: item.previewKey,
+      previewPosterKey: item.previewPosterKey || item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320
+    };
+  }
+  return {
+    previewKey: item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewKey,
+    previewPosterKey: undefined
+  };
+};
+
+const getYouTubeEmbedInfo = (url?: string): { videoId: string; thumbnailUrl: string; isShort: boolean } | null => {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.replace(/^www\./, '').toLowerCase();
+    let videoId = '';
+    let isShort = false;
+    if (hostname === 'youtu.be') {
+      videoId = parsed.pathname.split('/').filter(Boolean)[0] || '';
+    } else if (hostname === 'youtube.com' || hostname === 'm.youtube.com' || hostname === 'youtube-nocookie.com') {
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parts[0] === 'shorts') {
+        videoId = parts[1] || '';
+        isShort = true;
+      } else if (parts[0] === 'embed') {
+        videoId = parts[1] || '';
+      } else {
+        videoId = parsed.searchParams.get('v') || '';
+      }
+    }
+    if (!/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) return null;
+    return {
+      videoId,
+      thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      isShort
+    };
+  } catch {
+    return null;
+  }
+};
+
+const findYouTubeEmbedInfo = (blocks: Post['blocks']): { videoId: string; thumbnailUrl: string; isShort: boolean } | null => {
+  for (const block of blocks) {
+    if (block.type === 'embed') {
+      const provider = typeof block.payload?.provider === 'string' ? block.payload.provider.toLowerCase() : '';
+      const info = provider === 'youtube' || provider === 'youtube-shorts' || !provider
+        ? getYouTubeEmbedInfo(block.url)
+        : null;
+      if (info) {
+        return {
+          ...info,
+          isShort: info.isShort || block.payload?.format === 'short' || block.payload?.layout === 'short'
+        };
+      }
+    }
+    if (block.blocks?.length) {
+      const child = findYouTubeEmbedInfo(block.blocks);
+      if (child) return child;
+    }
+  }
+  return null;
+};
+
+const normalizePostType = (post: Pick<Post, 'metadata' | 'blocks' | 'media' | 'primaryMediaId'>, mediaById?: Map<string, Pick<Media, 'mediaId' | 'assetType'>>): PostType => {
+  const raw = (post.metadata?.postType || post.metadata?.type || post.metadata?.kind || '').toLowerCase();
+  if (raw === 'image' || raw === 'images' || raw === 'photo' || raw === 'photos') return 'image';
+  if (raw === 'video' || raw === 'videos' || raw === 'short' || raw === 'shorts' || raw === 'reel' || raw === 'reels') return 'video';
+  if (raw === 'audio' || raw === 'track' || raw === 'album') return 'audio';
+  if (raw === 'story' || raw === 'stories' || raw === 'blocks' || raw === 'article' || raw === 'reading' || raw === 'fiction') return 'story';
+  const primaryId = post.primaryMediaId || post.media[0]?.mediaId;
+  const primary = primaryId ? mediaById?.get(primaryId) : undefined;
+  if (primary?.assetType === 'video') return 'video';
+  if (primary?.assetType === 'audio') return 'audio';
+  if (primary?.assetType === 'image' && post.blocks.length <= 2) return 'image';
+  if (post.blocks.some((block) => block.type === 'audio')) return 'audio';
+  if (post.blocks.some((block) => block.type === 'video')) return 'video';
+  return 'story';
+};
+
+const normalizePostFormat = (post: Pick<Post, 'metadata' | 'blocks' | 'media'>, postType: PostType): PostFormat => {
+  const raw = (post.metadata?.postFormat || post.metadata?.format || '').toLowerCase();
+  if ((postType === 'image' || postType === 'audio') && (raw === 'single' || raw === 'multi' || raw === 'album')) {
+    return raw === 'album' ? 'multi' : raw;
+  }
+  if ((postType === 'video' || postType === 'story') && (raw === 'short' || raw === 'long')) return raw;
+  if (postType === 'story') return post.blocks.filter((block) => block.type === 'paragraph').length >= 6 ? 'long' : 'short';
+  if (postType === 'video') return post.metadata?.videoFormat === 'short' || post.metadata?.layout === 'short' ? 'short' : 'long';
+  if (postType === 'audio') return post.media.length > 1 ? 'multi' : 'single';
+  return post.media.length > 1 ? 'multi' : 'single';
+};
 
 const hashToUnit = (input: string): number => {
   // Deterministic, fast 32-bit hash -> [0,1)
@@ -77,7 +184,7 @@ const rotateArray = <T>(items: T[], offset: number): T[] => {
 };
 
 const rebalanceHeadForVariety = <
-  T extends { imageId: string; artistId: string; galleryId: string; score: number }
+  T extends { surfaceKey: string; creatorId: string; groupingId: string; score: number }
 >(
   items: T[],
   period: TrendingPeriod,
@@ -93,30 +200,30 @@ const rebalanceHeadForVariety = <
 
   const buckets = new Map<string, T[]>();
   for (const item of pool) {
-    const list = buckets.get(item.artistId) || [];
+    const list = buckets.get(item.creatorId) || [];
     list.push(item);
-    buckets.set(item.artistId, list);
+    buckets.set(item.creatorId, list);
   }
   if (buckets.size <= 2) return items;
 
-  const orderedArtists = Array.from(buckets.keys()).sort((a, b) => {
+  const orderedCreators = Array.from(buckets.keys()).sort((a, b) => {
     const aTop = buckets.get(a)?.[0]?.score || 0;
     const bTop = buckets.get(b)?.[0]?.score || 0;
     return bTop - aTop;
   });
-  const offset = Math.floor(hashToUnit(`${period}:${seed}:head-variety-order`) * orderedArtists.length);
-  const artistOrder = rotateArray(orderedArtists, offset);
+  const offset = Math.floor(hashToUnit(`${period}:${seed}:head-variety-order`) * orderedCreators.length);
+  const creatorOrder = rotateArray(orderedCreators, offset);
 
   const rebalancedHead: T[] = [];
   while (rebalancedHead.length < targetHeadSize) {
     let progressed = false;
-    for (const artistId of artistOrder) {
-      const bucket = buckets.get(artistId);
+    for (const creatorId of creatorOrder) {
+      const bucket = buckets.get(creatorId);
       if (!bucket || bucket.length === 0) continue;
       const previous = rebalancedHead[rebalancedHead.length - 1];
       let pickIndex = -1;
       if (previous) {
-        pickIndex = bucket.findIndex((candidate) => candidate.galleryId !== previous.galleryId);
+        pickIndex = bucket.findIndex((candidate) => candidate.groupingId !== previous.groupingId);
       }
       if (pickIndex < 0) pickIndex = 0;
       const [picked] = bucket.splice(pickIndex, 1);
@@ -128,86 +235,178 @@ const rebalanceHeadForVariety = <
     if (!progressed) break;
   }
 
-  const used = new Set(rebalancedHead.map((item) => item.imageId));
-  const remainingPool = pool.filter((item) => !used.has(item.imageId));
+  const used = new Set(rebalancedHead.map((item) => item.surfaceKey));
+  const remainingPool = pool.filter((item) => !used.has(item.surfaceKey));
   const tail = items.slice(effectivePoolSize);
   return [...rebalancedHead, ...remainingPool, ...tail];
 };
 
 const buildCandidates = async (
   store: DataStore,
-  activeArtists: Artist[],
+  activeCreators: Creator[],
   period: TrendingPeriod,
   nowMs: number
-): Promise<{ candidates: CandidateItem[]; galleryCount: number }> => {
+): Promise<{ candidates: CandidateItem[]; groupingCount: number }> => {
   const periodMs = period === 'hourly' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-  const activeArtistIds = new Set(activeArtists.map((artist) => artist.artistId));
-  const artistById = new Map(activeArtists.map((artist) => [artist.artistId, artist]));
+  const activeCreatorIds = new Set(activeCreators.map((creator) => creator.creatorId));
+  const creatorById = new Map(activeCreators.map((creator) => [creator.creatorId, creator]));
 
-  const galleries = (await store.listAllGalleries()).filter((gallery) => {
-    if (gallery.status !== 'published') return false;
-    if (gallery.visibility === 'premium') return false;
-    if (!activeArtistIds.has(gallery.artistId)) return false;
-    if (isHiddenByVisibility(gallery.releaseVisibility)) return false;
+  const groupings = (await store.listAllGroupings()).filter((grouping) => {
+    if (grouping.status !== 'published') return false;
+    if (grouping.visibility === 'premium') return false;
+    if (!activeCreatorIds.has(grouping.creatorId)) return false;
+    if (isHiddenByVisibility(grouping.releaseVisibility)) return false;
     // Public trending feed is public-only, no follower-specific window.
-    return canViewBySchedule(gallery.publishAt, gallery.publicReleaseAt, nowMs, false);
+    return canViewBySchedule(grouping.publishAt, grouping.publicReleaseAt, nowMs, false);
   });
 
-  const mediaRows = await Promise.all(galleries.map(async (gallery) => ({ gallery, media: await store.getMediaByGallery(gallery.galleryId) })));
+  const mediaRows = await Promise.all(groupings.map(async (grouping) => ({ grouping, media: await store.getMediaByGrouping(grouping.groupingId) })));
+  const groupingById = new Map(groupings.map((grouping) => [grouping.groupingId, grouping]));
+  const groupingByCreatorId = new Map<string, Grouping>();
+  for (const grouping of groupings) {
+    if (!groupingByCreatorId.has(grouping.creatorId)) groupingByCreatorId.set(grouping.creatorId, grouping);
+  }
   const candidates: CandidateItem[] = [];
 
-  for (const { gallery, media } of mediaRows) {
-    for (const item of media) {
-      const assetType = (item.assetType || 'image');
-      if (isHiddenByVisibility(item.releaseVisibility)) continue;
-      if (item.status && item.status !== 'published' && item.status !== 'scheduled') continue;
-      if (!canViewBySchedule(item.publishAt || gallery.publishAt, item.publicReleaseAt || gallery.publicReleaseAt, nowMs, false)) {
-        continue;
+  const perPostSurfaceLimit = 1;
+  for (const creatorProfile of activeCreators) {
+    const [posts, creatorMedia] = await Promise.all([
+      store.listPostsByCreatorId(creatorProfile.creatorId),
+      store.listMediaByCreator(creatorProfile.creatorId)
+    ]);
+    const mediaById = new Map(creatorMedia.map((item) => [item.mediaId, item]));
+    const candidateMediaIds = Array.from(new Set(
+      posts
+        .filter((post) => post.status === 'published')
+        .flatMap((post) => post.media.map((ref) => ref.mediaId))
+    ));
+    const placementRows = await Promise.all(candidateMediaIds.map(async (mediaId) => ({
+      mediaId,
+      rows: await store.listMediaGroupingPlacements(mediaId)
+    })));
+    const placementByMediaId = new Map<string, Array<{ groupingId: string; position: number }>>();
+    for (const placement of placementRows) {
+      placementByMediaId.set(
+        placement.mediaId,
+        placement.rows
+          .filter((row) => groupingById.has(row.groupingId))
+          .sort((a, b) => a.position - b.position)
+          .map((row) => ({ groupingId: row.groupingId, position: row.position }))
+      );
+    }
+    for (const post of posts) {
+      if (post.status !== 'published') continue;
+      const postType = normalizePostType(post, mediaById);
+      const postFormat = normalizePostFormat(post, postType);
+      const sortedRefs = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
+      const primaryRef = post.primaryMediaId
+        ? sortedRefs.find((ref) => ref.mediaId === post.primaryMediaId)
+        : undefined;
+      const selectedRefs = sortedRefs.filter((ref) => ref.discoverable !== false);
+      const refs = primaryRef ? [primaryRef] : selectedRefs.slice(0, 1);
+      const limitedRefs = refs.slice(0, perPostSurfaceLimit);
+      if (limitedRefs.length === 0 && postType === 'video') {
+        const youtube = findYouTubeEmbedInfo(post.blocks);
+        const placedGrouping = groupingByCreatorId.get(creatorProfile.creatorId);
+        if (youtube && placedGrouping) {
+          const createdAtMs = asTime(post.publishedAt || post.createdAt) || nowMs;
+          candidates.push({
+            surfaceKey: `post:${post.postId}:youtube:${youtube.videoId}`,
+            surfaceType: 'post_surface',
+            postId: post.postId,
+            imageId: `youtube:${youtube.videoId}`,
+            relatedPostIds: [post.postId],
+            isPrimaryPostSurface: true,
+            assetType: 'video',
+            postType,
+            postFormat: youtube.isShort ? 'short' : postFormat,
+            creatorId: creatorProfile.creatorId,
+            creatorName: creatorProfile?.name || 'Creator',
+            groupingId: placedGrouping.groupingId,
+            groupingSlug: placedGrouping.slug,
+            groupingVisibility: placedGrouping.visibility === 'preview' ? 'preview' : 'free',
+            discoverSquareCropEnabled: false,
+            effectiveContentRating: 'general',
+            effectiveAiDisclosure: creatorProfile.defaultAiDisclosure || 'none',
+            effectiveHeavyTopics: creatorProfile.defaultHeavyTopics || [],
+            title: post.title || 'Video post',
+            previewKey: undefined,
+            previewPosterKey: undefined,
+            externalPreviewUrl: youtube.thumbnailUrl,
+            externalPreviewPosterUrl: youtube.thumbnailUrl,
+            width: youtube.isShort ? 1080 : 1280,
+            height: youtube.isShort ? 1920 : 720,
+            aspectRatio: youtube.isShort ? 0.5625 : 1.77778,
+            createdAt: post.publishedAt || post.createdAt,
+            createdAtMs,
+            recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs))
+          });
+        }
       }
-      const previewPosterKey = item.previewPosterKey
-        || item.thumbnailKeys?.w640
-        || item.thumbnailKeys?.w320;
-      const previewKey = assetType === 'video'
-        ? item.previewKey
-        : (item.thumbnailKeys?.w640 || item.thumbnailKeys?.w320 || item.previewKey);
-      if (!previewKey) continue;
-      const createdAtMs = asTime(item.createdAt) || nowMs;
-      const discoverSquareCropEnabled =
-        (artistById.get(item.artistId)?.discoverSquareCropEnabled ?? true) &&
-        (gallery.discoverSquareCropEnabled ?? true) &&
-        (item.discoverSquareCropEnabled ?? true);
-      const artist = artistById.get(item.artistId);
-      candidates.push({
-        imageId: item.mediaId,
-        assetType: assetType === 'video' ? 'video' : 'image',
-        artistId: item.artistId,
-        artistName: artistById.get(item.artistId)?.name || 'Artist',
-        galleryId: gallery.galleryId,
-        gallerySlug: gallery.slug,
-        galleryVisibility: gallery.visibility === 'preview' ? 'preview' : 'free',
-        discoverSquareCropEnabled,
-        effectiveContentRating: getEffectiveContentRating(item),
-        effectiveAiDisclosure: getEffectiveAiDisclosure(item, gallery, artist),
-        effectiveHeavyTopics: getEffectiveHeavyTopics(item, gallery, artist),
-        title: item.title || gallery.title || 'Artwork',
-        previewKey,
-        previewPosterKey,
-        width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
-        height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
-        aspectRatio: (
-          Number.isFinite(item.width) && item.width > 0
-          && Number.isFinite(item.height) && item.height > 0
-        )
-          ? Number((item.width / item.height).toFixed(5))
-          : 1,
-        createdAt: item.createdAt,
-        createdAtMs,
-        recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs))
-      });
+      for (let refIndex = 0; refIndex < limitedRefs.length; refIndex += 1) {
+        const ref = limitedRefs[refIndex];
+        const item = mediaById.get(ref.mediaId);
+        if (!item) continue;
+        if (item.appearsInFeed === false) continue;
+        if (isHiddenByVisibility(item.releaseVisibility)) continue;
+        if (item.status && item.status !== 'published' && item.status !== 'scheduled') continue;
+        const placements = placementByMediaId.get(item.mediaId) || [];
+        const placedGrouping = placements
+          .map((row) => groupingById.get(row.groupingId))
+          .find((grouping): grouping is Grouping => Boolean(grouping));
+        if (!placedGrouping) continue;
+        if (!canViewBySchedule(item.publishAt || placedGrouping.publishAt, item.publicReleaseAt || placedGrouping.publicReleaseAt, nowMs, false)) {
+          continue;
+        }
+        const normalizedAssetType = item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : item.assetType === 'image' ? 'image' : null;
+        if (!normalizedAssetType) continue;
+        const { previewKey, previewPosterKey } = resolveTrendingPreviewKeys(item);
+        if (!previewKey) continue;
+        const createdAtMs = asTime(item.createdAt) || nowMs;
+        const discoverSquareCropEnabled =
+          (creatorProfile.discoverSquareCropEnabled ?? true) &&
+          (placedGrouping.discoverSquareCropEnabled ?? true) &&
+          (item.discoverSquareCropEnabled ?? true);
+        candidates.push({
+          surfaceKey: `post:${post.postId}:${item.mediaId}:${refIndex}`,
+          surfaceType: 'post_surface',
+          postId: post.postId,
+          imageId: item.mediaId,
+          relatedPostIds: [post.postId],
+          isPrimaryPostSurface: Boolean(post.primaryMediaId && ref.mediaId === post.primaryMediaId),
+          assetType: normalizedAssetType,
+          postType,
+          postFormat,
+          creatorId: item.creatorId,
+          creatorName: creatorProfile?.name || 'Creator',
+          groupingId: placedGrouping.groupingId,
+          groupingSlug: placedGrouping.slug,
+          groupingVisibility: placedGrouping.visibility === 'preview' ? 'preview' : 'free',
+          discoverSquareCropEnabled,
+          effectiveContentRating: getEffectiveContentRating(item),
+          effectiveAiDisclosure: getEffectiveAiDisclosure(item, placedGrouping, creatorProfile),
+          effectiveHeavyTopics: getEffectiveHeavyTopics(item, placedGrouping, creatorProfile),
+          title: item.title || post.title || placedGrouping.title || 'Artwork',
+          previewKey,
+          previewPosterKey,
+          thumbnailKeys: item.thumbnailKeys,
+          width: Number.isFinite(item.width) && item.width > 0 ? Math.round(item.width) : 0,
+          height: Number.isFinite(item.height) && item.height > 0 ? Math.round(item.height) : 0,
+          aspectRatio: (
+            Number.isFinite(item.width) && item.width > 0
+            && Number.isFinite(item.height) && item.height > 0
+          )
+            ? Number((item.width / item.height).toFixed(5))
+            : 1,
+          createdAt: item.createdAt,
+          createdAtMs,
+          recencyBoost: Math.max(0, 1 - Math.min(1, (nowMs - createdAtMs) / periodMs))
+        });
+      }
     }
   }
 
-  return { candidates, galleryCount: galleries.length };
+  return { candidates, groupingCount: groupings.length };
 };
 
 export const buildTrendingFeedForPeriod = async (
@@ -215,9 +414,9 @@ export const buildTrendingFeedForPeriod = async (
   config: AppConfig,
   period: TrendingPeriod,
   nowMs = Date.now()
-): Promise<{ items: TrendingFeedItem[]; metrics: { candidateCount: number; scoredCount: number; galleryCount: number } }> => {
-  const activeArtists = (await store.listArtists()).filter((artist) => artist.status === 'active');
-  const { candidates, galleryCount } = await buildCandidates(store, activeArtists, period, nowMs);
+): Promise<{ items: TrendingFeedItem[]; metrics: { candidateCount: number; scoredCount: number; groupingCount: number } }> => {
+  const activeCreators = (await store.listCreators()).filter((creator) => creator.status === 'active');
+  const { candidates, groupingCount } = await buildCandidates(store, activeCreators, period, nowMs);
   const candidateLimit = Math.max(120, Math.min(5000, Number(config.trendingCandidateLimit || 1500)));
   const maxFeedItems = Math.max(60, Math.min(5000, Number(config.trendingFeedMaxItems || 600)));
   const sampled = [...candidates]
@@ -229,8 +428,10 @@ export const buildTrendingFeedForPeriod = async (
   const scored = sampled.map((item) => {
     const favoriteCount = Math.max(0, Number(favoriteCounts[item.imageId] || 0));
     const discoverSquareCropBonus = item.discoverSquareCropEnabled ? 1.25 : 0;
-    const jitter = (hashToUnit(`${period}:${seed}:${item.imageId}`) - 0.5) * 4.4;
-    const score = favoriteCount * 2 + item.recencyBoost * 7 + discoverSquareCropBonus + jitter;
+    const jitter = (hashToUnit(`${period}:${seed}:${item.surfaceKey}`) - 0.5) * 4.4;
+    const postLinkedMediaPenalty = item.surfaceType === 'media_surface' && item.relatedPostIds.length > 0 ? 0.7 : 0;
+    const postSurfaceBoost = item.surfaceType === 'post_surface' ? 0.35 : 0;
+    const score = favoriteCount * 2 + item.recencyBoost * 7 + discoverSquareCropBonus + postSurfaceBoost - postLinkedMediaPenalty + jitter;
     return {
       ...item,
       favoriteCount,
@@ -244,40 +445,59 @@ export const buildTrendingFeedForPeriod = async (
     return b.createdAtMs - a.createdAtMs;
   });
 
+  const oneSurfacePerImage = new Map<string, (typeof scored)[number]>();
+  for (const candidate of scored) {
+    const existing = oneSurfacePerImage.get(candidate.imageId);
+    if (!existing) {
+      oneSurfacePerImage.set(candidate.imageId, candidate);
+      continue;
+    }
+    if (candidate.surfaceType === 'post_surface' && existing.surfaceType !== 'post_surface') {
+      oneSurfacePerImage.set(candidate.imageId, candidate);
+    }
+  }
+  const uniqueScored = Array.from(oneSurfacePerImage.values()).sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.createdAtMs - a.createdAtMs;
+  });
+
   const diversified: Array<(typeof scored)[number] & { selectionScore: number }> = [];
-  const queue = [...scored];
-  const artistUsage = new Map<string, number>();
-  const galleryUsage = new Map<string, number>();
+  const queue = [...uniqueScored];
+  const creatorUsage = new Map<string, number>();
+  const groupingUsage = new Map<string, number>();
   const recentArtists: string[] = [];
-  const recentGalleries: string[] = [];
-  const diversityArtistCount = Math.max(1, new Set(scored.map((item) => item.artistId)).size);
-  const diversityGalleryCount = Math.max(1, new Set(scored.map((item) => item.galleryId)).size);
+  const recentGroupings: string[] = [];
+  const surfacedPostIds = new Set<string>();
+  const selectedImageIds = new Set<string>();
+  const diversityArtistCount = Math.max(1, new Set(uniqueScored.map((item) => item.creatorId)).size);
+  const diversityGroupingCount = Math.max(1, new Set(uniqueScored.map((item) => item.groupingId)).size);
 
   while (queue.length > 0 && diversified.length < maxFeedItems) {
-    const lastArtistId = diversified.length > 0 ? diversified[diversified.length - 1].artistId : undefined;
-    const lastGalleryId = diversified.length > 0 ? diversified[diversified.length - 1].galleryId : undefined;
+    const lastArtistId = diversified.length > 0 ? diversified[diversified.length - 1].creatorId : undefined;
+    const lastGroupingId = diversified.length > 0 ? diversified[diversified.length - 1].groupingId : undefined;
     const lookahead = Math.min(80, queue.length);
     const lookaheadItems = queue.slice(0, lookahead);
     const rankIndex = diversified.length;
     const earlyDiversity = rankIndex < 36;
-    const artistCap = Math.max(1, Math.ceil((rankIndex + 1) / Math.min(diversityArtistCount, 8)));
-    const galleryCap = Math.max(1, Math.ceil((rankIndex + 1) / Math.min(diversityGalleryCount, 10)));
-    const artistsUnderCap = new Set(
+    const creatorCap = Math.max(1, Math.ceil((rankIndex + 1) / Math.min(diversityArtistCount, 8)));
+    const groupingCap = Math.max(1, Math.ceil((rankIndex + 1) / Math.min(diversityGroupingCount, 10)));
+    const creators = new Set(
       lookaheadItems
-        .filter((item) => (artistUsage.get(item.artistId) || 0) < artistCap)
-        .map((item) => item.artistId)
+        .filter((item) => (creatorUsage.get(item.creatorId) || 0) < creatorCap)
+        .map((item) => item.creatorId)
     );
-    const galleriesUnderCap = new Set(
+    const groupingsUnderCap = new Set(
       lookaheadItems
-        .filter((item) => (galleryUsage.get(item.galleryId) || 0) < galleryCap)
-        .map((item) => item.galleryId)
+        .filter((item) => (groupingUsage.get(item.groupingId) || 0) < groupingCap)
+        .map((item) => item.groupingId)
     );
     const recentArtistWindow = recentArtists.slice(0, 3);
-    const recentGalleryWindow = recentGalleries.slice(0, 2);
-    const hasAltArtistFromLast = Boolean(lastArtistId) && lookaheadItems.some((item) => item.artistId !== lastArtistId);
-    const hasAltGalleryFromLast = Boolean(lastGalleryId) && lookaheadItems.some((item) => item.galleryId !== lastGalleryId);
-    const hasAltNonRecentArtist = lookaheadItems.some((item) => !recentArtistWindow.includes(item.artistId));
-    const hasAltNonRecentGallery = lookaheadItems.some((item) => !recentGalleryWindow.includes(item.galleryId));
+    const recentGroupingWindow = recentGroupings.slice(0, 2);
+    const hasAltArtistFromLast = Boolean(lastArtistId) && lookaheadItems.some((item) => item.creatorId !== lastArtistId);
+    const hasAltGroupingFromLast = Boolean(lastGroupingId) && lookaheadItems.some((item) => item.groupingId !== lastGroupingId);
+    const hasAltNonRecentArtist = lookaheadItems.some((item) => !recentArtistWindow.includes(item.creatorId));
+    const hasAltNonRecentGrouping = lookaheadItems.some((item) => !recentGroupingWindow.includes(item.groupingId));
+    const hasAltImageNotSelected = lookaheadItems.some((item) => !selectedImageIds.has(item.imageId));
 
     let bestIndex = -1;
     let bestScore = Number.NEGATIVE_INFINITY;
@@ -287,43 +507,58 @@ export const buildTrendingFeedForPeriod = async (
 
       for (let i = 0; i < lookahead; i += 1) {
         const candidate = queue[i];
-        const artistCount = artistUsage.get(candidate.artistId) || 0;
-        const galleryCount = galleryUsage.get(candidate.galleryId) || 0;
+        const creatorCount = creatorUsage.get(candidate.creatorId) || 0;
+        const groupingCount = groupingUsage.get(candidate.groupingId) || 0;
 
-        const blockByLastArtist = Boolean(lastArtistId && candidate.artistId === lastArtistId && hasAltArtistFromLast);
-        const blockByLastGallery = Boolean(lastGalleryId && candidate.galleryId === lastGalleryId && hasAltGalleryFromLast);
-        const blockByRecentArtist = recentArtistWindow.includes(candidate.artistId) && hasAltNonRecentArtist;
-        const blockByRecentGallery = recentGalleryWindow.includes(candidate.galleryId) && hasAltNonRecentGallery;
+        const blockByLastArtist = Boolean(lastArtistId && candidate.creatorId === lastArtistId && hasAltArtistFromLast);
+        const blockByLastGrouping = Boolean(lastGroupingId && candidate.groupingId === lastGroupingId && hasAltGroupingFromLast);
+        const blockByRecentArtist = recentArtistWindow.includes(candidate.creatorId) && hasAltNonRecentArtist;
+        const blockByRecentGrouping = recentGroupingWindow.includes(candidate.groupingId) && hasAltNonRecentGrouping;
         const blockByArtistCap = Boolean(
           earlyDiversity
-          && artistsUnderCap.size > 0
-          && artistCount >= artistCap
-          && !artistsUnderCap.has(candidate.artistId)
+          && creators.size > 0
+          && creatorCount >= creatorCap
+          && !creators.has(candidate.creatorId)
         );
-        const blockByGalleryCap = Boolean(
+        const blockByGroupingCap = Boolean(
           earlyDiversity
-          && galleriesUnderCap.size > 0
-          && galleryCount >= galleryCap
-          && !galleriesUnderCap.has(candidate.galleryId)
+          && groupingsUnderCap.size > 0
+          && groupingCount >= groupingCap
+          && !groupingsUnderCap.has(candidate.groupingId)
+        );
+        const blockByDuplicateImage = Boolean(
+          selectedImageIds.has(candidate.imageId)
+          && hasAltImageNotSelected
         );
 
         const disqualified =
           (pass <= 3 && blockByLastArtist) ||
-          (pass <= 2 && blockByLastGallery) ||
+          (pass <= 2 && blockByLastGrouping) ||
           (pass <= 1 && blockByRecentArtist) ||
-          (pass === 0 && blockByRecentGallery) ||
+          (pass === 0 && blockByRecentGrouping) ||
           (pass <= 1 && blockByArtistCap) ||
-          (pass === 0 && blockByGalleryCap);
+          (pass === 0 && blockByGroupingCap) ||
+          (pass === 0 && blockByDuplicateImage);
         if (disqualified) continue;
 
         let selectionScore = candidate.score;
-        selectionScore -= artistCount * 3.1;
-        selectionScore -= galleryCount * 2.05;
+        selectionScore -= creatorCount * 3.1;
+        selectionScore -= groupingCount * 2.05;
 
         if (blockByLastArtist) selectionScore -= 8;
-        if (blockByLastGallery) selectionScore -= 6;
+        if (blockByLastGrouping) selectionScore -= 6;
         if (blockByRecentArtist) selectionScore -= 4;
-        if (blockByRecentGallery) selectionScore -= 2.5;
+        if (blockByRecentGrouping) selectionScore -= 2.5;
+        if (blockByDuplicateImage) selectionScore -= 8;
+        if (candidate.surfaceType === 'media_surface' && surfacedPostIds.size > 0 && candidate.relatedPostIds.length > 0) {
+          const overlaps = candidate.relatedPostIds.filter((postId) => surfacedPostIds.has(postId)).length;
+          if (overlaps > 0) {
+            selectionScore -= overlaps * 6;
+          }
+        }
+        if (candidate.surfaceType === 'post_surface' && candidate.postId && surfacedPostIds.has(candidate.postId)) {
+          selectionScore -= 4.5;
+        }
 
         if (selectionScore > bestScore) {
           bestScore = selectionScore;
@@ -346,13 +581,17 @@ export const buildTrendingFeedForPeriod = async (
       ...picked,
       selectionScore: bestScore
     });
-    artistUsage.set(picked.artistId, (artistUsage.get(picked.artistId) || 0) + 1);
-    galleryUsage.set(picked.galleryId, (galleryUsage.get(picked.galleryId) || 0) + 1);
+    selectedImageIds.add(picked.imageId);
+    if (picked.surfaceType === 'post_surface' && picked.postId) {
+      surfacedPostIds.add(picked.postId);
+    }
+    creatorUsage.set(picked.creatorId, (creatorUsage.get(picked.creatorId) || 0) + 1);
+    groupingUsage.set(picked.groupingId, (groupingUsage.get(picked.groupingId) || 0) + 1);
 
-    recentArtists.unshift(picked.artistId);
-    recentGalleries.unshift(picked.galleryId);
+    recentArtists.unshift(picked.creatorId);
+    recentGroupings.unshift(picked.groupingId);
     if (recentArtists.length > 4) recentArtists.pop();
-    if (recentGalleries.length > 3) recentGalleries.pop();
+    if (recentGroupings.length > 3) recentGroupings.pop();
   }
 
   const rebalanced = rebalanceHeadForVariety(
@@ -368,19 +607,26 @@ export const buildTrendingFeedForPeriod = async (
     period,
     rank: index + 1,
     imageId: item.imageId,
+    surfaceType: item.surfaceType,
     assetType: item.assetType,
-    artistId: item.artistId,
-    artistName: item.artistName,
-    galleryId: item.galleryId,
-    gallerySlug: item.gallerySlug,
-    galleryVisibility: item.galleryVisibility,
+    postType: item.postType,
+    postFormat: item.postFormat,
+    postId: item.postId,
+    creatorId: item.creatorId,
+    creatorName: item.creatorName,
+    groupingId: item.groupingId,
+    groupingSlug: item.groupingSlug,
+    groupingVisibility: item.groupingVisibility,
     discoverSquareCropEnabled: item.discoverSquareCropEnabled,
     effectiveContentRating: item.effectiveContentRating,
     effectiveAiDisclosure: item.effectiveAiDisclosure,
     effectiveHeavyTopics: item.effectiveHeavyTopics,
     title: item.title,
-    previewKey: item.previewKey,
+    previewKey: item.previewKey || '',
     previewPosterKey: item.previewPosterKey,
+    externalPreviewUrl: item.externalPreviewUrl,
+    externalPreviewPosterUrl: item.externalPreviewPosterUrl,
+    thumbnailKeys: item.thumbnailKeys,
     width: item.width,
     height: item.height,
     aspectRatio: item.aspectRatio,
@@ -395,7 +641,7 @@ export const buildTrendingFeedForPeriod = async (
     metrics: {
       candidateCount: candidates.length,
       scoredCount: sampled.length,
-      galleryCount
+      groupingCount
     }
   };
 };
@@ -404,9 +650,9 @@ export const refreshTrendingFeeds = async (
   store: DataStore,
   config: AppConfig,
   nowMs = Date.now()
-): Promise<Record<TrendingPeriod, { written: number; candidateCount: number; scoredCount: number; galleryCount: number }>> => {
+): Promise<Record<TrendingPeriod, { written: number; candidateCount: number; scoredCount: number; groupingCount: number }>> => {
   const periods: TrendingPeriod[] = ['hourly', 'daily'];
-  const result = {} as Record<TrendingPeriod, { written: number; candidateCount: number; scoredCount: number; galleryCount: number }>;
+  const result = {} as Record<TrendingPeriod, { written: number; candidateCount: number; scoredCount: number; groupingCount: number }>;
   for (const period of periods) {
     const built = await buildTrendingFeedForPeriod(store, config, period, nowMs);
     await store.replaceTrendingFeed(period, built.items);
@@ -414,7 +660,7 @@ export const refreshTrendingFeeds = async (
       written: built.items.length,
       candidateCount: built.metrics.candidateCount,
       scoredCount: built.metrics.scoredCount,
-      galleryCount: built.metrics.galleryCount
+      groupingCount: built.metrics.groupingCount
     };
   }
   return result;

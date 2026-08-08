@@ -2,17 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import type {
   AiFilterPreference,
-  Artist,
+  Creator,
   CollectionSummary,
-  GallerySummary,
-  ManagedArtist,
+  GroupingSummary,
+  ManagedCreator,
   ManagedFavorite,
   TrendingImage
 } from '../domainTypes';
 
-export type DiscoveryGallery = GallerySummary & {
-  artistName: string;
-  artistSlug: string;
+export type DiscoveryGrouping = GroupingSummary & {
+  creatorName: string;
+  creatorSlug: string;
   stackPreviewUrls?: string[];
 };
 
@@ -42,15 +42,15 @@ export default function useDiscoveryFeed({
   disclosureFilters,
   favoriteIdentity
 }: UseDiscoveryFeedArgs) {
-  const [artists, setArtists] = useState<Artist[]>([]);
-  const [galleries, setGalleries] = useState<DiscoveryGallery[]>([]);
+  const [creators, setArtists] = useState<Creator[]>([]);
+  const [groupings, setGroupings] = useState<DiscoveryGrouping[]>([]);
   const [trendingImages, setTrendingImages] = useState<TrendingImage[]>([]);
   const [trendingCursor, setTrendingCursor] = useState<string | undefined>(undefined);
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
-  const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
+  const [managedArtists, setManagedArtists] = useState<ManagedCreator[]>([]);
   const [followedArtistIds, setFollowedArtistIds] = useState<Set<string>>(new Set());
   const [favoriteImageIds, setFavoriteImageIds] = useState<Set<string>>(new Set());
-  const [favoriteGalleryIds, setFavoriteGalleryIds] = useState<Set<string>>(new Set());
+  const [favoriteGroupingIds, setFavoriteGroupingIds] = useState<Set<string>>(new Set());
   const [loadingMoreTrending, setLoadingMoreTrending] = useState(false);
   const [loadingTrending, setLoadingTrending] = useState(false);
   const [loadingLatest, setLoadingLatest] = useState(false);
@@ -59,8 +59,8 @@ export default function useDiscoveryFeed({
   const [error, setError] = useState('');
 
   const favoriteAsProfile = useMemo(() => (
-    favoriteIdentity.startsWith('artist:')
-      ? { ownerProfileType: 'artist' as const, ownerProfileId: favoriteIdentity.slice('artist:'.length) }
+    favoriteIdentity.startsWith('creator:')
+      ? { ownerProfileType: 'creator' as const, ownerProfileId: favoriteIdentity.slice('creator:'.length) }
       : { ownerProfileType: 'user' as const }
   ), [favoriteIdentity]);
 
@@ -117,12 +117,12 @@ export default function useDiscoveryFeed({
     const loadLatest = async () => {
       try {
         setLoadingLatest(true);
-        const [artistList, latestGalleries] = await Promise.all([
-          api.getArtists() as Promise<Artist[]>,
-          api.getLatestGalleries(12) as Promise<DiscoveryGallery[]>
+        const [creator, latestGroupings] = await Promise.all([
+          api.getArtists() as Promise<Creator[]>,
+          api.getLatestGroupings(12) as Promise<DiscoveryGrouping[]>
         ]);
-        setArtists(artistList);
-        setGalleries(latestGalleries || []);
+        setArtists(creator);
+        setGroupings(latestGroupings || []);
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -158,10 +158,10 @@ export default function useDiscoveryFeed({
       }
       try {
         const [follows, myArtists] = await Promise.all([
-          api.myFollows() as Promise<Array<{ artistId: string }>>,
-          api.getMyArtists() as Promise<ManagedArtist[]>
+          api.myFollows() as Promise<Array<{ creatorId: string }>>,
+          api.getMyCreators() as Promise<ManagedCreator[]>
         ]);
-        setFollowedArtistIds(new Set((follows || []).map((item) => item.artistId)));
+        setFollowedArtistIds(new Set((follows || []).map((item) => item.creatorId)));
         setManagedArtists(myArtists || []);
       } catch {
         setFollowedArtistIds(new Set());
@@ -176,16 +176,16 @@ export default function useDiscoveryFeed({
       if (!deferredSectionsReady) return;
       if (!currentUser) {
         setFavoriteImageIds(new Set());
-        setFavoriteGalleryIds(new Set());
+        setFavoriteGroupingIds(new Set());
         return;
       }
       try {
         const favorites = await api.myFavorites(favoriteAsProfile) as ManagedFavorite[];
         setFavoriteImageIds(new Set(favorites.filter((item) => item.targetType === 'image').map((item) => item.targetId)));
-        setFavoriteGalleryIds(new Set(favorites.filter((item) => item.targetType === 'gallery').map((item) => item.targetId)));
+        setFavoriteGroupingIds(new Set(favorites.filter((item) => item.targetType === 'grouping').map((item) => item.targetId)));
       } catch {
         setFavoriteImageIds(new Set());
-        setFavoriteGalleryIds(new Set());
+        setFavoriteGroupingIds(new Set());
       }
     };
     void loadFavorites();
@@ -210,26 +210,26 @@ export default function useDiscoveryFeed({
     }
   }, [trendingCursor, trendingPeriod, trendingBaseLimit, disclosureFilters]);
 
-  const toggleFollow = useCallback(async (artistId?: string) => {
-    if (!artistId) return;
-    const isFollowing = followedArtistIds.has(artistId);
+  const toggleFollow = useCallback(async (creator?: string) => {
+    if (!creator) return;
+    const isFollowing = followedArtistIds.has(creator);
     setFollowedArtistIds((prev) => {
       const next = new Set(prev);
-      if (isFollowing) next.delete(artistId);
-      else next.add(artistId);
+      if (isFollowing) next.delete(creator);
+      else next.add(creator);
       return next;
     });
     try {
       if (isFollowing) {
-        await api.unfollowArtist(artistId);
+        await api.unfollowCreator(creator);
       } else {
-        await api.followArtist(artistId);
+        await api.followCreator(creator);
       }
     } catch {
       setFollowedArtistIds((prev) => {
         const next = new Set(prev);
-        if (isFollowing) next.add(artistId);
-        else next.delete(artistId);
+        if (isFollowing) next.add(creator);
+        else next.delete(creator);
         return next;
       });
     }
@@ -269,40 +269,40 @@ export default function useDiscoveryFeed({
     }
   }, [favoriteImageIds, favoriteAsProfile]);
 
-  const toggleGalleryFavorite = useCallback(async (galleryId: string) => {
-    const wasFavorited = favoriteGalleryIds.has(galleryId);
-    setFavoriteGalleryIds((prev) => {
+  const toggleGroupingFavorite = useCallback(async (groupingId: string) => {
+    const wasFavorited = favoriteGroupingIds.has(groupingId);
+    setFavoriteGroupingIds((prev) => {
       const next = new Set(prev);
-      if (wasFavorited) next.delete(galleryId);
-      else next.add(galleryId);
+      if (wasFavorited) next.delete(groupingId);
+      else next.add(groupingId);
       return next;
     });
     try {
       if (wasFavorited) {
-        await api.unfavorite('gallery', galleryId, favoriteAsProfile);
+        await api.unfavorite('grouping', groupingId, favoriteAsProfile);
       } else {
-        await api.favorite('gallery', galleryId, 'public', favoriteAsProfile);
+        await api.favorite('grouping', groupingId, 'public', favoriteAsProfile);
       }
     } catch {
-      setFavoriteGalleryIds((prev) => {
+      setFavoriteGroupingIds((prev) => {
         const next = new Set(prev);
-        if (wasFavorited) next.add(galleryId);
-        else next.delete(galleryId);
+        if (wasFavorited) next.add(groupingId);
+        else next.delete(groupingId);
         return next;
       });
     }
-  }, [favoriteGalleryIds, favoriteAsProfile]);
+  }, [favoriteGroupingIds, favoriteAsProfile]);
 
   return {
-    artists,
-    galleries,
+    creators,
+    groupings,
     trendingImages,
     trendingCursor,
     collections,
     managedArtists,
     followedArtistIds,
     favoriteImageIds,
-    favoriteGalleryIds,
+    favoriteGroupingIds,
     loadingMoreTrending,
     loadingTrending,
     loadingLatest,
@@ -315,6 +315,6 @@ export default function useDiscoveryFeed({
     loadMoreTrending,
     toggleFollow,
     toggleImageFavorite,
-    toggleGalleryFavorite
+    toggleGroupingFavorite
   };
 }

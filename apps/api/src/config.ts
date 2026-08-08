@@ -1,20 +1,20 @@
 export interface AppConfig {
   awsRegion: string;
-  artistsTable: string;
-  galleriesTable: string;
+  creators: string;
+  groupingsTable: string;
   imagesTable: string;
   commentsTable: string;
   favoritesTable: string;
   blockedUsersTable: string;
   siteSettingsTable: string;
-  imageStatsTable: string;
+  contentStatsTable: string;
   trendingFeedTable: string;
-  galleryCoreTable: string;
-  useGalleryCoreTable: boolean;
+  contentCoreTable: string;
+  useContentCoreTable: boolean;
   mediaBucket: string;
   unlockJwtSecret: string;
   unlockTokenTtlSeconds: number;
-  rememberGalleryAccessTtlSeconds: number;
+  rememberGroupingAccessTtlSeconds: number;
   signedUrlTtlSeconds: number;
   mediaCdnDomain?: string;
   premiumMediaCdnDomain?: string;
@@ -29,21 +29,21 @@ export interface AppConfig {
 
 export const loadConfig = (): AppConfig => ({
   awsRegion: process.env.AWS_REGION || 'ca-central-1',
-  artistsTable: process.env.ARTISTS_TABLE || 'artists',
-  galleriesTable: process.env.GALLERIES_TABLE || 'galleries',
+  creators: process.env.CREATORS || 'creators',
+  groupingsTable: process.env.GROUPINGS_TABLE || 'groupings',
   imagesTable: process.env.IMAGES_TABLE || 'images',
   commentsTable: process.env.COMMENTS_TABLE || 'comments',
   favoritesTable: process.env.FAVORITES_TABLE || 'favorites',
   blockedUsersTable: process.env.BLOCKED_USERS_TABLE || 'blocked-users',
   siteSettingsTable: process.env.SITE_SETTINGS_TABLE || 'site-settings',
-  imageStatsTable: process.env.IMAGE_STATS_TABLE || 'image-stats',
+  contentStatsTable: process.env.CONTENT_STATS_TABLE || 'content-stats',
   trendingFeedTable: process.env.TRENDING_FEED_TABLE || 'trending-feed',
-  galleryCoreTable: process.env.GALLERY_CORE_TABLE || 'gallery-core',
-  useGalleryCoreTable: (process.env.USE_GALLERY_CORE_TABLE || 'false') === 'true',
-  mediaBucket: process.env.MEDIA_BUCKET || 'gallery-media',
+  contentCoreTable: process.env.CONTENT_CORE_TABLE || 'content-core',
+  useContentCoreTable: (process.env.USE_CONTENT_CORE_TABLE || 'false') === 'true',
+  mediaBucket: process.env.MEDIA_BUCKET || 'content-media',
   unlockJwtSecret: process.env.UNLOCK_JWT_SECRET || 'dev-secret',
   unlockTokenTtlSeconds: Number(process.env.UNLOCK_TOKEN_TTL_SECONDS || 3600),
-  rememberGalleryAccessTtlSeconds: Number(process.env.REMEMBER_GALLERY_ACCESS_TTL_SECONDS || 60 * 60 * 24 * 30),
+  rememberGroupingAccessTtlSeconds: Number(process.env.REMEMBER_GROUPING_ACCESS_TTL_SECONDS || 60 * 60 * 24 * 30),
   signedUrlTtlSeconds: Number(process.env.SIGNED_URL_TTL_SECONDS || 300),
   mediaCdnDomain: process.env.MEDIA_CDN_DOMAIN,
   premiumMediaCdnDomain: process.env.PREMIUM_MEDIA_CDN_DOMAIN,

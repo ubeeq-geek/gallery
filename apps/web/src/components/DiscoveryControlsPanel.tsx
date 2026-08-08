@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import type { DensityViewport, DiscoveryFilterSection, FeedDensity, ManagedArtist } from '../domainTypes';
+import type { DensityViewport, DiscoveryFilterSection, FeedDensity, ManagedCreator } from '../domainTypes';
 import { heavyTopicLabels } from '../discoveryUtils';
 
 type CompactTab = {
@@ -23,11 +23,15 @@ type DiscoveryControlsPanelProps = {
   hideHeavyTopics: boolean;
   hidePoliticsPublicAffairs: boolean;
   hideCrimeDisastersTragedy: boolean;
+  showImageMedia: boolean;
+  showVideoMedia: boolean;
+  showPostMedia: boolean;
+  showAudioMedia: boolean;
   heavyTopicsExpanded: boolean;
   discoverySearch: string;
   currentUserPresent: boolean;
   favoriteIdentity: string;
-  managedArtists: ManagedArtist[];
+  managedArtists: ManagedCreator[];
   discoveryFilterPanelRef: React.MutableRefObject<HTMLDivElement | null>;
   discoverySearchInputRef: React.MutableRefObject<HTMLInputElement | null>;
   compactSearchInputRef: React.MutableRefObject<HTMLInputElement | null>;
@@ -38,6 +42,10 @@ type DiscoveryControlsPanelProps = {
   onHideAllHeavyTopicsChange: (enabled: boolean) => void;
   onHidePoliticsPublicAffairsChange: (enabled: boolean) => void;
   onHideCrimeDisastersTragedyChange: (enabled: boolean) => void;
+  onShowImageMediaChange: (enabled: boolean) => void;
+  onShowVideoMediaChange: (enabled: boolean) => void;
+  onShowPostMediaChange: (enabled: boolean) => void;
+  onShowAudioMediaChange: (enabled: boolean) => void;
   onHeavyTopicsExpandedChange: (expanded: boolean) => void;
   onDensitySliderChange: (value: number) => void;
   onDensityOptionChange: (density: FeedDensity) => void;
@@ -61,6 +69,10 @@ export default function DiscoveryControlsPanel({
   hideHeavyTopics,
   hidePoliticsPublicAffairs,
   hideCrimeDisastersTragedy,
+  showImageMedia,
+  showVideoMedia,
+  showPostMedia,
+  showAudioMedia,
   heavyTopicsExpanded,
   discoverySearch,
   currentUserPresent,
@@ -76,6 +88,10 @@ export default function DiscoveryControlsPanel({
   onHideAllHeavyTopicsChange,
   onHidePoliticsPublicAffairsChange,
   onHideCrimeDisastersTragedyChange,
+  onShowImageMediaChange,
+  onShowVideoMediaChange,
+  onShowPostMediaChange,
+  onShowAudioMediaChange,
   onHeavyTopicsExpandedChange,
   onDensitySliderChange,
   onDensityOptionChange,
@@ -101,6 +117,28 @@ export default function DiscoveryControlsPanel({
               Daily
             </button>
             <Link className="discovery-pill-btn no-underline" to="/trending" onClick={onCloseCompactFilters}>View all</Link>
+          </div>
+        </div>
+      );
+    }
+
+    if (compactFilterSection === 'media') {
+      return (
+        <div className="discovery-compact-section discovery-compact-period-section">
+          <div className="discovery-filter-label">Media types</div>
+          <div className="discovery-trending-filter">
+            <button className={`discovery-pill-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => onShowImageMediaChange(!showImageMedia)}>
+              🖼 Images
+            </button>
+            <button className={`discovery-pill-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => onShowVideoMediaChange(!showVideoMedia)}>
+              🎬 Videos
+            </button>
+            <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => onShowPostMediaChange(!showPostMedia)}>
+              📝 Stories
+            </button>
+            <button className={`discovery-pill-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => onShowAudioMediaChange(!showAudioMedia)}>
+              ♪ Audio
+            </button>
           </div>
         </div>
       );
@@ -184,10 +222,7 @@ export default function DiscoveryControlsPanel({
                 {densityLabel[option]}
               </button>
             ))}
-          </div>
-          <p className="small m-0">
-            Small shows more rows before editorial sections. Large emphasizes image size.
-          </p>
+          </div>          
         </div>
       );
     }
@@ -204,7 +239,7 @@ export default function DiscoveryControlsPanel({
             type="text"
             value={discoverySearch}
             onChange={(e) => onDiscoverySearchChange(e.target.value)}
-            placeholder="Search titles, artists, galleries, tags..."
+            placeholder="Search titles, creators, groupings, tags..."
           />
         </div>
       </div>
@@ -268,9 +303,9 @@ export default function DiscoveryControlsPanel({
       <div id="discovery-filter-panel" ref={discoveryFilterPanelRef} className="discovery-filter-shell">
         <div className="discovery-filter-grid">
           <div className="discovery-filter-left">
-            <div>
-              <div className="discovery-filter-label">Trending period</div>
-              <div className="discovery-trending-filter">
+              <div>
+                <div className="discovery-filter-label">Trending period</div>
+                <div className="discovery-trending-filter">
                 <button
                   className={`discovery-pill-btn${trendingPeriod === 'hourly' ? ' is-active' : ''}`}
                   onClick={() => onTrendingPeriodChange('hourly')}
@@ -283,9 +318,27 @@ export default function DiscoveryControlsPanel({
                 >
                   Daily
                 </button>
-                <Link className="discovery-pill-btn no-underline" to="/trending">View all</Link>
+                  <Link className="discovery-pill-btn no-underline" to="/trending">View all</Link>
+                </div>
               </div>
-            </div>
+
+              <div>
+                <div className="discovery-filter-label">Media types</div>
+                <div className="discovery-trending-filter">
+                  <button className={`discovery-pill-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => onShowImageMediaChange(!showImageMedia)}>
+                    🖼 Images
+                  </button>
+                  <button className={`discovery-pill-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => onShowVideoMediaChange(!showVideoMedia)}>
+                    🎬 Videos
+                  </button>
+                  <button className={`discovery-pill-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => onShowPostMediaChange(!showPostMedia)}>
+                    📝 Stories
+                  </button>
+                  <button className={`discovery-pill-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => onShowAudioMediaChange(!showAudioMedia)}>
+                    ♪ Audio
+                  </button>
+                </div>
+              </div>
 
             <div className="discovery-heavy-card">
               <div className="discovery-heavy-head">
@@ -361,10 +414,7 @@ export default function DiscoveryControlsPanel({
                     {densityLabel[option]}
                   </button>
                 ))}
-              </div>
-              <p className="small m-0">
-                Small shows more rows before editorial sections. Large emphasizes image size.
-              </p>
+              </div>              
             </div>
 
             <div className="discovery-search-card">
@@ -378,7 +428,7 @@ export default function DiscoveryControlsPanel({
                   type="text"
                   value={discoverySearch}
                   onChange={(e) => onDiscoverySearchChange(e.target.value)}
-                  placeholder="Search titles, artists, galleries, tags..."
+                  placeholder="Search titles, creators, groupings, tags..."
                 />
               </div>
               {currentUserPresent && (
@@ -390,9 +440,9 @@ export default function DiscoveryControlsPanel({
                     onChange={(e) => onFavoriteIdentityChange(e.target.value)}
                   >
                     <option value="user">User Profile</option>
-                    {managedArtists.map((artist) => (
-                      <option key={`home-favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
-                        Artist: {artist.name}
+                    {managedArtists.map((creator) => (
+                      <option key={`home-favorite-${creator.creatorId}`} value={`creator:${creator.creatorId}`}>
+                        Creator: {creator.name}
                       </option>
                     ))}
                   </select>

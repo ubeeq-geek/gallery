@@ -3,15 +3,112 @@ export type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fe
 export type AiDisclosure = 'none' | 'ai-assisted' | 'ai-generated';
 export type HeavyTopic = 'politics-public-affairs' | 'crime-disasters-tragedy';
 export type AiFilterPreference = 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
+export type PostStatus = 'draft' | 'published' | 'archived';
+export type PostDiscoveryMode = 'primary' | 'all' | 'selected';
+export type PostType = 'image' | 'video' | 'story' | 'audio';
+export type PostFormat = 'single' | 'multi' | 'short' | 'long';
+export type CreatorGroupDisplayType = 'series' | 'grouping' | 'set';
+export type MediaType = 'image' | 'video' | 'audio';
+export type SourceFileKind = 'image' | 'video' | 'audio' | 'document' | 'archive' | 'other';
+export type PostBlockType =
+  | 'section'
+  | 'heading'
+  | 'paragraph'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'quote'
+  | 'divider'
+  | 'embed'
+  | 'file'
+  | 'link'
+  | 'credit'
+  | 'grouping'
+  | 'carousel'
+  | 'pdf_preview'
+  | 'html_fragment';
 
-export interface Artist {
-  artistId: string;
+export interface PostBlock {
+  blockId: string;
+  type: PostBlockType;
+  text?: string;
+  level?: number;
+  mediaId?: string;
+  fileId?: string;
+  caption?: string;
+  quote?: string;
+  author?: string;
+  url?: string;
+  mimeType?: string;
+  title?: string;
+  label?: string;
+  html?: string;
+  payload?: Record<string, unknown>;
+  blocks?: PostBlock[];
+}
+
+export interface PostMediaRef {
+  mediaId: string;
+  discoverable?: boolean;
+  sortOrder?: number;
+  caption?: string;
+  credit?: {
+    label: string;
+    url?: string;
+  };
+  comparison?: {
+    type?: 'colorization' | 'before-after' | 'retouch' | 'historical' | string;
+    role?: 'original' | 'colorized' | 'before' | 'after' | string;
+    order?: number;
+    comparisonItem?: {
+      mediaId: string;
+      role?: 'original' | 'colorized' | 'before' | 'after' | string;
+      order?: number;
+      caption?: string;
+      credit?: {
+        label: string;
+        url?: string;
+      };
+    };
+  };
+}
+
+export interface PostDestination {
+  type: 'post' | 'pdf' | 'external' | 'internal';
+  url: string;
+}
+
+export interface Post {
+  postId: string;
+  creatorId: string;
+  groupId?: string;
+  authorId?: string;
+  title: string;
+  slug: string;
+  slugHistory?: string[];
+  summary?: string;
+  status: PostStatus;
+  blocks: PostBlock[];
+  media: PostMediaRef[];
+  primaryMediaId?: string;
+  discovery: {
+    mode: PostDiscoveryMode;
+  };
+  destination?: PostDestination | null;
+  metadata?: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+}
+
+export interface Creator {
+  creatorId: string;
   name: string;
   slug: string;
   slugHistory?: string[];
-  defaultProfileTab?: 'feed' | 'galleries';
+  defaultProfileTab?: 'feed' | 'groupings';
   featuredItemIds?: string[];
-  featuredGalleryIds?: string[];
+  featuredGroupingIds?: string[];
   discoverSquareCropEnabled?: boolean;
   defaultAiDisclosure?: AiDisclosure;
   defaultHeavyTopics?: HeavyTopic[];
@@ -19,15 +116,97 @@ export interface Artist {
   sortOrder: number;
   followerCount?: number;
   imageCount?: number;
-  galleryCount?: number;
+  groupingCount?: number;
+  branding?: {
+    profileImage?: {
+      sourceKey: string;
+      thumbnailKeys?: {
+        square256?: string;
+        square512?: string;
+        square1024?: string;
+      };
+      squareCrop?: {
+        x: number;
+        y: number;
+        size: number;
+      };
+      altText?: string;
+      updatedAt: string;
+    };
+    coverImage?: {
+      sourceKey: string;
+      renditionKeys?: {
+        desktop?: string;
+        tablet?: string;
+        mobile?: string;
+      };
+      crops?: {
+        desktop?: {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        };
+        tablet?: {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        };
+        mobile?: {
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        };
+      };
+      focalPoint?: {
+        x: number;
+        y: number;
+      };
+      altText?: string;
+      updatedAt: string;
+    };
+  };
   createdAt: string;
 }
 
-export interface Gallery {
-  galleryId: string;
-  artistId: string;
-  artistSlug?: string;
+export interface CreatorGroup {
+  groupId: string;
+  creatorId: string;
   title: string;
+  slug: string;
+  description?: string;
+  displayType: CreatorGroupDisplayType;
+  coverMediaId?: string;
+  status: 'draft' | 'published' | 'archived';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SourceFile {
+  fileId: string;
+  creatorId: string;
+  sourceKind: SourceFileKind;
+  mimeType: string;
+  storageKey: string;
+  originalFilename?: string;
+  sizeBytes?: number;
+  checksumSha256?: string;
+  metadata?: Record<string, string | number | boolean | null>;
+  downloadable?: boolean;
+  premium?: boolean;
+  restricted?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Grouping {
+  groupingId: string;
+  creatorId: string;
+  creatorSlug?: string;
+  title: string;
+  isDefaultStream?: boolean;
   slug: string;
   slugHistory?: string[];
   discoverSquareCropEnabled?: boolean;
@@ -35,8 +214,9 @@ export interface Gallery {
   defaultHeavyTopics?: HeavyTopic[];
   visibility: Visibility;
   releaseVisibility?: 'public' | 'hidden' | 'removed';
-  pairedPremiumGalleryId?: string;
+  pairedPremiumGroupingId?: string;
   purchaseUrl?: string;
+  defaultPreviewMaxWidth?: number;
   status: 'draft' | 'published';
   publishAt?: string;
   publicReleaseAt?: string;
@@ -47,7 +227,9 @@ export interface Gallery {
 
 export interface Media {
   mediaId: string;
-  artistId: string;
+  creatorId: string;
+  sourceFileId?: string;
+  mediaType?: MediaType;
   appearsInFeed?: boolean;
   discoverSquareCropEnabled?: boolean;
   contentRating?: ContentRating;
@@ -56,7 +238,7 @@ export interface Media {
   moderatorAiDisclosure?: AiDisclosure;
   heavyTopics?: HeavyTopic[];
   moderatorHeavyTopics?: HeavyTopic[];
-  assetType?: 'image' | 'video';
+  assetType?: 'image' | 'video' | 'audio';
   status?: 'draft' | 'scheduled' | 'published' | 'archived';
   releaseVisibility?: 'public' | 'hidden' | 'removed';
   publishAt?: string;
@@ -96,35 +278,39 @@ export interface Media {
   createdAt: string;
 }
 
-export interface GalleryMedia {
-  galleryMediaId: string;
-  galleryId: string;
+export interface GroupingMedia {
+  groupingMediaId: string;
+  groupingId: string;
   mediaId: string;
   position: number;
+  isPreview?: boolean;
+  previewMaxWidth?: number;
   createdAt: string;
 }
 
-export interface GalleryMediaView extends Media {
-  galleryId: string;
-  galleryMediaId: string;
+export interface GroupingMediaView extends Media {
+  groupingId: string;
+  groupingMediaId: string;
   position: number;
+  isPreview?: boolean;
+  previewMaxWidth?: number;
 }
 
 export interface Comment {
   commentId: string;
   userId: string;
-  authorProfileType: 'user' | 'artist';
+  authorProfileType: 'user' | 'creator';
   authorProfileId: string;
   displayName: string;
-  targetType: 'gallery' | 'image';
+  targetType: 'grouping' | 'image';
   targetId: string;
   body: string;
   hidden: boolean;
   createdAt: string;
 }
 
-export interface ArtistMember {
-  artistId: string;
+export interface CreatorMember {
+  creatorId: string;
   userId: string;
   role: 'owner' | 'manager' | 'editor';
   invitedByUserId?: string;
@@ -133,9 +319,9 @@ export interface ArtistMember {
 
 export interface Favorite {
   userId: string;
-  ownerProfileType?: 'user' | 'artist';
+  ownerProfileType?: 'user' | 'creator';
   ownerProfileId?: string;
-  targetType: 'gallery' | 'image' | 'collection';
+  targetType: 'grouping' | 'image' | 'collection';
   targetId: string;
   visibility?: 'public' | 'private';
   createdAt: string;
@@ -144,7 +330,7 @@ export interface Favorite {
 export interface Collection {
   collectionId: string;
   ownerUserId: string;
-  ownerProfileType?: 'user' | 'artist';
+  ownerProfileType?: 'user' | 'creator';
   ownerProfileId?: string;
   title: string;
   description?: string;
@@ -167,7 +353,7 @@ export interface CollectionImage {
 export interface Follow {
   followId: string;
   followerUserId: string;
-  artistId: string;
+  creatorId: string;
   insertedDate: string;
   notificationsEnabled: boolean;
 }
@@ -218,7 +404,7 @@ export interface AuditEvent {
   auditId: string;
   action: string;
   actorUserId?: string | null;
-  actorRole: 'public' | 'user' | 'artist' | 'admin';
+  actorRole: 'public' | 'user' | 'creator' | 'admin';
   ip?: string;
   detail?: Record<string, unknown>;
   createdAt: string;
@@ -226,7 +412,126 @@ export interface AuditEvent {
 
 export type TrendingPeriod = 'hourly' | 'daily';
 
-export interface ImageStats {
+export type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
+
+export interface UserCapabilities {
+  canBrowse: boolean;
+  canComment: boolean;
+  canVote: boolean;
+  canSubmitToContexts: boolean;
+  canPublishPosts: boolean;
+  canManageGroups: boolean;
+  canModerate: boolean;
+  canAwardPrizes: boolean;
+}
+
+export interface UserIdentity {
+  userId: string;
+  role: PlatformRole;
+  isBeeker: boolean;
+  capabilities: UserCapabilities;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserExternalLink {
+  linkId: string;
+  userId: string;
+  type: 'website' | 'deviantart' | 'instagram' | 'x' | 'other';
+  label?: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserBadge {
+  badgeId: string;
+  userId: string;
+  code: string;
+  label: string;
+  description?: string;
+  awardedAt: string;
+}
+
+export type ContributionContextType = 'challenge' | 'event' | 'prompt' | 'open_call' | 'editorial_call' | 'contest';
+export type ContributionContextStatus = 'draft' | 'active' | 'closed' | 'archived';
+
+export interface ContributionContext {
+  contextId: string;
+  type: ContributionContextType;
+  title: string;
+  slug: string;
+  status: ContributionContextStatus;
+  description?: string;
+  rules: {
+    maxEntriesPerUser: number;
+    requiresOtp: boolean;
+  };
+  submissionWindow?: {
+    opensAt?: string;
+    closesAt?: string;
+  };
+  rewardConfig?: {
+    manual: boolean;
+  };
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ContextSubmissionStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ContextSubmission {
+  submissionId: string;
+  contextId: string;
+  userId: string;
+  status: ContextSubmissionStatus;
+  title: string;
+  notes?: string;
+  mediaIds: string[];
+  fileIds: string[];
+  submittedAt: string;
+  reviewedAt?: string;
+  reviewedByUserId?: string;
+  convertedPostId?: string;
+}
+
+export interface ContextUnlockThreshold {
+  unlockId: string;
+  contextId: string;
+  metric: 'approved_entries' | 'supports' | 'unique_visitors';
+  threshold: number;
+  effectDescription: string;
+  isActive: boolean;
+  activatedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChallengePrize {
+  prizeId: string;
+  contextId: string;
+  title: string;
+  description: string;
+  category: 'platform' | 'digital' | 'physical' | 'draw';
+  placement: 'winner' | 'runner_up' | 'top_n' | 'random_supporter';
+  quantity: number;
+  status: 'draft' | 'active' | 'awarded';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PrizeAward {
+  prizeAwardId: string;
+  prizeId: string;
+  contextId: string;
+  recipientUserId: string;
+  awardedAt: string;
+  fulfillmentStatus: 'pending' | 'in_progress' | 'fulfilled' | 'cancelled';
+  fulfillmentNotes?: string;
+}
+
+export interface ContentStats {
   imageId: string;
   favoriteCount: number;
   updatedAt: string;
@@ -235,13 +540,17 @@ export interface ImageStats {
 export interface TrendingFeedItem {
   period: TrendingPeriod;
   rank: number;
+  surfaceType?: 'media_surface' | 'post_surface';
   imageId: string;
-  assetType: 'image' | 'video';
-  artistId: string;
-  artistName: string;
-  galleryId: string;
-  gallerySlug: string;
-  galleryVisibility: 'free' | 'preview';
+  assetType: 'image' | 'video' | 'audio';
+  postType?: PostType;
+  postFormat?: PostFormat;
+  creatorId: string;
+  creatorName: string;
+  postId?: string;
+  groupingId: string;
+  groupingSlug: string;
+  groupingVisibility: 'free' | 'preview';
   discoverSquareCropEnabled: boolean;
   effectiveContentRating: ContentRating;
   effectiveAiDisclosure: AiDisclosure;
@@ -249,6 +558,9 @@ export interface TrendingFeedItem {
   title: string;
   previewKey: string;
   previewPosterKey?: string;
+  externalPreviewUrl?: string;
+  externalPreviewPosterUrl?: string;
+  thumbnailKeys?: Media['thumbnailKeys'];
   width?: number;
   height?: number;
   aspectRatio?: number;

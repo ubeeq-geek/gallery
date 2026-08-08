@@ -22,7 +22,8 @@
 }
 
 @layer components {
-  .admin-shell {
+  .admin-shell,
+  .studio-shell {
     @apply min-h-screen grid grid-cols-1 lg:grid-cols-[18rem,1fr];
   }
 

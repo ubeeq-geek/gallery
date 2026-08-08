@@ -2,17 +2,17 @@
   "mediaDir": "media",
   "siteSettings": {
     "stackName": "GalleryStackDevScenarioA",
-    "siteName": "Scenario A Gallery",
+    "siteName": "Scenario A Studio",
     "theme": "ubeeq",
     "logoKey": "branding/scenario-a-logo.svg",
     "logoFile": "media/scenario-a-logo.svg"
   },
-  "artists": [
+  "creators": [
     {
       "name": "Anne Smith",
       "slug": "anne-smith",
       "filePrefix": "anne-",
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
           "title": "Anne Free",
@@ -33,6 +33,75 @@
           "status": "published",
           "premiumPassword": "anne-premium-password"
         }
+      ],
+      "posts": [
+        {
+          "title": "Anne Sample Post",
+          "slug": "anne-sample-post",
+          "summary": "Generic post with blocks and media references.",
+          "discoveryMode": "selected",
+          "primaryMedia": {
+            "file": "anne-0001.jpg",
+            "groupingSlug": "anne-free"
+          },
+          "media": [
+            {
+              "file": "anne-0001.jpg",
+              "groupingSlug": "anne-free",
+              "discoverable": true
+            }
+          ],
+          "blocks": [
+            {
+              "type": "heading",
+              "level": 2,
+              "text": "Anne Sample Post"
+            },
+            {
+              "type": "image",
+              "file": "anne-0001.jpg",
+              "groupingSlug": "anne-free",
+              "caption": "Primary image block"
+            },
+            {
+              "type": "paragraph",
+              "text": "This post uses the generic blocks + media model."
+            }
+          ],
+          "metadata": {
+            "template": "default",
+            "layout": "standard"
+          }
+        },
+        {
+          "title": "Anne YouTube Short",
+          "slug": "anne-youtube-short",
+          "summary": "Short-form video post backed by a YouTube Shorts embed.",
+          "discoveryMode": "selected",
+          "postType": "video",
+          "postFormat": "short",
+          "blocks": [
+            {
+              "type": "embed",
+              "url": "https://youtube.com/shorts/xQknAlRnaM4?si=OUE55670yoyutWwY",
+              "title": "YouTube short",
+              "caption": "Embedded from YouTube Shorts.",
+              "payload": {
+                "provider": "youtube",
+                "format": "short"
+              }
+            },
+            {
+              "type": "paragraph",
+              "text": "YouTube embeds can be used in short-form and long-form video posts without uploading a local video file."
+            }
+          ],
+          "metadata": {
+            "template": "default",
+            "layout": "video",
+            "videoFormat": "short"
+          }
+        }
       ]
     },
     {
@@ -40,7 +109,7 @@
       "slug": "samuel-jones",
       "filePrefix": "samuel-",
       "includePrefixes": ["samuel-0001", "samuel-0002", "samuel-0003"],
-      "galleries": [
+      "groupings": [
         {
           "kind": "free",
           "title": "Samuel Free",

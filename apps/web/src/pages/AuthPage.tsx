@@ -251,20 +251,20 @@ export default function AuthPage({ user, setUser }: { user: CurrentUser; setUser
           {error && <p className="error">{error}</p>}
         </div>
 
-        <div className="auth-showcase panel">
+        <div className="auth-grouping panel">
           <span className="auth-chip">Trusted access for collectors and creators</span>
-          <h1>{`${authMode === 'signin' ? 'Sign in' : 'Create your account'} to follow artists, favourite work, and unlock early access.`}</h1>
-          <p>A cleaner entrance experience for a curated gallery platform.</p>
+          <h1>{`${authMode === 'signin' ? 'Sign in' : 'Create your account'} to follow creators, favourite work, and unlock early access.`}</h1>
+          <p>A cleaner entrance experience for a curated grouping platform.</p>
           <div className="auth-feature-grid">
-            <article><strong>Follow artists</strong><p>Unlock follower-access releases and stay current with new drops.</p></article>
+            <article><strong>Follow creators</strong><p>Unlock follower-access releases and stay current with new drops.</p></article>
             <article><strong>Favourite pieces</strong><p>Build your own collection trail and surface relevant work faster.</p></article>
-            <article><strong>Early access</strong><p>See scheduled releases before wide release when artists enable it.</p></article>
+            <article><strong>Early access</strong><p>See scheduled releases before wide release when creators enable it.</p></article>
           </div>
-          <div className="auth-showcase-actions">
+          <div className="auth-grouping-actions">
             {authMode === 'signin'
               ? <button className="auth-primary-btn" onClick={() => navigate('/auth/register')}>Create account</button>
               : <button className="auth-primary-btn" onClick={() => navigate('/auth/signin')}>Sign in</button>}
-            <Link className="auth-secondary-btn" to="/">Browse public galleries</Link>
+            <Link className="auth-secondary-btn" to="/">Browse public groupings</Link>
           </div>
         </div>
       </div>

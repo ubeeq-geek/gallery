@@ -1,30 +1,41 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api';
-import { ArtistAreaWorkspace } from './ArtistAreaWorkspace';
+import { StudioWorkspace } from './StudioWorkspace';
+import { ForCreatorsPage } from './pages/ForCreatorsPage';
+import DiscoveryQuickReadOverlay, { PostMetaHeader, RichPostRenderer, type DiscoveryOverlayItem, type OverlayPost } from './components/DiscoveryQuickReadOverlay';
 import {
   changePassword,
+  clearStoredAuthSession,
   confirmForgotPassword,
   confirmRegistration,
   forgotPassword,
   getCurrentUser,
+  startEmailOtpSignIn,
   setInitialPassword,
   signIn,
   signOut,
+  verifyEmailOtpSignIn,
   type CurrentUser
 } from './cognitoAuth';
 
-type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string };
+type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string; creatorThumbnailUrl?: string };
 type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
 type FeedDensity = 'small' | 'medium' | 'large';
 type DensityViewport = 'mobile' | 'tablet' | 'desktop';
-type DiscoveryFilterSection = 'period' | 'density' | 'heavy' | 'search';
+type DiscoveryFilterSection = 'period' | 'density' | 'media' | 'heavy' | 'search';
+type DiscoveryMediaRoute = 'audio' | 'video' | 'story' | 'image';
 type DiscoveryDockSummary = {
   active: boolean;
   viewport: DensityViewport;
   period: 'hourly' | 'daily';
   periodLabel?: string;
   density: FeedDensity;
+  mediaLabel: string;
+  showImages: boolean;
+  showVideos: boolean;
+  showPosts: boolean;
+  showAudio: boolean;
   heavyLabel:
     | 'Heavy Shown'
     | 'Some Heavy'
@@ -35,8 +46,31 @@ type DiscoveryDockSummary = {
   searchActive: boolean;
 };
 const DISCOVERY_FILTER_EVENT_NAME = 'ubeeq:discovery-filters';
-const ADMIN_AREA_URL = (import.meta.env.VITE_ADMIN_APP_URL || '/admin').trim() || '/admin';
+const DEFAULT_PROFILE_ICON_SRC = '/default-profile-icon.svg';
+const OTP_TRUST_DAYS = 30;
+const otpTrustStorageKey = (email: string) => `ubeeq.otpTrust.${email.trim().toLowerCase()}`;
+const hasValidOtpTrust = (email: string): boolean => {
+  if (!email.trim()) return false;
+  const raw = localStorage.getItem(otpTrustStorageKey(email));
+  if (!raw) return false;
+  const expiresAt = Number(raw);
+  if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) {
+    localStorage.removeItem(otpTrustStorageKey(email));
+    return false;
+  }
+  return true;
+};
+const rememberOtpTrust = (email: string) => {
+  if (!email.trim()) return;
+  const expiresAt = Date.now() + OTP_TRUST_DAYS * 24 * 60 * 60 * 1000;
+  localStorage.setItem(otpTrustStorageKey(email), String(expiresAt));
+};
 type RoleNotificationCounts = { studio: number; admin: number };
+type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
+const ROLE_DISPLAY_LABELS: Partial<Record<PlatformRole, string>> = {
+  contributor: 'Beeker'
+};
+const roleDisplayLabel = (role: PlatformRole): string => ROLE_DISPLAY_LABELS[role] || role[0].toUpperCase() + role.slice(1);
 const ROLE_NOTIFICATION_STORAGE_KEY = 'ubeeq.roleNotifications';
 const sanitizeNotificationCount = (value: unknown): number => {
   const normalized = Number(value);
@@ -90,6 +124,7 @@ const heavyTopicLabels: Record<HeavyTopic, string> = {
   'politics-public-affairs': 'Politics & Public Affairs',
   'crime-disasters-tragedy': 'Crime, Disasters & Tragedy'
 };
+const initialHeavyTopicPreference = (value?: boolean): boolean => value ?? true;
 const formatDisclosureLine = (item: {
   displayedAiDisclosure?: string;
   displayedHeavyTopics?: string[];
@@ -102,6 +137,86 @@ const formatDisclosureLine = (item: {
     if (topic) parts.push(topic);
   }
   return parts.join(' • ');
+};
+type DiscoveryMediaFilters = {
+  showImages: boolean;
+  showVideos: boolean;
+  showPosts: boolean;
+  showAudio: boolean;
+};
+const getDiscoveryMediaLabel = (filters: DiscoveryMediaFilters): string => {
+  const parts: string[] = [];
+  if (filters.showImages) parts.push('Images');
+  if (filters.showVideos) parts.push('Videos');
+  if (filters.showPosts) parts.push('Stories');
+  if (filters.showAudio) parts.push('Audio');
+  return parts.length > 0 ? parts.join(' + ') : 'None';
+};
+type DiscoveryMediaKind = 'image' | 'video' | 'post' | 'audio';
+const DiscoveryMediaIcon = ({ kind, className }: { kind: DiscoveryMediaKind; className?: string }) => {
+  if (kind === 'audio') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+        <path d="M8 14.2V5.4L15 4.2V13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="5.8" cy="14.2" r="2.1" stroke="currentColor" strokeWidth="1.6" />
+        <circle cx="12.8" cy="13" r="2.1" stroke="currentColor" strokeWidth="1.6" />
+      </svg>
+    );
+  }
+  if (kind === 'video') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+        <rect x="2.5" y="4.5" width="10.5" height="11" rx="2" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M9 8.2L12.4 10L9 11.8V8.2Z" fill="currentColor" />
+        <path d="M13 8L17 5.8V14.2L13 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === 'post') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+        <rect x="3" y="2.8" width="14" height="14.4" rx="2" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M6.2 7.1H13.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M6.2 10H13.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M6.2 12.9H10.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+      <rect x="2.8" y="3.3" width="14.4" height="13.4" rx="2" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="7.2" cy="8.1" r="1.3" fill="currentColor" />
+      <path d="M4.7 14L8.2 10.5C8.6 10.1 9.2 10.1 9.6 10.5L11 11.9C11.4 12.3 12 12.3 12.4 11.9L15.3 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+};
+const DiscoveryMediaIndicator = ({
+  showImages,
+  showVideos,
+  showPosts,
+  showAudio
+}: {
+  showImages: boolean;
+  showVideos: boolean;
+  showPosts: boolean;
+  showAudio: boolean;
+}) => (
+  <span className="discovery-media-indicator" aria-hidden="true">
+    {showImages && <DiscoveryMediaIcon kind="image" className="discovery-media-icon" />}
+    {showVideos && <DiscoveryMediaIcon kind="video" className="discovery-media-icon" />}
+    {showPosts && <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />}
+    {showAudio && <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />}
+  </span>
+);
+const passesDiscoveryMediaFilter = (
+  item: { assetType?: 'image' | 'video' | 'audio'; postType?: 'image' | 'video' | 'story' | 'audio'; surfaceType?: 'media' | 'post'; postId?: string },
+  filters: DiscoveryMediaFilters
+): boolean => {
+  const normalizedType = item.postType || (item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image');
+  if (normalizedType === 'story') return filters.showPosts;
+  if (normalizedType === 'video') return filters.showVideos;
+  if (normalizedType === 'audio') return filters.showAudio;
+  return filters.showImages;
 };
 const passesAiDisclosureFilter = (aiDisclosure: AiDisclosure | undefined, aiFilter: AiFilterPreference): boolean => {
   const normalized = aiDisclosure || 'none';
@@ -136,7 +251,7 @@ const matchesDiscoverySearch = (needle: string, fields: Array<string | undefined
 };
 const getDensityRangeStyle = (sliderValue: number): CSSProperties => {
   const clamped = Math.max(0, Math.min(2, sliderValue));
-  const darkSegmentWidth = 64;
+  const darkSegmentWidth = 44.8;
   const start = (clamped / 2) * (100 - darkSegmentWidth);
   const end = start + darkSegmentWidth;
   return {
@@ -152,6 +267,31 @@ const guessArtistNameFromSlug = (slug?: string): string => {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
 };
+const creatorAvatarUrl = (artist: Artist): string | undefined => artist.creatorThumbnailUrl || artist.artistThumbnailUrl;
+const withAssetVersion = (url?: string, version?: string): string | undefined => {
+  if (!url || !version) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}`;
+};
+const normalizeCreatorProfilePayload = (raw: CreatorProfilePayload): CreatorProfilePayload => {
+  const normalizedGalleries = raw.galleries || raw.groupings || [];
+  return {
+    ...raw,
+    artistId: raw.artistId || raw.creatorId || '',
+    galleryCount: raw.galleryCount ?? raw.groupingCount ?? normalizedGalleries.length,
+    galleries: normalizedGalleries,
+    groupings: normalizedGalleries,
+    publicFavoritesByType: {
+      images: raw.publicFavoritesByType?.images || [],
+      galleries: raw.publicFavoritesByType?.galleries || [],
+      collections: raw.publicFavoritesByType?.collections || []
+    },
+    publicCollections: raw.publicCollections || []
+  };
+};
+const isUnauthorizedError = (value: unknown): boolean => {
+  const message = value instanceof Error ? value.message : String(value || '');
+  return /\b401\b|unauthorized|not authorized/i.test(message);
+};
 type CollectionSummary = {
   collectionId: string;
   ownerUserId: string;
@@ -166,7 +306,14 @@ type CollectionSummary = {
 };
 type TrendingImage = {
   imageId: string;
-  assetType?: 'image' | 'video';
+  assetType?: 'image' | 'video' | 'audio';
+  postType?: 'image' | 'video' | 'story' | 'audio';
+  postFormat?: 'single' | 'multi' | 'short' | 'long';
+  surfaceType?: 'media' | 'post';
+  postId?: string;
+  postSlug?: string;
+  postTitle?: string;
+  postSummary?: string;
   artistId: string;
   artistName: string;
   galleryId: string;
@@ -183,30 +330,229 @@ type TrendingImage = {
   title: string;
   previewUrl: string;
   previewPosterUrl?: string;
+  thumbnailUrls?: {
+    w320?: string;
+    w640?: string;
+    w1280?: string;
+    w1920?: string;
+    square256?: string;
+    square512?: string;
+    square1024?: string;
+  };
   width?: number;
   height?: number;
   aspectRatio?: number;
   favoriteCount: number;
   createdAt: string;
 };
+const normalizeTrendingImage = (item: Partial<TrendingImage> & {
+  creatorId?: string;
+  creatorName?: string;
+  groupingId?: string;
+  groupingSlug?: string;
+  groupingVisibility?: 'free' | 'preview' | 'premium';
+}): TrendingImage => ({
+  ...item,
+  artistId: item.artistId || item.creatorId || '',
+  artistName: item.artistName || item.creatorName || '',
+  galleryId: item.galleryId || item.groupingId || '',
+  gallerySlug: item.gallerySlug || item.groupingSlug || '',
+  galleryVisibility: item.galleryVisibility || item.groupingVisibility
+} as TrendingImage);
+
+type CollectionDetail = CollectionSummary & {
+  imageIds?: string[];
+  items?: TrendingImage[];
+};
+
+type PostBlockType =
+  | 'section'
+  | 'heading'
+  | 'paragraph'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'quote'
+  | 'divider'
+  | 'embed'
+  | 'file'
+  | 'link'
+  | 'credit'
+  | 'gallery'
+  | 'carousel'
+  | 'pdf_preview'
+  | 'html_fragment';
+
+const buildImageSrcSet = (thumbnailUrls?: TrendingImage['thumbnailUrls']): string | undefined => {
+  if (!thumbnailUrls) return undefined;
+  const entries: Array<[keyof NonNullable<TrendingImage['thumbnailUrls']>, number]> = [
+    ['w320', 320],
+    ['w640', 640],
+    ['w1280', 1280],
+    ['w1920', 1920]
+  ];
+  const parts = entries
+    .map(([key, width]) => thumbnailUrls[key] ? `${thumbnailUrls[key]} ${width}w` : '')
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : undefined;
+};
+
+type PostBlock = {
+  blockId: string;
+  type: PostBlockType;
+  text?: string;
+  level?: number;
+  mediaId?: string;
+  caption?: string;
+  quote?: string;
+  author?: string;
+  url?: string;
+  mimeType?: string;
+  title?: string;
+  label?: string;
+  html?: string;
+  payload?: Record<string, unknown>;
+  blocks?: PostBlock[];
+};
+
+type CreatorPostSummary = {
+  postId: string;
+  artistId?: string;
+  creatorId?: string;
+  title: string;
+  slug: string;
+  summary?: string;
+  status: 'draft' | 'published' | 'archived';
+  discovery: { mode: 'primary' | 'all' | 'selected' };
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+  mediaCount: number;
+  blockCount: number;
+  primaryMediaId?: string;
+  discoveryMediaIds?: string[];
+  primaryMedia?: {
+    mediaId: string;
+    assetType: 'image' | 'video' | 'audio';
+    previewUrl: string;
+    previewPosterUrl?: string;
+    width?: number;
+    height?: number;
+  } | null;
+  discoveryMedia?: Array<{
+    mediaId: string;
+    assetType: 'image' | 'video' | 'audio';
+    previewUrl: string;
+    previewPosterUrl?: string;
+    width?: number;
+    height?: number;
+  }>;
+};
+
+type PostDetailPayload = {
+  postId: string;
+  artistId: string;
+  title: string;
+  slug: string;
+  summary?: string;
+  status: 'draft' | 'published' | 'archived';
+  discovery: { mode: 'primary' | 'all' | 'selected' };
+  primaryMediaId?: string;
+  destination?: { type: 'post' | 'pdf' | 'external' | 'internal'; url: string } | null;
+  metadata?: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string;
+  blocks: PostBlock[];
+  media: Array<{
+    mediaId: string;
+    assetType: 'image' | 'video' | 'audio';
+    title?: string;
+    previewUrl: string;
+    previewPosterUrl?: string;
+    width?: number;
+    height?: number;
+    discoverable?: boolean;
+    sortOrder?: number;
+    caption?: string;
+    credit?: {
+      label: string;
+      url?: string;
+    };
+    comparison?: {
+      type?: string;
+      role?: string;
+      order?: number;
+      comparisonItem?: {
+        mediaId: string;
+        assetType: 'image' | 'video' | 'audio';
+        title?: string;
+        previewUrl: string;
+        previewPosterUrl?: string;
+        width?: number;
+        height?: number;
+        role?: string;
+        order?: number;
+        caption?: string;
+        credit?: {
+          label: string;
+          url?: string;
+        };
+      };
+    };
+  }>;
+  creator?: {
+    artistId?: string;
+    creatorId: string;
+    name: string;
+    slug: string;
+  };
+  artist?: {
+    artistId: string;
+    name: string;
+    slug: string;
+  };
+};
 
 const isLikelyImageUrl = (url?: string): boolean => {
   if (!url) return false;
   return /\.(avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)(\?|#|$)/i.test(url);
 };
-type ArtistProfilePayload = {
-  artistId: string;
+
+type CreatorProfilePayload = {
+  artistId?: string;
+  creatorId?: string;
   name: string;
   slug: string;
   status: 'active' | 'inactive';
+  branding?: {
+    profileImage?: {
+      altText?: string;
+      updatedAt?: string;
+      thumbnailUrls?: {
+        square256?: string;
+        square512?: string;
+        square1024?: string;
+      };
+    };
+    coverImage?: {
+      altText?: string;
+      renditionUrls?: {
+        desktop?: string;
+        tablet?: string;
+        mobile?: string;
+      };
+    };
+  };
   defaultProfileTab?: 'feed' | 'galleries';
   followerCount: number;
   imageCount: number;
-  galleryCount: number;
+  galleryCount?: number;
+  groupingCount?: number;
   feedItems?: Array<{
     imageId: string;
     title: string;
-    assetType: 'image' | 'video';
+    assetType: 'image' | 'video' | 'audio';
     createdAt: string;
     previewUrl?: string;
     previewPosterUrl?: string;
@@ -224,7 +570,7 @@ type ArtistProfilePayload = {
     galleries: Array<{ galleryId: string; title: string; slug: string; visibility: 'free' | 'preview' | 'premium'; galleryThumbnailUrl?: string }>;
   };
   trendingImages: TrendingImage[];
-  galleries: Array<{
+  galleries?: Array<{
     galleryId: string;
     title: string;
     slug: string;
@@ -234,12 +580,22 @@ type ArtistProfilePayload = {
     favoriteCount: number;
     galleryThumbnailUrl?: string;
   }>;
-  publicFavoritesByType: {
-    images: Array<{ targetId: string; targetType?: 'image'; createdAt?: string; title?: string; previewUrl?: string }>;
-    galleries: Array<{ targetId: string; targetType?: 'gallery'; createdAt?: string; title?: string; slug?: string; galleryThumbnailUrl?: string }>;
-    collections: Array<{ targetId: string; targetType?: 'collection'; createdAt?: string; title?: string }>;
+  groupings?: Array<{
+    galleryId: string;
+    title: string;
+    slug: string;
+    visibility: 'free' | 'preview' | 'premium';
+    createdAt: string;
+    imageCount: number;
+    favoriteCount: number;
+    galleryThumbnailUrl?: string;
+  }>;
+  publicFavoritesByType?: {
+    images?: Array<{ targetId: string; targetType?: 'image'; createdAt?: string; title?: string; previewUrl?: string }>;
+    galleries?: Array<{ targetId: string; targetType?: 'gallery'; createdAt?: string; title?: string; slug?: string; galleryThumbnailUrl?: string }>;
+    collections?: Array<{ targetId: string; targetType?: 'collection'; createdAt?: string; title?: string }>;
   };
-  publicCollections: Array<{
+  publicCollections?: Array<{
     collectionId: string;
     title: string;
     description?: string;
@@ -250,7 +606,7 @@ type ArtistProfilePayload = {
     favoriteCount: number;
   }>;
 };
-type GallerySummary = {
+type GroupingSummary = {
   galleryId: string;
   title: string;
   slug: string;
@@ -260,10 +616,13 @@ type GallerySummary = {
   galleryThumbnailUrl?: string;
   stackPreviewUrls?: string[];
 };
-type GalleryAsset = {
+type GroupingAsset = {
   imageId: string;
   title?: string;
-  assetType: 'image' | 'video';
+  postTitle?: string;
+  assetType: 'image' | 'video' | 'audio';
+  publishAt?: string;
+  publicReleaseAt?: string;
   effectiveContentRating?: ContentRating;
   displayedContentRating?: string;
   blurred?: boolean;
@@ -284,7 +643,7 @@ type GalleryAsset = {
   };
   favoriteCount: number;
 };
-type Gallery = {
+type GroupingDetail = {
   galleryId: string;
   title: string;
   artistName?: string;
@@ -298,7 +657,10 @@ type Gallery = {
   premiumTeaserMedia?: Array<{
     imageId: string;
     title?: string;
-    assetType: 'image' | 'video';
+    postTitle?: string;
+    assetType: 'image' | 'video' | 'audio';
+    publishAt?: string;
+    publicReleaseAt?: string;
     effectiveContentRating?: ContentRating;
     displayedContentRating?: string;
     blurred?: boolean;
@@ -310,8 +672,33 @@ type Gallery = {
     previewPosterUrl?: string;
   }>;
   favoriteCount: number;
-  media: GalleryAsset[];
+  media: GroupingAsset[];
 };
+const normalizeGroupingAsset = (item: Partial<GroupingAsset> & { mediaId?: string }): GroupingAsset => ({
+  ...item,
+  imageId: item.imageId || item.mediaId || '',
+  title: item.title,
+  assetType: item.assetType || 'image',
+  previewUrl: item.previewUrl || '',
+  favoriteCount: item.favoriteCount || 0
+} as GroupingAsset);
+const normalizeGroupingDetail = (raw: Partial<GroupingDetail> & {
+  groupingId?: string;
+  sourceGroupingId?: string;
+  creatorName?: string;
+  creatorSlug?: string;
+  media?: Array<Partial<GroupingAsset> & { mediaId?: string }>;
+  premiumTeaserMedia?: Array<Partial<GroupingAsset> & { mediaId?: string }>;
+}): GroupingDetail => ({
+  ...raw,
+  galleryId: raw.galleryId || raw.groupingId || raw.sourceGroupingId || '',
+  artistName: raw.artistName || raw.creatorName,
+  artistSlug: raw.artistSlug || raw.creatorSlug,
+  visibility: raw.visibility || 'free',
+  favoriteCount: raw.favoriteCount || 0,
+  media: (raw.media || []).map(normalizeGroupingAsset),
+  premiumTeaserMedia: raw.premiumTeaserMedia?.map(normalizeGroupingAsset)
+} as GroupingDetail);
 type Comment = {
   commentId: string;
   authorProfileType?: 'user' | 'artist';
@@ -466,13 +853,6 @@ function HeaderAuth({
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
-  const initials = initialsSource
-    .split('@')[0]
-    .split(/[.\s_-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() || '')
-    .join('') || 'U';
   const normalizedGroups = (user?.groups || []).map((group) => group.toLowerCase());
   const isAdmin = normalizedGroups.includes('admin') || normalizedGroups.includes('admins');
   const primaryManagedArtist = (managedArtists || []).find((artist) => Boolean(artist.slug)) || managedArtists?.[0];
@@ -480,17 +860,17 @@ function HeaderAuth({
   const showCreatorNav = Boolean(user) && (canAccessStudio || isAdmin);
   const studioCount = sanitizeNotificationCount(roleNotificationCounts?.studio);
   const adminCount = sanitizeNotificationCount(roleNotificationCounts?.admin);
-  const artistProfileHref = primaryManagedArtist?.slug ? `/artists/${primaryManagedArtist.slug}` : '/settings';
+  const artistProfileHref = primaryManagedArtist?.slug ? `/creators/${primaryManagedArtist.slug}` : '/settings';
   const studioHref = '/studio';
-  const adminHref = ADMIN_AREA_URL;
-  const isExternalAdminHref = /^https?:\/\//i.test(adminHref);
-  const compactNavLabel = canAccessStudio ? 'Artist' : 'Admin';
-  const compactNavHref = canAccessStudio ? studioHref : adminHref;
-  const isExternalCompactNavHref = /^https?:\/\//i.test(compactNavHref);
-  const compactNavCount = canAccessStudio ? studioCount : adminCount;
-  const isArtistNavActive = location.pathname.startsWith('/artists/');
+  const adminHref = studioHref;
+  const isExternalAdminHref = false;
+  const compactNavLabel = canAccessStudio ? 'Creator' : 'Studio';
+  const compactNavHref = studioHref;
+  const isExternalCompactNavHref = false;
+  const compactNavCount = studioCount;
+  const isArtistNavActive = location.pathname.startsWith('/creators/');
   const isStudioNavActive = location.pathname.startsWith('/studio');
-  const isAdminNavActive = !isExternalAdminHref && location.pathname.startsWith('/admin');
+  const isAdminNavActive = false;
   const showMobileDiscoveryButton = discoveryDock?.viewport === 'mobile';
   const openDiscoveryFilters = (section: DiscoveryFilterSection = 'period') => {
     if (typeof window === 'undefined') return;
@@ -546,11 +926,20 @@ function HeaderAuth({
           {discoveryDock?.active && discoveryDock.viewport !== 'mobile' && (
             <div className="topbar-discovery-summary" aria-label="Discovery filter summary">
               <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive topbar-discovery-open-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                <span>Filters</span>
+                <DiscoveryMediaIndicator
+                  showImages={discoveryDock.showImages}
+                  showVideos={discoveryDock.showVideos}
+                  showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
+                />
               </button>
               <div className="topbar-discovery-chip-list">
                 <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('period')}>
                   {discoveryDock.periodLabel || (discoveryDock.period === 'daily' ? 'Daily' : 'Hourly')}
+                </button>
+                <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('media')}>
+                  {discoveryDock.mediaLabel}
                 </button>
                 <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('density')}>
                   Density: {discoveryDock.density[0].toUpperCase() + discoveryDock.density.slice(1)}
@@ -575,7 +964,7 @@ function HeaderAuth({
                     >
                       {canAccessStudio && (
                         <span className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-white">
-                          Artist
+                          Creator
                         </span>
                       )}
                       {canAccessStudio && (
@@ -599,7 +988,7 @@ function HeaderAuth({
                           )}
                         </Link>
                       )}
-                      {isAdmin && (
+                      {false && isAdmin && (
                         isExternalAdminHref ? (
                           <a
                             href={adminHref}
@@ -669,16 +1058,18 @@ function HeaderAuth({
                   </>
                 )}
                 <details className="user-menu">
-                  <summary className="user-menu-trigger" aria-label="Open account menu">{initials}</summary>
+                  <summary className="user-menu-trigger" aria-label="Open account menu">
+                    <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
+                  </summary>
                   <div className="user-menu-items">
                     <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
-                    {canAccessStudio && <Link to={artistProfileHref} onClick={closeUserMenus}>Artist</Link>}
+                    {canAccessStudio && <Link to={artistProfileHref} onClick={closeUserMenus}>Creator</Link>}
                     {canAccessStudio && (
                       <Link to={studioHref} onClick={closeUserMenus}>
                         Studio{studioCount > 0 ? ` (${formatNotificationBadge(studioCount)})` : ''}
                       </Link>
                     )}
-                    {isAdmin && (isExternalAdminHref ? (
+                    {false && isAdmin && (isExternalAdminHref ? (
                       <a href={adminHref} onClick={closeUserMenus}>
                         Admin{adminCount > 0 ? ` (${formatNotificationBadge(adminCount)})` : ''}
                       </a>
@@ -696,6 +1087,12 @@ function HeaderAuth({
               <div className="auth-line">
                 <div className="auth-links">
                   <Link
+                    to="/for-creators"
+                    className={`auth-nav-btn auth-nav-btn-secondary${location.pathname.startsWith('/for-creators') ? ' is-active' : ''}`}
+                  >
+                    For Creators
+                  </Link>
+                  <Link
                     to="/auth/signin"
                     className={`auth-nav-btn auth-nav-btn-secondary${location.pathname.startsWith('/auth/signin') ? ' is-active' : ''}`}
                   >
@@ -710,7 +1107,7 @@ function HeaderAuth({
                   </Link>
                 </div>
               </div>
-            )}
+              )}
           </section>
         </div>
       </header>
@@ -720,9 +1117,17 @@ function HeaderAuth({
           <div className={`mobile-user-dock-inner${showMobileDiscoveryButton || showCreatorNav ? ' has-discovery' : ''}`}>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                <span>Filters</span>
+                {discoveryDock && (
+                  <DiscoveryMediaIndicator
+                    showImages={discoveryDock.showImages}
+                    showVideos={discoveryDock.showVideos}
+                    showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
+                  />
+                )}
               </button>
-            )}
+              )}
             {showCreatorNav && (
               canAccessStudio ? (
                 <Link to={compactNavHref} className="mobile-creator-dock-btn">
@@ -748,7 +1153,9 @@ function HeaderAuth({
               <div className="user-menu-items">
                 <div className="user-menu-sheet-handle" />
                 <div className="user-menu-profile">
-                  <div className="user-menu-profile-avatar">{initials}</div>
+                  <div className="user-menu-profile-avatar">
+                    <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
+                  </div>
                   <div>
                     <div className="user-menu-profile-name">{displayName}</div>
                     <div className="user-menu-profile-email">{menuSecondaryLabel || displayName}</div>
@@ -787,7 +1194,15 @@ function HeaderAuth({
             </Link>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                <span>Filters</span>
+                {discoveryDock && (
+                  <DiscoveryMediaIndicator
+                    showImages={discoveryDock.showImages}
+                    showVideos={discoveryDock.showVideos}
+                    showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
+                  />
+                )}
               </button>
             )}
           </div>
@@ -816,6 +1231,11 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [code, setCode] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSession, setOtpSession] = useState('');
+  const [otpContext, setOtpContext] = useState<'direct' | 'mfa'>('direct');
+  const [trustBrowser, setTrustBrowser] = useState(true);
+  const [signinMethod, setSigninMethod] = useState<'password' | 'email_otp'>('password');
   const [forgotStage, setForgotStage] = useState<'request' | 'confirm'>('request');
   const [keepSignedIn, setKeepSignedIn] = useState(() => localStorage.getItem(AUTH_PERSISTENCE_KEY) !== 'session');
   const [message, setMessage] = useState('');
@@ -831,6 +1251,13 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   useEffect(() => {
     if (authMode === 'initial') {
       setEmail(sessionStorage.getItem('auth.initial.username') || '');
+    }
+    if (authMode === 'signin') {
+      setOtpCode('');
+      setOtpSession('');
+      setOtpContext('direct');
+      setTrustBrowser(true);
+      setSigninMethod('password');
     }
     if (authMode === 'forgot') {
       setForgotStage('request');
@@ -890,7 +1317,54 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
       navigate('/auth/initial');
       return;
     }
+
+    const groups = new Set(result.user?.groups || []);
+    const bypassOtpMfa = groups.has('Admins') || groups.has('Artists');
+    if (!bypassOtpMfa && !hasValidOtpTrust(email)) {
+      clearStoredAuthSession();
+      const otpResult = await startEmailOtpSignIn(email.trim(), keepSignedIn);
+      if (otpResult.status === 'authenticated') {
+        if (trustBrowser) rememberOtpTrust(email);
+        setUser(otpResult.user);
+        navigate('/');
+        return;
+      }
+      setOtpContext('mfa');
+      setOtpSession(otpResult.session);
+      setSigninMethod('email_otp');
+      setMessage('Password verified. Enter the email code to finish signing in.');
+      return;
+    }
+
     setUser(result.user);
+    navigate('/');
+  });
+
+  const doStartOtpSignIn = () => withFeedback(async () => {
+    if (!email.trim()) throw new Error('Email is required');
+    const result = await startEmailOtpSignIn(email.trim(), keepSignedIn);
+    if (result.status === 'authenticated') {
+      setUser(result.user);
+      navigate('/');
+      return;
+    }
+    setOtpContext('direct');
+    setOtpSession(result.session);
+    setMessage('A sign-in code was sent to your email.');
+  });
+
+  const doVerifyOtpSignIn = () => withFeedback(async () => {
+    if (!email.trim()) throw new Error('Email is required');
+    if (!otpSession) throw new Error('Start email OTP sign-in first.');
+    if (!otpCode.trim()) throw new Error('Enter the verification code.');
+    const loggedIn = await verifyEmailOtpSignIn(email.trim(), otpSession, otpCode.trim());
+    setUser(loggedIn);
+    if (otpContext === 'mfa' && trustBrowser) {
+      rememberOtpTrust(email);
+    }
+    setOtpSession('');
+    setOtpCode('');
+    setOtpContext('direct');
     navigate('/');
   });
 
@@ -960,7 +1434,33 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
             <h2>{authMode === 'signin' ? 'Welcome back' : 'Create account'}</h2>
             <span className="badge">Secure sign-in</span>
           </div>
-          <p className="small">{authMode === 'signin' ? 'Sign in to continue to your account.' : 'Create your account to continue.'}</p>
+          <p className="small">
+            {authMode === 'signin'
+              ? (otpContext === 'mfa'
+                ? 'Complete sign-in with the email code. Trusted browsers can skip this step for 30 days.'
+                : signinMethod === 'email_otp'
+                ? 'Sign in with a one-time code sent to your email.'
+                : 'Sign in to continue to your account.')
+              : 'Create your account to continue.'}
+          </p>
+          {authMode === 'signin' && otpContext !== 'mfa' && (
+            <div className="auth-method-switch">
+              <button
+                type="button"
+                className={`auth-nav-btn auth-nav-btn-secondary${signinMethod === 'password' ? ' is-active' : ''}`}
+                onClick={() => setSigninMethod('password')}
+              >
+                Password
+              </button>
+              <button
+                type="button"
+                className={`auth-nav-btn auth-nav-btn-secondary${signinMethod === 'email_otp' ? ' is-active' : ''}`}
+                onClick={() => setSigninMethod('email_otp')}
+              >
+                Email OTP
+              </button>
+            </div>
+          )}
           <input
             name="email"
             autoComplete="email"
@@ -993,11 +1493,15 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
               )}
             </>
           )}
-          <div className="auth-inline-label">
-            <span>Password</span>
-            {authMode === 'signin' && <Link to="/auth/forgot">Forgot password?</Link>}
-          </div>
-          <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          {(authMode === 'register' || (authMode === 'signin' && signinMethod === 'password')) && (
+            <>
+              <div className="auth-inline-label">
+                <span>Password</span>
+                {authMode === 'signin' && <Link to="/auth/forgot">Forgot password?</Link>}
+              </div>
+              <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </>
+          )}
           {authMode === 'register' && (
             <input
               type="password"
@@ -1006,6 +1510,19 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
             />
+          )}
+          {authMode === 'signin' && signinMethod === 'email_otp' && otpSession && (
+            <input
+              placeholder="Verification code"
+              value={otpCode}
+              onChange={(e) => setOtpCode(e.target.value)}
+            />
+          )}
+          {authMode === 'signin' && otpContext === 'mfa' && (
+            <label className="auth-checkbox">
+              <input type="checkbox" checked={trustBrowser} onChange={(e) => setTrustBrowser(e.target.checked)} />
+              <span>Trust this browser for {OTP_TRUST_DAYS} days</span>
+            </label>
           )}
 
           {authMode === 'signin' && (
@@ -1017,7 +1534,15 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
 
           <div className="auth-main-actions">
             {authMode === 'signin'
-              ? <button className="auth-primary-btn w-full" onClick={doSignIn}>Sign in</button>
+              ? (
+                signinMethod === 'password'
+                  ? <button className="auth-primary-btn w-full" onClick={doSignIn}>Sign in</button>
+                  : (
+                    otpSession
+                      ? <button className="auth-primary-btn w-full" onClick={doVerifyOtpSignIn}>Verify code</button>
+                      : <button className="auth-primary-btn w-full" onClick={doStartOtpSignIn}>Send code</button>
+                  )
+              )
               : <button className="auth-primary-btn w-full" onClick={doRegister}>Create account</button>}
             <button className="auth-secondary-btn w-full" onClick={() => navigate('/')}>Cancel</button>
           </div>
@@ -1047,7 +1572,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
           <h1>{`${authMode === 'signin' ? 'Sign in' : 'Create your account'} to follow artists, favourite work, and unlock early access.`}</h1>
           <p>A cleaner entrance experience for a curated gallery platform.</p>
           <div className="auth-feature-grid">
-            <article><strong>Follow artists</strong><p>Unlock follower-access releases and stay current with new drops.</p></article>
+            <article><strong>Follow creators</strong><p>Unlock follower-access releases and stay current with new drops.</p></article>
             <article><strong>Favourite pieces</strong><p>Build your own collection trail and surface relevant work faster.</p></article>
             <article><strong>Early access</strong><p>See scheduled releases before wide release when artists enable it.</p></article>
           </div>
@@ -1132,7 +1657,7 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
   const [error, setError] = useState('');
   const selectedArtistId = selectedProfileKey.startsWith('artist:') ? selectedProfileKey.slice('artist:'.length) : '';
   const selectedArtist = managedArtists.find((artist) => artist.artistId === selectedArtistId) || null;
-  const profileUrlPreview = `${window.location.origin.replace(/\/$/, '')}/${selectedArtist ? 'artists' : 'u'}/${(usernameInput || '').trim() || 'your-profile-url'}`;
+  const profileUrlPreview = `${window.location.origin.replace(/\/$/, '')}/${selectedArtist ? 'creators' : 'u'}/${(usernameInput || '').trim() || 'your-profile-url'}`;
   const selectedOwnerContext = selectedArtist
     ? { ownerProfileType: 'artist' as const, ownerProfileId: selectedArtist.artistId }
     : { ownerProfileType: 'user' as const };
@@ -1191,7 +1716,7 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
           name: displayName || selectedArtist.name
         }) as ManagedArtist;
         setManagedArtists((prev) => prev.map((item) => (item.artistId === updatedArtist.artistId ? { ...item, ...updatedArtist } : item)));
-        setMessage('Artist profile updated');
+        setMessage('Creator profile updated');
         return;
       }
       const updated = await api.updateMyProfile({
@@ -1258,7 +1783,7 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
         setManagedArtists((prev) => prev.map((item) => (item.artistId === updatedArtist.artistId ? { ...item, ...updatedArtist } : item)));
         setUsernameInput(updatedArtist.slug);
         setUsernameSuggestions([]);
-        setMessage('Artist profile URL updated');
+        setMessage('Creator profile URL updated');
         return;
       }
       const updated = await api.updateMyUsername(usernameInput) as UserProfile;
@@ -1449,7 +1974,7 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
               <option value="user">User Profile</option>
               {managedArtists.map((artist) => (
                 <option key={artist.artistId} value={`artist:${artist.artistId}`}>
-                  Artist: {artist.name} ({artist.memberRole || 'editor'})
+                  Creator: {artist.name} ({artist.memberRole || 'editor'})
                 </option>
               ))}
             </select>
@@ -1465,9 +1990,9 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
             />
-            <p className="small">{selectedArtist ? 'The name shown on this artist profile' : 'The name shown on your profile'}</p>
+            <p className="small">{selectedArtist ? 'The name shown on this creator profile' : 'The name shown on your profile'}</p>
           </div>
-          <button onClick={saveProfile}>{selectedArtist ? 'Save Artist Name' : 'Save Display Name'}</button>
+          <button onClick={saveProfile}>{selectedArtist ? 'Save Creator Name' : 'Save Display Name'}</button>
           {!selectedArtist && (
             <>
               <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
@@ -1573,10 +2098,10 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
               value={usernameInput}
               onChange={(e) => setUsernameInput(e.target.value)}
             />
-            <p className="small">{selectedArtist ? 'This artist profile will be available at:' : 'Your profile will be available at:'}</p>
+            <p className="small">{selectedArtist ? 'This creator profile will be available at:' : 'Your profile will be available at:'}</p>
             <p className="small settings-profile-url-preview">{profileUrlPreview}</p>
           </div>
-          <button onClick={changeUsername}>{selectedArtist ? 'Save Artist URL' : 'Save Profile URL'}</button>
+          <button onClick={changeUsername}>{selectedArtist ? 'Save Creator URL' : 'Save Profile URL'}</button>
           {!selectedArtist && profile?.lastUsernameChangeAt && (
             <p className="small">Last changed: {new Date(profile.lastUsernameChangeAt).toLocaleDateString()}</p>
           )}
@@ -1714,9 +2239,11 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
 
 function HomePage({
   viewerProfile,
+  mediaRoute,
   onDiscoveryDockChange
 }: {
   viewerProfile?: UserProfile | null;
+  mediaRoute?: DiscoveryMediaRoute;
   onDiscoveryDockChange?: (state: DiscoveryDockSummary | null) => void;
 }) {
   const currentUser = getCurrentUser();
@@ -1733,12 +2260,13 @@ function HomePage({
   };
   type TrendingMediumBlock =
     | { kind: 'pair'; row: TrendingPairRow }
-    | { kind: 'pair-with-insets'; row: TrendingPairRow; insets: TrendingCardEntry[]; insetOn: 'left' | 'right' };
+    | { kind: 'pair-with-insets'; row: TrendingPairRow; insets: TrendingCardEntry[]; insetOn: 'left' | 'right' }
+    | { kind: 'post-landscape'; entry: TrendingCardEntry };
   type MediumBlockBuildResult = {
     blocks: TrendingMediumBlock[];
     consumedBorrowedImageIds: Set<string>;
   };
-  type DiscoveryGallery = GallerySummary & { artistName: string; artistSlug: string; stackPreviewUrls?: string[] };
+  type DiscoveryGallery = GroupingSummary & { artistName: string; artistSlug: string; stackPreviewUrls?: string[] };
 
   const [artists, setArtists] = useState<Artist[]>([]);
   const [galleries, setGalleries] = useState<DiscoveryGallery[]>([]);
@@ -1747,7 +2275,7 @@ function HomePage({
   const [trendingReloadNonce, setTrendingReloadNonce] = useState(0);
   const [discoverySort, setDiscoverySort] = useState<'latest' | 'trending'>('trending');
   const [trendingPeriod, setTrendingPeriod] = useState<'hourly' | 'daily'>('daily');
-  const [feedDensity, setFeedDensity] = useState<FeedDensity>('large');
+  const [feedDensity, setFeedDensity] = useState<FeedDensity>(() => (mediaRoute ? 'large' : 'medium'));
   const [densityViewport, setDensityViewport] = useState<DensityViewport>(() => {
     if (typeof window === 'undefined') return 'desktop';
     if (window.innerWidth >= 1100) return 'desktop';
@@ -1766,11 +2294,15 @@ function HomePage({
   const [loadingCollections, setLoadingCollections] = useState(false);
   const [deferredSectionsReady, setDeferredSectionsReady] = useState(false);
   const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
-  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
-  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   const [heavyTopicsExpanded, setHeavyTopicsExpanded] = useState(true);
   const [discoverySearch, setDiscoverySearch] = useState('');
+  const [showImageMedia, setShowImageMedia] = useState(() => (mediaRoute ? mediaRoute === 'image' : true));
+  const [showVideoMedia, setShowVideoMedia] = useState(() => (mediaRoute ? mediaRoute === 'video' : true));
+  const [showPostMedia, setShowPostMedia] = useState(() => (mediaRoute ? mediaRoute === 'story' : true));
+  const [showAudioMedia, setShowAudioMedia] = useState(() => (mediaRoute ? mediaRoute === 'audio' : true));
   const [showCompactDiscoveryDock, setShowCompactDiscoveryDock] = useState(false);
   const [compactFiltersOpen, setCompactFiltersOpen] = useState(false);
   const [compactFilterSection, setCompactFilterSection] = useState<DiscoveryFilterSection>('period');
@@ -1778,10 +2310,9 @@ function HomePage({
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [followedArtistIds, setFollowedArtistIds] = useState<Set<string>>(new Set());
   const [focusedDiscoveryOpen, setFocusedDiscoveryOpen] = useState(false);
-  const [focusedDiscoveryGallerySlug, setFocusedDiscoveryGallerySlug] = useState('');
-  const [focusedDiscoveryGalleryTitle, setFocusedDiscoveryGalleryTitle] = useState('');
-  const [focusedDiscoveryItems, setFocusedDiscoveryItems] = useState<GalleryAsset[]>([]);
-  const [focusedDiscoveryIndex, setFocusedDiscoveryIndex] = useState(0);
+  const [focusedDiscoveryContextItems, setFocusedDiscoveryContextItems] = useState<TrendingImage[]>([]);
+  const [focusedDiscoveryContextIndex, setFocusedDiscoveryContextIndex] = useState(0);
+  const [focusedDiscoveryPost, setFocusedDiscoveryPost] = useState<PostDetailPayload | null>(null);
   const [focusedDiscoveryLoading, setFocusedDiscoveryLoading] = useState(false);
   const [focusedDiscoveryError, setFocusedDiscoveryError] = useState('');
   const [focusedDiscoveryVideoMuted, setFocusedDiscoveryVideoMuted] = useState(true);
@@ -1821,16 +2352,38 @@ function HomePage({
     aiFilter: disclosureAiFilter,
     hideHeavyTopics,
     hidePoliticsPublicAffairs: hideHeavyTopics ? true : hidePoliticsPublicAffairs,
-    hideCrimeDisastersTragedy: hideHeavyTopics ? true : hideCrimeDisastersTragedy
+    hideCrimeDisastersTragedy: hideHeavyTopics ? true : hideCrimeDisastersTragedy,
+    itemTypes: [
+      ...(showImageMedia ? ['image'] : []),
+      ...(showVideoMedia ? ['video'] : []),
+      ...(showPostMedia ? ['story'] : []),
+      ...(showAudioMedia ? ['audio'] : [])
+    ]
   };
   const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
   const someHeavyHidden = !heavyHidden && (hidePoliticsPublicAffairs || hideCrimeDisastersTragedy);
+  const mediaSummaryLabel = getDiscoveryMediaLabel({
+    showImages: showImageMedia,
+    showVideos: showVideoMedia,
+    showPosts: showPostMedia,
+    showAudio: showAudioMedia
+  });
+  const videoOnlyDiscovery = showVideoMedia && !showImageMedia && !showPostMedia && !showAudioMedia;
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
     densityViewport === 'mobile'
       ? (heavyHidden ? 'Heavy Hidden' : (someHeavyHidden ? 'Some Heavy' : 'Heavy Shown'))
       : (heavyHidden ? 'Heavy Topics Hidden' : (someHeavyHidden ? 'Some Heavy Topics' : 'Heavy Topics Shown'))
   );
   const artistSlugById = new Map(artists.map((artist) => [artist.artistId, artist.slug]));
+
+  useEffect(() => {
+    if (!mediaRoute) return;
+    setFeedDensity('large');
+    setShowImageMedia(mediaRoute === 'image');
+    setShowVideoMedia(mediaRoute === 'video');
+    setShowPostMedia(mediaRoute === 'story');
+    setShowAudioMedia(mediaRoute === 'audio');
+  }, [mediaRoute]);
 
   const clearDensityTransitionTimers = () => {
     if (typeof window === 'undefined') return;
@@ -1888,7 +2441,7 @@ function HomePage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.requestAnimationFrame(() => window.dispatchEvent(new Event('scroll')));
-  }, [heavyTopicsExpanded, densityViewport, feedDensity, trendingPeriod, discoverySearch]);
+  }, [heavyTopicsExpanded, densityViewport, feedDensity, trendingPeriod, discoverySearch, showImageMedia, showVideoMedia, showPostMedia, showAudioMedia]);
 
   useEffect(() => {
     if (densityViewport !== 'mobile' && !showCompactDiscoveryDock) {
@@ -1964,9 +2517,9 @@ function HomePage({
 
   useEffect(() => {
     setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
-    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
-    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+    setHideHeavyTopics(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   }, [
     viewerProfile?.aiFilter,
     viewerProfile?.hideHeavyTopics,
@@ -1981,6 +2534,11 @@ function HomePage({
       period: trendingPeriod,
       periodLabel: discoverySort === 'latest' ? 'Latest' : undefined,
       density: feedDensity,
+      mediaLabel: mediaSummaryLabel,
+      showImages: showImageMedia,
+      showVideos: showVideoMedia,
+      showPosts: showPostMedia,
+      showAudio: showAudioMedia,
       heavyLabel: heavySummaryLabel,
       searchActive: discoverySearch.trim().length > 0
     });
@@ -1991,6 +2549,7 @@ function HomePage({
     discoverySort,
     trendingPeriod,
     feedDensity,
+    mediaSummaryLabel,
     heavySummaryLabel,
     discoverySearch
   ]);
@@ -2010,9 +2569,10 @@ function HomePage({
           trendingBaseLimit,
           disclosureFilters
         ) as { items: TrendingImage[]; nextCursor?: string };
+        const normalizedItems = (trendingData.items || []).map((entry) => normalizeTrendingImage(entry));
         const nextItems = discoverySort === 'latest'
-          ? [...(trendingData.items || [])].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-          : (trendingData.items || []);
+          ? [...normalizedItems].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+          : normalizedItems;
         setTrendingImages(nextItems);
         setTrendingCursor(trendingData.nextCursor);
       } catch (e) {
@@ -2134,7 +2694,7 @@ function HomePage({
         disclosureFilters
       ) as { items: TrendingImage[]; nextCursor?: string };
       setTrendingImages((prev) => {
-        const merged = [...prev, ...(response.items || [])];
+        const merged = [...prev, ...(response.items || []).map((entry) => normalizeTrendingImage(entry))];
         if (discoverySort !== 'latest') return merged;
         return [...merged].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       });
@@ -2168,6 +2728,17 @@ function HomePage({
     }
     if (item.imageId) return ratioFromImageId(item.imageId);
     return fallbackAspectRatios[index % fallbackAspectRatios.length];
+  };
+
+  const getKnownTrendingRatio = (item: TrendingImage): number | null => {
+    const aspectRatio = Number(item.aspectRatio || 0);
+    if (Number.isFinite(aspectRatio) && aspectRatio > 0) return aspectRatio;
+    const width = Number(item.width || 0);
+    const height = Number(item.height || 0);
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      return width / height;
+    }
+    return null;
   };
 
   const buildPairRows = (items: TrendingImage[]): TrendingPairRow[] => {
@@ -2212,10 +2783,28 @@ function HomePage({
     const blocks: TrendingMediumBlock[] = [];
     const consumedBorrowedImageIds = new Set<string>();
     let remainingPrimaryEntries = primaryEntries.length;
+    let promotedLandscapePosts = 0;
     const maxLayoutPromotionOffset = 100;
+    const isPostEntry = (entry: TrendingCardEntry): boolean => (
+      entry.item.surfaceType === 'post' || Boolean(entry.item.postId)
+    );
     const isSquareEligible = (entry: TrendingCardEntry): boolean => (
       entry.item.discoverSquareCropEnabled !== false && getTrendingRatio(entry.item, entry.index) <= 0.95
     );
+    const isMediumLandscapePostEligible = (entry: TrendingCardEntry): boolean => (
+      isPostEntry(entry)
+      && entry.item.discoverSquareCropEnabled !== false
+      && (getKnownTrendingRatio(entry.item) || 0) >= 1.35
+    );
+    const shouldPromoteMediumPostLandscape = (entry: TrendingCardEntry): boolean => {
+      let hash = 2166136261;
+      const id = entry.item.postId || entry.item.imageId || String(entry.index);
+      for (let i = 0; i < id.length; i += 1) {
+        hash ^= id.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0) % 20 < 3;
+    };
     const canPromoteWithinWindow = (entry: TrendingCardEntry, baseIndex: number): boolean => (
       entry.index - baseIndex <= maxLayoutPromotionOffset
     );
@@ -2231,6 +2820,22 @@ function HomePage({
     };
 
     while (remainingPrimaryEntries > 0 && queue.length > 0) {
+      const first = queue[0]?.entry;
+      if (
+        first
+        && isMediumLandscapePostEligible(first)
+        && (promotedLandscapePosts === 0 || shouldPromoteMediumPostLandscape(first))
+      ) {
+        const entry = consumeAt(0);
+        if (!entry) break;
+        promotedLandscapePosts += 1;
+        blocks.push({
+          kind: 'post-landscape',
+          entry
+        });
+        continue;
+      }
+
       if (queue.length >= 3) {
         const left = queue[0]?.entry;
         const right = queue[1]?.entry;
@@ -2372,7 +2977,13 @@ function HomePage({
       return haystack.includes(searchNeedle);
     })
     : trendingImages;
-  const trendingRenderable = trendingAfterSearch.filter((item) => Boolean(item.previewUrl));
+  const trendingAfterMediaType = trendingAfterSearch.filter((item) => passesDiscoveryMediaFilter(item, {
+    showImages: showImageMedia,
+    showVideos: showVideoMedia,
+    showPosts: showPostMedia,
+    showAudio: showAudioMedia
+  }));
+  const trendingRenderable = trendingAfterMediaType.filter((item) => Boolean(item.previewUrl));
   const smallTopItemCount = densityTopRows.small * 4;
   const smallTopItems = trendingRenderable.slice(0, smallTopItemCount);
   const smallContinuationItems = trendingRenderable.slice(smallTopItemCount);
@@ -2477,6 +3088,71 @@ function HomePage({
   const latestItems: DiscoveryGallery[] = latest;
   const risingArtists = artists.slice(0, 4);
   const trendingCollections = collections.slice(0, 3);
+  const discoveryTopics = ['For you', 'Challenges', 'Following', 'Photography', 'Design', 'Stories', 'Places'];
+  const challengeRows = [
+    {
+      id: 'sun-faded',
+      endsIn: '6d',
+      title: 'Sun Faded',
+      description: 'Capture the beauty of faded signs and colors.',
+      joinedLabel: '1.2k joined',
+      preview: trendingRenderable[0]?.previewPosterUrl || trendingRenderable[0]?.previewUrl || latestItems[0]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'blue-hour',
+      endsIn: '12d',
+      title: 'Blue Hour',
+      description: 'Show us the magic of twilight and transition.',
+      joinedLabel: '856 joined',
+      preview: trendingRenderable[1]?.previewPosterUrl || trendingRenderable[1]?.previewUrl || latestItems[1]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'roadside-reflections',
+      endsIn: '3d',
+      title: 'Roadside Reflections',
+      description: 'Reflections found in unexpected places.',
+      joinedLabel: '643 joined',
+      preview: trendingRenderable[2]?.previewPosterUrl || trendingRenderable[2]?.previewUrl || latestItems[2]?.galleryThumbnailUrl || ''
+    }
+  ];
+  const risingNowRows = [
+    {
+      id: 'neon-dreams',
+      title: 'Neon Dreams',
+      posts: 348,
+      preview: trendingRenderable[3]?.previewPosterUrl || trendingRenderable[3]?.previewUrl || latestItems[3]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'roadside-icons',
+      title: 'Roadside Icons',
+      posts: 512,
+      preview: trendingRenderable[4]?.previewPosterUrl || trendingRenderable[4]?.previewUrl || latestItems[4]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'forgotten-places',
+      title: 'Forgotten Places',
+      posts: 201,
+      preview: trendingRenderable[5]?.previewPosterUrl || trendingRenderable[5]?.previewUrl || latestItems[5]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'midday-light',
+      title: 'Midday Light',
+      posts: 309,
+      preview: trendingRenderable[6]?.previewPosterUrl || trendingRenderable[6]?.previewUrl || latestItems[6]?.galleryThumbnailUrl || ''
+    },
+    {
+      id: 'backroad-america',
+      title: 'Backroad America',
+      posts: 621,
+      preview: trendingRenderable[7]?.previewPosterUrl || trendingRenderable[7]?.previewUrl || latestItems[7]?.galleryThumbnailUrl || ''
+    }
+  ];
+  const discoverySpotlightRows = trendingRenderable.slice(8, 12).map((item, index) => ({
+    id: item.imageId || `spotlight-${index}`,
+    title: item.title || item.postTitle || 'Untitled spotlight',
+    subtitle: item.artistName || 'Creator',
+    preview: item.previewPosterUrl || item.previewUrl
+  }));
   const showRisingArtistsSection = risingArtists.length >= 2;
   const showTrendingCollectionsSection = trendingCollections.length >= 2;
 
@@ -2581,66 +3257,108 @@ function HomePage({
     }
   };
 
-  const toFocusedAsset = (item: TrendingImage): GalleryAsset => ({
-    imageId: item.imageId,
-    assetType: item.assetType === 'video' ? 'video' : 'image',
-    effectiveContentRating: item.effectiveContentRating,
-    displayedContentRating: item.displayedContentRating,
-    blurred: item.blurred,
-    effectiveAiDisclosure: item.effectiveAiDisclosure,
-    displayedAiDisclosure: item.displayedAiDisclosure,
-    effectiveHeavyTopics: item.effectiveHeavyTopics,
-    displayedHeavyTopics: item.displayedHeavyTopics,
-    previewUrl: item.previewUrl,
-    previewPosterUrl: item.previewPosterUrl,
-    favoriteCount: item.favoriteCount || 0
-  });
-
   const openFocusedDiscovery = async (item: TrendingImage) => {
-    const fallback = toFocusedAsset(item);
     setFocusedDiscoveryOpen(true);
-    setFocusedDiscoveryGallerySlug(item.gallerySlug || '');
-    setFocusedDiscoveryGalleryTitle(item.title || 'Artwork');
-    setFocusedDiscoveryItems([fallback]);
-    setFocusedDiscoveryIndex(0);
     setFocusedDiscoveryError('');
-    if (!item.gallerySlug) {
-      setFocusedDiscoveryLoading(false);
-      return;
-    }
-    const requestId = focusedDiscoveryRequestRef.current + 1;
-    focusedDiscoveryRequestRef.current = requestId;
-    setFocusedDiscoveryLoading(true);
-    try {
-      const response = await api.getGallery(item.gallerySlug) as Gallery;
-      if (focusedDiscoveryRequestRef.current !== requestId) return;
-      const media = (response.media || []).filter((asset) => Boolean(asset.previewUrl));
-      const nextItems = media.length > 0 ? media : [fallback];
-      const focusedIndex = Math.max(0, nextItems.findIndex((asset) => asset.imageId === item.imageId));
-      setFocusedDiscoveryGalleryTitle(response.title || item.title || 'Artwork');
-      setFocusedDiscoveryItems(nextItems);
-      setFocusedDiscoveryIndex(focusedIndex);
-      setFocusedDiscoveryError('');
-    } catch (e) {
-      if (focusedDiscoveryRequestRef.current !== requestId) return;
-      setFocusedDiscoveryError((e as Error).message || 'Could not load gallery media');
-    } finally {
-      if (focusedDiscoveryRequestRef.current === requestId) {
-        setFocusedDiscoveryLoading(false);
-      }
-    }
+    const activeFeed = trendingAfterMediaType.length > 0 ? trendingAfterMediaType : [item];
+    const focusedIndex = Math.max(
+      0,
+      activeFeed.findIndex((entry) => (
+        entry.imageId === item.imageId
+        && entry.surfaceType === item.surfaceType
+        && (entry.postId || '') === (item.postId || '')
+      ))
+    );
+    setFocusedDiscoveryContextItems(activeFeed);
+    setFocusedDiscoveryContextIndex(focusedIndex);
   };
 
   const closeFocusedDiscovery = () => {
     setFocusedDiscoveryOpen(false);
+    setFocusedDiscoveryPost(null);
     setFocusedDiscoveryLoading(false);
     setFocusedDiscoveryError('');
     focusedDiscoveryRequestRef.current += 1;
   };
 
-  const focusedDiscoveryItem = focusedDiscoveryItems[focusedDiscoveryIndex] || null;
-  const focusedDiscoveryHasPrevious = focusedDiscoveryIndex > 0;
-  const focusedDiscoveryHasNext = focusedDiscoveryIndex >= 0 && focusedDiscoveryIndex < focusedDiscoveryItems.length - 1;
+  const focusedDiscoveryItem = focusedDiscoveryContextItems[focusedDiscoveryContextIndex] || null;
+  const focusedDiscoveryHasPrevious = focusedDiscoveryContextIndex > 0;
+  const focusedDiscoveryHasNext = focusedDiscoveryContextIndex >= 0 && focusedDiscoveryContextIndex < focusedDiscoveryContextItems.length - 1;
+  const focusedOverlayItem: DiscoveryOverlayItem | null = focusedDiscoveryItem
+    ? {
+      imageId: focusedDiscoveryItem.imageId,
+      assetType: focusedDiscoveryItem.assetType === 'video' ? 'video' : 'image',
+      surfaceType: focusedDiscoveryItem.surfaceType,
+      postId: focusedDiscoveryItem.postId,
+      postSlug: focusedDiscoveryItem.postSlug,
+      postTitle: focusedDiscoveryItem.postTitle,
+      postSummary: focusedDiscoveryItem.postSummary,
+      artistId: focusedDiscoveryItem.artistId,
+      artistName: focusedDiscoveryItem.artistName,
+      creatorSlug: artistSlugById.get(focusedDiscoveryItem.artistId),
+      gallerySlug: focusedDiscoveryItem.gallerySlug,
+      title: focusedDiscoveryItem.title,
+      previewUrl: focusedDiscoveryItem.previewUrl,
+      previewPosterUrl: focusedDiscoveryItem.previewPosterUrl,
+      displayedContentRating: focusedDiscoveryItem.displayedContentRating,
+      displayedAiDisclosure: focusedDiscoveryItem.displayedAiDisclosure,
+      displayedHeavyTopics: focusedDiscoveryItem.displayedHeavyTopics,
+      blurred: focusedDiscoveryItem.blurred
+    }
+    : null;
+  const focusedRelatedItems: DiscoveryOverlayItem[] = focusedDiscoveryContextItems
+    .filter((entry, index) => index !== focusedDiscoveryContextIndex)
+    .slice(0, 8)
+    .map((entry) => ({
+      imageId: entry.imageId,
+      assetType: entry.assetType === 'video' ? 'video' : 'image',
+      surfaceType: entry.surfaceType,
+      postId: entry.postId,
+      postSlug: entry.postSlug,
+      postTitle: entry.postTitle,
+      postSummary: entry.postSummary,
+      artistId: entry.artistId,
+      artistName: entry.artistName,
+      creatorSlug: artistSlugById.get(entry.artistId),
+      gallerySlug: entry.gallerySlug,
+      title: entry.title,
+      previewUrl: entry.previewUrl,
+      previewPosterUrl: entry.previewPosterUrl,
+      displayedContentRating: entry.displayedContentRating,
+      displayedAiDisclosure: entry.displayedAiDisclosure,
+      displayedHeavyTopics: entry.displayedHeavyTopics,
+      blurred: entry.blurred
+    }));
+
+  useEffect(() => {
+    if (!focusedDiscoveryOpen || !focusedDiscoveryItem) return;
+    const isPostSurface = focusedDiscoveryItem.surfaceType === 'post' || Boolean(focusedDiscoveryItem.postId);
+    if (!isPostSurface || !focusedDiscoveryItem.postId) {
+      setFocusedDiscoveryPost(null);
+      setFocusedDiscoveryLoading(false);
+      setFocusedDiscoveryError('');
+      return;
+    }
+    const requestId = focusedDiscoveryRequestRef.current + 1;
+    focusedDiscoveryRequestRef.current = requestId;
+    setFocusedDiscoveryLoading(true);
+    setFocusedDiscoveryError('');
+    void (async () => {
+      try {
+        const post = await api.getPostById(focusedDiscoveryItem.postId || '') as PostDetailPayload;
+        if (focusedDiscoveryRequestRef.current !== requestId) return;
+        setFocusedDiscoveryPost(post);
+      } catch (e) {
+        if (focusedDiscoveryRequestRef.current !== requestId) return;
+        setFocusedDiscoveryPost(null);
+        setFocusedDiscoveryError((e as Error).message || 'Could not load post');
+      } finally {
+        if (focusedDiscoveryRequestRef.current === requestId) {
+          setFocusedDiscoveryLoading(false);
+        }
+      }
+    })();
+  }, [focusedDiscoveryOpen, focusedDiscoveryItem?.imageId, focusedDiscoveryItem?.postId, focusedDiscoveryItem?.surfaceType]);
 
   useEffect(() => {
     const video = focusedDiscoveryVideoRef.current;
@@ -2699,10 +3417,10 @@ function HomePage({
         return;
       }
       if (event.key === 'ArrowLeft' && focusedDiscoveryHasPrevious) {
-        setFocusedDiscoveryIndex((index) => Math.max(0, index - 1));
+        setFocusedDiscoveryContextIndex((index) => Math.max(0, index - 1));
       }
       if (event.key === 'ArrowRight' && focusedDiscoveryHasNext) {
-        setFocusedDiscoveryIndex((index) => Math.min(focusedDiscoveryItems.length - 1, index + 1));
+        setFocusedDiscoveryContextIndex((index) => Math.min(focusedDiscoveryContextItems.length - 1, index + 1));
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -2714,15 +3432,32 @@ function HomePage({
     focusedDiscoveryOpen,
     focusedDiscoveryHasPrevious,
     focusedDiscoveryHasNext,
-    focusedDiscoveryItems.length
+    focusedDiscoveryContextItems.length
   ]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const pauseOtherVideos = (event: Event) => {
+      const activeVideo = event.target;
+      if (!(activeVideo instanceof HTMLVideoElement)) return;
+      document.querySelectorAll('video').forEach((video) => {
+        if (video !== activeVideo && !video.paused) {
+          video.pause();
+          video.currentTime = 0;
+        }
+      });
+    };
+    document.addEventListener('play', pauseOtherVideos, true);
+    return () => document.removeEventListener('play', pauseOtherVideos, true);
+  }, []);
 
   const renderTrendingCard = (
     item: TrendingImage,
     cardIndex: number,
-    options?: { forceSquareFrame?: boolean; compactCard?: boolean; preload?: boolean }
+    options?: { forceSquareFrame?: boolean; forceLandscapeFrame?: boolean; compactCard?: boolean; preload?: boolean }
   ) => {
-    const assetType = item.assetType === 'video' ? 'video' : 'image';
+    const isPostSurface = item.surfaceType === 'post' || Boolean(item.postId);
+    const assetType = item.assetType === 'video' ? 'video' : item.assetType === 'audio' ? 'audio' : 'image';
     const effectivePosterUrl = item.previewPosterUrl
       || (assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
     const visibilityPill = item.galleryVisibility === 'preview'
@@ -2732,21 +3467,80 @@ function HomePage({
         : null;
     const isFavorite = favoriteImageIds.has(item.imageId);
     const displayedRating = item.displayedContentRating || 'General';
+    const cardTitle = isPostSurface ? (item.postTitle || item.title || 'Untitled post') : (item.title || 'Artwork title');
+    const contentTypeLabel = isPostSurface
+      ? (item.postType || 'story')
+      : assetType === 'video'
+        ? 'video'
+        : assetType === 'audio'
+          ? 'audio'
+          : null;
+    const cardSummary = isPostSurface ? (item.postSummary || '') : '';
     const disclosureLine = formatDisclosureLine(item);
     const isBlurredByRating = item.blurred === true;
     const ratio = displayAspectRatio(item, cardIndex);
     const allowDiscoverSquareCrop = item.discoverSquareCropEnabled !== false;
     const forceSquareFrame = Boolean(options?.forceSquareFrame);
+    const forceLandscapeFrame = Boolean(options?.forceLandscapeFrame);
     const compactCard = Boolean(options?.compactCard);
     const preload = Boolean(options?.preload);
     const shouldSquareCrop = (feedDensity === 'small' || forceSquareFrame) && allowDiscoverSquareCrop;
-    const shouldLargeCrop = feedDensity === 'large' && allowDiscoverSquareCrop;
-    const frameRatio = shouldSquareCrop ? 1 : ratio;
+    const shouldLargeCrop = false;
+    const frameRatio = forceLandscapeFrame ? Math.max(1.35, ratio) : (shouldSquareCrop ? 1 : ratio);
     const isSmallLandscape = feedDensity === 'small' && !shouldSquareCrop && ratio >= 1.25;
+    const isShortVideoPoster = assetType === 'video' && (item.postFormat === 'short' || frameRatio < 0.8);
     const largeCardClass = feedDensity === 'large' ? ' density-large-card' : '';
     const compactCardClass = compactCard ? ' is-compact' : '';
     const largeCropClass = shouldLargeCrop ? ' large-crop' : '';
     const nonCropClass = !shouldSquareCrop && !shouldLargeCrop ? ' no-crop' : '';
+    const imageSrcSet = assetType === 'image' ? buildImageSrcSet(item.thumbnailUrls) : undefined;
+    const imageSizes = feedDensity === 'large'
+      ? '(min-width: 1100px) min(100vw, 1280px), 100vw'
+      : feedDensity === 'medium'
+        ? '(min-width: 1100px) 50vw, 100vw'
+        : '(min-width: 1100px) 33vw, 50vw';
+    const imageSrc = item.thumbnailUrls?.w1280 || item.thumbnailUrls?.w640 || item.previewUrl;
+    const mediaFrame = (
+      <div
+        className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}${nonCropClass}${isShortVideoPoster ? ' is-short-video-poster' : ''}`}
+        style={{
+          aspectRatio: `${frameRatio.toFixed(3)} / 1`
+        }}
+      >
+        {assetType === 'audio' ? (
+          <div className="discovery-audio-preview" aria-label={item.title || 'Audio preview'}>
+            <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+          </div>
+        ) : (assetType === 'video' && !effectivePosterUrl) ? (
+          <video
+            src={item.previewUrl}
+            muted
+            playsInline
+            preload="metadata"
+            aria-label={item.title || 'Video preview'}
+            style={{
+              objectPosition: 'center center',
+              filter: isBlurredByRating ? 'blur(28px)' : undefined
+            }}
+          />
+        ) : (
+          <img
+            src={assetType === 'video' ? (effectivePosterUrl || '') : imageSrc}
+            srcSet={assetType === 'image' ? imageSrcSet : undefined}
+            sizes={assetType === 'image' ? imageSizes : undefined}
+            alt={item.title || 'Artwork preview'}
+            loading={preload || cardIndex < 2 ? 'eager' : 'lazy'}
+            decoding="async"
+            style={{
+              objectPosition: 'center center',
+              filter: isBlurredByRating ? 'blur(28px)' : undefined
+            }}
+          />
+        )}
+        {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
+        {isBlurredByRating && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
+      </div>
+    );
 
     return (
       <article
@@ -2754,90 +3548,77 @@ function HomePage({
         className={`discovery-feature-card${isSmallLandscape ? ' is-landscape' : ''}${largeCardClass}${compactCardClass}`}
         style={{ '--media-aspect': frameRatio.toFixed(4) } as any}
       >
-        <button
-          type="button"
-          className="discovery-feature-link discovery-feature-link-btn no-underline"
-          onClick={() => void openFocusedDiscovery(item)}
-        >
-          <div
-            className={`discovery-feature-media${shouldSquareCrop ? ' can-square-crop' : ''}${largeCropClass}${nonCropClass}`}
-            style={{
-              aspectRatio: `${frameRatio.toFixed(3)} / 1`
-            }}
+        <div className="discovery-feature-link no-underline">
+          <button
+            type="button"
+            className="discovery-feature-media-open"
+            onClick={() => void openFocusedDiscovery(item)}
+            aria-label={`Open ${cardTitle}`}
           >
-            {(assetType === 'video' && !effectivePosterUrl) ? (
-              <video
-                src={item.previewUrl}
-                muted
-                playsInline
-                preload="metadata"
-                aria-label={item.title || 'Video preview'}
-                style={{
-                  objectPosition: 'center center',
-                  filter: isBlurredByRating ? 'blur(28px)' : undefined
-                }}
-              />
-            ) : (
-              <img
-                src={assetType === 'video' ? (effectivePosterUrl || '') : item.previewUrl}
-                alt={item.title || 'Artwork preview'}
-                loading={preload || cardIndex < 2 ? 'eager' : 'lazy'}
-                fetchPriority={preload || cardIndex < 2 ? 'high' : (cardIndex < 8 ? 'auto' : 'low')}
-                decoding="async"
-                style={{
-                  objectPosition: 'center center',
-                  filter: isBlurredByRating ? 'blur(28px)' : undefined
-                }}
-              />
-            )}
-            {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
-            {assetType === 'video' && (
-              <span
-                className="discovery-chip"
-                style={{ left: 'unset', right: visibilityPill ? '8.2rem' : '1rem' }}
-              >
-                Video
-              </span>
-            )}
-            {isBlurredByRating && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
-          </div>
-        </button>
-        <div className="discovery-feature-footer">
+            {mediaFrame}
+          </button>
+          {assetType === 'video' && !isBlurredByRating && (
+            <button
+              type="button"
+              className="discovery-video-play-overlay"
+              style={{
+                width: '5rem',
+                height: '5rem',
+                padding: 0,
+                border: 0,
+                borderRadius: '50%',
+                backgroundColor: 'rgb(0 0 0 / 0.48)',
+                boxShadow: 'none'
+              }}
+              onClick={() => void openFocusedDiscovery(item)}
+              aria-label={`Play ${cardTitle}`}
+            >
+              <span aria-hidden="true" />
+            </button>
+          )}
+        </div>
+        <div className="discovery-feature-footer discovery-feature-footer-stacked">
           <div className="discovery-feature-text">
+            {contentTypeLabel && <span className="discovery-content-type-pill">{contentTypeLabel}</span>}
             <h3 className="discovery-feature-title">
               {item.gallerySlug ? (
                 <Link to={`/gallery/${item.gallerySlug}?image=${encodeURIComponent(item.imageId)}`} className="no-underline">
-                  {item.title || 'Artwork title'}
+                  {cardTitle}
                 </Link>
-              ) : (item.title || 'Artwork title')}
+              ) : cardTitle}
             </h3>
             <p className="discovery-feature-subtitle">
               by {artistSlugById.get(item.artistId)
                 ? (
-                  <Link to={`/artists/${artistSlugById.get(item.artistId)}`} className="no-underline">
-                    {item.artistName || 'Artist Name'}
+                  <Link to={`/creators/${artistSlugById.get(item.artistId)}`} className="no-underline">
+                    {item.artistName || 'Creator Name'}
                   </Link>
                 )
-                : (item.artistName || 'Artist Name')}
+                : (item.artistName || 'Creator Name')}
             </p>
+            {cardSummary && !compactCard && (
+              <p className="discovery-feature-summary">{cardSummary}</p>
+            )}
             {disclosureLine && !compactCard && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
           </div>
           {!compactCard && (
-            <div className="discovery-feature-stats">
-              <span>❤ {item.favoriteCount || 0}</span>
-              <span>👁 {trendingViewCount(cardIndex)}</span>
-              <span>{visibilityPill === 'Preview' ? 'Follower preview' : visibilityPill === 'Premium' ? 'Premium' : 'Public'}</span>
-              <span>{displayedRating}</span>
-            </div>
-          )}
-          {currentUser && !compactCard && (
-            <div className="discovery-feature-actions">
-              <button
-                className="auth-secondary-btn discovery-inline-btn"
-                onClick={() => void toggleImageFavorite(item.imageId)}
-              >
-                {isFavorite ? 'Unfavorite' : 'Favorite'}
-              </button>
+            <div className="discovery-feature-meta-row">
+              <div className="discovery-feature-stats">
+                <span>❤ {item.favoriteCount || 0}</span>
+                <span>👁 {trendingViewCount(cardIndex)}</span>
+                <span>{visibilityPill === 'Preview' ? 'Follower preview' : visibilityPill === 'Premium' ? 'Premium' : 'Public'}</span>
+                <span>{displayedRating}</span>
+              </div>
+              {currentUser && (
+                <div className="discovery-feature-actions">
+                  <button
+                    className="auth-secondary-btn discovery-inline-btn"
+                    onClick={() => void toggleImageFavorite(item.imageId)}
+                  >
+                    {isFavorite ? 'Unfavorite' : 'Favorite'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -2864,20 +3645,35 @@ function HomePage({
       const mediumBlocks = preparedMediumBlocks || stableMediumBlockBuild(rows).blocks;
       return (
         <div className="discovery-pair-feed density-medium-mixed">
-          {mediumBlocks.map((block, blockIndex) => (
-            block.kind === 'pair' ? (
-              <div
-                key={`medium-pair-${block.row.left.imageId}-${block.row.right?.imageId || 'single'}`}
-                className={`discovery-pair-row density-medium${block.row.right ? '' : ' single'}`}
-                style={{
-                  '--pair-cols-mobile': '1fr 1fr',
-                  '--pair-cols': pairTemplateColumns(block.row, 'medium')
-                } as any}
-              >
-                {renderTrendingCard(block.row.left, block.row.startIndex, { preload: preloadAll })}
-                {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1, { preload: preloadAll })}
-              </div>
-            ) : (
+          {mediumBlocks.map((block) => {
+            if (block.kind === 'pair') {
+              return (
+                <div
+                  key={`medium-pair-${block.row.left.imageId}-${block.row.right?.imageId || 'single'}`}
+                  className={`discovery-pair-row density-medium${block.row.right ? '' : ' single'}`}
+                  style={{
+                    '--pair-cols-mobile': '1fr 1fr',
+                    '--pair-cols': pairTemplateColumns(block.row, 'medium')
+                  } as any}
+                >
+                  {renderTrendingCard(block.row.left, block.row.startIndex, { preload: preloadAll })}
+                  {block.row.right && renderTrendingCard(block.row.right, block.row.startIndex + 1, { preload: preloadAll })}
+                </div>
+              );
+            }
+
+            if (block.kind === 'post-landscape') {
+              return (
+                <div
+                  key={`medium-post-landscape-${block.entry.item.imageId}`}
+                  className="discovery-pair-row density-medium single discovery-medium-post-landscape-row"
+                >
+                  {renderTrendingCard(block.entry.item, block.entry.index, { forceLandscapeFrame: true, preload: preloadAll })}
+                </div>
+              );
+            }
+
+            return (
               <div
                 key={`medium-pair-inset-${block.row.left.imageId}-${block.row.right?.imageId || 'single'}-${block.insets.map((entry) => entry.item.imageId).join('-')}`}
                 className="discovery-pair-row density-medium discovery-pair-row-with-inset"
@@ -2904,8 +3700,8 @@ function HomePage({
                   </>
                 )}
               </div>
-            )
-          ))}
+            );
+          })}
         </div>
       );
     }
@@ -2964,6 +3760,7 @@ function HomePage({
 
   const compactTabs: Array<{ section: DiscoveryFilterSection; label: string }> = [
     { section: 'period', label: discoverySort === 'latest' ? 'Latest' : (trendingPeriod === 'daily' ? 'Daily' : 'Hourly') },
+    { section: 'media', label: mediaSummaryLabel },
     { section: 'density', label: `Density: ${densityLabel[feedDensity]}` },
     { section: 'heavy', label: heavySummaryLabel },
     { section: 'search', label: discoverySearch.trim().length > 0 ? 'Search active' : 'Search' }
@@ -2999,7 +3796,36 @@ function HomePage({
             >
               Daily
             </button>
-            <Link className="discovery-pill-btn no-underline" to="/trending" onClick={closeCompactFilters}>View all</Link>
+          </div>
+        </div>
+      );
+    }
+
+    if (compactFilterSection === 'media') {
+      return (
+        <div className="discovery-compact-section discovery-compact-period-section">
+          <div className="discovery-filter-label">Media types</div>
+          <div className="discovery-trending-filter">
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showImageMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="image" className="discovery-media-icon" />
+              <span>Images</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showVideoMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="video" className="discovery-media-icon" />
+              <span>Videos</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showPostMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />
+              <span>Stories</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => setShowAudioMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showAudioMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              <span>Audio</span>
+            </button>
           </div>
         </div>
       );
@@ -3087,10 +3913,7 @@ function HomePage({
                 {densityLabel[option]}
               </button>
             ))}
-          </div>
-          <p className="small m-0">
-            Small shows more rows before editorial sections. Large emphasizes image size.
-          </p>
+          </div>          
         </div>
       );
     }
@@ -3107,7 +3930,7 @@ function HomePage({
             type="text"
             value={discoverySearch}
             onChange={(e) => setDiscoverySearch(e.target.value)}
-            placeholder="Search titles, artists, galleries, tags..."
+            placeholder="Search titles, creators, groupings, tags..."
           />
         </div>
       </div>
@@ -3116,13 +3939,26 @@ function HomePage({
 
   return (
     <div className="layout discovery-layout">
-      <section className="panel discovery-hero">
-        <div>
-          <h1>Discover trending artwork</h1>          
+      <section className="panel discovery-hero discovery-home-hero">
+        <div className="discovery-hero-copy">
+          <span className="discovery-hero-kicker">Welcome to Ubeeq</span>
+          <h1>Creativity. <span>Everywhere.</span></h1>
+          <p>Explore original perspectives from creators around the world. Curated by humans, powered by openness.</p>
+          <div className="discovery-hero-topics" role="tablist" aria-label="Discovery topics">
+            {discoveryTopics.map((topic, index) => (
+              <button
+                key={`discovery-topic-${topic}`}
+                type="button"
+                className={`discovery-hero-topic-pill${index === 0 ? ' is-active' : ''}`}
+              >
+                {topic}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="discovery-hero-actions">
-          <a href="#rising-artists" className="auth-primary-btn no-underline">Browse Artists</a>
-          <a href="#latest-galleries" className="auth-secondary-btn no-underline">Latest Galleries</a>
+          <a href="#rising-artists" className="auth-primary-btn no-underline">Browse Creators</a>
+          <a href="#trending" className="auth-secondary-btn no-underline">Keep discovering</a>
         </div>
       </section>
 
@@ -3182,16 +4018,8 @@ function HomePage({
         </div>
       )}
 
-      <section id="trending" aria-busy={densitySwitchLoading}>
-        <div className="discovery-section-header">
-          <div>
-            <h2>Trending</h2>
-            <p className="small m-0 mt-1">
-              Variable-width rows based on image aspect ratio keep landscape and portrait media visually balanced.
-            </p>
-          </div>
-        </div>
-        <div id="discovery-filter-panel" ref={discoveryFilterPanelRef} className="discovery-filter-shell">
+      <section id="trending" aria-busy={densitySwitchLoading}>        
+        <div id="discovery-filter-panel" ref={discoveryFilterPanelRef} className="discovery-filter-shell discovery-home-filter-shell">
           <div className="discovery-filter-grid">
             <div className="discovery-filter-left">
               <div>
@@ -3221,7 +4049,32 @@ function HomePage({
                   >
                     Daily
                   </button>
-                  <Link className="discovery-pill-btn no-underline" to="/trending">View all</Link>
+                </div>
+              </div>
+
+              <div>
+                <div className="discovery-filter-label">Media types</div>
+                <div className="discovery-trending-filter">
+                  <button className={`discovery-pill-btn discovery-media-toggle-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+                    <span className={`discovery-media-toggle-check${showImageMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+                    <DiscoveryMediaIcon kind="image" className="discovery-media-icon" />
+                    <span>Images</span>
+                  </button>
+                  <button className={`discovery-pill-btn discovery-media-toggle-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+                    <span className={`discovery-media-toggle-check${showVideoMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+                    <DiscoveryMediaIcon kind="video" className="discovery-media-icon" />
+                    <span>Videos</span>
+                  </button>
+                  <button className={`discovery-pill-btn discovery-media-toggle-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+                    <span className={`discovery-media-toggle-check${showPostMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+                    <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />
+                    <span>Stories</span>
+                  </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => setShowAudioMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showAudioMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              <span>Audio</span>
+            </button>
                 </div>
               </div>
 
@@ -3303,10 +4156,7 @@ function HomePage({
                       {densityLabel[option]}
                     </button>
                   ))}
-                </div>
-                <p className="small m-0">
-                  Small shows more rows before editorial sections. Large emphasizes image size.
-                </p>
+                </div>                
               </div>
 
               <div className="discovery-search-card">
@@ -3320,7 +4170,7 @@ function HomePage({
                     type="text"
                     value={discoverySearch}
                     onChange={(e) => setDiscoverySearch(e.target.value)}
-                    placeholder="Search titles, artists, galleries, tags..."
+                    placeholder="Search titles, creators, groupings, tags..."
                   />
                 </div>
                 {currentUser && (
@@ -3334,7 +4184,7 @@ function HomePage({
                       <option value="user">User Profile</option>
                       {managedArtists.map((artist) => (
                         <option key={`home-favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
-                          Artist: {artist.name}
+                          Creator: {artist.name}
                         </option>
                       ))}
                     </select>
@@ -3362,6 +4212,132 @@ function HomePage({
         {!loadingTrending && (feedDensity === 'small' ? smallTopItems.length === 0 : topRows.length === 0) && <p className="small">No trending artwork yet.</p>}
       </section>
 
+      <section id="active-challenges" className="discovery-editorial-section discovery-special-row">
+        <div className="discovery-section-header">
+          <h2>Active challenges</h2>
+          <span className="text-sm font-semibold">Timed themes to spark creativity and connection.</span>
+        </div>
+        <div className="discovery-challenge-grid">
+          {challengeRows.map((challenge) => (
+            <article key={challenge.id} className="discovery-challenge-card">
+              <span className="discovery-challenge-kicker">ENDS IN {challenge.endsIn}</span>
+              <h3>{challenge.title}</h3>
+              <p>{challenge.description}</p>
+              <div className="discovery-challenge-footer">
+                <span>{challenge.joinedLabel}</span>
+                {challenge.preview && <img src={challenge.preview} alt="" loading="lazy" decoding="async" aria-hidden="true" />}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {continuationBlockOneHasItems && (
+        <section id="trending-block-three" className="discovery-trending-flow-section">
+          <div className={`discovery-density-transition${densityTransitionClass}`}>
+            {renderTrendingBlockContent(
+              smallContinuationBlockOne,
+              smallTopItemCount,
+              continuationBlockOneRows,
+              undefined,
+              { preloadAll: true }
+            )}
+          </div>
+        </section>
+      )}
+
+      {showRisingArtistsSection && (
+        <section id="rising-artists" className="discovery-editorial-section discovery-special-row">
+          <div className="discovery-section-header">
+            <h2>Rising Together</h2>
+            <span className="text-sm font-semibold">Fresh voices. Growing communities.</span>
+          </div>
+          <div className="discovery-rising-row">
+            {risingArtists.map((artist, i) => (
+              <article key={artist.artistId || artist.name || `artist-special-${i}`} className="discovery-rising-pill">
+                <div className="discovery-rising-avatar">
+                  {creatorAvatarUrl(artist)
+                    ? <img src={creatorAvatarUrl(artist)} alt={artist.name || 'Creator'} loading="lazy" decoding="async" />
+                    : <img src={DEFAULT_PROFILE_ICON_SRC} alt="" />}
+                </div>
+                <div className="discovery-rising-meta">
+                  <div className="discovery-card-title">
+                    {artist.slug ? <Link to={`/creators/${artist.slug}`} className="no-underline">{artist.name || 'Creator Name'}</Link> : (artist.name || 'Creator Name')}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {continuationBlockTwoHasItems && (
+        <section id="trending-block-four" className="discovery-trending-flow-section">
+          <div className={`discovery-density-transition${densityTransitionClass}`}>
+            {renderTrendingBlockContent(
+              smallContinuationBlockTwo,
+              smallTopItemCount + smallContinuationBlockOne.length,
+              continuationBlockTwoRows,
+              undefined,
+              { preloadAll: true }
+            )}
+          </div>
+        </section>
+      )}
+
+      <section id="rising-now" className="discovery-editorial-section discovery-special-row">
+        <div className="discovery-section-header">
+          <h2>Rising Now</h2>
+          <span className="text-sm font-semibold">Fast-moving themes from the discovery stream.</span>
+        </div>
+        <div className="discovery-rising-now-row">
+          {risingNowRows.map((row) => (
+            <article key={row.id} className="discovery-rising-now-pill">
+              <div className="discovery-rising-now-avatar">
+                {row.preview
+                  ? <img src={row.preview} alt="" loading="lazy" decoding="async" aria-hidden="true" />
+                  : <div className="discovery-rising-now-placeholder" aria-hidden="true" />}
+              </div>
+              <div>
+                <div className="discovery-card-title">{row.title}</div>
+                <div className="discovery-card-subtitle">{row.posts} posts</div>
+              </div>
+            </article>
+          ))}
+          <button type="button" className="discovery-rising-now-next" aria-label="See more rising now rows">›</button>
+        </div>
+      </section>
+
+      <section id="discovery-spotlight" className="discovery-editorial-section discovery-special-row">
+        <div className="discovery-section-header">
+          <h2>Discovery spotlight</h2>
+          <span className="text-sm font-semibold">Fresh picks between rising trends and gallery drops.</span>
+        </div>
+        <div className="discovery-spotlight-grid">
+          {discoverySpotlightRows.map((row, index) => (
+            <article key={row.id} className="discovery-spotlight-card">
+              <div className="discovery-spotlight-media">
+                {row.preview
+                  ? <img src={row.preview} alt={row.title} loading={index === 0 ? 'eager' : 'lazy'} decoding="async" />
+                  : <div className="discovery-rising-now-placeholder" aria-hidden="true" />}
+              </div>
+              <div className="discovery-spotlight-meta">
+                <div className="discovery-card-title">{row.title}</div>
+                <div className="discovery-card-subtitle">by {row.subtitle}</div>
+              </div>
+            </article>
+          ))}
+          {discoverySpotlightRows.length === 0 && (
+            <article className="discovery-spotlight-card is-placeholder" aria-hidden="true">
+              <div className="discovery-spotlight-media"><div className="discovery-rising-now-placeholder" /></div>
+              <div className="discovery-spotlight-meta">
+                <div className="discovery-card-title">More discovery cards coming soon</div>
+              </div>
+            </article>
+          )}
+        </div>
+      </section>
+
       <section id="latest-galleries" className="discovery-editorial-section">
         <div className="discovery-section-header">
           <h2>Latest Galleries</h2>
@@ -3380,17 +4356,16 @@ function HomePage({
                   return (
                     <div className="discovery-stack discovery-stack-tall">
                       <div className="discovery-stack-layer discovery-stack-layer-back">
-                        <img src={backImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                        <img src={backImage} alt="" loading="lazy" decoding="async" aria-hidden="true" />
                       </div>
                       <div className="discovery-stack-layer discovery-stack-layer-mid">
-                        <img src={midImage} alt="" loading="lazy" fetchPriority="low" decoding="async" aria-hidden="true" />
+                        <img src={midImage} alt="" loading="lazy" decoding="async" aria-hidden="true" />
                       </div>
                       <div className="discovery-stack-layer discovery-stack-layer-front">
                         <img
                           src={frontImage}
                           alt={gallery.title || 'Gallery cover'}
                           loading={i < 2 ? 'eager' : 'lazy'}
-                          fetchPriority={i < 2 ? 'high' : 'low'}
                           decoding="async"
                         />
                       </div>
@@ -3399,7 +4374,7 @@ function HomePage({
                 })()}
                 <div className="discovery-gallery-stack-meta">
                   <div className="discovery-card-title">{gallery.title || 'Gallery title'}</div>
-                  <div className="discovery-card-subtitle">by {gallery.artistName || 'Artist Name'}</div>
+                  <div className="discovery-card-subtitle">by {gallery.artistName || 'Creator Name'}</div>
                 </div>
               </Link>
               {currentUser && gallery.galleryId && (
@@ -3419,51 +4394,23 @@ function HomePage({
         {!loadingLatest && latestItems.length === 0 && <p className="small">No galleries yet.</p>}
       </section>
 
-      {continuationBlockOneHasItems && (
-        <section id="trending-block-three" className="discovery-trending-flow-section">
-          <div className={`discovery-density-transition${densityTransitionClass}`}>
-            {renderTrendingBlockContent(
-              smallContinuationBlockOne,
-              smallTopItemCount,
-              continuationBlockOneRows,
-              undefined,
-              { preloadAll: true }
-            )}
-          </div>
-        </section>
-      )}
-
-      {continuationBlockTwoHasItems && (
-        <section id="trending-block-four" className="discovery-trending-flow-section">
-          <div className={`discovery-density-transition${densityTransitionClass}`}>
-            {renderTrendingBlockContent(
-              smallContinuationBlockTwo,
-              smallTopItemCount + smallContinuationBlockOne.length,
-              continuationBlockTwoRows,
-              undefined,
-              { preloadAll: true }
-            )}
-          </div>
-        </section>
-      )}
-
       {showRisingArtistsSection && (
-        <section id="rising-artists" className="discovery-editorial-section">
+        <section id="rising-artists-grid" className="discovery-editorial-section">
           <div className="discovery-section-header">
-            <h2>Rising Artists</h2>
-            <a href="#rising-artists" className="text-sm font-semibold no-underline">View all</a>
+            <h2>Rising Creators</h2>
+            <a href="#rising-artists-grid" className="text-sm font-semibold no-underline">More creators</a>
           </div>
           <div className="discovery-artists-grid discovery-artists-grid-wide">
             {risingArtists.map((artist, i) => (
               <article key={artist.artistId || artist.name || `artist-${i}`} className="discovery-artist-card">
                 <div className="discovery-artist-avatar">
-                  {artist.artistThumbnailUrl
-                    ? <img src={artist.artistThumbnailUrl} alt={artist.name || 'Artist'} loading="lazy" decoding="async" />
-                    : <span className="discovery-artist-initials">{(artist.name || 'Artist').split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')}</span>}
+                  {creatorAvatarUrl(artist)
+                    ? <img src={creatorAvatarUrl(artist)} alt={artist.name || 'Creator'} loading="lazy" decoding="async" />
+                    : <img src={DEFAULT_PROFILE_ICON_SRC} alt="" />}
                 </div>
                 <div className="discovery-artist-meta">
                   <div className="discovery-card-title">
-                    {artist.slug ? <Link to={`/artists/${artist.slug}`} className="no-underline">{artist.name || 'Artist Name'}</Link> : (artist.name || 'Artist Name')}
+                    {artist.slug ? <Link to={`/creators/${artist.slug}`} className="no-underline">{artist.name || 'Creator Name'}</Link> : (artist.name || 'Creator Name')}
                   </div>
                   <div className="discovery-card-subtitle">1.2k followers</div>
                 </div>
@@ -3535,73 +4482,36 @@ function HomePage({
         </section>
       )}
 
-      {focusedDiscoveryOpen && (
-        <div className="discovery-focus-modal-layer" onClick={closeFocusedDiscovery}>
-          <div className="discovery-focus-modal" role="dialog" aria-modal="true" aria-label="Focused media viewer" onClick={(e) => e.stopPropagation()}>
-            <div className="discovery-focus-modal-header">
-              <div className="discovery-focus-modal-title-wrap">
-                <span className="discovery-focus-modal-title-id">
-                  {focusedDiscoveryItem ? (focusedDiscoveryItem.imageId || 'Focused view') : 'Focused view'}
-                </span>
-                <span className="discovery-focus-modal-title-gallery">{focusedDiscoveryGalleryTitle || 'Gallery preview'}</span>
-              </div>
-              <div className="discovery-focus-modal-meta">
-                <span>{focusedDiscoveryItem?.displayedContentRating || 'General'}</span>
-                {focusedDiscoveryItem && formatDisclosureLine(focusedDiscoveryItem) && <span>{formatDisclosureLine(focusedDiscoveryItem)}</span>}
-                <span>{Math.max(1, focusedDiscoveryIndex + 1)} / {Math.max(1, focusedDiscoveryItems.length)}</span>
-                {focusedDiscoveryLoading && <span className="discovery-focus-modal-status-chip">Loading…</span>}
-                {focusedDiscoveryError && <span className="discovery-focus-modal-error-chip">{focusedDiscoveryError}</span>}
-              </div>
-              <div className="discovery-focus-modal-actions">
-                {focusedDiscoveryGallerySlug && (
-                  <Link
-                    className="auth-primary-btn no-underline"
-                    to={`/gallery/${focusedDiscoveryGallerySlug}?image=${encodeURIComponent(focusedDiscoveryItem?.imageId || '')}`}
-                    onClick={closeFocusedDiscovery}
-                  >
-                    Open in Gallery
-                  </Link>
-                )}
-              </div>
-              <button type="button" className="discovery-focus-modal-close" onClick={closeFocusedDiscovery} aria-label="Close focused viewer">
-                ✕
-              </button>
-            </div>
-            <div className="discovery-focus-modal-media">
-              {focusedDiscoveryItem && (
-                focusedDiscoveryItem.assetType === 'video'
-                  ? (
-                    <video
-                      key={focusedDiscoveryItem.imageId}
-                      ref={focusedDiscoveryVideoRef}
-                      autoPlay
-                      controls
-                      playsInline
-                      muted={focusedDiscoveryVideoMuted}
-                      poster={focusedDiscoveryItem.previewPosterUrl}
-                      style={{ filter: focusedDiscoveryItem.blurred ? 'blur(28px)' : undefined }}
-                      onVolumeChange={(event) => {
-                        const target = event.currentTarget;
-                        setFocusedDiscoveryVideoMuted(target.muted);
-                        setFocusedDiscoveryVideoVolume(Math.max(0, Math.min(1, target.volume)));
-                      }}
-                    >
-                      <source src={focusedDiscoveryItem.previewUrl} />
-                    </video>
-                  )
-                  : (
-                    <img
-                      src={focusedDiscoveryItem.thumbnailUrls?.w1280 || focusedDiscoveryItem.thumbnailUrls?.w640 || focusedDiscoveryItem.previewUrl}
-                      alt={focusedDiscoveryItem.imageId || 'Focused media'}
-                      style={{ filter: focusedDiscoveryItem.blurred ? 'blur(28px)' : undefined }}
-                    />
-                  )
-              )}
-              {!focusedDiscoveryItem && <div className="small">No media selected.</div>}
-            </div>
-          </div>
-        </div>
-      )}
+      <DiscoveryQuickReadOverlay
+        open={focusedDiscoveryOpen}
+        item={focusedOverlayItem}
+        itemIndex={focusedDiscoveryContextIndex}
+        itemsCount={focusedDiscoveryContextItems.length}
+        hasPrevious={focusedDiscoveryHasPrevious}
+        hasNext={focusedDiscoveryHasNext}
+        loading={focusedDiscoveryLoading}
+        error={focusedDiscoveryError}
+        post={focusedDiscoveryPost}
+        moreFromStream={focusedRelatedItems}
+        videoMuted={focusedDiscoveryVideoMuted}
+        videoRef={focusedDiscoveryVideoRef}
+        loopVideosUntilNext={videoOnlyDiscovery}
+        onClose={closeFocusedDiscovery}
+        onPrevious={() => setFocusedDiscoveryContextIndex((index) => Math.max(0, index - 1))}
+        onNext={() => setFocusedDiscoveryContextIndex((index) => Math.min(focusedDiscoveryContextItems.length - 1, index + 1))}
+        onSelectStreamItem={(selectedItem) => {
+          const nextIndex = focusedDiscoveryContextItems.findIndex((entry) => (
+            entry.imageId === selectedItem.imageId
+            && entry.surfaceType === selectedItem.surfaceType
+            && (entry.postId || '') === (selectedItem.postId || '')
+          ));
+          if (nextIndex >= 0) setFocusedDiscoveryContextIndex(nextIndex);
+        }}
+        onVideoVolumeChange={(video) => {
+          setFocusedDiscoveryVideoMuted(video.muted);
+          setFocusedDiscoveryVideoVolume(Math.max(0, Math.min(1, video.volume)));
+        }}
+      />
 
       {error && (
         <section className="panel">
@@ -3621,7 +4531,7 @@ function GalleryPage({
   const { slug = '' } = useParams();
   const location = useLocation();
   const currentUser = getCurrentUser();
-  const [gallery, setGallery] = useState<Gallery | null>(null);
+  const [grouping, setGrouping] = useState<GroupingDetail | null>(null);
   const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
   const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
   const [favoriteGallerySelected, setFavoriteGallerySelected] = useState(false);
@@ -3639,7 +4549,7 @@ function GalleryPage({
   const [premiumImages, setPremiumImages] = useState<Array<{
     imageId: string;
     title?: string;
-    assetType: 'image' | 'video';
+    assetType: 'image' | 'video' | 'audio';
     effectiveContentRating?: ContentRating;
     displayedContentRating?: string;
     blurred?: boolean;
@@ -3658,10 +4568,14 @@ function GalleryPage({
     return 'mobile';
   });
   const [discoverySearch, setDiscoverySearch] = useState('');
+  const [showImageMedia, setShowImageMedia] = useState(true);
+  const [showVideoMedia, setShowVideoMedia] = useState(true);
+  const [showPostMedia, setShowPostMedia] = useState(true);
+  const [showAudioMedia, setShowAudioMedia] = useState(true);
   const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
-  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
-  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   const [heavyTopicsExpanded, setHeavyTopicsExpanded] = useState(true);
   const [galleryScope, setGalleryScope] = useState<'all' | 'public'>('all');
   const [showCompactDiscoveryDock, setShowCompactDiscoveryDock] = useState(false);
@@ -3669,7 +4583,7 @@ function GalleryPage({
   const [compactFilterSection, setCompactFilterSection] = useState<DiscoveryFilterSection>('period');
   const [compactHeavyTopicsExpanded, setCompactHeavyTopicsExpanded] = useState(true);
   const [focusedOpen, setFocusedOpen] = useState(false);
-  const [focusedItems, setFocusedItems] = useState<GalleryAsset[]>([]);
+  const [focusedItems, setFocusedItems] = useState<GroupingAsset[]>([]);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [focusedSectionTitle, setFocusedSectionTitle] = useState('Gallery');
   const [focusedVideoMuted, setFocusedVideoMuted] = useState(true);
@@ -3679,6 +4593,7 @@ function GalleryPage({
   const discoverySearchInputRef = useRef<HTMLInputElement | null>(null);
   const compactSearchInputRef = useRef<HTMLInputElement | null>(null);
   const deepLinkHandledRef = useRef<string>('');
+  const [loadingGallery, setLoadingGallery] = useState(true);
   const [error, setError] = useState<string>('');
 
   const densityLabel: Record<FeedDensity, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
@@ -3687,6 +4602,12 @@ function GalleryPage({
   const densityRangeStyle = getDensityRangeStyle(densitySliderValue);
   const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
   const someHeavyHidden = !heavyHidden && (hidePoliticsPublicAffairs || hideCrimeDisastersTragedy);
+  const mediaSummaryLabel = getDiscoveryMediaLabel({
+    showImages: showImageMedia,
+    showVideos: showVideoMedia,
+    showPosts: showPostMedia,
+    showAudio: showAudioMedia
+  });
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
     densityViewport === 'mobile'
       ? (heavyHidden ? 'Heavy Hidden' : (someHeavyHidden ? 'Some Heavy' : 'Heavy Shown'))
@@ -3695,17 +4616,19 @@ function GalleryPage({
 
   const load = async () => {
     try {
+      setLoadingGallery(true);
       setError('');
       const stored = getStoredGalleryAccessToken(slug);
       if (stored && stored !== rememberToken) {
         setRememberToken(stored);
       }
       const [galleryData, commentData] = await Promise.all([api.getGallery(slug, stored || rememberToken), api.getGalleryComments(slug)]);
-      setGallery(galleryData);
+      const normalizedGallery = normalizeGroupingDetail(galleryData);
+      setGrouping(normalizedGallery);
       setComments(commentData);
-      const serverAccess = galleryData.visibility !== 'premium' ? Boolean(galleryData.hasAccess ?? true) : Boolean(galleryData.hasAccess);
+      const serverAccess = normalizedGallery.visibility !== 'premium' ? Boolean(normalizedGallery.hasAccess ?? true) : Boolean(normalizedGallery.hasAccess);
       setHasPremiumAccess(serverAccess);
-      if (galleryData.visibility === 'premium' && serverAccess) {
+      if (normalizedGallery.visibility === 'premium' && serverAccess) {
         try {
           if (stored || rememberToken) {
             const premium = await api.getPremiumImagesWithRemember(slug, stored || rememberToken);
@@ -3723,6 +4646,9 @@ function GalleryPage({
       }
     } catch (e) {
       setError((e as Error).message);
+      setGrouping(null);
+    } finally {
+      setLoadingGallery(false);
     }
   };
 
@@ -3755,9 +4681,9 @@ function GalleryPage({
 
   useEffect(() => {
     setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
-    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
-    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+    setHideHeavyTopics(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   }, [
     viewerProfile?.aiFilter,
     viewerProfile?.hideHeavyTopics,
@@ -3792,13 +4718,13 @@ function GalleryPage({
 
   useEffect(() => {
     const loadFavoritesAndCollections = async () => {
-      if (!currentUser || !gallery) return;
+      if (!currentUser || !grouping) return;
       try {
         const [favorites, collections] = await Promise.all([
           api.myFavorites(favoriteAsProfile) as Promise<ManagedFavorite[]>,
           api.myCollections(favoriteAsProfile) as Promise<ManagedCollection[]>
         ]);
-        setFavoriteGallerySelected((favorites || []).some((item) => item.targetType === 'gallery' && item.targetId === gallery.galleryId));
+        setFavoriteGallerySelected((favorites || []).some((item) => item.targetType === 'gallery' && item.targetId === grouping.galleryId));
         setFavoriteImageIds(new Set((favorites || []).filter((item) => item.targetType === 'image').map((item) => item.targetId)));
         setProfileCollections(collections || []);
       } catch {
@@ -3808,7 +4734,7 @@ function GalleryPage({
       }
     };
     void loadFavoritesAndCollections();
-  }, [currentUser?.username, favoriteIdentity, gallery?.galleryId]);
+  }, [currentUser?.username, favoriteIdentity, grouping?.galleryId]);
 
   const submitComment = async () => {
     try {
@@ -3847,16 +4773,16 @@ function GalleryPage({
   };
 
   const favoriteGallery = async () => {
-    if (!gallery) return;
+    if (!grouping) return;
     const wasFavorited = favoriteGallerySelected;
     setFavoriteGallerySelected(!wasFavorited);
-    setGallery((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? -1 : 1)) } : prev);
+    setGrouping((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? -1 : 1)) } : prev);
     try {
-      if (wasFavorited) await api.unfavorite('gallery', gallery.galleryId, favoriteAsProfile);
-      else await api.favorite('gallery', gallery.galleryId, 'public', favoriteAsProfile);
+      if (wasFavorited) await api.unfavorite('gallery', grouping.galleryId, favoriteAsProfile);
+      else await api.favorite('gallery', grouping.galleryId, 'public', favoriteAsProfile);
     } catch (e) {
       setFavoriteGallerySelected(wasFavorited);
-      setGallery((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? 1 : -1)) } : prev);
+      setGrouping((prev) => prev ? { ...prev, favoriteCount: Math.max(0, prev.favoriteCount + (wasFavorited ? 1 : -1)) } : prev);
       setError((e as Error).message);
     }
   };
@@ -3869,7 +4795,7 @@ function GalleryPage({
       else next.add(imageId);
       return next;
     });
-    setGallery((prev) => prev ? ({
+    setGrouping((prev) => prev ? ({
       ...prev,
       media: prev.media.map((item) => item.imageId === imageId ? { ...item, favoriteCount: Math.max(0, item.favoriteCount + (wasFavorited ? -1 : 1)) } : item)
     }) : prev);
@@ -3883,7 +4809,7 @@ function GalleryPage({
         else next.delete(imageId);
         return next;
       });
-      setGallery((prev) => prev ? ({
+      setGrouping((prev) => prev ? ({
         ...prev,
         media: prev.media.map((item) => item.imageId === imageId ? { ...item, favoriteCount: Math.max(0, item.favoriteCount + (wasFavorited ? 1 : -1)) } : item)
       }) : prev);
@@ -3916,11 +4842,14 @@ function GalleryPage({
     setHideHeavyTopics(enabled && hidePoliticsPublicAffairs);
   };
 
-  const previewItems = gallery?.media || [];
-  const teaserItems: GalleryAsset[] = (gallery?.premiumTeaserMedia || []).map((item) => ({
+  const previewItems = grouping?.media || [];
+  const teaserItems: GroupingAsset[] = (grouping?.premiumTeaserMedia || []).map((item) => ({
     imageId: item.imageId,
     title: item.title,
+    postTitle: item.postTitle,
     assetType: item.assetType,
+    publishAt: item.publishAt,
+    publicReleaseAt: item.publicReleaseAt,
     effectiveContentRating: item.effectiveContentRating,
     displayedContentRating: item.displayedContentRating,
     blurred: item.blurred,
@@ -3932,7 +4861,7 @@ function GalleryPage({
     previewPosterUrl: item.previewPosterUrl,
     favoriteCount: 0
   }));
-  const premiumItems: GalleryAsset[] = premiumImages.map((item) => ({
+  const premiumItems: GroupingAsset[] = premiumImages.map((item) => ({
     imageId: item.imageId,
     title: item.title,
     assetType: item.assetType,
@@ -3948,8 +4877,14 @@ function GalleryPage({
     favoriteCount: 0
   }));
 
-  const filterItems = (items: GalleryAsset[]): GalleryAsset[] => items.filter((item) => (
-    passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
+  const filterItems = (items: GroupingAsset[]): GroupingAsset[] => items.filter((item) => (
+    passesDiscoveryMediaFilter(item, {
+      showImages: showImageMedia,
+      showVideos: showVideoMedia,
+      showPosts: showPostMedia,
+    showAudio: showAudioMedia
+  })
+    && passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
     && passesHeavyTopicFilter(item.effectiveHeavyTopics, {
       hideHeavyTopics,
       hidePoliticsPublicAffairs,
@@ -3967,6 +4902,21 @@ function GalleryPage({
   const filteredPreviewItems = filterItems(previewItems);
   const filteredTeaserItems = filterItems(teaserItems).slice(0, teaserLimit);
   const filteredPremiumItems = filterItems(premiumItems);
+  const toPublishAt = filteredTeaserItems
+    .map((item) => item.publicReleaseAt || item.publishAt)
+    .find((value) => Boolean(value));
+  const toPublishDate = toPublishAt ? new Date(toPublishAt) : null;
+  const hasValidToPublishDate = Boolean(toPublishDate && Number.isFinite(toPublishDate.getTime()));
+  const toPublishSectionTitle = filteredTeaserItems[0]?.postTitle || filteredTeaserItems[0]?.title || 'Premium Content';
+  const formattedToPublishDate = hasValidToPublishDate
+    ? new Intl.DateTimeFormat(undefined, {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    }).format(toPublishDate as Date)
+    : null;
 
   const mediaColumns = (() => {
     if (feedDensity === 'large') return 1;
@@ -3977,7 +4927,7 @@ function GalleryPage({
   })();
   const mediaAspect = feedDensity === 'small' ? 1 : (feedDensity === 'medium' ? 1.05 : 1.28);
   const pseudoViewCount = (index: number): string => `${(1.8 + (index % 8) * 0.19).toFixed(1)}k`;
-  const hasPremiumSegments = gallery ? (gallery.visibility !== 'free' || teaserItems.length > 0 || premiumItems.length > 0) : false;
+  const hasPremiumSegments = grouping ? (grouping.visibility !== 'free' || teaserItems.length > 0 || premiumItems.length > 0) : false;
   const showPreviewSection = true;
   const showPremiumSection = galleryScope === 'all' && hasPremiumSegments;
   const galleryScopeLabel = galleryScope === 'public' ? 'Free and previews' : 'All media';
@@ -4016,7 +4966,7 @@ function GalleryPage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.requestAnimationFrame(() => window.dispatchEvent(new Event('scroll')));
-  }, [galleryScope, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch]);
+  }, [galleryScope, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch, showImageMedia, showVideoMedia, showPostMedia, showAudioMedia]);
 
   useEffect(() => {
     if (densityViewport !== 'mobile' && !showCompactDiscoveryDock) {
@@ -4081,6 +5031,11 @@ function GalleryPage({
       period: 'daily',
       periodLabel: galleryScopeLabel,
       density: feedDensity,
+      mediaLabel: mediaSummaryLabel,
+      showImages: showImageMedia,
+      showVideos: showVideoMedia,
+      showPosts: showPostMedia,
+      showAudio: showAudioMedia,
       heavyLabel: heavySummaryLabel,
       searchActive: discoverySearch.trim().length > 0
     });
@@ -4090,6 +5045,7 @@ function GalleryPage({
     densityViewport,
     galleryScopeLabel,
     feedDensity,
+    mediaSummaryLabel,
     heavySummaryLabel,
     discoverySearch
   ]);
@@ -4099,7 +5055,7 @@ function GalleryPage({
   }, [onDiscoveryDockChange]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !gallery) return;
+    if (typeof window === 'undefined' || !grouping) return;
     const imageId = new URLSearchParams(location.search).get('image')?.trim();
     if (!imageId) {
       deepLinkHandledRef.current = '';
@@ -4144,7 +5100,7 @@ function GalleryPage({
   }, [
     location.search,
     slug,
-    gallery?.galleryId,
+    grouping?.galleryId,
     galleryScope,
     discoverySearch,
     previewItems,
@@ -4152,7 +5108,7 @@ function GalleryPage({
     premiumItems
   ]);
 
-  const openFocusedViewer = (items: GalleryAsset[], imageId: string, sectionTitle: string) => {
+  const openFocusedViewer = (items: GroupingAsset[], imageId: string, sectionTitle: string) => {
     const available = items.filter((item) => Boolean(item.previewUrl));
     if (available.length === 0) return;
     setFocusedItems(available);
@@ -4229,21 +5185,34 @@ function GalleryPage({
     };
   }, [focusedOpen, focusedHasPrevious, focusedHasNext, focusedItems.length]);
 
-  if (!gallery) return <div className="layout">Loading...</div>;
-  const galleryArtistName = (gallery.artistName || '').trim() || guessArtistNameFromSlug(gallery.artistSlug) || 'Unknown Artist';
-  const discoverGalleryHeadingText = `Discover ${gallery.title} from ${galleryArtistName}`;
+  if (!grouping) {
+    return (
+      <div className="layout">
+        {loadingGallery ? (
+          <p>Loading...</p>
+        ) : (
+          <>
+            <h1>Gallery unavailable</h1>
+            <p className="error">{error || 'Unable to load this gallery.'}</p>
+          </>
+        )}
+      </div>
+    );
+  }
+  const galleryArtistName = (grouping.artistName || '').trim() || guessArtistNameFromSlug(grouping.artistSlug) || 'Unknown Creator';
+  const discoverGalleryHeadingText = `Discover ${grouping.title} from ${galleryArtistName}`;
   const discoverGalleryHeading = (
     <>
-      Discover {gallery.title} from {gallery.artistSlug
-        ? <Link to={`/artists/${gallery.artistSlug}`} className="no-underline">{galleryArtistName}</Link>
+      Discover {grouping.title} from {grouping.artistSlug
+        ? <Link to={`/creators/${grouping.artistSlug}`} className="no-underline">{galleryArtistName}</Link>
         : galleryArtistName}
     </>
   );
 
   const renderGalleryCard = (
-    item: GalleryAsset,
+    item: GroupingAsset,
     cardIndex: number,
-    sourceItems: GalleryAsset[],
+    sourceItems: GroupingAsset[],
     sectionTitle: string,
     sectionVisibility: 'free' | 'preview' | 'premium'
   ) => {
@@ -4254,6 +5223,7 @@ function GalleryPage({
       : sectionVisibility === 'premium'
         ? 'Premium'
         : null;
+    const contentTypeLabel = item.assetType === 'video' ? 'video' : null;
     return (
       <article
         id={`gallery-media-${item.imageId}`}
@@ -4285,7 +5255,6 @@ function GalleryPage({
                   src={item.assetType === 'video' ? (fallbackPosterUrl || '') : item.previewUrl}
                   alt={item.title || item.imageId}
                   loading={cardIndex < 2 ? 'eager' : 'lazy'}
-                  fetchPriority={cardIndex < 2 ? 'high' : 'low'}
                   decoding="async"
                   style={{
                     objectPosition: 'center center',
@@ -4294,12 +5263,12 @@ function GalleryPage({
                 />
               )}
             {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
-            {item.assetType === 'video' && <span className="discovery-chip" style={{ left: 'unset', right: visibilityPill ? '8.2rem' : '1rem' }}>Video</span>}
             {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
           </div>
         </button>
         <div className="discovery-feature-footer">
           <div className="discovery-feature-text">
+            {contentTypeLabel && <span className="discovery-content-type-pill">{contentTypeLabel}</span>}
             <h3 className="discovery-feature-title">{item.title || item.imageId}</h3>
             <p className="discovery-feature-subtitle">{item.displayedContentRating || 'General'}</p>
             {disclosureLine && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
@@ -4342,6 +5311,7 @@ function GalleryPage({
 
   const compactTabs: Array<{ section: DiscoveryFilterSection; label: string }> = [
     { section: 'period', label: galleryScopeLabel },
+    { section: 'media', label: mediaSummaryLabel },
     { section: 'density', label: `Density: ${densityLabel[feedDensity]}` },
     { section: 'heavy', label: heavySummaryLabel },
     { section: 'search', label: discoverySearch.trim().length > 0 ? 'Search active' : 'Search' }
@@ -4355,6 +5325,36 @@ function GalleryPage({
           <div className="discovery-trending-filter">
             <button className={`discovery-pill-btn${galleryScope === 'all' ? ' is-active' : ''}`} onClick={() => setGalleryScope('all')}>All</button>
             <button className={`discovery-pill-btn${galleryScope === 'public' ? ' is-active' : ''}`} onClick={() => setGalleryScope('public')}>Free and previews only</button>
+          </div>
+        </div>
+      );
+    }
+
+    if (compactFilterSection === 'media') {
+      return (
+        <div className="discovery-compact-section discovery-compact-period-section">
+          <div className="discovery-filter-label">Media types</div>
+          <div className="discovery-trending-filter">
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showImageMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="image" className="discovery-media-icon" />
+              <span>Images</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showVideoMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="video" className="discovery-media-icon" />
+              <span>Videos</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showPostMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />
+              <span>Stories</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => setShowAudioMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showAudioMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              <span>Audio</span>
+            </button>
           </div>
         </div>
       );
@@ -4471,7 +5471,7 @@ function GalleryPage({
     <div className="layout discovery-layout">
       <section className="panel discovery-hero">
         <div>
-          <h1>{gallery.title}</h1>
+          <h1>{grouping.title}</h1>
           <p>
             Discovery-style gallery browsing with focused view modal, filtering, and separate preview/premium media sections.
           </p>
@@ -4479,7 +5479,7 @@ function GalleryPage({
         <div className="discovery-hero-actions">
           <Link to="/" className="auth-secondary-btn no-underline">Back to discovery</Link>
           <button className="auth-primary-btn" onClick={favoriteGallery}>
-            {favoriteGallerySelected ? 'Unfavorite gallery' : 'Favorite gallery'} ({gallery.favoriteCount})
+            {favoriteGallerySelected ? 'Unfavorite gallery' : 'Favorite gallery'} ({grouping.favoriteCount})
           </button>
         </div>
       </section>
@@ -4552,6 +5552,31 @@ function GalleryPage({
                 <div className="discovery-trending-filter">
                   <button className={`discovery-pill-btn${galleryScope === 'all' ? ' is-active' : ''}`} onClick={() => setGalleryScope('all')}>All</button>
                   <button className={`discovery-pill-btn${galleryScope === 'public' ? ' is-active' : ''}`} onClick={() => setGalleryScope('public')}>Free and previews only</button>
+                </div>
+              </div>
+              <div>
+                <div className="discovery-filter-label">Media types</div>
+                <div className="discovery-trending-filter">
+                  <button className={`discovery-pill-btn discovery-media-toggle-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+                    <span className={`discovery-media-toggle-check${showImageMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+                    <DiscoveryMediaIcon kind="image" className="discovery-media-icon" />
+                    <span>Images</span>
+                  </button>
+                  <button className={`discovery-pill-btn discovery-media-toggle-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+                    <span className={`discovery-media-toggle-check${showVideoMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+                    <DiscoveryMediaIcon kind="video" className="discovery-media-icon" />
+                    <span>Videos</span>
+                  </button>
+                  <button className={`discovery-pill-btn discovery-media-toggle-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+                    <span className={`discovery-media-toggle-check${showPostMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+                    <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />
+                    <span>Stories</span>
+                  </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => setShowAudioMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showAudioMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              <span>Audio</span>
+            </button>
                 </div>
               </div>
               <div className="discovery-heavy-card">
@@ -4661,7 +5686,7 @@ function GalleryPage({
                       <option value="user">User Profile</option>
                       {managedArtists.map((artist) => (
                         <option key={`favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
-                          Artist: {artist.name}
+                          Creator: {artist.name}
                         </option>
                       ))}
                     </select>
@@ -4697,20 +5722,45 @@ function GalleryPage({
               index,
               filteredPreviewItems,
               discoverGalleryHeadingText,
-              gallery.visibility === 'preview' ? 'preview' : 'free'
+              grouping.visibility === 'preview' ? 'preview' : 'free'
             ))}
           </div>
           {filteredPreviewItems.length === 0 && <p className="small">No preview media matches your filters.</p>}
         </section>
       )}
 
-      {showPremiumSection && gallery.visibility === 'preview' && !gallery.hasAccess && (
+      {showPremiumSection && grouping.visibility === 'preview' && !grouping.hasAccess && (
         <section className="discovery-editorial-section">
+          <div className="gallery-section-break" aria-hidden="true">
+            <span className="gallery-section-break-line" />
+            <span className="gallery-section-break-pill">Section Break</span>
+            <span className="gallery-section-break-line" />
+          </div>
+
+          <article className="gallery-to-publish-card" aria-live="polite">
+            <div className="gallery-to-publish-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <rect x="4" y="5" width="16" height="15" rx="3" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M8 3.5V7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <path d="M16 3.5V7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <path d="M4 10H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </div>
+            <div className="gallery-to-publish-copy">
+              <div className="gallery-to-publish-chip">Coming Soon</div>
+              <h3>{toPublishSectionTitle}</h3>
+              <p>The next section will be available on:</p>
+              {formattedToPublishDate && <strong>{formattedToPublishDate}</strong>}
+              {!formattedToPublishDate && <strong>Publishing date to be announced</strong>}
+              <p className="gallery-to-publish-local-time">(Your local time)</p>
+            </div>
+          </article>
+
           <div className="discovery-section-header">
             <h2>Premium Preview</h2>
           </div>
           <div className="premium-preview-cta">
-            <a href={gallery.purchaseUrl || '#'} target="_blank" rel="noreferrer" className="inline-block rounded-xl bg-black/80 px-8 py-4 text-white no-underline">
+            <a href={grouping.purchaseUrl || '#'} target="_blank" rel="noreferrer" className="inline-block rounded-xl bg-black/80 px-8 py-4 text-white no-underline">
               Purchase Premium Access
             </a>
           </div>
@@ -4721,7 +5771,7 @@ function GalleryPage({
         </section>
       )}
 
-      {showPremiumSection && gallery.visibility === 'premium' && (
+      {showPremiumSection && grouping.visibility === 'premium' && (
         <section className="discovery-editorial-section">
           <div className="discovery-section-header">
             <h2>Premium Content</h2>
@@ -4778,7 +5828,7 @@ function GalleryPage({
           <div className="discovery-focus-modal" role="dialog" aria-modal="true" aria-label="Focused media viewer" onClick={(e) => e.stopPropagation()}>
             <div className="discovery-focus-modal-header">
               <div className="discovery-focus-modal-title-wrap">
-                <span className="discovery-focus-modal-title-id">{focusedItem?.title || focusedItem?.imageId || gallery.title}</span>
+                <span className="discovery-focus-modal-title-id">{focusedItem?.title || focusedItem?.imageId || grouping.title}</span>
                 <span className="discovery-focus-modal-title-gallery">{focusedSectionTitle}</span>
               </div>
               <div className="discovery-focus-modal-meta">
@@ -4833,6 +5883,12 @@ function GalleryPage({
                       <source src={focusedItem.previewUrl} />
                     </video>
                   )
+                  : focusedItem.assetType === 'audio'
+                    ? (
+                      <audio controls autoPlay preload="metadata" style={{ width: 'min(100%, 42rem)' }}>
+                        <source src={focusedItem.previewUrl} />
+                      </audio>
+                    )
                   : (
                     <img
                       src={focusedItem.thumbnailUrls?.w1280 || focusedItem.thumbnailUrls?.w640 || focusedItem.previewUrl}
@@ -4916,15 +5972,18 @@ function CollectionDetailPage() {
   const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
   const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
   const [isFavorited, setIsFavorited] = useState(false);
-  const [collection, setCollection] = useState<(CollectionSummary & { imageIds?: string[] }) | null>(null);
+  const [collection, setCollection] = useState<CollectionDetail | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
     const load = async () => {
       try {
         setError('');
-        const result = await api.getCollection(collectionId) as CollectionSummary & { imageIds?: string[] };
-        setCollection(result);
+        const result = await api.getCollection(collectionId) as CollectionSummary & { imageIds?: string[]; items?: Array<Partial<TrendingImage> & { creatorId?: string; creatorName?: string; groupingId?: string; groupingSlug?: string }> };
+        setCollection({
+          ...result,
+          items: (result.items || []).map(normalizeTrendingImage)
+        });
       } catch (e) {
         setError((e as Error).message);
       }
@@ -4985,6 +6044,48 @@ function CollectionDetailPage() {
   };
 
   if (!collection) return <div className="layout">Loading...</div>;
+  const collectionItems = collection.items || [];
+  const renderCollectionItem = (item: TrendingImage, index: number) => {
+    const imageSource = item.assetType === 'video' ? (item.previewPosterUrl || item.previewUrl) : item.previewUrl;
+    return (
+      <article key={item.imageId} className="discovery-feature-card collection-detail-card">
+        <div className="discovery-feature-media no-crop collection-detail-media">
+          {item.assetType === 'video' && !item.previewPosterUrl ? (
+            <video
+              src={item.previewUrl}
+              muted
+              playsInline
+              preload="metadata"
+              style={{ filter: item.blurred ? 'blur(28px)' : undefined }}
+            />
+          ) : item.assetType === 'audio' ? (
+            <div className="discovery-audio-preview">
+              <span className="collection-detail-audio-label">Audio</span>
+            </div>
+          ) : (
+            <img
+              src={imageSource}
+              alt={item.title || item.imageId}
+              loading={index < 3 ? 'eager' : 'lazy'}
+              decoding="async"
+              style={{ filter: item.blurred ? 'blur(28px)' : undefined }}
+            />
+          )}
+          {item.blurred && <span className="discovery-chip">Mature Content</span>}
+        </div>
+        <div className="discovery-feature-footer">
+          <div className="discovery-feature-text">
+            <h3 className="discovery-feature-title">{item.title || item.imageId}</h3>
+            <p className="discovery-feature-subtitle">{item.artistName}</p>
+          </div>
+          <div className="discovery-feature-stats">
+            <span>{item.assetType || 'image'}</span>
+            <span>{item.favoriteCount || 0} favorites</span>
+          </div>
+        </div>
+      </article>
+    );
+  };
 
   return (
     <div className="layout">
@@ -5003,7 +6104,7 @@ function CollectionDetailPage() {
             <option value="user">User Profile</option>
             {managedArtists.map((artist) => (
               <option key={`favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
-                Artist: {artist.name}
+                Creator: {artist.name}
               </option>
             ))}
           </select>
@@ -5014,6 +6115,19 @@ function CollectionDetailPage() {
       >
         {isFavorited ? 'Unfavorite Collection' : 'Favorite Collection'}
       </button>
+      <section className="collection-detail-section">
+        <div className="discovery-section-header">
+          <h2>Items</h2>
+          <p className="small">{collectionItems.length} shown</p>
+        </div>
+        {collectionItems.length > 0 ? (
+          <div className="collection-detail-grid">
+            {collectionItems.map(renderCollectionItem)}
+          </div>
+        ) : (
+          <p className="small">No items in this collection yet.</p>
+        )}
+      </section>
       {error && <p className="error">{error}</p>}
     </div>
   );
@@ -5030,9 +6144,9 @@ function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null })
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [aiFilter, setAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
-  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
-  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
   const masonryHeights = [220, 260, 300, 340, 380];
   const disclosureFilters = {
@@ -5044,9 +6158,9 @@ function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null })
 
   useEffect(() => {
     setAiFilter(viewerProfile?.aiFilter || 'show-all');
-    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
-    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+    setHideHeavyTopics(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   }, [
     viewerProfile?.aiFilter,
     viewerProfile?.hideHeavyTopics,
@@ -5166,7 +6280,7 @@ function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null })
               <option value="user">User Profile</option>
               {managedArtists.map((artist) => (
                 <option key={`trending-favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
-                  Artist: {artist.name}
+                  Creator: {artist.name}
                 </option>
               ))}
             </select>
@@ -5233,7 +6347,7 @@ function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null })
   );
 }
 
-function ArtistProfilePage({
+function CreatorProfilePage({
   viewerProfile,
   onDiscoveryDockChange
 }: {
@@ -5241,7 +6355,8 @@ function ArtistProfilePage({
   onDiscoveryDockChange?: (state: DiscoveryDockSummary | null) => void;
 }) {
   const { slug = '' } = useParams();
-  const [profile, setProfile] = useState<ArtistProfilePayload | null>(null);
+  const [profile, setProfile] = useState<CreatorProfilePayload | null>(null);
+  const [creatorPosts, setCreatorPosts] = useState<CreatorPostSummary[]>([]);
   const [artistTab, setArtistTab] = useState<'feed' | 'galleries'>('feed');
   const [feedItems, setFeedItems] = useState<TrendingImage[]>([]);
   const [feedCursor, setFeedCursor] = useState<string | undefined>(undefined);
@@ -5257,17 +6372,21 @@ function ArtistProfilePage({
     return 'mobile';
   });
   const [discoverySearch, setDiscoverySearch] = useState('');
+  const [showImageMedia, setShowImageMedia] = useState(true);
+  const [showVideoMedia, setShowVideoMedia] = useState(true);
+  const [showPostMedia, setShowPostMedia] = useState(true);
+  const [showAudioMedia, setShowAudioMedia] = useState(true);
   const [disclosureAiFilter, setDisclosureAiFilter] = useState<AiFilterPreference>(viewerProfile?.aiFilter || 'show-all');
-  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(Boolean(viewerProfile?.hideHeavyTopics));
-  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+  const [hideHeavyTopics, setHideHeavyTopics] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+  const [hidePoliticsPublicAffairs, setHidePoliticsPublicAffairs] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+  const [hideCrimeDisastersTragedy, setHideCrimeDisastersTragedy] = useState<boolean>(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   const [heavyTopicsExpanded, setHeavyTopicsExpanded] = useState(true);
   const [showCompactDiscoveryDock, setShowCompactDiscoveryDock] = useState(false);
   const [compactFiltersOpen, setCompactFiltersOpen] = useState(false);
   const [compactFilterSection, setCompactFilterSection] = useState<DiscoveryFilterSection>('period');
   const [compactHeavyTopicsExpanded, setCompactHeavyTopicsExpanded] = useState(true);
   const [focusedOpen, setFocusedOpen] = useState(false);
-  const [focusedItems, setFocusedItems] = useState<GalleryAsset[]>([]);
+  const [focusedItems, setFocusedItems] = useState<GroupingAsset[]>([]);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [focusedGallerySlug, setFocusedGallerySlug] = useState('');
   const [focusedGalleryTitle, setFocusedGalleryTitle] = useState('');
@@ -5278,10 +6397,22 @@ function ArtistProfilePage({
   const [galleryStackLayersById, setGalleryStackLayersById] = useState<Record<string, string[]>>({});
   const focusedVideoRef = useRef<HTMLVideoElement | null>(null);
   const focusedRequestRef = useRef(0);
+  const galleryRailRef = useRef<HTMLDivElement | null>(null);
   const discoveryFilterPanelRef = useRef<HTMLDivElement | null>(null);
   const discoverySearchInputRef = useRef<HTMLInputElement | null>(null);
   const compactSearchInputRef = useRef<HTMLInputElement | null>(null);
   const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
+  const creatorPostByMediaId = creatorPosts.reduce<Record<string, { slug: string; title: string }>>((acc, post) => {
+    const ids = [
+      ...(post.discoveryMediaIds || []),
+      ...(post.primaryMediaId ? [post.primaryMediaId] : [])
+    ];
+    for (const mediaId of ids) {
+      if (!mediaId || acc[mediaId]) continue;
+      acc[mediaId] = { slug: post.slug, title: post.title };
+    }
+    return acc;
+  }, {});
 
   const densityLabel: Record<FeedDensity, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
   const densityOptions: FeedDensity[] = ['small', 'medium', 'large'];
@@ -5297,6 +6428,12 @@ function ArtistProfilePage({
   })();
   const heavyHidden = hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy);
   const someHeavyHidden = !heavyHidden && (hidePoliticsPublicAffairs || hideCrimeDisastersTragedy);
+  const mediaSummaryLabel = getDiscoveryMediaLabel({
+    showImages: showImageMedia,
+    showVideos: showVideoMedia,
+    showPosts: showPostMedia,
+    showAudio: showAudioMedia
+  });
   const heavySummaryLabel: DiscoveryDockSummary['heavyLabel'] = (
     densityViewport === 'mobile'
       ? (heavyHidden ? 'Heavy Hidden' : (someHeavyHidden ? 'Some Heavy' : 'Heavy Shown'))
@@ -5313,7 +6450,7 @@ function ArtistProfilePage({
     const galleryId = primaryGallery?.galleryId || item?.galleryId || '';
     return {
       imageId: item.imageId,
-      assetType: item.assetType === 'video' ? 'video' : 'image',
+      assetType: item.assetType === 'video' || item.assetType === 'audio' ? item.assetType : 'image',
       artistId: item.artistId || artistId,
       artistName: item.artistName || artistName,
       galleryId,
@@ -5342,10 +6479,11 @@ function ArtistProfilePage({
     try {
       setLoading(true);
       setError('');
-      const response = await api.getArtistProfile(slug) as ArtistProfilePayload;
+      const response = normalizeCreatorProfilePayload(await api.getCreatorProfile(slug) as CreatorProfilePayload);
+      const creatorId = response.artistId || response.creatorId || '';
       setProfile(response);
-      setArtistTab(response.defaultProfileTab === 'galleries' ? 'galleries' : 'feed');
-      const initialFeed = (response.feedItems || []).map((item) => mapFeedItemToTrendingShape(item, response.name, response.artistId));
+      setArtistTab('feed');
+      const initialFeed = (response.feedItems || []).map((item) => mapFeedItemToTrendingShape(item, response.name, creatorId));
       setFeedItems(initialFeed);
       setFeedCursor(undefined);
     } catch (e) {
@@ -5355,16 +6493,25 @@ function ArtistProfilePage({
     }
   };
 
+  const loadCreatorPosts = async () => {
+    try {
+      const response = await api.getCreatorPosts(slug) as { items?: CreatorPostSummary[] };
+      setCreatorPosts(response.items || []);
+    } catch {
+      setCreatorPosts([]);
+    }
+  };
+
   const loadFeed = async (append = false) => {
     try {
       setFeedLoading(true);
       setError('');
-      const artistName = profile?.name || guessArtistNameFromSlug(slug) || 'Artist';
+      const artistName = profile?.name || guessArtistNameFromSlug(slug) || 'Creator';
       const artistId = profile?.artistId || '';
       let mapped: TrendingImage[] = [];
       let nextCursor: string | undefined;
       if (artistFeedSort === 'trending') {
-        const response = await api.getArtistTrendingImages(slug, 'daily', append ? feedCursor : undefined, 24) as {
+        const response = await api.getCreatorTrendingImages(slug, 'daily', append ? feedCursor : undefined, 24) as {
           items: TrendingImage[];
           nextCursor?: string;
         };
@@ -5376,7 +6523,7 @@ function ArtistProfilePage({
         }));
         nextCursor = response.nextCursor;
       } else {
-        const response = await api.getArtistFeed(slug, append ? feedCursor : undefined, 24) as {
+        const response = await api.getCreatorFeed(slug, append ? feedCursor : undefined, 24) as {
           artistId: string;
           artistSlug: string;
           items: any[];
@@ -5401,6 +6548,7 @@ function ArtistProfilePage({
     setFeedItems([]);
     setFeedCursor(undefined);
     void loadProfile();
+    void loadCreatorPosts();
   }, [slug]);
 
   useEffect(() => {
@@ -5422,9 +6570,9 @@ function ArtistProfilePage({
 
   useEffect(() => {
     setDisclosureAiFilter(viewerProfile?.aiFilter || 'show-all');
-    setHideHeavyTopics(Boolean(viewerProfile?.hideHeavyTopics));
-    setHidePoliticsPublicAffairs(Boolean(viewerProfile?.hidePoliticsPublicAffairs));
-    setHideCrimeDisastersTragedy(Boolean(viewerProfile?.hideCrimeDisastersTragedy));
+    setHideHeavyTopics(initialHeavyTopicPreference(viewerProfile?.hideHeavyTopics));
+    setHidePoliticsPublicAffairs(initialHeavyTopicPreference(viewerProfile?.hidePoliticsPublicAffairs));
+    setHideCrimeDisastersTragedy(initialHeavyTopicPreference(viewerProfile?.hideCrimeDisastersTragedy));
   }, [
     viewerProfile?.aiFilter,
     viewerProfile?.hideHeavyTopics,
@@ -5470,7 +6618,7 @@ function ArtistProfilePage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.requestAnimationFrame(() => window.dispatchEvent(new Event('scroll')));
-  }, [artistTab, artistFeedSort, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch]);
+  }, [artistTab, artistFeedSort, heavyTopicsExpanded, densityViewport, feedDensity, discoverySearch, showImageMedia, showVideoMedia, showPostMedia, showAudioMedia]);
 
   useEffect(() => {
     if (densityViewport !== 'mobile' && !showCompactDiscoveryDock) {
@@ -5530,37 +6678,20 @@ function ArtistProfilePage({
   }, [compactFiltersOpen, compactFilterSection, densityViewport]);
 
   useEffect(() => {
-    onDiscoveryDockChange?.({
-      active: artistTab === 'feed' && showCompactDiscoveryDock,
-      viewport: densityViewport,
-      period: 'daily',
-      periodLabel: artistFeedSort === 'latest' ? 'Latest' : 'Trending',
-      density: feedDensity,
-      heavyLabel: heavySummaryLabel,
-      searchActive: discoverySearch.trim().length > 0
-    });
-  }, [
-    onDiscoveryDockChange,
-    artistTab,
-    showCompactDiscoveryDock,
-    densityViewport,
-    artistFeedSort,
-    feedDensity,
-    heavySummaryLabel,
-    discoverySearch
-  ]);
+    onDiscoveryDockChange?.(null);
+  }, [onDiscoveryDockChange]);
 
   useEffect(() => () => {
     onDiscoveryDockChange?.(null);
   }, [onDiscoveryDockChange]);
 
   useEffect(() => {
-    if (artistTab !== 'galleries' || !profile?.galleries?.length) return;
+    if (!profile?.galleries?.length) return;
     let cancelled = false;
 
     setGalleryStackLayersById((prev) => {
       const next = { ...prev };
-      for (const gallery of profile.galleries) {
+      for (const gallery of (profile.galleries || [])) {
         if (!next[gallery.galleryId] && gallery.galleryThumbnailUrl) {
           next[gallery.galleryId] = [gallery.galleryThumbnailUrl];
         }
@@ -5570,9 +6701,9 @@ function ArtistProfilePage({
 
     const loadGalleryLayers = async () => {
       const updates: Record<string, string[]> = {};
-      await Promise.all(profile.galleries.map(async (gallery) => {
+      await Promise.all((profile.galleries || []).map(async (gallery) => {
         try {
-          const response = await api.getGallery(gallery.slug) as Gallery;
+          const response = await api.getGallery(gallery.slug) as GroupingDetail;
           const cover = gallery.galleryThumbnailUrl || response.coverPreviewUrl || '';
           const candidateUrls = [
             ...(cover ? [cover] : []),
@@ -5601,7 +6732,7 @@ function ArtistProfilePage({
     return () => {
       cancelled = true;
     };
-  }, [artistTab, profile?.artistId, profile?.galleries]);
+  }, [profile?.artistId, profile?.galleries]);
 
   const applyHideAllHeavyTopics = (enabled: boolean) => {
     setHideHeavyTopics(enabled);
@@ -5617,9 +6748,9 @@ function ArtistProfilePage({
     setHideHeavyTopics(enabled && hidePoliticsPublicAffairs);
   };
 
-  const toFocusedAsset = (item: TrendingImage): GalleryAsset => ({
+  const toFocusedAsset = (item: TrendingImage): GroupingAsset => ({
     imageId: item.imageId,
-    assetType: item.assetType === 'video' ? 'video' : 'image',
+    assetType: item.assetType === 'video' || item.assetType === 'audio' ? item.assetType : 'image',
     effectiveContentRating: item.effectiveContentRating,
     displayedContentRating: item.displayedContentRating,
     blurred: item.blurred,
@@ -5648,7 +6779,7 @@ function ArtistProfilePage({
     focusedRequestRef.current = requestId;
     setFocusedLoading(true);
     try {
-      const response = await api.getGallery(item.gallerySlug) as Gallery;
+      const response = await api.getGallery(item.gallerySlug) as GroupingDetail;
       if (focusedRequestRef.current !== requestId) return;
       const media = (response.media || []).filter((asset) => Boolean(asset.previewUrl));
       const nextItems = media.length > 0 ? media : [fallback];
@@ -5677,9 +6808,20 @@ function ArtistProfilePage({
     document.getElementById('artist-discovery-filters')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     closeFocusedViewer();
   };
+  const pageGalleryRail = (direction: -1 | 1) => {
+    const rail = galleryRailRef.current;
+    if (!rail) return;
+    rail.scrollBy({ left: direction * rail.clientWidth * 0.82, behavior: 'smooth' });
+  };
 
   const filteredFeedItems = feedItems.filter((item) => (
-    passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
+    passesDiscoveryMediaFilter(item, {
+      showImages: showImageMedia,
+      showVideos: showVideoMedia,
+      showPosts: showPostMedia,
+    showAudio: showAudioMedia
+  })
+    && passesAiDisclosureFilter(item.effectiveAiDisclosure, disclosureAiFilter)
     && passesHeavyTopicFilter(item.effectiveHeavyTopics, {
       hideHeavyTopics,
       hidePoliticsPublicAffairs,
@@ -5759,28 +6901,32 @@ function ArtistProfilePage({
   }, [focusedOpen, focusedHasPrevious, focusedHasNext, focusedItems.length]);
 
   if (loading && !profile) return <div className="layout">Loading...</div>;
-  if (!profile) return <div className="layout">{error || 'Artist not found'}</div>;
+  if (!profile) return <div className="layout">{error || 'Creator not found'}</div>;
 
   const followerLabel = `${profile.followerCount} ${profile.followerCount === 1 ? 'follower' : 'followers'}`;
-  const galleryLabel = `${profile.galleryCount} ${profile.galleryCount === 1 ? 'gallery' : 'galleries'}`;
+  const creatorGroupings = profile.galleries || [];
+  const galleryCount = profile.galleryCount ?? profile.groupingCount ?? creatorGroupings.length;
+  const galleryLabel = `${galleryCount} ${galleryCount === 1 ? 'gallery' : 'galleries'}`;
   const imageLabel = `${profile.imageCount} ${profile.imageCount === 1 ? 'image' : 'images'}`;
-  const artistTabLabel = artistTab === 'feed' ? 'Feed' : 'Galleries';
-
-  const openGalleriesTabFromHero = () => {
-    setArtistTab('galleries');
-  };
-  const openFeedTabFromHero = () => {
-    setArtistTab('feed');
-  };
-
+  const profileImageUrl = profile.branding?.profileImage?.thumbnailUrls?.square512
+    || profile.branding?.profileImage?.thumbnailUrls?.square256;
+  const profileImageSrc = withAssetVersion(profileImageUrl, profile.branding?.profileImage?.updatedAt);
+  const profileImageAlt = profile.branding?.profileImage?.altText || `${profile.name} profile image`;
+  const coverDesktopUrl = profile.branding?.coverImage?.renditionUrls?.desktop;
+  const coverTabletUrl = profile.branding?.coverImage?.renditionUrls?.tablet;
+  const coverMobileUrl = profile.branding?.coverImage?.renditionUrls?.mobile;
+  const coverImageAlt = profile.branding?.coverImage?.altText || `${profile.name} cover image`;
   const renderArtistCard = (item: TrendingImage, index: number) => {
-    const fallbackPosterUrl = item.previewPosterUrl || (item.assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
+    const assetType = item.assetType || 'image';
+    const fallbackPosterUrl = item.previewPosterUrl || (assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
     const disclosureLine = formatDisclosureLine(item);
     const visibilityPill = item.galleryVisibility === 'preview'
       ? 'Preview'
       : item.galleryVisibility === 'premium'
         ? 'Premium'
         : null;
+    const contentTypeLabel = assetType === 'video' || assetType === 'audio' ? assetType : null;
+    const linkedPost = creatorPostByMediaId[item.imageId];
     return (
       <article key={item.imageId} className="discovery-feature-card gallery-discovery-card" style={{ '--media-aspect': cardAspect.toFixed(3) } as any}>
         <button
@@ -5789,7 +6935,13 @@ function ArtistProfilePage({
           onClick={() => void openFocusedViewer(item)}
         >
           <div className="discovery-feature-media no-crop" style={{ aspectRatio: `${cardAspect} / 1` }}>
-            {(item.assetType === 'video' && !fallbackPosterUrl)
+            {assetType === 'audio'
+              ? (
+                <div className="discovery-audio-preview" aria-label={item.title || 'Audio preview'}>
+                  <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+                </div>
+              )
+              : (assetType === 'video' && !fallbackPosterUrl)
               ? (
                 <video
                   src={item.previewUrl}
@@ -5801,22 +6953,23 @@ function ArtistProfilePage({
               )
               : (
                 <img
-                  src={item.assetType === 'video' ? (fallbackPosterUrl || '') : item.previewUrl}
+                  src={assetType === 'video' ? (fallbackPosterUrl || '') : item.previewUrl}
                   alt={item.title || 'Artwork preview'}
                   loading={index < 2 ? 'eager' : 'lazy'}
-                  fetchPriority={index < 2 ? 'high' : 'low'}
                   decoding="async"
                   style={{ objectPosition: 'center center', filter: item.blurred ? 'blur(28px)' : undefined }}
                 />
               )}
             {visibilityPill && <span className="discovery-chip">{visibilityPill}</span>}
-            {item.assetType === 'video' && <span className="discovery-chip" style={{ left: 'unset', right: visibilityPill ? '8.2rem' : '1rem' }}>Video</span>}
             {item.blurred && <span className="discovery-chip" style={{ left: 'unset', right: '1rem' }}>Mature Content</span>}
           </div>
         </button>
         <div className="discovery-feature-footer">
           <div className="discovery-feature-text">
-            <h3 className="discovery-feature-title">{item.title || item.imageId}</h3>
+            {contentTypeLabel && <span className="discovery-content-type-pill">{contentTypeLabel}</span>}
+            <h3 className="discovery-feature-title">
+              {linkedPost ? <Link to={`/posts/${linkedPost.slug}`} className="no-underline">{item.title || item.imageId}</Link> : (item.title || item.imageId)}
+            </h3>
             <p className="discovery-feature-subtitle">by {item.artistName || profile.name}</p>
             {disclosureLine && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
           </div>
@@ -5841,6 +6994,7 @@ function ArtistProfilePage({
 
   const compactTabs: Array<{ section: DiscoveryFilterSection; label: string }> = [
     { section: 'period', label: artistFeedSort === 'latest' ? 'Latest' : 'Trending' },
+    { section: 'media', label: mediaSummaryLabel },
     { section: 'density', label: `Density: ${densityLabel[feedDensity]}` },
     { section: 'heavy', label: heavySummaryLabel },
     { section: 'search', label: discoverySearch.trim().length > 0 ? 'Search active' : 'Search' }
@@ -5850,7 +7004,7 @@ function ArtistProfilePage({
     if (compactFilterSection === 'period') {
       return (
         <div className="discovery-compact-section discovery-compact-period-section">
-          <div className="discovery-filter-label">Artist feed</div>
+          <div className="discovery-filter-label">Creator feed</div>
           <div className="discovery-trending-filter">
             <button
               className={`discovery-pill-btn${artistFeedSort === 'latest' ? ' is-active' : ''}`}
@@ -5865,6 +7019,36 @@ function ArtistProfilePage({
               onClick={() => setArtistFeedSort('trending')}
             >
               Trending
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (compactFilterSection === 'media') {
+      return (
+        <div className="discovery-compact-section discovery-compact-period-section">
+          <div className="discovery-filter-label">Media types</div>
+          <div className="discovery-trending-filter">
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showImageMedia ? ' is-active' : ''}`} onClick={() => setShowImageMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showImageMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="image" className="discovery-media-icon" />
+              <span>Images</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showVideoMedia ? ' is-active' : ''}`} onClick={() => setShowVideoMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showVideoMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="video" className="discovery-media-icon" />
+              <span>Videos</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showPostMedia ? ' is-active' : ''}`} onClick={() => setShowPostMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showPostMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />
+              <span>Stories</span>
+            </button>
+            <button className={`discovery-pill-btn discovery-media-toggle-btn${showAudioMedia ? ' is-active' : ''}`} onClick={() => setShowAudioMedia((prev) => !prev)}>
+              <span className={`discovery-media-toggle-check${showAudioMedia ? ' is-checked' : ''}`} aria-hidden="true" />
+              <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />
+              <span>Audio</span>
             </button>
           </div>
         </div>
@@ -5980,346 +7164,105 @@ function ArtistProfilePage({
 
   return (
     <div className="layout discovery-layout">
+      {(coverDesktopUrl || coverTabletUrl || coverMobileUrl) && (
+        <section className="panel" style={{ padding: 0, overflow: 'hidden' }}>
+          <picture>
+            {coverMobileUrl && <source media="(max-width: 699px)" srcSet={coverMobileUrl} />}
+            {coverTabletUrl && <source media="(max-width: 1099px)" srcSet={coverTabletUrl} />}
+            <img
+              src={coverDesktopUrl || coverTabletUrl || coverMobileUrl || ''}
+              alt={coverImageAlt}
+              style={{ width: '100%', display: 'block', maxHeight: '380px', objectFit: 'cover' }}
+            />
+          </picture>
+        </section>
+      )}
       <section className="panel discovery-hero">
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <img
+            src={profileImageSrc || DEFAULT_PROFILE_ICON_SRC}
+            alt={profileImageSrc ? profileImageAlt : ''}
+            style={{ width: '72px', height: '72px', borderRadius: '999px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.2)' }}
+          />
+          <div>
           <h1>{profile.name}</h1>
           <p>
             {followerLabel}
             {' • '}
-            <button
-              type="button"
-              className={`discovery-hero-count-pill${artistTab === 'galleries' ? ' is-active' : ''}`}
-              onClick={openGalleriesTabFromHero}
-            >
-              {galleryLabel}
-            </button>
+            <span>{galleryLabel}</span>
             {' • '}
-            <button
-              type="button"
-              className={`discovery-hero-count-pill${artistTab === 'feed' ? ' is-active' : ''}`}
-              onClick={openFeedTabFromHero}
-            >
-              {imageLabel}
-            </button>
+            <span>{imageLabel}</span>
           </p>
+          </div>
         </div>
         <div className="discovery-hero-actions">
-          <button className="auth-primary-btn">Follow artist</button>
+          <button className="auth-primary-btn">Follow creator</button>
           <Link className="auth-secondary-btn no-underline" to="/">Back to discovery</Link>
         </div>
       </section>
 
-      {artistTab === 'feed' && showCompactDiscoveryDock && densityViewport !== 'mobile' && compactFiltersOpen && (
-        <div className="discovery-compact-popover-layer" onClick={closeCompactFilters}>
-          <div className="discovery-compact-popover" role="dialog" aria-label="Artist filters" onClick={(e) => e.stopPropagation()}>
-            <div className="discovery-compact-popover-toolbar">
-              <button type="button" className="discovery-compact-close-btn" onClick={closeCompactFilters} aria-label="Close artist filters">
-                ✕
-              </button>
-            </div>
-            <div className="discovery-compact-tabs discovery-compact-tabs-tablet">
-              {compactTabs.map((tab) => (
-                <button
-                  key={`artist-compact-tab-desktop-${tab.section}`}
-                  type="button"
-                  className={`topbar-discovery-chip topbar-discovery-chip-interactive${compactFilterSection === tab.section ? ' is-active' : ''}`}
-                  onClick={() => setCompactSection(tab.section)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            <div className="discovery-compact-body">
-              {renderCompactFilterBody()}
-            </div>
+      <section id="creator-groupings-section" className="creator-collection-rail-section">
+        <div className="creator-section-heading">
+          <div>
+            <p className="creator-section-kicker">Collections</p>
+            <h2>{profile.name}'s galleries & albums</h2>
           </div>
+          {creatorGroupings.length > 1 && (
+            <div className="creator-gallery-rail-controls">
+              <button type="button" className="creator-gallery-rail-page-btn" onClick={() => pageGalleryRail(-1)} aria-label="Previous galleries">‹</button>
+              <button type="button" className="creator-gallery-rail-page-btn" onClick={() => pageGalleryRail(1)} aria-label="Next galleries">›</button>
+            </div>
+          )}
         </div>
-      )}
-
-      {artistTab === 'feed' && showCompactDiscoveryDock && densityViewport === 'mobile' && compactFiltersOpen && (
-        <div className="discovery-compact-sheet-layer" onClick={closeCompactFilters}>
-          <div className="discovery-compact-sheet" role="dialog" aria-label="Artist filters" onClick={(e) => e.stopPropagation()}>
-            <div className="discovery-compact-sheet-handle" />
-            <div className="discovery-compact-header">
-              <div className="discovery-filter-label">Artist controls</div>
-              <button type="button" className="discovery-compact-close-btn" onClick={closeCompactFilters} aria-label="Close artist filters">
-                ✕
-              </button>
-            </div>
-            <div className="discovery-compact-tabs">
-              {compactTabs.map((tab) => (
-                <button
-                  key={`artist-compact-tab-mobile-${tab.section}`}
-                  type="button"
-                  className={`topbar-discovery-chip topbar-discovery-chip-interactive${compactFilterSection === tab.section ? ' is-active' : ''}`}
-                  onClick={() => setCompactSection(tab.section)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            <div className="discovery-compact-body">
-              {renderCompactFilterBody()}
-            </div>
+        {creatorGroupings.length > 0 ? (
+          <div ref={galleryRailRef} className="creator-gallery-rail">
+            {creatorGroupings.map((grouping, i) => {
+              const layers = galleryStackLayersById[grouping.galleryId] || [];
+              const front = layers[0] || grouping.galleryThumbnailUrl;
+              const mid = layers[1] || front;
+              const back = layers[2] || mid;
+              return (
+                <article key={`${grouping.galleryId}-grouping-${i}`} className="creator-gallery-rail-card">
+                  <Link to={`/gallery/${grouping.slug}`} className="no-underline">
+                    <div className="discovery-stack creator-gallery-rail-stack">
+                      <div className="discovery-stack-layer discovery-stack-layer-back">
+                        {back ? <img src={back} alt="" loading="lazy" decoding="async" aria-hidden="true" /> : <div className="discovery-stack-placeholder" aria-hidden="true" />}
+                      </div>
+                      <div className="discovery-stack-layer discovery-stack-layer-mid">
+                        {mid ? <img src={mid} alt="" loading="lazy" decoding="async" aria-hidden="true" /> : <div className="discovery-stack-placeholder" aria-hidden="true" />}
+                      </div>
+                      <div className="discovery-stack-layer discovery-stack-layer-front">
+                        {front ? <img src={front} alt={grouping.title || 'Gallery cover'} loading={i < 2 ? 'eager' : 'lazy'} decoding="async" /> : <div className="discovery-swatch" style={{ backgroundColor: swatches[(i + 2) % swatches.length] }} />}
+                      </div>
+                    </div>
+                    <div className="creator-gallery-rail-meta">
+                      <span className="creator-gallery-visibility">{grouping.visibility === 'premium' ? 'Premium' : grouping.visibility === 'preview' ? 'Preview' : 'Public'}</span>
+                      <h3>{grouping.title || 'Untitled gallery'}</h3>
+                      <p>{grouping.imageCount} creations · {grouping.favoriteCount} favorites</p>
+                    </div>
+                  </Link>
+                </article>
+              );
+            })}
           </div>
-        </div>
-      )}
-
-      <section id="artist-discovery-section" className={`discovery-editorial-section${artistTab === 'galleries' ? ' discovery-artist-tabs-only' : ''}`}>
-        <div className="discovery-section-header">
-          <h2>Discover {profile.name}: {artistTabLabel}</h2>
-          <div className="discovery-trending-filter">
-            <button
-              className={`discovery-pill-btn${artistTab === 'feed' ? ' is-active' : ''}`}
-              onClick={() => setArtistTab('feed')}
-            >
-              Feed
-            </button>
-            <button
-              className={`discovery-pill-btn${artistTab === 'galleries' ? ' is-active' : ''}`}
-              onClick={() => setArtistTab('galleries')}
-            >
-              Galleries
-            </button>
-          </div>
-        </div>
-        {artistTab === 'feed' && (
-          <div id="artist-discovery-filters" ref={discoveryFilterPanelRef} className="discovery-filter-shell">
-          <div className="discovery-filter-grid">
-            <div className="discovery-filter-left">
-              <div>
-                <div className="discovery-filter-label">Artist feed</div>
-                <div className="discovery-trending-filter">
-                  <button
-                    className={`discovery-pill-btn${artistFeedSort === 'latest' ? ' is-active' : ''}`}
-                    type="button"
-                    onClick={() => setArtistFeedSort('latest')}
-                  >
-                    Latest
-                  </button>
-                  <button
-                    className={`discovery-pill-btn${artistFeedSort === 'trending' ? ' is-active' : ''}`}
-                    type="button"
-                    onClick={() => setArtistFeedSort('trending')}
-                  >
-                    Trending
-                  </button>
-                </div>
-              </div>
-              <div className="discovery-heavy-card">
-                <div className="discovery-heavy-head">
-                  <label className="discovery-heavy-row is-primary">
-                    <input
-                      type="checkbox"
-                      checked={hideHeavyTopics || (hidePoliticsPublicAffairs && hideCrimeDisastersTragedy)}
-                      onChange={(e) => applyHideAllHeavyTopics(e.target.checked)}
-                    />
-                    <span>Hide all heavy topics</span>
-                  </label>
-                  <button
-                    type="button"
-                    className={`discovery-heavy-toggle${heavyTopicsExpanded ? ' is-expanded' : ''}`}
-                    onClick={() => setHeavyTopicsExpanded((prev) => !prev)}
-                    aria-label={heavyTopicsExpanded ? 'Collapse heavy topics options' : 'Expand heavy topics options'}
-                  >
-                    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                      <path d="M6 12L10 8L14 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </div>
-                {heavyTopicsExpanded && (
-                  <div className="discovery-heavy-body">
-                    <label className="discovery-heavy-row">
-                      <input
-                        type="checkbox"
-                        checked={hidePoliticsPublicAffairs}
-                        onChange={(e) => applyHidePoliticsPublicAffairs(e.target.checked)}
-                      />
-                      <span>{heavyTopicLabels['politics-public-affairs']}</span>
-                    </label>
-                    <label className="discovery-heavy-row">
-                      <input
-                        type="checkbox"
-                        checked={hideCrimeDisastersTragedy}
-                        onChange={(e) => applyHideCrimeDisastersTragedy(e.target.checked)}
-                      />
-                      <span>{heavyTopicLabels['crime-disasters-tragedy']}</span>
-                    </label>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="discovery-filter-right">
-              <div className="discovery-density-card">
-                <div className="discovery-density-head">
-                  <span>Feed density</span>
-                  <strong>{densityLabel[feedDensity]}</strong>
-                </div>
-                {densityViewport === 'desktop' && (
-                  <input
-                    className="discovery-density-range"
-                    type="range"
-                    min={0}
-                    max={2}
-                    step={1}
-                    value={densitySliderValue}
-                    style={densityRangeStyle}
-                    onChange={(e) => {
-                      const next = Number(e.target.value);
-                      setFeedDensity(next <= 0 ? 'small' : next === 1 ? 'medium' : 'large');
-                    }}
-                  />
-                )}
-                <div className={`discovery-density-options${densityOptions.length === 2 ? ' is-two' : ''}`}>
-                  {densityOptions.map((option) => (
-                    <button
-                      key={`artist-density-${option}`}
-                      type="button"
-                      className={feedDensity === option ? 'is-active' : ''}
-                      onClick={() => setFeedDensity(option)}
-                    >
-                      {densityLabel[option]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="discovery-search-card">
-                <div className="discovery-filter-label">Search</div>
-                <div className="discovery-search-input-wrap">
-                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                    <path d="M9 4.25a4.75 4.75 0 103.78 7.64l2.16 2.16a.75.75 0 101.06-1.06l-2.16-2.16A4.75 4.75 0 009 4.25z" fill="currentColor" />
-                  </svg>
-                  <input
-                    ref={discoverySearchInputRef}
-                    type="text"
-                    value={discoverySearch}
-                    onChange={(e) => setDiscoverySearch(e.target.value)}
-                    placeholder="Search titles, galleries, and disclosures..."
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-          </div>
+        ) : (
+          <p className="small">No published galleries or albums yet.</p>
         )}
       </section>
 
-      {artistTab === 'feed' ? (
-        <section className="discovery-editorial-section">
-          <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
-            {filteredFeedItems.map((item, i) => renderArtistCard(item, i))}
+      <section id="creator-discovery-feed" className="creator-discovery-feed-section">
+        <div className="creator-section-heading">
+          <div>
+            <p className="creator-section-kicker">Discovery feed</p>
+            <h2>All creations by {profile.name}</h2>
           </div>
-          {filteredFeedItems.length === 0 && <p className="small">No artist media matches your filters.</p>}
-          <AutoLoadSentinel enabled={Boolean(feedCursor)} loading={feedLoading} onLoadMore={() => loadFeed(true)} />
-        </section>
-      ) : (
-        <section className="discovery-editorial-section discovery-editorial-tight-top">
-          <div className="discovery-latest-grid">
-            {(profile.galleries || []).map((gallery, i) => (
-              <article key={`${gallery.galleryId}-tab-${i}`} className="discovery-latest-item">
-                <Link to={`/gallery/${gallery.slug}`} className="no-underline">
-                  <div className="discovery-stack discovery-stack-tall">
-                    {(() => {
-                      const layers = galleryStackLayersById[gallery.galleryId] || [];
-                      const front = layers[0] || gallery.galleryThumbnailUrl;
-                      const mid = layers[1];
-                      const back = layers[2];
-                      return (
-                        <>
-                    <div className="discovery-stack-layer discovery-stack-layer-back">
-                      {back
-                        ? <img src={back} alt="" loading="lazy" aria-hidden="true" />
-                        : <div className="discovery-stack-placeholder" aria-hidden="true" />}
-                    </div>
-                    <div className="discovery-stack-layer discovery-stack-layer-mid">
-                      {mid
-                        ? <img src={mid} alt="" loading="lazy" aria-hidden="true" />
-                        : <div className="discovery-stack-placeholder" aria-hidden="true" />}
-                    </div>
-                    <div className="discovery-stack-layer discovery-stack-layer-front">
-                      {front
-                        ? <img src={front} alt={gallery.title || 'Gallery cover'} loading="lazy" />
-                        : <div className="discovery-swatch" style={{ backgroundColor: swatches[(i + 2) % swatches.length] }} />}
-                    </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                  <div className="discovery-latest-meta">
-                    <div className="discovery-card-title">{gallery.title}</div>
-                    <div className="discovery-card-subtitle">{gallery.imageCount} images • ❤ {gallery.favoriteCount}</div>
-                  </div>
-                </Link>
-              </article>
-            ))}
-          </div>
-          {(profile.galleries || []).length === 0 && <p className="small">No galleries published yet.</p>}
-        </section>
-      )}
-
-      <section className="discovery-editorial-section">
-        <div className="discovery-section-header">
-          <h2>Public Favorites</h2>
+          <span className="creator-feed-count">{filteredFeedItems.length} shown</span>
         </div>
-        <div className="panel artist-public-grid">
-          <article>
-            <h3>Images</h3>
-            <ul>
-              {profile.publicFavoritesByType.images.length
-                ? profile.publicFavoritesByType.images.slice(0, 6).map((item) => (
-                  <li key={`fav-img-${item.targetId}`}>
-                    {item.previewUrl && <img src={item.previewUrl} alt={item.title || item.targetId} className="artist-favorite-thumb" />}
-                    <span>{item.title || item.targetId}</span>
-                  </li>
-                ))
-                : <li className="small">No public image favorites yet.</li>}
-            </ul>
-          </article>
-          <article>
-            <h3>Galleries</h3>
-            <ul>
-              {profile.publicFavoritesByType.galleries.length
-                ? profile.publicFavoritesByType.galleries.slice(0, 6).map((item) => (
-                  <li key={`fav-gal-${item.targetId}`}>
-                    {item.galleryThumbnailUrl && <img src={item.galleryThumbnailUrl} alt={item.title || item.targetId} className="artist-favorite-thumb" />}
-                    {item.slug
-                      ? <Link to={`/gallery/${item.slug}`} className="no-underline">{item.title || item.targetId}</Link>
-                      : <span>{item.title || item.targetId}</span>}
-                  </li>
-                ))
-                : <li className="small">No public gallery favorites yet.</li>}
-            </ul>
-          </article>
-          <article>
-            <h3>Collections</h3>
-            <ul>
-              {profile.publicFavoritesByType.collections.length
-                ? profile.publicFavoritesByType.collections.slice(0, 6).map((item) => <li key={`fav-col-${item.targetId}`}>{item.title || item.targetId}</li>)
-                : <li className="small">No public collection favorites yet.</li>}
-            </ul>
-          </article>
+        <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
+          {filteredFeedItems.map((item, i) => renderArtistCard(item, i))}
         </div>
-      </section>
-
-      <section className="discovery-editorial-section">
-        <div className="discovery-section-header">
-          <h2>Public Collections</h2>
-        </div>
-        <div className="discovery-latest-grid">
-          {profile.publicCollections.length ? profile.publicCollections.map((collection) => (
-            <article key={collection.collectionId} className="discovery-latest-item">
-              <div className="panel">
-                <div className="discovery-card-title">{collection.title}</div>
-                <div className="discovery-card-subtitle">{collection.imageCount} images • ❤ {collection.favoriteCount}</div>
-                {collection.description && <p className="small">{collection.description}</p>}
-              </div>
-            </article>
-          )) : (
-            <div className="panel"><p className="small">No public collections yet.</p></div>
-          )}
-        </div>
+        {filteredFeedItems.length === 0 && <p className="small">No creations match the current discovery preferences.</p>}
+        <AutoLoadSentinel enabled={Boolean(feedCursor)} loading={feedLoading} onLoadMore={() => loadFeed(true)} />
       </section>
 
       {focusedOpen && (
@@ -6412,6 +7355,120 @@ function ArtistProfilePage({
   );
 }
 
+function PostPage() {
+  const { slug = '' } = useParams();
+  const [post, setPost] = useState<PostDetailPayload | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError('');
+        const response = await api.getPostBySlug(slug) as PostDetailPayload;
+        if (cancelled) return;
+        setPost(response);
+      } catch (e) {
+        if (cancelled) return;
+        setError((e as Error).message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
+  if (loading && !post) return <div className="layout">Loading...</div>;
+  if (!post) return <div className="layout">{error || 'Post not found'}</div>;
+
+  const orderedMedia = [...post.media].sort((a, b) => (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER));
+  const relatedSidebarMedia = orderedMedia.slice(0, 6);
+  const primaryMedia = post.primaryMediaId ? orderedMedia.find((media) => media.mediaId === post.primaryMediaId) : orderedMedia[0];
+  const creator = post.creator || post.artist;
+  const postRendererItem: DiscoveryOverlayItem = {
+    imageId: primaryMedia?.mediaId || post.postId,
+    assetType: primaryMedia?.assetType || 'image',
+    postType: (post.metadata?.postType as DiscoveryOverlayItem['postType']) || undefined,
+    postFormat: (post.metadata?.postFormat as DiscoveryOverlayItem['postFormat']) || undefined,
+    surfaceType: 'post',
+    postId: post.postId,
+    postSlug: post.slug,
+    postTitle: post.title,
+    postSummary: post.summary,
+    artistId: post.creator?.creatorId || post.artist?.artistId || post.artistId,
+    artistName: creator?.name || 'Unknown creator',
+    creatorSlug: creator?.slug,
+    title: post.title,
+    previewUrl: primaryMedia?.previewUrl || primaryMedia?.previewPosterUrl || '',
+    previewPosterUrl: primaryMedia?.previewPosterUrl,
+    displayedContentRating: 'General',
+    displayedHeavyTopics: [],
+    blurred: false
+  };
+  const rendererPost = post as OverlayPost;
+  const destinationLabel = post.destination?.type === 'pdf'
+    ? 'Open PDF'
+    : post.destination?.type === 'external'
+      ? 'Open external link'
+      : post.destination?.type === 'internal'
+        ? 'Open internal destination'
+        : 'Open destination';
+
+  return (
+    <div className="layout post-detail-layout">
+      <div className="post-detail-main">
+        <section className="panel">
+          <PostMetaHeader item={postRendererItem} post={rendererPost} itemIndex={0} itemsCount={1} showPosition={false} />
+          {post.summary && <p className="discovery-quickread-summary">{post.summary}</p>}
+          {post.destination?.url && (
+            <p className="mt-3">
+              <a className="auth-primary-btn no-underline" href={post.destination.url} target="_blank" rel="noreferrer">
+                {destinationLabel}
+              </a>
+            </p>
+          )}
+        </section>
+
+        <section className="panel mt-4 post-detail-reader-panel">
+          <RichPostRenderer item={postRendererItem} post={rendererPost} />
+        </section>
+      </div>
+
+      <aside className="post-detail-sidebar">
+        <section className="panel">
+          <h3 className="m-0">Discover related</h3>
+          <p className="small mt-2 mb-0">More media and discovery context connected to this post.</p>
+        </section>
+        <section className="panel mt-4">
+          <h4 className="m-0">From this post</h4>
+          <div className="post-detail-sidebar-list mt-3">
+            {relatedSidebarMedia.length > 0 ? relatedSidebarMedia.map((media) => (
+              <article key={`related-media-${media.mediaId}`} className="post-detail-sidebar-card">
+                <div className="post-detail-sidebar-thumb">
+                  {media.assetType === 'video'
+                    ? <img src={media.previewPosterUrl || media.previewUrl} alt={media.title || media.mediaId} loading="lazy" decoding="async" />
+                    : <img src={media.previewUrl} alt={media.title || media.mediaId} loading="lazy" decoding="async" />}
+                </div>
+                <div>
+                  <div className="discovery-card-title">{media.title || media.mediaId}</div>
+                  <div className="discovery-card-subtitle">{media.assetType === 'video' ? 'Video' : 'Image'}</div>
+                </div>
+              </article>
+            )) : (
+              <p className="small m-0">No related media yet.</p>
+            )}
+          </div>
+        </section>
+      </aside>
+    </div>
+  );
+}
+
 function StudioDashboardPage({
   user,
   managedArtists,
@@ -6424,95 +7481,298 @@ function StudioDashboardPage({
   if (!user) return <Navigate to="/auth/signin" replace />;
   const normalizedGroups = (user.groups || []).map((group) => group.toLowerCase());
   const isAdmin = normalizedGroups.includes('admin') || normalizedGroups.includes('admins');
-  const hasArtistProfiles = managedArtists.length > 0;
+  const hasCreatorProfiles = managedArtists.length > 0;
   const studioCount = sanitizeNotificationCount(roleNotificationCounts.studio);
   const adminCount = sanitizeNotificationCount(roleNotificationCounts.admin);
-  const externalAdminUrl = /^https?:\/\//i.test(ADMIN_AREA_URL) ? ADMIN_AREA_URL : '';
+  const [studioMetrics, setStudioMetrics] = useState<{
+    totalUsers: number;
+    creators: number;
+    posts: number;
+    files: number;
+    mediaItems: number;
+    pendingEntries: number;
+    adminReviewItems: number;
+    contributors: number;
+  } | null>(null);
+  const [crudCreators, setCrudCreators] = useState<Array<{ artistId: string; creatorId?: string; name: string; slug: string }>>([]);
+  const [crudPosts, setCrudPosts] = useState<Array<{ postId: string; title: string; status: string; artistId: string }>>([]);
+  const [crudGalleries, setCrudGalleries] = useState<Array<{ galleryId: string; title: string; artistId: string }>>([]);
+  const [crudFiles, setCrudFiles] = useState<Array<{ fileId: string; creatorId: string; sourceKind: string; originalFilename?: string; storageKey: string }>>([]);
+  const [crudError, setCrudError] = useState<string>('');
+  const [newCreatorName, setNewCreatorName] = useState('');
+  const [newCreatorSlug, setNewCreatorSlug] = useState('');
+  const [newFileCreatorId, setNewFileCreatorId] = useState('');
+  const [newFileName, setNewFileName] = useState('');
+  const [newFileMimeType, setNewFileMimeType] = useState('image/jpeg');
+  const [selectedGalleryId, setSelectedGalleryId] = useState('');
+  const totalUsers = studioMetrics?.totalUsers || 0;
+  const beekerCount = studioMetrics?.contributors || 0;
+  const creatorCount = studioMetrics?.creators || Math.max(0, managedArtists.length);
+  const reviewCount = studioMetrics?.adminReviewItems || adminCount;
+  const quickLinks = [
+    { label: 'Files & Media', section: 'files-media' },
+    { label: 'Posts', section: 'posts' },
+    { label: 'Creator Groupings', section: 'creator-groupings' },
+    { label: 'Collections', section: 'collections' },
+    { label: 'Creators', section: 'creators' },
+    { label: 'Challenges', section: 'challenges' },
+    { label: 'Entries', section: 'entries' },
+    { label: 'Users', section: 'users' },
+    { label: 'Moderation', section: 'moderation' }
+  ];
+  const queueItems = [
+    { title: 'Review approved challenge entries', detail: '12 items · promotes User to Beeker', tone: 'success' },
+    { title: 'Confirm bulk media deletion', detail: '2-step admin action · 41 assets', tone: 'warning' },
+    { title: 'Resolve flagged user collection', detail: 'Mature-tag mismatch', tone: 'danger' },
+    { title: 'Publish scheduled creator posts', detail: '6 items due today', tone: 'info' }
+  ] as const;
+  const loadCrudData = async () => {
+    try {
+      setCrudError('');
+      const [metrics, creators, posts, galleries, files] = await Promise.all([
+        api.studioMetrics(),
+        api.adminListCreators(),
+        api.adminListPosts(),
+        api.adminListGalleries(),
+        api.adminListFiles()
+      ]);
+      setStudioMetrics(metrics as any);
+      setCrudCreators((creators as any[]) || []);
+      setCrudPosts((posts as any[]) || []);
+      setCrudGalleries((galleries as any[]) || []);
+      setCrudFiles((files as any[]) || []);
+      if (!newFileCreatorId && Array.isArray(creators) && creators[0]?.artistId) {
+        setNewFileCreatorId(creators[0].artistId);
+      }
+      if (!selectedGalleryId && Array.isArray(galleries) && galleries[0]?.galleryId) {
+        setSelectedGalleryId(galleries[0].galleryId);
+      }
+    } catch (error) {
+      setCrudError(error instanceof Error ? error.message : 'Failed to load Studio resources');
+    }
+  };
+
+  useEffect(() => {
+    void loadCrudData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const createCreator = async () => {
+    if (!newCreatorName.trim()) return;
+    try {
+      await api.adminCreateArtist({
+        name: newCreatorName.trim(),
+        slug: newCreatorSlug.trim() || newCreatorName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      });
+      setNewCreatorName('');
+      setNewCreatorSlug('');
+      await loadCrudData();
+    } catch (error) {
+      setCrudError(error instanceof Error ? error.message : 'Failed to create creator');
+    }
+  };
+
+  const createFile = async () => {
+    if (!newFileCreatorId.trim() || !newFileName.trim()) return;
+    try {
+      await api.adminCreateFile({
+        creatorId: newFileCreatorId,
+        originalFilename: newFileName.trim(),
+        mimeType: newFileMimeType,
+        storageKey: `uploads/${newFileName.trim().replace(/\s+/g, '-').toLowerCase()}`
+      });
+      setNewFileName('');
+      await loadCrudData();
+    } catch (error) {
+      setCrudError(error instanceof Error ? error.message : 'Failed to create file');
+    }
+  };
 
   return (
-    <div className="layout">
-      <section className="panel">
-        <h2>Artist Studio</h2>
-        <p className="small">
-          Use Studio to manage artist profiles, jump into public artist pages, and access admin tools when you have admin rights.
-        </p>
-        <div className="inline-form mt-3">
-          <Link to="/studio/workspace" className="auth-primary-btn no-underline">Workspace</Link>
-          <Link to="/settings" className="auth-secondary-btn no-underline">Settings</Link>
-          <Link to="/collections" className="auth-secondary-btn no-underline">Collections</Link>
-          <Link to="/trending" className="auth-secondary-btn no-underline">Discovery</Link>
-          {isAdmin && (
-            externalAdminUrl
-              ? <a href={externalAdminUrl} className="auth-primary-btn no-underline">Admin</a>
-              : <Link to="/admin" className="auth-primary-btn no-underline">Admin</Link>
-          )}
+    <div className="layout studio-dashboard-shell">
+      <aside className="studio-sidebar panel">
+        <div className="studio-brand-card">
+          <strong>Ubeeq</strong>
+          <span>STUDIO</span>
         </div>
-      </section>
+        <div className="studio-contributor-label">
+          <strong>Contributor label</strong>
+          <p>System name: Contributor.</p>
+          <p>Visual name: {roleDisplayLabel('contributor')}.</p>
+        </div>
+        <nav className="studio-sidebar-nav">
+          <Link className="studio-nav-item studio-nav-item-active no-underline" to="/studio">
+            <span>Dashboard</span><span aria-hidden="true">›</span>
+          </Link>
+          {quickLinks.map((link) => (
+            <Link
+              key={link.section}
+              className="studio-nav-item no-underline"
+              to={`/studio/workspace?section=${encodeURIComponent(link.section)}`}
+            >
+              <span>{link.label}</span><span aria-hidden="true">›</span>
+            </Link>
+          ))}
+        </nav>
+        <div className="studio-user-card">
+          <strong>{user.displayName || user.username}</strong>
+          <span>{isAdmin ? 'Admin' : 'Creator'} · {managedArtists.length} creator accounts</span>
+        </div>
+      </aside>
 
-      {hasArtistProfiles ? (
-        <section className="panel mt-4">
-          <h3>Your Artist Profiles</h3>
-          <div className="studio-artist-grid">
-            {managedArtists.map((artist) => (
-              <article key={artist.artistId} className="studio-artist-card">
-                <h4>{artist.name}</h4>
-                <p className="small">/{artist.slug}</p>
-                <p className="small">Role: {artist.memberRole || 'editor'}</p>
-                <div className="inline-form mt-2">
-                  <Link to={`/artists/${artist.slug}`} className="auth-secondary-btn no-underline">Open Profile</Link>
-                  <Link to="/settings" className="auth-secondary-btn no-underline">Edit in Settings</Link>
-                </div>
-              </article>
-            ))}
+      <section className="studio-main">
+        <section className="panel studio-hero">
+          <div>
+            <div className="studio-pills">
+              <span>Admin controls inside Studio</span>
+              <span>Creators can manage multiple creators</span>
+              <span>Approved entry = {roleDisplayLabel('contributor')}</span>
+            </div>
+            <h2>Studio dashboard</h2>
+            <p className="small">
+              A unified control surface for contribution, publishing, moderation, and challenge workflows.
+              The separate Admin area is removed; elevated actions appear contextually with stronger protections.
+            </p>
+          </div>
+          <div className="studio-hero-actions">
+            <Link to="/settings#notifications" className="auth-secondary-btn no-underline">Notifications</Link>
+            <Link to="/settings#preferences" className="auth-secondary-btn no-underline">Preferences</Link>
+            <Link to="/studio/workspace" className="auth-primary-btn no-underline">+ Quick create</Link>
           </div>
         </section>
-      ) : (
-        <section className="panel mt-4">
-          <h3>No Artist Profiles Yet</h3>
-          <p className="small">You don’t currently have access to an artist profile. An admin can add you to an artist account from the admin area.</p>
+
+        <section className="studio-stat-grid">
+          <article className="panel"><p>Total users</p><h3>{totalUsers.toLocaleString()}</h3><span>live from `/studio/metrics`</span></article>
+          <article className="panel"><p>Beekers</p><h3>{beekerCount.toLocaleString()}</h3><span>contributor role count</span></article>
+          <article className="panel"><p>Creators</p><h3>{creatorCount.toLocaleString()}</h3><span>live creator accounts</span></article>
+          <article className="panel"><p>Admin review items</p><h3>{reviewCount.toLocaleString()}</h3><span>entries + moderation queue</span></article>
         </section>
-      )}
 
-      <section className="panel mt-4">
-        <h3>Notifications</h3>
-        <p className="small">Studio: {studioCount > 0 ? formatNotificationBadge(studioCount) : '0'}</p>
-        {isAdmin && <p className="small">Admin: {adminCount > 0 ? formatNotificationBadge(adminCount) : '0'}</p>}
+        <section className="studio-detail-grid">
+          <article className="panel">
+            <div className="studio-title-row">
+              <h3>Studio overview</h3>
+              <button type="button" className="auth-secondary-btn">+ New item</button>
+            </div>
+            <p className="small">A single contribution surface for users, Beekers, Creators, and Admins. No separate admin area.</p>
+            <div className="studio-overview-cards">
+              <div className="studio-overview-card success">
+                <h4>Beeker onboarding</h4>
+                <p>Approved challenge entries automatically unlock the Beeker role and contributor tools.</p>
+                <span>12 awaiting review</span>
+              </div>
+              <div className="studio-overview-card info">
+                <h4>Multi-creator accounts</h4>
+                <p>Creators and Admins can manage multiple creator identities under one user account.</p>
+                <span>48 users manage 2+ creators</span>
+              </div>
+              <div className="studio-overview-card warning">
+                <h4>Admin protections</h4>
+                <p>Destructive actions require typed confirmation, a reason, and dependency checks.</p>
+                <span>7 pending destructive confirmations</span>
+              </div>
+            </div>
+          </article>
+          <article className="panel">
+            <h3>Action queue</h3>
+            <p className="small">Prioritized items across moderation, approvals, and publishing.</p>
+            <div className="studio-queue-list">
+              {queueItems.map((item) => (
+                <div key={item.title} className={`studio-queue-item ${item.tone}`}>
+                  <strong>{item.title}</strong>
+                  <span>{item.detail}</span>
+                  <Link className="no-underline" to="/studio/workspace?section=entries">Open</Link>
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+
+        <section className="studio-detail-grid">
+          <article className="panel">
+            <div className="studio-title-row">
+              <h3>Your creator accounts</h3>
+              <button type="button" className="auth-primary-btn">+ New creator</button>
+            </div>
+            {hasCreatorProfiles ? (
+              <div className="studio-creator-list">
+                {managedArtists.map((artist) => (
+                  <article key={artist.artistId} className="studio-creator-card">
+                    <h4>{artist.name}</h4>
+                    <p>/{artist.slug}</p>
+                    <span className="studio-creator-role">Creator</span>
+                    <Link to={`/creators/${artist.slug}`} className="auth-secondary-btn no-underline">Open profile</Link>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="small">No creator accounts yet. Admins can assign creator ownership from Users in Studio.</p>
+            )}
+          </article>
+          <article className="panel">
+            <h3>Role model</h3>
+            <p className="small">Clear progression and management rules.</p>
+            <ul className="studio-role-list">
+              <li><strong>User</strong> — create collections, enter challenges, manage profile settings.</li>
+              <li><strong>{roleDisplayLabel('contributor')}</strong> — contributor role for approved challenge workflows.</li>
+              <li><strong>Creator</strong> — publish content and manage creator groupings.</li>
+              <li><strong>Admin</strong> — moderation, challenge management, and destructive approvals.</li>
+            </ul>
+            <p className="small">Studio notifications: {studioCount > 0 ? formatNotificationBadge(studioCount) : '0'}.</p>
+          </article>
+        </section>
+
+        <section className="panel">
+          <div className="studio-title-row">
+            <h3>Resource CRUD workbench</h3>
+            <button type="button" className="auth-secondary-btn" onClick={() => void loadCrudData()}>Refresh data</button>
+          </div>
+          <p className="small">This mirrors the prototype resource model with live API-backed forms for Creators, Files, Posts, and Media Items.</p>
+          {crudError && <p className="error">{crudError}</p>}
+          <div className="studio-crud-grid">
+            <article className="studio-crud-card">
+              <h4>Creators</h4>
+              <input placeholder="Creator name" value={newCreatorName} onChange={(e) => setNewCreatorName(e.target.value)} />
+              <input placeholder="creator-slug" value={newCreatorSlug} onChange={(e) => setNewCreatorSlug(e.target.value)} />
+              <button type="button" className="auth-primary-btn" onClick={() => void createCreator()}>Create creator</button>
+              <ul>
+                {crudCreators.slice(0, 6).map((creator) => <li key={creator.artistId}>{creator.name} / {creator.slug}</li>)}
+              </ul>
+            </article>
+            <article className="studio-crud-card">
+              <h4>Files</h4>
+              <select value={newFileCreatorId} onChange={(e) => setNewFileCreatorId(e.target.value)}>
+                <option value="">Select creator</option>
+                {crudCreators.map((creator) => <option key={`file-creator-${creator.artistId}`} value={creator.artistId}>{creator.name}</option>)}
+              </select>
+              <input placeholder="original-filename.jpg" value={newFileName} onChange={(e) => setNewFileName(e.target.value)} />
+              <input placeholder="mime type" value={newFileMimeType} onChange={(e) => setNewFileMimeType(e.target.value)} />
+              <button type="button" className="auth-primary-btn" onClick={() => void createFile()}>Create file</button>
+              <ul>
+                {crudFiles.slice(0, 6).map((file) => <li key={file.fileId}>{file.originalFilename || file.fileId} ({file.sourceKind})</li>)}
+              </ul>
+            </article>
+            <article className="studio-crud-card">
+              <h4>Posts</h4>
+              <p className="small">{crudPosts.length} posts loaded via `/admin/posts`.</p>
+              <ul>
+                {crudPosts.slice(0, 6).map((post) => <li key={post.postId}>{post.title} ({post.status})</li>)}
+              </ul>
+            </article>
+            <article className="studio-crud-card">
+              <h4>Media items</h4>
+              <select value={selectedGalleryId} onChange={(e) => setSelectedGalleryId(e.target.value)}>
+                <option value="">Select gallery</option>
+                {crudGalleries.map((gallery) => <option key={`gallery-${gallery.galleryId}`} value={gallery.galleryId}>{gallery.title}</option>)}
+              </select>
+              <p className="small">
+                Media CRUD is powered by `/admin/images` endpoints and requires a gallery context.
+                Selected gallery: {selectedGalleryId || 'none'}.
+              </p>
+            </article>
+          </div>
+        </section>
       </section>
-    </div>
-  );
-}
-
-function AdminLandingPage({ user }: { user: CurrentUser }) {
-  if (!user) return <Navigate to="/auth/signin" replace />;
-  const normalizedGroups = (user.groups || []).map((group) => group.toLowerCase());
-  const isAdmin = normalizedGroups.includes('admin') || normalizedGroups.includes('admins');
-  if (!isAdmin) {
-    return (
-      <div className="layout">
-        <div className="panel">
-          <h2>Admin Area</h2>
-          <p className="small">You do not have admin access.</p>
-        </div>
-      </div>
-    );
-  }
-  const externalAdminUrl = /^https?:\/\//i.test(ADMIN_AREA_URL) ? ADMIN_AREA_URL : '';
-  return (
-    <div className="layout">
-      <div className="panel">
-        <h2>Admin Area</h2>
-        {externalAdminUrl ? (
-          <>
-            <p className="small">Open the dedicated admin workspace.</p>
-            <p><a className="auth-primary-btn no-underline" href={externalAdminUrl}>Open Admin</a></p>
-          </>
-        ) : (
-          <>
-            <p className="small">Use the integrated workspace for admin operations.</p>
-            <p><Link className="auth-primary-btn no-underline" to="/studio/workspace">Open Admin Workspace</Link></p>
-          </>
-        )}
-      </div>
     </div>
   );
 }
@@ -6542,7 +7802,14 @@ export default function App() {
       .then((profile) => {
         if (!cancelled) setMyProfile(profile as UserProfile);
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        if (cancelled) return;
+        if (isUnauthorizedError(error)) {
+          clearStoredAuthSession();
+          setUser(null);
+          setMyProfile(null);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -6567,7 +7834,7 @@ export default function App() {
           studio: sanitizeNotificationCount(storedCounts.studio ?? studioCountFromArtists),
           admin: sanitizeNotificationCount(storedCounts.admin)
         });
-      } catch {
+      } catch (error) {
         if (cancelled) return;
         const storedCounts = readRoleNotificationCounts();
         setManagedArtists([]);
@@ -6575,6 +7842,11 @@ export default function App() {
           studio: sanitizeNotificationCount(storedCounts.studio),
           admin: sanitizeNotificationCount(storedCounts.admin)
         });
+        if (isUnauthorizedError(error)) {
+          clearStoredAuthSession();
+          setUser(null);
+          setMyProfile(null);
+        }
       }
     };
     void loadHeaderNav();
@@ -6606,16 +7878,22 @@ export default function App() {
       />
       <Routes>
         <Route path="/" element={<HomePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/audio" element={<HomePage viewerProfile={myProfile} mediaRoute="audio" onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/video" element={<HomePage viewerProfile={myProfile} mediaRoute="video" onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/story" element={<HomePage viewerProfile={myProfile} mediaRoute="story" onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/image" element={<HomePage viewerProfile={myProfile} mediaRoute="image" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/trending" element={<TrendingPage viewerProfile={myProfile} />} />
-        <Route path="/artists/:slug" element={<ArtistProfilePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/creators/:slug" element={<CreatorProfilePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/gallery/:slug" element={<GalleryPage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/posts/:slug" element={<PostPage />} />
         <Route path="/collections" element={<CollectionsPage />} />
+        <Route path="/for-creators" element={<ForCreatorsPage />} />
         <Route path="/collections/:collectionId" element={<CollectionDetailPage />} />
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
         <Route path="/settings" element={<SettingsPage user={user} onProfileChanged={setMyProfile} />} />
         <Route path="/studio" element={<StudioDashboardPage user={user} managedArtists={managedArtists} roleNotificationCounts={roleNotificationCounts} />} />
-        <Route path="/studio/workspace" element={user ? <ArtistAreaWorkspace /> : <Navigate to="/auth/signin" replace />} />
-        <Route path="/admin" element={<AdminLandingPage user={user} />} />
+        <Route path="/studio/workspace" element={user ? <StudioWorkspace /> : <Navigate to="/auth/signin" replace />} />
+        <Route path="/admin" element={<Navigate to="/studio" replace />} />
         <Route path="/artist-area" element={<LegacyArtistAreaRedirect />} />
         <Route path="/artist-area/admin" element={<LegacyArtistAreaWorkspaceRedirect />} />
       </Routes>

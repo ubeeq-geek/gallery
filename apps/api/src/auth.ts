@@ -9,10 +9,12 @@ export interface AuthUser {
   groups: string[];
 }
 
-export type AppRole = 'user' | 'artist' | 'admin';
+export type AppRole = 'user' | 'contributor' | 'creator' | 'admin';
 
 const ADMIN_GROUP = 'Admins';
-const ARTIST_GROUP = 'Artists';
+const CONTRIBUTOR_GROUP = 'Contributors';
+const CREATOR_GROUP = 'Creators';
+const CREATOR = 'Creators';
 
 declare global {
   namespace Express {
@@ -43,8 +45,17 @@ export const createOptionalAuthMiddleware = (config: AppConfig) => {
         if (devRole === 'admin' && !devGroups.includes(ADMIN_GROUP)) {
           devGroups.push(ADMIN_GROUP);
         }
-        if (devRole === 'artist' && !devGroups.includes(ARTIST_GROUP)) {
-          devGroups.push(ARTIST_GROUP);
+        if (devRole === 'creator' && !devGroups.includes(CREATOR_GROUP)) {
+          devGroups.push(CREATOR_GROUP);
+        }
+        if (devRole === 'creator' && !devGroups.includes(CREATOR_GROUP)) {
+          devGroups.push(CREATOR_GROUP);
+        }
+        if (devRole === 'creator' && !devGroups.includes(CREATOR)) {
+          devGroups.push(CREATOR);
+        }
+        if (devRole === 'contributor' && !devGroups.includes(CONTRIBUTOR_GROUP)) {
+          devGroups.push(CONTRIBUTOR_GROUP);
         }
         req.authUser = {
           userId: devUserId,
@@ -88,15 +99,19 @@ const hasRole = (user: AuthUser, role: AppRole): boolean => {
   if (role === 'admin') {
     return user.groups.includes(ADMIN_GROUP);
   }
-  if (role === 'artist') {
-    return user.groups.includes(ARTIST_GROUP) || user.groups.includes(ADMIN_GROUP);
+  if (role === 'creator') {
+    return user.groups.includes(CREATOR_GROUP) || user.groups.includes(CREATOR) || user.groups.includes(ADMIN_GROUP);
+  }
+  if (role === 'contributor') {
+    return hasRole(user, 'creator') || user.groups.includes(CONTRIBUTOR_GROUP);
   }
   return true;
 };
 
 export const resolveRole = (user: AuthUser): AppRole => {
   if (hasRole(user, 'admin')) return 'admin';
-  if (hasRole(user, 'artist')) return 'artist';
+  if (hasRole(user, 'creator')) return 'creator';
+  if (hasRole(user, 'contributor')) return 'contributor';
   return 'user';
 };
 
@@ -111,4 +126,5 @@ const requireRole = (role: AppRole, message: string) => (req: Request, res: Resp
 };
 
 export const requireAdmin = requireRole('admin', 'Admin role required');
-export const requireArtistOrAdmin = requireRole('artist', 'Artist or admin role required');
+export const requireCreatorOrAdmin = requireRole('creator', 'Creator or admin role required');
+export const requireArtistOrAdmin = requireCreatorOrAdmin;

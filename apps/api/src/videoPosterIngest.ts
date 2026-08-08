@@ -12,7 +12,7 @@ import path from 'node:path';
 const execFileAsync = promisify(execFile);
 
 const region = process.env.AWS_REGION || 'ca-central-1';
-const tableName = process.env.GALLERY_CORE_TABLE || '';
+const tableName = process.env.CONTENT_CORE_TABLE || '';
 const defaultBucket = process.env.MEDIA_BUCKET || '';
 const posterPrefix = process.env.VIDEO_POSTER_OUTPUT_PREFIX || 'posters';
 const ffmpegPath = process.env.VIDEO_POSTER_FFMPEG_PATH || '/opt/bin/ffmpeg';
@@ -31,7 +31,7 @@ const mediaIdFromKey = (key: string): string | undefined => {
   const raw = parts[1];
   return raw.replace(/\.[a-z0-9]+$/i, '');
 };
-const artistIdFromKey = (key: string): string | undefined => {
+const creatorIdFromKey = (key: string): string | undefined => {
   const parts = key.split('/').filter(Boolean);
   return parts[0];
 };
@@ -89,16 +89,16 @@ const getMediaById = async (mediaId: string): Promise<MediaRecord | null> => {
   return response.Item as MediaRecord;
 };
 
-const queryArtistMediaBySourceKey = async (artistId: string, sourceKey: string): Promise<MediaRecord | null> => {
+const queryArtistMediaBySourceKey = async (creator: string, sourceKey: string): Promise<MediaRecord | null> => {
   let lastEvaluatedKey: Record<string, unknown> | undefined;
   do {
     const response = await ddb.send(
       new QueryCommand({
         TableName: tableName,
         IndexName: 'GSI2',
-        KeyConditionExpression: 'GSI2PK = :artistPk AND begins_with(GSI2SK, :mediaPrefix)',
+        KeyConditionExpression: 'GSI2PK = :creator AND begins_with(GSI2SK, :mediaPrefix)',
         ExpressionAttributeValues: {
-          ':artistPk': `ARTIST#${artistId}`,
+          ':creator': `CREATOR#${creator}`,
           ':mediaPrefix': 'MEDIA#'
         },
         ExclusiveStartKey: lastEvaluatedKey
@@ -127,9 +127,9 @@ const resolveMediaForKey = async (sourceKey: string): Promise<MediaRecord | null
     }
   }
 
-  const artistId = artistIdFromKey(sourceKey);
-  if (!artistId) return null;
-  return queryArtistMediaBySourceKey(artistId, sourceKey);
+  const creatorId = creatorIdFromKey(sourceKey);
+  if (!creatorId) return null;
+  return queryArtistMediaBySourceKey(creatorId, sourceKey);
 };
 
 const updateMediaPosterKeys = async (media: MediaRecord, posterKey: string): Promise<void> => {
@@ -164,7 +164,7 @@ const updateMediaPosterKeys = async (media: MediaRecord, posterKey: string): Pro
 
 const processJob = async (job: S3KeyJob): Promise<void> => {
   if (!tableName) {
-    throw new Error('GALLERY_CORE_TABLE is required');
+    throw new Error('CONTENT_CORE_TABLE is required');
   }
 
   const sourceKey = normalizeKey(job.key);
@@ -182,7 +182,7 @@ const processJob = async (job: S3KeyJob): Promise<void> => {
     throw new Error('MEDIA_BUCKET is required');
   }
 
-  const posterKey = `${media.artistId}/${media.mediaId}/${posterPrefix}/preview.jpg`;
+  const posterKey = `${media.creatorId}/${media.mediaId}/${posterPrefix}/preview.jpg`;
   const videoBuffer = await readS3Buffer(sourceBucket, sourceKey);
   const posterBuffer = await generatePoster(videoBuffer);
 

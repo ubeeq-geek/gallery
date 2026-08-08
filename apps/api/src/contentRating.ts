@@ -36,14 +36,14 @@ export const normalizeContentRating = (value: unknown): ContentRating => {
 export const getEffectiveContentRating = (
   value: Pick<Media, 'contentRating' | 'moderatorContentRating'>
 ): ContentRating => {
-  const artistRating = normalizeContentRating(value.contentRating);
+  const creator = normalizeContentRating(value.contentRating);
   const moderatorRating = value.moderatorContentRating
     ? normalizeContentRating(value.moderatorContentRating)
     : undefined;
-  if (!moderatorRating) return artistRating;
-  return CONTENT_RATING_LEVEL[moderatorRating] > CONTENT_RATING_LEVEL[artistRating]
+  if (!moderatorRating) return creator;
+  return CONTENT_RATING_LEVEL[moderatorRating] > CONTENT_RATING_LEVEL[creator]
     ? moderatorRating
-    : artistRating;
+    : creator;
 };
 
 export const shouldBlurContent = (rating: ContentRating, viewer: ViewerContentPolicy): boolean => {

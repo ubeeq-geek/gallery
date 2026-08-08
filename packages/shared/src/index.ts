@@ -1,5 +1,6 @@
 export type Visibility = 'free' | 'premium';
 export type CommentTargetType = 'gallery' | 'image';
+export type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
 
 export interface Artist {
   artistId: string;
@@ -76,4 +77,19 @@ export const assertNonEmpty = (value: string, fieldName: string): string => {
     throw new Error(`${fieldName} is required`);
   }
   return value.trim();
+};
+
+export type RoleLabelConfig = Partial<Record<PlatformRole, string>>;
+
+const defaultRoleLabels: Record<PlatformRole, string> = {
+  user: 'User',
+  contributor: 'Contributor',
+  creator: 'Creator',
+  admin: 'Admin'
+};
+
+export const roleDisplayName = (role: PlatformRole, labels?: RoleLabelConfig): string => {
+  const configured = labels?.[role]?.trim();
+  if (configured) return configured;
+  return defaultRoleLabels[role];
 };

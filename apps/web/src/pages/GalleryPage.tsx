@@ -1,3 +1,3 @@
-export default function GalleryPage() {
+export default function GroupingPage() {
   return null;
 }

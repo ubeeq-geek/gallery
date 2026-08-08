@@ -1,24 +1,24 @@
-# Gallery Platform (MVP)
+# Studio Platform (MVP)
 
-AWS-first gallery platform with:
-- Multi-artist and multi-gallery support.
-- Free preview media and premium media behind per-gallery passwords.
+AWS-first creator platform with:
+- Multi-creator and multi-grouping support.
+- Free preview media and premium media behind per-grouping passwords.
 - Image and video support in both preview and premium flows.
 - Public read comments, authenticated write comments.
 - Favorites with private user saves plus public like counts.
-- Integrated artist/admin workspace for artist/gallery/media management and moderation.
+- Integrated Studio workspace for creator/grouping/media management and moderation.
 
 ## Tech Stack
 
 - `apps/web`: Customer React app (Vite).
 - `apps/api`: Express API (Lambda-compatible via `serverless-http`).
 - `infra`: AWS CDK stack (API Gateway, Lambda, DynamoDB, S3, Cognito).
-- Includes migration-safe `GalleryCore` single-table support (`GALLERY_CORE_TABLE`, `USE_GALLERY_CORE_TABLE`).
+- Includes migration-safe `GroupingCore` single-table support (`GROUPING_CORE_TABLE`, `USE_GROUPING_CORE_TABLE`).
 
-## Artist Area workspace
+## Studio Workspace
 
-- The web app now includes an authenticated **Artist Area** route at `/artist-area` as the long-term home for upload and management workflows.
-- The in-app Artist Area studio is available at `/artist-area/admin` for artist/gallery/media management, moderation, and operations.
+- The web app now includes an authenticated Studio surface as the long-term home for upload and management workflows.
+- Studio handles creator, grouping, media, moderation, and operations workflows in one place.
 
 ## Requirements
 
@@ -48,18 +48,18 @@ npm --workspace @gallery/web run build
 
 ## Key API Endpoints
 
-- `GET /artists`
-- `GET /artists/:slug/galleries`
-- `GET /galleries/:slug`
-- `POST /galleries/:slug/unlock`
-- `GET /galleries/:slug/premium-images` (`x-unlock-token` required)
-- `GET/POST /galleries/:slug/comments`
+- `GET /creators`
+- `GET /creators/:slug/groupings`
+- `GET /groupings/:slug`
+- `POST /groupings/:slug/unlock`
+- `GET /groupings/:slug/premium-images` (`x-unlock-token` required)
+- `GET/POST /groupings/:slug/comments`
 - `GET/POST /images/:imageId/comments`
 - `POST/DELETE /favorites`
 - `GET /me/favorites`
 - Admin:
-  - `POST /admin/artists`
-  - `POST /admin/galleries`
+  - `POST /admin/creators`
+  - `POST /admin/groupings`
   - `POST /admin/images` (use `assetType: image|video`)
   - `PATCH /admin/comments/:commentId`
   - `DELETE /admin/comments/:commentId`
@@ -75,12 +75,20 @@ npm --workspace @gallery/api run build
 ```bash
 npm --workspace @gallery/infra run deploy
 ```
-3. Configure web env var `VITE_API_BASE_URL` to deployed API URL.
-4. Configure Cognito social identity providers in AWS console/CDK extensions.
+3. If your API points at a pre-existing `CONTENT_CORE_TABLE` (legacy/shared table), ensure `GSI1` and `GSI2` exist:
+```bash
+# Preview only
+npm --workspace @gallery/api run ensure:core-indexes -- --dry-run --content-core-table <ContentCoreTableName> --region ca-central-1
 
-## GalleryCore Migration
+# Create any missing GSI1/GSI2 definitions
+npm --workspace @gallery/api run ensure:core-indexes -- --content-core-table <ContentCoreTableName> --region ca-central-1
+```
+4. Configure web env var `VITE_API_BASE_URL` to deployed API URL.
+5. Configure Cognito social identity providers in AWS console/CDK extensions.
 
-After deploying infra, backfill `GalleryCore` from legacy tables:
+## GroupingCore Migration
+
+After deploying infra, backfill `GroupingCore` from legacy tables:
 
 ```bash
 # Preview counts only
@@ -93,10 +101,10 @@ npm --workspace @gallery/api run migrate:core
 Optional flags:
 - `--region <aws-region>` (or `--region=<aws-region>`)
 - `--profile <aws-profile>` (or `--profile=<aws-profile>`)
-- `--artists-table <name>`
-- `--galleries-table <name>`
+- `--creators-table <name>`
+- `--groupings-table <name>`
 - `--images-table <name>`
-- `--gallery-core-table <name>`
+- `--grouping-core-table <name>`
 
 Examples:
 
@@ -108,8 +116,8 @@ npm --workspace @gallery/api run migrate:core -- --region ca-central-1 --profile
 If your CDK tables are auto-named, pass explicit table names with the flags above.
 
 Then set:
-- `USE_GALLERY_CORE_TABLE=true`
-- `GALLERY_CORE_TABLE=<deployed GalleryCore table name>`
+- `USE_GROUPING_CORE_TABLE=true`
+- `GROUPING_CORE_TABLE=<deployed GroupingCore table name>`
 
 Verify parity before disabling fallback:
 
@@ -125,19 +133,19 @@ npm --workspace @gallery/api run verify:core -- --region ca-central-1 --profile 
 
 ## Seed Fresh Stack
 
-For a brand-new deployment (no legacy tables to migrate), seed `GalleryCore` directly:
+For a brand-new deployment (no legacy tables to migrate), seed `GroupingCore` directly:
 
 ```bash
 # Preview only
-npm --workspace @gallery/api run seed:core -- --dry-run --region ca-central-1 --profile cdk-ca --gallery-core-table <GalleryCoreTableName>
+npm --workspace @gallery/api run seed:core -- --dry-run --region ca-central-1 --profile cdk-ca --grouping-core-table <GroupingCoreTableName>
 
-# Write sample artist/galleries/image+video metadata (auto-discovers tables + media bucket)
+# Write sample creator/grouping/image+video metadata (auto-discovers tables + media bucket)
 npm --workspace @gallery/api run seed:core -- --region ca-central-1 --profile cdk-ca --premium-password <your-password>
 
-# Reset all gallery metadata + artists/branding objects only
+# Reset all grouping metadata + creator/branding objects only
 npm --workspace @gallery/api run reset:core -- --region ca-central-1 --profile cdk-ca
 
-# Reset all gallery metadata + artists/branding objects first, then seed (single command option)
+# Reset all grouping metadata + creator/branding objects first, then seed (single command option)
 npm --workspace @gallery/api run seed:core -- --reset --region ca-central-1 --profile cdk-ca --premium-password <your-password>
 ```
 
@@ -147,11 +155,11 @@ When `--scenario-file` is omitted, `seed:core` automatically uses `seed-scenario
 - `seed-scenarios/default/seed.json`
 - `seed-scenarios/default/media/` (child folder symlink to repo `media/`)
 
-Seeded S3 objects use flat UUID keys: `artist_uuid/object_uuid` (no gallery/title path encoding).
+Seeded S3 objects use flat UUID keys: `creator_uuid/object_uuid` (no grouping/title path encoding).
 
 ### Scenario File Seeding (Stack-Specific)
 
-`seed:core` supports loading artists/galleries/site settings from a JSON file.  
+`seed:core` supports loading creators/groupings/site settings from a JSON file.  
 Use `--scenario-file` and keep the media folder as a child folder under the same scenario folder.
 
 ```text
@@ -180,9 +188,9 @@ npm --workspace @gallery/api run seed:core -- \
 ```
 
 The scenario file can set:
-- `siteSettings.stackName` (used to read `GalleryCoreTableName`, `SiteSettingsTableName`, `MediaBucketName` from CloudFormation outputs)
+- `siteSettings.stackName` (used to read `GroupingCoreTableName`, `SiteSettingsTableName`, `MediaBucketName` from CloudFormation outputs)
 - `siteSettings.siteName`, `siteSettings.theme`, `siteSettings.logoKey`, `siteSettings.logoFile`
-- `artists[]` with nested `galleries[]` definitions (`free|preview|premium`) and optional per-premium-gallery password
+- `creators[]` with nested `groupings[]` definitions (`free|preview|premium`) and optional per-premium-grouping password
 
 Reference example: `docs/seed-scenarios/example/seed.json`
 
@@ -199,7 +207,7 @@ Optional flags:
 --media-dir /absolute/path/to/media
 --media-bucket your-media-bucket-name
 --scenario-file /absolute/path/to/scenario/seed.json
---stack-name GalleryStackName
+--stack-name StudioStackName
 --skip-media-upload
 --skip-renditions
 --reset
@@ -208,5 +216,5 @@ Optional flags:
 ## Store Integration (MVP)
 
 - Use external store as checkout source.
-- Fulfill access manually by sharing per-gallery premium password.
+- Fulfill access manually by sharing per-grouping premium password.
 - API/DB model is ready for future webhook-based entitlement automation.

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { getCurrentUser } from '../cognitoAuth';
-import type { CollectionSummary, ManagedArtist, ManagedFavorite } from '../domainTypes';
+import type { CollectionDetail, CollectionSummary, ManagedCreator, ManagedFavorite, TrendingImage } from '../domainTypes';
 import AutoLoadSentinel from '../components/AutoLoadSentinel';
 
 export default function CollectionsPage() {
@@ -65,17 +65,17 @@ export default function CollectionsPage() {
 export function CollectionDetailPage() {
   const { collectionId = '' } = useParams();
   const currentUser = getCurrentUser();
-  const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
+  const [managedArtists, setManagedArtists] = useState<ManagedCreator[]>([]);
   const [favoriteIdentity, setFavoriteIdentity] = useState<string>('user');
   const [isFavorited, setIsFavorited] = useState(false);
-  const [collection, setCollection] = useState<(CollectionSummary & { imageIds?: string[] }) | null>(null);
+  const [collection, setCollection] = useState<CollectionDetail | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
     const load = async () => {
       try {
         setError('');
-        const result = await api.getCollection(collectionId) as CollectionSummary & { imageIds?: string[] };
+        const result = await api.getCollection(collectionId) as CollectionDetail;
         setCollection(result);
       } catch (e) {
         setError((e as Error).message);
@@ -92,8 +92,8 @@ export function CollectionDetailPage() {
     }
     const loadArtists = async () => {
       try {
-        const artists = await api.getMyArtists() as ManagedArtist[];
-        setManagedArtists(artists);
+        const creators = await api.getMyCreators() as ManagedCreator[];
+        setManagedArtists(creators);
       } catch {
         setManagedArtists([]);
       }
@@ -101,8 +101,8 @@ export function CollectionDetailPage() {
     void loadArtists();
   }, [currentUser?.username]);
 
-  const favoriteAsProfile = favoriteIdentity.startsWith('artist:')
-    ? { ownerProfileType: 'artist' as const, ownerProfileId: favoriteIdentity.slice('artist:'.length) }
+  const favoriteAsProfile = favoriteIdentity.startsWith('creator:')
+    ? { ownerProfileType: 'creator' as const, ownerProfileId: favoriteIdentity.slice('creator:'.length) }
     : { ownerProfileType: 'user' as const };
 
   useEffect(() => {
@@ -137,6 +137,48 @@ export function CollectionDetailPage() {
   };
 
   if (!collection) return <div className="layout">Loading...</div>;
+  const collectionItems = collection.items || [];
+  const renderCollectionItem = (item: TrendingImage, index: number) => {
+    const imageSource = item.assetType === 'video' ? (item.previewPosterUrl || item.previewUrl) : item.previewUrl;
+    return (
+      <article key={item.imageId} className="discovery-feature-card collection-detail-card">
+        <div className="discovery-feature-media no-crop collection-detail-media">
+          {item.assetType === 'video' && !item.previewPosterUrl ? (
+            <video
+              src={item.previewUrl}
+              muted
+              playsInline
+              preload="metadata"
+              style={{ filter: item.blurred ? 'blur(28px)' : undefined }}
+            />
+          ) : item.assetType === 'audio' ? (
+            <div className="discovery-audio-preview">
+              <span className="collection-detail-audio-label">Audio</span>
+            </div>
+          ) : (
+            <img
+              src={imageSource}
+              alt={item.title || item.imageId}
+              loading={index < 3 ? 'eager' : 'lazy'}
+              decoding="async"
+              style={{ filter: item.blurred ? 'blur(28px)' : undefined }}
+            />
+          )}
+          {item.blurred && <span className="discovery-chip">Mature Content</span>}
+        </div>
+        <div className="discovery-feature-footer">
+          <div className="discovery-feature-text">
+            <h3 className="discovery-feature-title">{item.title || item.imageId}</h3>
+            <p className="discovery-feature-subtitle">{item.creatorName}</p>
+          </div>
+          <div className="discovery-feature-stats">
+            <span>{item.assetType || 'image'}</span>
+            <span>{item.favoriteCount || 0} favorites</span>
+          </div>
+        </div>
+      </article>
+    );
+  };
 
   return (
     <div className="layout">
@@ -153,9 +195,9 @@ export function CollectionDetailPage() {
             onChange={(e) => setFavoriteIdentity(e.target.value)}
           >
             <option value="user">User Profile</option>
-            {managedArtists.map((artist) => (
-              <option key={`favorite-${artist.artistId}`} value={`artist:${artist.artistId}`}>
-                Artist: {artist.name}
+            {managedArtists.map((creator) => (
+              <option key={`favorite-${creator.creatorId}`} value={`creator:${creator.creatorId}`}>
+                Creator: {creator.name}
               </option>
             ))}
           </select>
@@ -166,8 +208,20 @@ export function CollectionDetailPage() {
       >
         {isFavorited ? 'Unfavorite Collection' : 'Favorite Collection'}
       </button>
+      <section className="collection-detail-section">
+        <div className="discovery-section-header">
+          <h2>Items</h2>
+          <p className="small">{collectionItems.length} shown</p>
+        </div>
+        {collectionItems.length > 0 ? (
+          <div className="collection-detail-grid">
+            {collectionItems.map(renderCollectionItem)}
+          </div>
+        ) : (
+          <p className="small">No items in this collection yet.</p>
+        )}
+      </section>
       {error && <p className="error">{error}</p>}
     </div>
   );
 }
-

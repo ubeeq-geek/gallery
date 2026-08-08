@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { changePassword, signOut, type CurrentUser } from '../cognitoAuth';
-import type { AiFilterPreference, ContentRating, ManagedArtist, ManagedCollection, ManagedFavorite, UserProfile } from '../domainTypes';
+import type { AiFilterPreference, ContentRating, ManagedCreator, ManagedCollection, ManagedFavorite, UserProfile } from '../domainTypes';
 import { aiFilterOptions, contentRatingOptions, heavyTopicLabels } from '../discoveryUtils';
 import AutoLoadSentinel from '../components/AutoLoadSentinel';
 
 export default function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfileChanged?: (profile: UserProfile) => void }) {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
+  const [managedArtists, setManagedArtists] = useState<ManagedCreator[]>([]);
   const [selectedProfileKey, setSelectedProfileKey] = useState<string>('user');
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio] = useState('');
@@ -41,11 +41,11 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const selectedArtistId = selectedProfileKey.startsWith('artist:') ? selectedProfileKey.slice('artist:'.length) : '';
-  const selectedArtist = managedArtists.find((artist) => artist.artistId === selectedArtistId) || null;
-  const profileUrlPreview = `${window.location.origin.replace(/\/$/, '')}/${selectedArtist ? 'artists' : 'u'}/${(usernameInput || '').trim() || 'your-profile-url'}`;
+  const selectedArtistId = selectedProfileKey.startsWith('creator:') ? selectedProfileKey.slice('creator:'.length) : '';
+  const selectedArtist = managedArtists.find((creator) => creator.creatorId === selectedArtistId) || null;
+  const profileUrlPreview = `${window.location.origin.replace(/\/$/, '')}/${selectedArtist ? 'creators' : 'u'}/${(usernameInput || '').trim() || 'your-profile-url'}`;
   const selectedOwnerContext = selectedArtist
-    ? { ownerProfileType: 'artist' as const, ownerProfileId: selectedArtist.artistId }
+    ? { ownerProfileType: 'creator' as const, ownerProfileId: selectedArtist.creatorId }
     : { ownerProfileType: 'user' as const };
 
   const reloadCuration = async () => {
@@ -65,7 +65,7 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
     const load = async () => {
       try {
         const loaded = await api.getMyProfile() as UserProfile;
-        const myArtists = await api.getMyArtists() as ManagedArtist[];
+        const myArtists = await api.getMyCreators() as ManagedCreator[];
         setProfile(loaded);
         setManagedArtists(myArtists);
         onProfileChanged?.(loaded);
@@ -98,11 +98,11 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
       setError('');
       setMessage('');
       if (selectedArtist) {
-        const updatedArtist = await api.updateArtist(selectedArtist.artistId, {
+        const updatedArtist = await api.studioUpdateCreator(selectedArtist.creatorId, {
           name: displayName || selectedArtist.name
-        }) as ManagedArtist;
-        setManagedArtists((prev) => prev.map((item) => (item.artistId === updatedArtist.artistId ? { ...item, ...updatedArtist } : item)));
-        setMessage('Artist profile updated');
+        }) as ManagedCreator;
+        setManagedArtists((prev) => prev.map((item) => (item.creatorId === updatedArtist.creatorId ? { ...item, ...updatedArtist } : item)));
+        setMessage('Creator profile updated');
         return;
       }
       const updated = await api.updateMyProfile({
@@ -163,13 +163,13 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
       setMessage('');
       setUsernameError('');
       if (selectedArtist) {
-        const updatedArtist = await api.updateArtist(selectedArtist.artistId, {
+        const updatedArtist = await api.studioUpdateCreator(selectedArtist.creatorId, {
           slug: usernameInput
-        }) as ManagedArtist;
-        setManagedArtists((prev) => prev.map((item) => (item.artistId === updatedArtist.artistId ? { ...item, ...updatedArtist } : item)));
+        }) as ManagedCreator;
+        setManagedArtists((prev) => prev.map((item) => (item.creatorId === updatedArtist.creatorId ? { ...item, ...updatedArtist } : item)));
         setUsernameInput(updatedArtist.slug);
         setUsernameSuggestions([]);
-        setMessage('Artist profile URL updated');
+        setMessage('Creator profile URL updated');
         return;
       }
       const updated = await api.updateMyUsername(usernameInput) as UserProfile;
@@ -358,9 +358,9 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
               onChange={(e) => setSelectedProfileKey(e.target.value)}
             >
               <option value="user">User Profile</option>
-              {managedArtists.map((artist) => (
-                <option key={artist.artistId} value={`artist:${artist.artistId}`}>
-                  Artist: {artist.name} ({artist.memberRole || 'editor'})
+              {managedArtists.map((creator) => (
+                <option key={creator.creatorId} value={`creator:${creator.creatorId}`}>
+                  Creator: {creator.name} ({creator.memberRole || 'editor'})
                 </option>
               ))}
             </select>
@@ -376,9 +376,9 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
             />
-            <p className="small">{selectedArtist ? 'The name shown on this artist profile' : 'The name shown on your profile'}</p>
+            <p className="small">{selectedArtist ? 'The name shown on this creator profile' : 'The name shown on your profile'}</p>
           </div>
-          <button onClick={saveProfile}>{selectedArtist ? 'Save Artist Name' : 'Save Display Name'}</button>
+          <button onClick={saveProfile}>{selectedArtist ? 'Save Creator Name' : 'Save Display Name'}</button>
           {!selectedArtist && (
             <>
               <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
@@ -484,10 +484,10 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
               value={usernameInput}
               onChange={(e) => setUsernameInput(e.target.value)}
             />
-            <p className="small">{selectedArtist ? 'This artist profile will be available at:' : 'Your profile will be available at:'}</p>
+            <p className="small">{selectedArtist ? 'This creator profile will be available at:' : 'Your profile will be available at:'}</p>
             <p className="small settings-profile-url-preview">{profileUrlPreview}</p>
           </div>
-          <button onClick={changeUsername}>{selectedArtist ? 'Save Artist URL' : 'Save Profile URL'}</button>
+          <button onClick={changeUsername}>{selectedArtist ? 'Save Creator URL' : 'Save Profile URL'}</button>
           {!selectedArtist && profile?.lastUsernameChangeAt && (
             <p className="small">Last changed: {new Date(profile.lastUsernameChangeAt).toLocaleDateString()}</p>
           )}

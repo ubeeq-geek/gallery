@@ -3,6 +3,66 @@ import { Link, useLocation } from 'react-router-dom';
 import type { CurrentUser } from '../cognitoAuth';
 import { DISCOVERY_FILTER_EVENT_NAME, type DiscoveryDockSummary, type DiscoveryFilterSection, type SiteSettings, type UserProfile } from '../domainTypes';
 
+type DiscoveryMediaKind = 'image' | 'video' | 'post' | 'audio';
+const DEFAULT_PROFILE_ICON_SRC = '/default-profile-icon.svg';
+
+const DiscoveryMediaIcon = ({ kind, className }: { kind: DiscoveryMediaKind; className?: string }) => {
+  if (kind === 'audio') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+        <path d="M8 14.2V5.4L15 4.2V13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="5.8" cy="14.2" r="2.1" stroke="currentColor" strokeWidth="1.6" />
+        <circle cx="12.8" cy="13" r="2.1" stroke="currentColor" strokeWidth="1.6" />
+      </svg>
+    );
+  }
+  if (kind === 'video') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+        <rect x="2.5" y="4.5" width="10.5" height="11" rx="2" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M9 8.2L12.4 10L9 11.8V8.2Z" fill="currentColor" />
+        <path d="M13 8L17 5.8V14.2L13 12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === 'post') {
+    return (
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+        <rect x="3" y="2.8" width="14" height="14.4" rx="2" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M6.2 7.1H13.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M6.2 10H13.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M6.2 12.9H10.8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className={className}>
+      <rect x="2.8" y="3.3" width="14.4" height="13.4" rx="2" stroke="currentColor" strokeWidth="1.6" />
+      <circle cx="7.2" cy="8.1" r="1.3" fill="currentColor" />
+      <path d="M4.7 14L8.2 10.5C8.6 10.1 9.2 10.1 9.6 10.5L11 11.9C11.4 12.3 12 12.3 12.4 11.9L15.3 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+};
+
+const DiscoveryMediaIndicator = ({
+  showImages,
+  showVideos,
+  showPosts,
+  showAudio
+}: {
+  showImages: boolean;
+  showVideos: boolean;
+  showPosts: boolean;
+  showAudio: boolean;
+}) => (
+  <span className="discovery-media-indicator" aria-hidden="true">
+    {showImages && <DiscoveryMediaIcon kind="image" className="discovery-media-icon" />}
+    {showVideos && <DiscoveryMediaIcon kind="video" className="discovery-media-icon" />}
+    {showPosts && <DiscoveryMediaIcon kind="post" className="discovery-media-icon" />}
+    {showAudio && <DiscoveryMediaIcon kind="audio" className="discovery-media-icon" />}
+  </span>
+);
+
 export default function HeaderAuth({
   user,
   onSignOut,
@@ -35,13 +95,6 @@ export default function HeaderAuth({
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
-  const initials = initialsSource
-    .split('@')[0]
-    .split(/[.\s_-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() || '')
-    .join('') || 'U';
   const showMobileDiscoveryButton = discoveryDock?.viewport === 'mobile';
   const openDiscoveryFilters = (section: DiscoveryFilterSection = 'period') => {
     if (typeof window === 'undefined') return;
@@ -97,11 +150,20 @@ export default function HeaderAuth({
           {discoveryDock?.active && discoveryDock.viewport !== 'mobile' && (
             <div className="topbar-discovery-summary" aria-label="Discovery filter summary">
               <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive topbar-discovery-open-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                <span>Filters</span>
+                <DiscoveryMediaIndicator
+                  showImages={discoveryDock.showImages}
+                  showVideos={discoveryDock.showVideos}
+                  showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
+                />
               </button>
               <div className="topbar-discovery-chip-list">
                 <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('period')}>
                   {discoveryDock.period === 'daily' ? 'Daily' : 'Hourly'}
+                </button>
+                <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('media')}>
+                  {discoveryDock.mediaLabel}
                 </button>
                 <button type="button" className="topbar-discovery-chip topbar-discovery-chip-interactive" onClick={() => openDiscoveryFilters('density')}>
                   Density: {discoveryDock.density[0].toUpperCase() + discoveryDock.density.slice(1)}
@@ -119,7 +181,9 @@ export default function HeaderAuth({
             {user ? (
               <div className="auth-line">
                 <details className="user-menu">
-                  <summary className="user-menu-trigger" aria-label="Open account menu">{initials}</summary>
+                  <summary className="user-menu-trigger" aria-label="Open account menu">
+                    <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
+                  </summary>
                   <div className="user-menu-items">
                     <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
                     <Link to="/settings" onClick={closeUserMenus}>Settings</Link>
@@ -155,7 +219,15 @@ export default function HeaderAuth({
           <div className={`mobile-user-dock-inner${showMobileDiscoveryButton ? ' has-discovery' : ''}`}>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                <span>Filters</span>
+                {discoveryDock && (
+                  <DiscoveryMediaIndicator
+                    showImages={discoveryDock.showImages}
+                    showVideos={discoveryDock.showVideos}
+                    showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
+                  />
+                )}
               </button>
             )}
             <details className="user-menu">
@@ -165,7 +237,9 @@ export default function HeaderAuth({
               <div className="user-menu-items">
                 <div className="user-menu-sheet-handle" />
                 <div className="user-menu-profile">
-                  <div className="user-menu-profile-avatar">{initials}</div>
+                  <div className="user-menu-profile-avatar">
+                    <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
+                  </div>
                   <div>
                     <div className="user-menu-profile-name">{displayName}</div>
                     <div className="user-menu-profile-email">{menuSecondaryLabel || displayName}</div>
@@ -200,7 +274,15 @@ export default function HeaderAuth({
             </Link>
             {showMobileDiscoveryButton && (
               <button type="button" className="mobile-discovery-dock-btn" onClick={() => openDiscoveryFilters('period')}>
-                Filters
+                <span>Filters</span>
+                {discoveryDock && (
+                  <DiscoveryMediaIndicator
+                    showImages={discoveryDock.showImages}
+                    showVideos={discoveryDock.showVideos}
+                    showPosts={discoveryDock.showPosts}
+                  showAudio={discoveryDock.showAudio}
+                  />
+                )}
               </button>
             )}
           </div>
