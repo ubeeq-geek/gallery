@@ -63,7 +63,7 @@ export const api = {
     const response = await fetch(`${API_BASE}/auth/username/check?username=${encodeURIComponent(username)}`);
     return handleJson(response);
   },
-  async registerAccount(email: string, password: string, username: string) {
+  async registerAccount(email: string, password: string, username?: string) {
     const response = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -878,6 +878,139 @@ export const api = {
     const response = await fetch(`${API_BASE}/studio/operations/trending/rebuild`, {
       method: 'POST',
       headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async studioGetDeviantArtConfiguration(creatorId?: string) {
+    const query = creatorId ? `?creatorId=${encodeURIComponent(creatorId)}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/configuration${query}`);
+    return handleJson(response) as Promise<{
+      platform: 'deviantart';
+      configured: boolean;
+      callbackUrl?: string;
+      requiredConfiguration: string[];
+      credential: null | { externalPlatformCredentialId: string; clientId: string; redirectUri: string; updatedAt: string };
+    }>;
+  },
+  async studioSaveDeviantArtCredentials(payload: { creatorId?: string; clientId: string; clientSecret?: string }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/credentials`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response) as Promise<{ externalPlatformCredentialId: string; clientId: string; redirectUri: string; updatedAt: string }>;
+  },
+  async studioStartDeviantArtConnection(creatorId?: string, returnPath = '/studio/workspace?section=integrations') {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ ...(creatorId ? { creatorId } : {}), returnPath })
+    });
+    return handleJson(response) as Promise<{ authorizationUrl: string }>;
+  },
+  async studioListDeviantArtAccounts(creatorId?: string) {
+    const query = creatorId ? `?creatorId=${encodeURIComponent(creatorId)}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts${query}`);
+    return handleJson(response);
+  },
+  async studioAssignDeviantArtAccountCreators(externalAccountId: string, payload: { creatorIdentityIds: string[]; primaryCreatorIdentityId?: string }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/creators`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async studioSyncDeviantArtAccount(externalAccountId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/sync`, {
+      method: 'POST',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async studioListDeviantArtSyncJobs(externalAccountId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/jobs`);
+    return handleJson(response);
+  },
+  async studioListDeviantArtCatalogue(creatorId: string, query = '') {
+    const params = new URLSearchParams({ creatorId });
+    if (query.trim()) params.set('query', query.trim());
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/catalogue?${params.toString()}`);
+    return handleJson(response);
+  },
+  async studioUpdateExternalAsset(assetId: string, payload: {
+    canonicalTitle?: string;
+    canonicalDescription?: string;
+    visibility?: 'private' | 'unlisted' | 'public';
+    titleSyncPolicy?: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
+    descriptionSyncPolicy?: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
+  }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/assets/${encodeURIComponent(assetId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async studioUpdateSpacePublication(assetId: string, payload: {
+    published: boolean;
+    hostingMode?: 'linked' | 'hosted';
+    visibility?: 'private' | 'unlisted' | 'public';
+  }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/assets/${encodeURIComponent(assetId)}/space-publication`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async studioListDeviantArtCollections(creatorId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/collections?creatorId=${encodeURIComponent(creatorId)}`);
+    return handleJson(response);
+  },
+  async studioCreateIntegrationCollection(payload: {
+    creatorIdentityId: string;
+    name: string;
+    parentUbeeqCollectionId?: string;
+    visibility?: 'private' | 'unlisted' | 'public';
+    collectionType?: 'collection' | 'gallery' | 'series';
+  }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/collections`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async studioUpdateIntegrationCollection(collectionId: string, payload: {
+    creatorIdentityId: string;
+    visibility?: 'private' | 'unlisted' | 'public';
+    collectionType?: 'collection' | 'gallery' | 'series';
+  }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/collections/${encodeURIComponent(collectionId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async studioReplaceIntegrationCollectionAssets(collectionId: string, payload: { creatorIdentityId: string; assetIds: string[] }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/collections/${encodeURIComponent(collectionId)}/assets`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async studioSaveDeviantArtCollectionMapping(externalCollectionId: string, payload: {
+    externalAccountId: string;
+    ubeeqCollectionId: string;
+    syncMode: 'continuous' | 'initial_only' | 'manual' | 'ignored';
+  }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/collection-mappings/${encodeURIComponent(externalCollectionId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
     });
     return handleJson(response);
   },

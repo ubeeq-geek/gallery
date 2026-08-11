@@ -26,7 +26,21 @@ import type {
   ContextUnlockThreshold,
   ChallengePrize,
   PrizeAward,
-  PlatformRole
+  PlatformRole,
+  ExternalAccount,
+  ExternalAccountCreatorAssignment,
+  ExternalPlatformCredential,
+  Asset,
+  ExternalPublication,
+  SpacePublication,
+  ExternalCollection,
+  UbeeqCollection,
+  UbeeqCollectionAsset,
+  ExternalCollectionMapping,
+  ExternalEngagementSnapshot,
+  ExternalComment,
+  ExternalSyncJob,
+  ExternalSyncLog
 } from './domain';
 
 export interface TrendingFeedQueryOptions {
@@ -192,6 +206,53 @@ export interface DataStore {
   updateChallengePrize?(prize: ChallengePrize): Promise<void>;
   listPrizeAwards?(contextId: string): Promise<PrizeAward[]>;
   createPrizeAward?(award: PrizeAward): Promise<void>;
+
+  listExternalAccountsByCreatorIdentity(creatorIdentityId: string): Promise<ExternalAccount[]>;
+  listExternalAccountsByUser(userId: string): Promise<ExternalAccount[]>;
+  listExternalAccountCreatorAssignments(externalAccountId: string): Promise<ExternalAccountCreatorAssignment[]>;
+  replaceExternalAccountCreatorAssignments(externalAccountId: string, assignments: ExternalAccountCreatorAssignment[]): Promise<void>;
+  listExternalAccountsForScheduledScan(limit?: number): Promise<ExternalAccount[]>;
+  getExternalAccount(externalAccountId: string): Promise<ExternalAccount | null>;
+  createExternalAccount(account: ExternalAccount): Promise<void>;
+  updateExternalAccount(account: ExternalAccount): Promise<void>;
+  getExternalPlatformCredential(externalPlatformCredentialId: string): Promise<ExternalPlatformCredential | null>;
+  listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId: string): Promise<ExternalPlatformCredential[]>;
+  listExternalPlatformCredentialsByUser(userId: string): Promise<ExternalPlatformCredential[]>;
+  createExternalPlatformCredential(credential: ExternalPlatformCredential): Promise<void>;
+  updateExternalPlatformCredential(credential: ExternalPlatformCredential): Promise<void>;
+  listAssetsByCreatorIdentity(creatorIdentityId: string): Promise<Asset[]>;
+  getAsset(assetId: string): Promise<Asset | null>;
+  createAsset(asset: Asset): Promise<void>;
+  updateAsset(asset: Asset): Promise<void>;
+  getExternalPublication(externalAccountId: string, externalContentId: string): Promise<ExternalPublication | null>;
+  listExternalPublications(externalAccountId: string): Promise<ExternalPublication[]>;
+  createExternalPublication(publication: ExternalPublication): Promise<void>;
+  updateExternalPublication(publication: ExternalPublication): Promise<void>;
+  getSpacePublication(assetId: string): Promise<SpacePublication | null>;
+  upsertSpacePublication(publication: SpacePublication): Promise<void>;
+  listExternalCollections(externalAccountId: string): Promise<ExternalCollection[]>;
+  createExternalCollection(collection: ExternalCollection): Promise<void>;
+  updateExternalCollection(collection: ExternalCollection): Promise<void>;
+  listUbeeqCollectionsByCreatorIdentity(creatorIdentityId: string): Promise<UbeeqCollection[]>;
+  createUbeeqCollection(collection: UbeeqCollection): Promise<void>;
+  updateUbeeqCollection(collection: UbeeqCollection): Promise<void>;
+  listUbeeqCollectionAssets(ubeeqCollectionId: string): Promise<UbeeqCollectionAsset[]>;
+  replaceUbeeqCollectionAssets(ubeeqCollectionId: string, assets: UbeeqCollectionAsset[]): Promise<void>;
+  listExternalCollectionMappings(externalAccountId: string): Promise<ExternalCollectionMapping[]>;
+  createExternalCollectionMapping(mapping: ExternalCollectionMapping): Promise<void>;
+  updateExternalCollectionMapping(mapping: ExternalCollectionMapping): Promise<void>;
+  listExternalEngagementSnapshots(externalPublicationId: string, limit?: number): Promise<ExternalEngagementSnapshot[]>;
+  createExternalEngagementSnapshot(snapshot: ExternalEngagementSnapshot): Promise<void>;
+  listExternalComments(externalPublicationId: string, limit?: number): Promise<ExternalComment[]>;
+  createExternalComment(comment: ExternalComment): Promise<void>;
+  updateExternalComment(comment: ExternalComment): Promise<void>;
+  getExternalSyncJob(externalSyncJobId: string): Promise<ExternalSyncJob | null>;
+  listExternalSyncJobs(externalAccountId: string, limit?: number): Promise<ExternalSyncJob[]>;
+  listDueExternalSyncJobs(now: string, limit?: number): Promise<ExternalSyncJob[]>;
+  createExternalSyncJob(job: ExternalSyncJob): Promise<void>;
+  updateExternalSyncJob(job: ExternalSyncJob): Promise<void>;
+  listExternalSyncLogs(externalSyncJobId: string, limit?: number): Promise<ExternalSyncLog[]>;
+  appendExternalSyncLog(log: ExternalSyncLog): Promise<void>;
 
   getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null>;
   putIdempotencyRecord(record: IdempotencyRecord): Promise<void>;

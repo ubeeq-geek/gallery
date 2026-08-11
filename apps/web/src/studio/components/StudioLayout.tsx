@@ -7,11 +7,13 @@ export function StudioLayout({
   section,
   title,
   description,
+  onboarding = false,
   children
 }: {
   section: StudioSection;
   title: string;
   description: string;
+  onboarding?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -22,9 +24,8 @@ export function StudioLayout({
           <span>STUDIO</span>
         </div>
         <div className="studio-contributor-label">
-          <strong>Contributor label</strong>
-          <p>System role: contributor.</p>
-          <p>Display label: {roleDisplayLabel('contributor')}.</p>
+          <strong>{onboarding ? 'Your next step' : 'Ubeeqer account'}</strong>
+          <p>{onboarding ? 'A free Space is ready whenever you are.' : `You are a ${roleDisplayLabel('contributor')}.`}</p>
         </div>
         <nav className="studio-sidebar-nav">
           <Link
@@ -34,7 +35,7 @@ export function StudioLayout({
             <span>Dashboard</span>
             <span aria-hidden="true">›</span>
           </Link>
-          {studioNavSections.map((item) => (
+          {!onboarding && studioNavSections.map((item) => (
             <Link
               key={item.key}
               className={`studio-nav-item no-underline${item.key === section ? ' studio-nav-item-active' : ''}`}

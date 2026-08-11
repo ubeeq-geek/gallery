@@ -30,7 +30,21 @@ import type {
   ChallengePrize,
   PrizeAward,
   PlatformRole,
-  UserCapabilities
+  UserCapabilities,
+  ExternalAccount,
+  ExternalAccountCreatorAssignment,
+  ExternalPlatformCredential,
+  Asset,
+  ExternalPublication,
+  SpacePublication,
+  ExternalCollection,
+  UbeeqCollection,
+  UbeeqCollectionAsset,
+  ExternalCollectionMapping,
+  ExternalEngagementSnapshot,
+  ExternalComment,
+  ExternalSyncJob,
+  ExternalSyncLog
 } from './domain';
 import type { DataStore, TrendingFeedQueryOptions } from './store';
 import { capabilitiesForRole } from './roleHelpers';
@@ -83,6 +97,20 @@ export class InMemoryStore implements DataStore {
   contextUnlockThresholds: ContextUnlockThreshold[] = [];
   challengePrizes: ChallengePrize[] = [];
   prizeAwards: PrizeAward[] = [];
+  externalAccounts: ExternalAccount[] = [];
+  externalAccountCreatorAssignments: ExternalAccountCreatorAssignment[] = [];
+  externalPlatformCredentials: ExternalPlatformCredential[] = [];
+  assets: Asset[] = [];
+  externalPublications: ExternalPublication[] = [];
+  spacePublications: SpacePublication[] = [];
+  externalCollections: ExternalCollection[] = [];
+  ubeeqCollections: UbeeqCollection[] = [];
+  ubeeqCollectionAssets: UbeeqCollectionAsset[] = [];
+  externalCollectionMappings: ExternalCollectionMapping[] = [];
+  externalEngagementSnapshots: ExternalEngagementSnapshot[] = [];
+  externalComments: ExternalComment[] = [];
+  externalSyncJobs: ExternalSyncJob[] = [];
+  externalSyncLogs: ExternalSyncLog[] = [];
   idempotency: IdempotencyRecord[] = [];
   auditEvents: AuditEvent[] = [];
   imageFavoriteCounts = new Map<string, number>();
@@ -727,6 +755,243 @@ export class InMemoryStore implements DataStore {
   async createPrizeAward(award: PrizeAward): Promise<void> {
     this.prizeAwards = this.prizeAwards.filter((item) => item.prizeAwardId !== award.prizeAwardId);
     this.prizeAwards.push(award);
+  }
+
+  async listExternalAccountsByCreatorIdentity(creatorIdentityId: string): Promise<ExternalAccount[]> {
+    const assignedAccountIds = new Set(this.externalAccountCreatorAssignments
+      .filter((item) => item.creatorIdentityId === creatorIdentityId)
+      .map((item) => item.externalAccountId));
+    return this.externalAccounts.filter((item) => item.creatorIdentityId === creatorIdentityId || assignedAccountIds.has(item.externalAccountId));
+  }
+
+  async listExternalAccountsByUser(userId: string): Promise<ExternalAccount[]> {
+    return this.externalAccounts.filter((item) => item.userId === userId);
+  }
+
+  async listExternalAccountCreatorAssignments(externalAccountId: string): Promise<ExternalAccountCreatorAssignment[]> {
+    return this.externalAccountCreatorAssignments.filter((item) => item.externalAccountId === externalAccountId);
+  }
+
+  async replaceExternalAccountCreatorAssignments(externalAccountId: string, assignments: ExternalAccountCreatorAssignment[]): Promise<void> {
+    this.externalAccountCreatorAssignments = this.externalAccountCreatorAssignments
+      .filter((item) => item.externalAccountId !== externalAccountId)
+      .concat(assignments);
+  }
+
+  async listExternalAccountsForScheduledScan(limit = 100): Promise<ExternalAccount[]> {
+    return this.externalAccounts
+      .filter((item) => item.platform === 'deviantart')
+      .sort((a, b) => String(a.lastSuccessfulSyncAt || a.createdAt).localeCompare(String(b.lastSuccessfulSyncAt || b.createdAt)))
+      .slice(0, limit);
+  }
+
+  async getExternalAccount(externalAccountId: string): Promise<ExternalAccount | null> {
+    return this.externalAccounts.find((item) => item.externalAccountId === externalAccountId) || null;
+  }
+
+  async createExternalAccount(account: ExternalAccount): Promise<void> {
+    this.externalAccounts = this.externalAccounts.filter((item) => item.externalAccountId !== account.externalAccountId);
+    this.externalAccounts.push(account);
+  }
+
+  async updateExternalAccount(account: ExternalAccount): Promise<void> {
+    await this.createExternalAccount(account);
+  }
+
+  async getExternalPlatformCredential(externalPlatformCredentialId: string): Promise<ExternalPlatformCredential | null> {
+    return this.externalPlatformCredentials.find((item) => item.externalPlatformCredentialId === externalPlatformCredentialId) || null;
+  }
+
+  async listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId: string): Promise<ExternalPlatformCredential[]> {
+    return this.externalPlatformCredentials.filter((item) => item.creatorIdentityId === creatorIdentityId);
+  }
+
+  async listExternalPlatformCredentialsByUser(userId: string): Promise<ExternalPlatformCredential[]> {
+    return this.externalPlatformCredentials.filter((item) => item.userId === userId);
+  }
+
+  async createExternalPlatformCredential(credential: ExternalPlatformCredential): Promise<void> {
+    this.externalPlatformCredentials = this.externalPlatformCredentials.filter((item) => item.externalPlatformCredentialId !== credential.externalPlatformCredentialId);
+    this.externalPlatformCredentials.push(credential);
+  }
+
+  async updateExternalPlatformCredential(credential: ExternalPlatformCredential): Promise<void> {
+    await this.createExternalPlatformCredential(credential);
+  }
+
+  async listAssetsByCreatorIdentity(creatorIdentityId: string): Promise<Asset[]> {
+    return this.assets
+      .filter((item) => item.creatorIdentityId === creatorIdentityId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async getAsset(assetId: string): Promise<Asset | null> {
+    return this.assets.find((item) => item.assetId === assetId) || null;
+  }
+
+  async createAsset(asset: Asset): Promise<void> {
+    this.assets = this.assets.filter((item) => item.assetId !== asset.assetId);
+    this.assets.push(asset);
+  }
+
+  async updateAsset(asset: Asset): Promise<void> {
+    await this.createAsset(asset);
+  }
+
+  async getExternalPublication(externalAccountId: string, externalContentId: string): Promise<ExternalPublication | null> {
+    return this.externalPublications.find((item) => (
+      item.externalAccountId === externalAccountId && item.externalContentId === externalContentId
+    )) || null;
+  }
+
+  async listExternalPublications(externalAccountId: string): Promise<ExternalPublication[]> {
+    return this.externalPublications
+      .filter((item) => item.externalAccountId === externalAccountId)
+      .sort((a, b) => (b.publishedAt || b.createdAt).localeCompare(a.publishedAt || a.createdAt));
+  }
+
+  async createExternalPublication(publication: ExternalPublication): Promise<void> {
+    this.externalPublications = this.externalPublications.filter((item) => !(
+      item.externalAccountId === publication.externalAccountId && item.externalContentId === publication.externalContentId
+    ));
+    this.externalPublications.push(publication);
+  }
+
+  async updateExternalPublication(publication: ExternalPublication): Promise<void> {
+    await this.createExternalPublication(publication);
+  }
+
+  async getSpacePublication(assetId: string): Promise<SpacePublication | null> {
+    return this.spacePublications.find((item) => item.assetId === assetId) || null;
+  }
+
+  async upsertSpacePublication(publication: SpacePublication): Promise<void> {
+    this.spacePublications = this.spacePublications.filter((item) => item.assetId !== publication.assetId);
+    this.spacePublications.push(publication);
+  }
+
+  async listExternalCollections(externalAccountId: string): Promise<ExternalCollection[]> {
+    return this.externalCollections
+      .filter((item) => item.externalAccountId === externalAccountId)
+      .sort((a, b) => (a.position || 0) - (b.position || 0));
+  }
+
+  async createExternalCollection(collection: ExternalCollection): Promise<void> {
+    this.externalCollections = this.externalCollections.filter((item) => !(
+      item.externalAccountId === collection.externalAccountId
+      && item.externalCollectionExternalId === collection.externalCollectionExternalId
+    ));
+    this.externalCollections.push(collection);
+  }
+
+  async updateExternalCollection(collection: ExternalCollection): Promise<void> {
+    await this.createExternalCollection(collection);
+  }
+
+  async listUbeeqCollectionsByCreatorIdentity(creatorIdentityId: string): Promise<UbeeqCollection[]> {
+    return this.ubeeqCollections
+      .filter((item) => item.creatorIdentityId === creatorIdentityId)
+      .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name));
+  }
+
+  async createUbeeqCollection(collection: UbeeqCollection): Promise<void> {
+    this.ubeeqCollections = this.ubeeqCollections.filter((item) => item.ubeeqCollectionId !== collection.ubeeqCollectionId);
+    this.ubeeqCollections.push(collection);
+  }
+
+  async updateUbeeqCollection(collection: UbeeqCollection): Promise<void> {
+    await this.createUbeeqCollection(collection);
+  }
+
+  async listUbeeqCollectionAssets(ubeeqCollectionId: string): Promise<UbeeqCollectionAsset[]> {
+    return this.ubeeqCollectionAssets.filter((item) => item.ubeeqCollectionId === ubeeqCollectionId);
+  }
+
+  async replaceUbeeqCollectionAssets(ubeeqCollectionId: string, assets: UbeeqCollectionAsset[]): Promise<void> {
+    this.ubeeqCollectionAssets = [
+      ...this.ubeeqCollectionAssets.filter((item) => item.ubeeqCollectionId !== ubeeqCollectionId),
+      ...assets
+    ];
+  }
+
+  async listExternalCollectionMappings(externalAccountId: string): Promise<ExternalCollectionMapping[]> {
+    return this.externalCollectionMappings.filter((item) => item.externalAccountId === externalAccountId);
+  }
+
+  async createExternalCollectionMapping(mapping: ExternalCollectionMapping): Promise<void> {
+    this.externalCollectionMappings = this.externalCollectionMappings.filter((item) => item.externalCollectionMappingId !== mapping.externalCollectionMappingId);
+    this.externalCollectionMappings.push(mapping);
+  }
+
+  async updateExternalCollectionMapping(mapping: ExternalCollectionMapping): Promise<void> {
+    await this.createExternalCollectionMapping(mapping);
+  }
+
+  async listExternalEngagementSnapshots(externalPublicationId: string, limit = 100): Promise<ExternalEngagementSnapshot[]> {
+    return this.externalEngagementSnapshots
+      .filter((item) => item.externalPublicationId === externalPublicationId)
+      .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
+      .slice(0, limit);
+  }
+
+  async createExternalEngagementSnapshot(snapshot: ExternalEngagementSnapshot): Promise<void> {
+    this.externalEngagementSnapshots = this.externalEngagementSnapshots.filter((item) => item.externalEngagementSnapshotId !== snapshot.externalEngagementSnapshotId);
+    this.externalEngagementSnapshots.push(snapshot);
+  }
+
+  async listExternalComments(externalPublicationId: string, limit = 100): Promise<ExternalComment[]> {
+    return this.externalComments
+      .filter((item) => item.externalPublicationId === externalPublicationId)
+      .sort((a, b) => (b.createdAtRemote || b.lastSyncedAt).localeCompare(a.createdAtRemote || a.lastSyncedAt))
+      .slice(0, limit);
+  }
+
+  async createExternalComment(comment: ExternalComment): Promise<void> {
+    this.externalComments = this.externalComments.filter((item) => item.externalCommentId !== comment.externalCommentId);
+    this.externalComments.push(comment);
+  }
+
+  async updateExternalComment(comment: ExternalComment): Promise<void> {
+    await this.createExternalComment(comment);
+  }
+
+  async getExternalSyncJob(externalSyncJobId: string): Promise<ExternalSyncJob | null> {
+    return this.externalSyncJobs.find((item) => item.externalSyncJobId === externalSyncJobId) || null;
+  }
+
+  async listExternalSyncJobs(externalAccountId: string, limit = 100): Promise<ExternalSyncJob[]> {
+    return this.externalSyncJobs
+      .filter((item) => item.externalAccountId === externalAccountId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit);
+  }
+
+  async listDueExternalSyncJobs(now: string, limit = 100): Promise<ExternalSyncJob[]> {
+    return this.externalSyncJobs
+      .filter((item) => (item.status === 'retry_scheduled' || item.status === 'rate_limited') && Boolean(item.nextAttemptAt))
+      .filter((item) => String(item.nextAttemptAt) <= now)
+      .sort((a, b) => String(a.nextAttemptAt).localeCompare(String(b.nextAttemptAt)))
+      .slice(0, limit);
+  }
+
+  async createExternalSyncJob(job: ExternalSyncJob): Promise<void> {
+    this.externalSyncJobs = this.externalSyncJobs.filter((item) => item.externalSyncJobId !== job.externalSyncJobId);
+    this.externalSyncJobs.push(job);
+  }
+
+  async updateExternalSyncJob(job: ExternalSyncJob): Promise<void> {
+    await this.createExternalSyncJob(job);
+  }
+
+  async listExternalSyncLogs(externalSyncJobId: string, limit = 100): Promise<ExternalSyncLog[]> {
+    return this.externalSyncLogs
+      .filter((item) => item.externalSyncJobId === externalSyncJobId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit);
+  }
+
+  async appendExternalSyncLog(log: ExternalSyncLog): Promise<void> {
+    this.externalSyncLogs.push(log);
   }
 
   async getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null> {

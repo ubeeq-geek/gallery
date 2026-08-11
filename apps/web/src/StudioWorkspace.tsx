@@ -8,6 +8,10 @@ import { Card } from './studio/components/Card';
 import { DashboardView } from './studio/views/DashboardView';
 import { CreatorsView } from './studio/views/CreatorsView';
 import { FilesMediaView } from './studio/views/FilesMediaView';
+import { DeviantArtView } from './studio/views/DeviantArtView';
+import { CollectionsView } from './studio/views/CollectionsView';
+import { WorksView } from './studio/views/WorksView';
+import { CreatorOnboardingView } from './studio/views/CreatorOnboardingView';
 import { PostsView } from './studio/views/PostsView';
 import { ResourceView } from './studio/views/ResourceView';
 import type {
@@ -90,6 +94,9 @@ export function StudioWorkspace() {
   }, []);
 
   const renderSection = () => {
+    if (!creators.length) {
+      return <CreatorOnboardingView onCreated={async () => { await load(); }} />;
+    }
     switch (section) {
       case 'dashboard':
         return (
@@ -124,6 +131,8 @@ export function StudioWorkspace() {
             onRemoveCoverImage={(creatorId) => api.studioDeleteCreatorCoverImage(creatorId).then(() => load())}
           />
         );
+      case 'integrations':
+        return <DeviantArtView creators={creators} />;
       case 'files-media':
         return (
           <FilesMediaView
@@ -219,15 +228,9 @@ export function StudioWorkspace() {
           />
         );
       case 'collections':
-        return (
-          <ResourceView
-            title="Collections"
-            eyebrow="Registered-user collections"
-            searchPlaceholder="Search collections..."
-            emptyMessage="Collection CRUD is moving into this Studio shell next."
-            items={[]}
-          />
-        );
+        return <CollectionsView creators={creators} />;
+      case 'works':
+        return <WorksView creators={creators} />;
       case 'moderation':
         return (
           <ResourceView
@@ -264,7 +267,12 @@ export function StudioWorkspace() {
   };
 
   return (
-    <StudioLayout section={section} title={sectionMeta.label} description={sectionMeta.description}>
+    <StudioLayout
+      section={section}
+      title={creators.length ? sectionMeta.label : 'Welcome to Ubeeq Studio'}
+      description={creators.length ? sectionMeta.description : 'Create a free Space when you are ready to share or manage your creative work.'}
+      onboarding={!creators.length}
+    >
       {(loading || error) && (
         <Card title="Workspace status" eyebrow="Live data">
           {loading && <p className="small">Loading Studio data…</p>}
@@ -272,7 +280,7 @@ export function StudioWorkspace() {
         </Card>
       )}
       {renderSection()}
-      <Card title="Scope summary" eyebrow="Studio contract">
+      {creators.length > 0 && <Card title="Scope summary" eyebrow="Studio contract">
         <p className="small">
           Studio now reads from `/studio/*` resources as the primary API surface. Creator, files, posts,
           entries, and challenge workflows are no longer modeled as a separate product area.
@@ -280,7 +288,7 @@ export function StudioWorkspace() {
         <p className="small">
           Loaded: {creators.length} creators · {files.length} files · {posts.length} posts · {groupings.length} groupings · {users.length} users.
         </p>
-      </Card>
+      </Card>}
     </StudioLayout>
   );
 }

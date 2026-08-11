@@ -105,6 +105,8 @@ export interface Creator {
   creatorId: string;
   name: string;
   slug: string;
+  spaceTier?: 'free' | 'approved';
+  approvedCreatorAt?: string;
   slugHistory?: string[];
   defaultProfileTab?: 'feed' | 'groupings';
   featuredItemIds?: string[];
@@ -568,4 +570,231 @@ export interface TrendingFeedItem {
   createdAt: string;
   score: number;
   updatedAt: string;
+}
+
+export type ExternalPlatform = 'deviantart';
+export type ExternalAccountConnectionStatus =
+  | 'connected'
+  | 'authentication_required'
+  | 'rate_limited'
+  | 'temporarily_unavailable'
+  | 'disabled';
+export type ExternalAssetType = 'image' | 'literature' | 'video' | 'animation' | 'other';
+export type AssetVisibility = 'private' | 'unlisted' | 'public';
+export type UbeeqCollectionType = 'collection' | 'gallery' | 'series';
+export type MetadataSyncPolicy = 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
+export type SpaceHostingMode = 'linked' | 'hosted';
+export type ExternalPublicationSyncStatus = 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
+export type ExternalCollectionSyncMode = 'continuous' | 'initial_only' | 'manual' | 'ignored';
+export type ExternalSyncJobType =
+  | 'account_import'
+  | 'account_scan'
+  | 'content_metadata_sync'
+  | 'gallery_sync'
+  | 'engagement_sync'
+  | 'comment_sync'
+  | 'full_reconciliation'
+  | 'publish'
+  | 'remote_update';
+export type ExternalSyncJobStatus =
+  | 'queued'
+  | 'processing'
+  | 'successful'
+  | 'failed'
+  | 'rate_limited'
+  | 'authentication_required'
+  | 'retry_scheduled'
+  | 'cancelled';
+
+export interface ExternalAccount {
+  externalAccountId: string;
+  userId: string;
+  /**
+   * Legacy/default owner for imported assets. Account visibility is governed by
+   * ExternalAccountCreatorAssignment, so this can be absent until assigned.
+   */
+  creatorIdentityId?: string;
+  primaryCreatorIdentityId?: string;
+  externalPlatformCredentialId: string;
+  platform: ExternalPlatform;
+  externalUserId: string;
+  externalUsername: string;
+  accessTokenEncrypted: string;
+  refreshTokenEncrypted?: string;
+  tokenExpiresAt?: string;
+  connectionStatus: ExternalAccountConnectionStatus;
+  lastSuccessfulSyncAt?: string;
+  lastSyncAttemptAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalPlatformCredential {
+  externalPlatformCredentialId: string;
+  userId: string;
+  /** Legacy creator-scoped credential retained for backwards compatibility. */
+  creatorIdentityId?: string;
+  platform: ExternalPlatform;
+  clientId: string;
+  clientSecretEncrypted: string;
+  redirectUri: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * A connected external account can be used by more than one Ubeeq creator
+ * identity without making the external platform's account model part of ours.
+ */
+export interface ExternalAccountCreatorAssignment {
+  externalAccountId: string;
+  creatorIdentityId: string;
+  userId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Asset {
+  assetId: string;
+  userId: string;
+  creatorIdentityId: string;
+  assetType: ExternalAssetType;
+  canonicalTitle: string;
+  canonicalDescription?: string;
+  visibility: AssetVisibility;
+  titleSyncPolicy: MetadataSyncPolicy;
+  descriptionSyncPolicy: MetadataSyncPolicy;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalPublication {
+  externalPublicationId: string;
+  assetId: string;
+  externalAccountId: string;
+  platform: ExternalPlatform;
+  externalContentId: string;
+  externalUrl?: string;
+  externalTitle?: string;
+  externalDescription?: string;
+  externalTags?: string[];
+  externalCollectionIds?: string[];
+  publishedAt?: string;
+  remoteCreatedAt?: string;
+  remoteUpdatedAt?: string;
+  lastSyncedAt?: string;
+  lastSeenAt?: string;
+  syncStatus: ExternalPublicationSyncStatus;
+  rawMetadataJson: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SpacePublication {
+  assetId: string;
+  published: boolean;
+  hostingMode: SpaceHostingMode;
+  publishedAt?: string;
+  ubeeqTitleOverride?: string;
+  ubeeqDescriptionOverride?: string;
+  visibility: AssetVisibility;
+  updatedAt: string;
+}
+
+export interface ExternalCollection {
+  externalCollectionId: string;
+  externalAccountId: string;
+  platform: ExternalPlatform;
+  externalCollectionExternalId: string;
+  name: string;
+  parentExternalCollectionExternalId?: string;
+  position?: number;
+  lastSyncedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UbeeqCollection {
+  ubeeqCollectionId: string;
+  userId: string;
+  creatorIdentityId: string;
+  name: string;
+  parentUbeeqCollectionId?: string;
+  position: number;
+  visibility: AssetVisibility;
+  collectionType?: UbeeqCollectionType;
+  ruleDefinition?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UbeeqCollectionAsset {
+  ubeeqCollectionId: string;
+  assetId: string;
+  userId: string;
+  creatorIdentityId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalCollectionMapping {
+  externalCollectionMappingId: string;
+  externalAccountId: string;
+  externalCollectionId: string;
+  ubeeqCollectionId: string;
+  syncMode: ExternalCollectionSyncMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalEngagementSnapshot {
+  externalEngagementSnapshotId: string;
+  externalPublicationId: string;
+  capturedAt: string;
+  views?: number;
+  favourites?: number;
+  comments?: number;
+  otherMetricsJson?: Record<string, unknown>;
+}
+
+export interface ExternalComment {
+  externalCommentId: string;
+  platform: ExternalPlatform;
+  externalCommentExternalId: string;
+  externalPublicationId: string;
+  externalAuthorId?: string;
+  externalAuthorName?: string;
+  body: string;
+  createdAtRemote?: string;
+  parentExternalCommentExternalId?: string;
+  lastSyncedAt: string;
+}
+
+export interface ExternalSyncJob {
+  externalSyncJobId: string;
+  externalAccountId: string;
+  type: ExternalSyncJobType;
+  status: ExternalSyncJobStatus;
+  payload?: Record<string, unknown>;
+  progress?: {
+    discovered: number;
+    synchronized: number;
+    remaining: number;
+  };
+  attemptCount: number;
+  lastAttemptAt?: string;
+  nextAttemptAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalSyncLog {
+  externalSyncLogId: string;
+  externalSyncJobId: string;
+  level: 'info' | 'warning' | 'error';
+  message: string;
+  detail?: Record<string, unknown>;
+  createdAt: string;
 }

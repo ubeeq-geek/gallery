@@ -38,15 +38,31 @@ import type {
   ContextUnlockThreshold,
   ChallengePrize,
   PrizeAward,
-  PlatformRole
+  PlatformRole,
+  ExternalAccount,
+  ExternalAccountCreatorAssignment,
+  ExternalPlatformCredential,
+  Asset,
+  ExternalPublication,
+  SpacePublication,
+  ExternalCollection,
+  UbeeqCollection,
+  UbeeqCollectionAsset,
+  ExternalCollectionMapping,
+  ExternalEngagementSnapshot,
+  ExternalComment,
+  ExternalSyncJob,
+  ExternalSyncLog
 } from './domain';
 import { ContentCoreRepository } from './contentCoreRepository';
+import { ExternalPlatformRepository } from './externalPlatformRepository';
 import { normalizeContentRating } from './contentRating';
 import { normalizeAiDisclosure, normalizeHeavyTopics } from './disclosures';
 
 export class DynamoStore implements DataStore {
   private readonly client: DynamoDBDocumentClient;
   private readonly coreRepo?: ContentCoreRepository;
+  private readonly externalPlatformRepo?: ExternalPlatformRepository;
   private readonly localUsernameReservations = new Map<string, { username: string; email: string }>();
   private readonly localUserProfiles = new Map<string, UserProfile>();
   private readonly localCreatorMembers = new Map<string, CreatorMember>();
@@ -62,7 +78,15 @@ export class DynamoStore implements DataStore {
     this.client = DynamoDBDocumentClient.from(lowLevel);
     if (config.useContentCoreTable) {
       this.coreRepo = new ContentCoreRepository(this.client, config.contentCoreTable);
+      this.externalPlatformRepo = new ExternalPlatformRepository(this.client, config.contentCoreTable);
     }
+  }
+
+  private externalPlatform(): ExternalPlatformRepository {
+    if (!this.externalPlatformRepo) {
+      throw new Error('External platform integrations require USE_CONTENT_CORE_TABLE=true');
+    }
+    return this.externalPlatformRepo;
   }
 
   private async batchWriteAll(requestItems: Record<string, Array<Record<string, unknown>>>): Promise<void> {
@@ -346,6 +370,7 @@ export class DynamoStore implements DataStore {
   async createCreator(creator: Creator): Promise<void> {
     if (this.coreRepo) {
       await this.coreRepo.createCreator(creator);
+      return;
     }
     await this.client.send(new PutCommand({ TableName: this.config.creators, Item: { ...creator, pk: 'CREATOR', sk: creator.creatorId } }));
   }
@@ -353,6 +378,7 @@ export class DynamoStore implements DataStore {
   async createGrouping(grouping: Grouping): Promise<void> {
     if (this.coreRepo) {
       await this.coreRepo.createGrouping(grouping);
+      return;
     }
     await this.client.send(new PutCommand({ TableName: this.config.groupingsTable, Item: grouping }));
   }
@@ -428,6 +454,7 @@ export class DynamoStore implements DataStore {
   async updateCreator(creator: Creator): Promise<void> {
     if (this.coreRepo) {
       await this.coreRepo.updateCreator(creator);
+      return;
     }
     await this.client.send(new PutCommand({ TableName: this.config.creators, Item: { ...creator, pk: 'CREATOR', sk: creator.creatorId } }));
   }
@@ -435,6 +462,7 @@ export class DynamoStore implements DataStore {
   async updateGrouping(grouping: Grouping): Promise<void> {
     if (this.coreRepo) {
       await this.coreRepo.updateGrouping(grouping);
+      return;
     }
     await this.client.send(new PutCommand({ TableName: this.config.groupingsTable, Item: grouping }));
   }
@@ -544,6 +572,7 @@ export class DynamoStore implements DataStore {
   async deleteCreator(creator: string): Promise<void> {
     if (this.coreRepo) {
       await this.coreRepo.deleteCreator(creator);
+      return;
     }
     await this.client.send(new DeleteCommand({ TableName: this.config.creators, Key: { pk: 'CREATOR', sk: creator } }));
   }
@@ -551,6 +580,7 @@ export class DynamoStore implements DataStore {
   async deleteGrouping(groupingId: string): Promise<void> {
     if (this.coreRepo) {
       await this.coreRepo.deleteGrouping(groupingId);
+      return;
     }
     await this.client.send(new DeleteCommand({ TableName: this.config.groupingsTable, Key: { groupingId } }));
   }
@@ -1440,6 +1470,53 @@ export class DynamoStore implements DataStore {
       return;
     }
   }
+
+  async listExternalAccountsByCreatorIdentity(creatorIdentityId: string): Promise<ExternalAccount[]> { return this.externalPlatform().listExternalAccountsByCreatorIdentity(creatorIdentityId); }
+  async listExternalAccountsByUser(userId: string): Promise<ExternalAccount[]> { return this.externalPlatform().listExternalAccountsByUser(userId); }
+  async listExternalAccountCreatorAssignments(externalAccountId: string): Promise<ExternalAccountCreatorAssignment[]> { return this.externalPlatform().listExternalAccountCreatorAssignments(externalAccountId); }
+  async replaceExternalAccountCreatorAssignments(externalAccountId: string, assignments: ExternalAccountCreatorAssignment[]): Promise<void> { await this.externalPlatform().replaceExternalAccountCreatorAssignments(externalAccountId, assignments); }
+  async listExternalAccountsForScheduledScan(limit?: number): Promise<ExternalAccount[]> { return this.externalPlatform().listExternalAccountsForScheduledScan(limit); }
+  async getExternalAccount(externalAccountId: string): Promise<ExternalAccount | null> { return this.externalPlatform().getExternalAccount(externalAccountId); }
+  async createExternalAccount(account: ExternalAccount): Promise<void> { await this.externalPlatform().createExternalAccount(account); }
+  async updateExternalAccount(account: ExternalAccount): Promise<void> { await this.externalPlatform().updateExternalAccount(account); }
+  async getExternalPlatformCredential(externalPlatformCredentialId: string): Promise<ExternalPlatformCredential | null> { return this.externalPlatform().getExternalPlatformCredential(externalPlatformCredentialId); }
+  async listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId: string): Promise<ExternalPlatformCredential[]> { return this.externalPlatform().listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId); }
+  async listExternalPlatformCredentialsByUser(userId: string): Promise<ExternalPlatformCredential[]> { return this.externalPlatform().listExternalPlatformCredentialsByUser(userId); }
+  async createExternalPlatformCredential(credential: ExternalPlatformCredential): Promise<void> { await this.externalPlatform().createExternalPlatformCredential(credential); }
+  async updateExternalPlatformCredential(credential: ExternalPlatformCredential): Promise<void> { await this.externalPlatform().updateExternalPlatformCredential(credential); }
+  async listAssetsByCreatorIdentity(creatorIdentityId: string): Promise<Asset[]> { return this.externalPlatform().listAssetsByCreatorIdentity(creatorIdentityId); }
+  async getAsset(assetId: string): Promise<Asset | null> { return this.externalPlatform().getAsset(assetId); }
+  async createAsset(asset: Asset): Promise<void> { await this.externalPlatform().createAsset(asset); }
+  async updateAsset(asset: Asset): Promise<void> { await this.externalPlatform().updateAsset(asset); }
+  async getExternalPublication(externalAccountId: string, externalContentId: string): Promise<ExternalPublication | null> { return this.externalPlatform().getExternalPublication(externalAccountId, externalContentId); }
+  async listExternalPublications(externalAccountId: string): Promise<ExternalPublication[]> { return this.externalPlatform().listExternalPublications(externalAccountId); }
+  async createExternalPublication(publication: ExternalPublication): Promise<void> { await this.externalPlatform().createExternalPublication(publication); }
+  async updateExternalPublication(publication: ExternalPublication): Promise<void> { await this.externalPlatform().updateExternalPublication(publication); }
+  async getSpacePublication(assetId: string): Promise<SpacePublication | null> { return this.externalPlatform().getSpacePublication(assetId); }
+  async upsertSpacePublication(publication: SpacePublication): Promise<void> { await this.externalPlatform().upsertSpacePublication(publication); }
+  async listExternalCollections(externalAccountId: string): Promise<ExternalCollection[]> { return this.externalPlatform().listExternalCollections(externalAccountId); }
+  async createExternalCollection(collection: ExternalCollection): Promise<void> { await this.externalPlatform().createExternalCollection(collection); }
+  async updateExternalCollection(collection: ExternalCollection): Promise<void> { await this.externalPlatform().updateExternalCollection(collection); }
+  async listUbeeqCollectionsByCreatorIdentity(creatorIdentityId: string): Promise<UbeeqCollection[]> { return this.externalPlatform().listUbeeqCollectionsByCreatorIdentity(creatorIdentityId); }
+  async createUbeeqCollection(collection: UbeeqCollection): Promise<void> { await this.externalPlatform().createUbeeqCollection(collection); }
+  async updateUbeeqCollection(collection: UbeeqCollection): Promise<void> { await this.externalPlatform().updateUbeeqCollection(collection); }
+  async listUbeeqCollectionAssets(ubeeqCollectionId: string): Promise<UbeeqCollectionAsset[]> { return this.externalPlatform().listUbeeqCollectionAssets(ubeeqCollectionId); }
+  async replaceUbeeqCollectionAssets(ubeeqCollectionId: string, assets: UbeeqCollectionAsset[]): Promise<void> { await this.externalPlatform().replaceUbeeqCollectionAssets(ubeeqCollectionId, assets); }
+  async listExternalCollectionMappings(externalAccountId: string): Promise<ExternalCollectionMapping[]> { return this.externalPlatform().listExternalCollectionMappings(externalAccountId); }
+  async createExternalCollectionMapping(mapping: ExternalCollectionMapping): Promise<void> { await this.externalPlatform().createExternalCollectionMapping(mapping); }
+  async updateExternalCollectionMapping(mapping: ExternalCollectionMapping): Promise<void> { await this.externalPlatform().updateExternalCollectionMapping(mapping); }
+  async listExternalEngagementSnapshots(externalPublicationId: string, limit?: number): Promise<ExternalEngagementSnapshot[]> { return this.externalPlatform().listExternalEngagementSnapshots(externalPublicationId, limit); }
+  async createExternalEngagementSnapshot(snapshot: ExternalEngagementSnapshot): Promise<void> { await this.externalPlatform().createExternalEngagementSnapshot(snapshot); }
+  async listExternalComments(externalPublicationId: string, limit?: number): Promise<ExternalComment[]> { return this.externalPlatform().listExternalComments(externalPublicationId, limit); }
+  async createExternalComment(comment: ExternalComment): Promise<void> { await this.externalPlatform().createExternalComment(comment); }
+  async updateExternalComment(comment: ExternalComment): Promise<void> { await this.externalPlatform().updateExternalComment(comment); }
+  async getExternalSyncJob(externalSyncJobId: string): Promise<ExternalSyncJob | null> { return this.externalPlatform().getExternalSyncJob(externalSyncJobId); }
+  async listExternalSyncJobs(externalAccountId: string, limit?: number): Promise<ExternalSyncJob[]> { return this.externalPlatform().listExternalSyncJobs(externalAccountId, limit); }
+  async listDueExternalSyncJobs(now: string, limit?: number): Promise<ExternalSyncJob[]> { return this.externalPlatform().listDueExternalSyncJobs(now, limit); }
+  async createExternalSyncJob(job: ExternalSyncJob): Promise<void> { await this.externalPlatform().createExternalSyncJob(job); }
+  async updateExternalSyncJob(job: ExternalSyncJob): Promise<void> { await this.externalPlatform().updateExternalSyncJob(job); }
+  async listExternalSyncLogs(externalSyncJobId: string, limit?: number): Promise<ExternalSyncLog[]> { return this.externalPlatform().listExternalSyncLogs(externalSyncJobId, limit); }
+  async appendExternalSyncLog(log: ExternalSyncLog): Promise<void> { await this.externalPlatform().appendExternalSyncLog(log); }
 
   async getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null> {
     if (this.coreRepo) {
