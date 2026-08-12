@@ -79,6 +79,27 @@ export interface ExternalContentUpdate {
   allowAiTraining?: boolean;
 }
 
+export interface ExternalContentPublish {
+  body: Buffer;
+  filename: string;
+  contentType: string;
+  title: string;
+  description?: string;
+  tags?: string[];
+  isMature?: boolean;
+  matureLevel?: 'strict' | 'moderate';
+  matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
+  allowComments?: boolean;
+  isAiGenerated?: boolean;
+  noAi?: boolean;
+}
+
+export interface ExternalPublishedContent {
+  externalContentId: string;
+  externalUrl?: string;
+  rawMetadata: Record<string, unknown>;
+}
+
 export interface ExternalRemoteComment {
   externalCommentId: string;
   authorId?: string;
@@ -105,7 +126,7 @@ export interface ExternalPlatformProvider {
   listCollections(accessToken: string, username: string): Promise<ExternalRemoteCollection[]>;
   listComments(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteComment[]; nextCursor?: string }>;
   updateContent(accessToken: string, externalContentId: string, update: ExternalContentUpdate): Promise<void>;
-  publishContent(): Promise<never>;
+  publishContent(accessToken: string, content: ExternalContentPublish): Promise<ExternalPublishedContent>;
   moveContent(): Promise<never>;
 }
 
@@ -114,6 +135,15 @@ const asRecord = (value: unknown): Record<string, unknown> => (
 );
 
 const asString = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim() : undefined;
+const descriptionFrom = (item: Record<string, unknown>): string | undefined => {
+  const direct = [item.description, item.description_html, item.html, item.excerpt, item.artist_comments]
+    .map(asString)
+    .find((value): value is string => Boolean(value));
+  if (direct) return direct;
+  const textContent = asRecord(item.text_content);
+  const body = asRecord(textContent.body);
+  return [body.html, body.text, textContent.html, textContent.text].map(asString).find((value): value is string => Boolean(value));
+};
 const asNumber = (value: unknown): number | undefined => {
   const number = Number(value);
   return Number.isFinite(number) ? number : undefined;
@@ -127,7 +157,7 @@ const asIsoDate = (value: unknown): string | undefined => {
 };
 
 const rawItems = (payload: Record<string, unknown>): unknown[] => {
-  const values = payload.results || payload.deviations || payload.items || payload.comments;
+  const values = payload.results || payload.metadata || payload.deviations || payload.items || payload.comments;
   return Array.isArray(values) ? values : [];
 };
 
@@ -146,7 +176,7 @@ const normalizeContent = (value: unknown): ExternalRemoteContent | null => {
   if (!externalContentId) return null;
   const stats = asRecord(item.stats);
   const tags = (Array.isArray(item.tags) ? item.tags : [])
-    .map((tag) => typeof tag === 'string' ? tag : asString(asRecord(tag).name))
+    .map((tag) => typeof tag === 'string' ? tag : asString(asRecord(tag).name) || asString(asRecord(tag).tag_name))
     .filter((tag): tag is string => Boolean(tag));
   const galleryIds = [
     asString(item.gallery_folder_id),
@@ -159,7 +189,7 @@ const normalizeContent = (value: unknown): ExternalRemoteContent | null => {
     externalContentId,
     externalUrl: asString(item.url),
     title: asString(item.title) || 'Untitled DeviantArt work',
-    description: asString(item.description) || asString(item.description_html),
+    description: descriptionFrom(item),
     tags,
     assetType: normalizeAssetType(item),
     publishedAt: asIsoDate(item.published_time) || asIsoDate(item.published_at),
@@ -187,7 +217,9 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
   readonly platform = 'deviantart' as const;
   private static readonly oauthBaseUrl = 'https://www.deviantart.com/oauth2';
   private static readonly apiBaseUrl = 'https://www.deviantart.com/api/v1/oauth2';
-  private static readonly scopes = ['user', 'browse', 'gallery', 'collection', 'stash', 'publish'];
+  // user.manage is required for owner-only editing data, including the original
+  // text returned by deviation/content?for_edit=true.
+  private static readonly scopes = ['user', 'user.manage', 'browse', 'gallery', 'collection', 'stash', 'publish'];
 
   constructor(private readonly credentials?: ExternalPlatformApplicationCredentials) {}
 
@@ -290,7 +322,47 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
   }
 
   async getContent(accessToken: string, externalContentId: string): Promise<ExternalRemoteContent> {
-    const payload = await this.request(`/deviation/${encodeURIComponent(externalContentId)}`, accessToken);
+    const summary = await this.request(`/deviation/${encodeURIComponent(externalContentId)}`, accessToken, { with_session: 'true' });
+    const metadataPayload = await this.request('/deviation/metadata', accessToken, {
+      'deviationids[0]': externalContentId,
+      with_session: 'true'
+    });
+    const metadata = rawItems(metadataPayload)
+      .map(asRecord)
+      .find((item) => (asString(item.deviationid) || asString(item.id)) === externalContentId) || {};
+    let fullContent: Record<string, unknown> = {};
+    if (!descriptionFrom(metadata) && !descriptionFrom(summary)) {
+      try {
+        fullContent = await this.request('/deviation/content', accessToken, { deviationid: externalContentId, for_edit: 'true', with_session: 'true' });
+      } catch (contentError) {
+        if (!(contentError instanceof ExternalProviderError)) throw contentError;
+        if (contentError.code !== 'authentication_required' && contentError.code !== 'invalid_response') throw contentError;
+        try {
+          // Existing connections may predate user.manage. The ordinary content
+          // endpoint uses browse access and can still return literature or journal
+          // bodies without forcing the creator to reconnect.
+          fullContent = await this.request('/deviation/content', accessToken, { deviationid: externalContentId, with_session: 'true' });
+        } catch (fallbackError) {
+          if (!(fallbackError instanceof ExternalProviderError)) throw fallbackError;
+          if (fallbackError.code !== 'authentication_required' && fallbackError.code !== 'invalid_response') throw fallbackError;
+          // DeviantArt does not expose /deviation/content for every media type.
+          // Image descriptions live in /deviation/metadata, so an unsupported
+          // content response must not discard the extended metadata we already have.
+          fullContent = {};
+        }
+      }
+    }
+    // Gallery listings intentionally omit editable metadata. Extended metadata is
+    // authoritative for image descriptions and tags; content adds bodies for
+    // media types such as literature and journals when DeviantArt supports it.
+    const description = descriptionFrom(metadata) || descriptionFrom(summary) || descriptionFrom(fullContent);
+    const payload = {
+      ...summary,
+      ...metadata,
+      ...fullContent,
+      ...(description ? { description } : {}),
+      deviationid: externalContentId
+    };
     const content = normalizeContent(payload);
     if (!content) throw new ExternalProviderError('DeviantArt deviation response was incomplete', 'invalid_response');
     return content;
@@ -368,7 +440,36 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     if (![...form.keys()].length) return;
     await this.requestForm(`/deviation/edit/${encodeURIComponent(externalContentId)}`, accessToken, form);
   }
-  async publishContent(): Promise<never> { throw new ExternalProviderError('Remote writes are not enabled for DeviantArt', 'unsupported'); }
+  async publishContent(accessToken: string, content: ExternalContentPublish): Promise<ExternalPublishedContent> {
+    const submit = new FormData();
+    submit.set('title', content.title);
+    if (content.description) submit.set('artist_comments', content.description);
+    if (content.tags) content.tags.forEach((tag) => submit.append('tags[]', tag));
+    if (content.isAiGenerated !== undefined) submit.set('is_ai_generated', String(content.isAiGenerated));
+    if (content.noAi !== undefined) submit.set('noai', String(content.noAi));
+    const uploadBytes = new Uint8Array(content.body.byteLength);
+    uploadBytes.set(content.body);
+    submit.set('file', new Blob([uploadBytes], { type: content.contentType }), content.filename);
+    const submitted = await this.requestMultipart('/stash/submit', accessToken, submit);
+    const itemId = asString(submitted.itemid) || asString(submitted.id);
+    if (!itemId) throw new ExternalProviderError('DeviantArt did not return a Sta.sh item ID', 'invalid_response');
+    const publish = new URLSearchParams({ itemid: itemId, is_mature: String(content.isMature === true) });
+    if (content.isMature && content.matureLevel) publish.set('mature_level', content.matureLevel);
+    if (content.matureClassification) content.matureClassification.forEach((classification) => publish.append('mature_classification[]', classification));
+    if (content.allowComments !== undefined) publish.set('allow_comments', String(content.allowComments));
+    if (content.tags) content.tags.forEach((tag) => publish.append('tags[]', tag));
+    if (content.isAiGenerated !== undefined) publish.set('is_ai_generated', String(content.isAiGenerated));
+    if (content.noAi !== undefined) publish.set('noai', String(content.noAi));
+    const published = await this.requestForm('/stash/publish', accessToken, publish);
+    const nestedDeviation = asRecord(published.deviation);
+    const externalContentId = asString(published.deviationid) || asString(published.id) || asString(nestedDeviation.deviationid) || asString(nestedDeviation.id);
+    if (!externalContentId) throw new ExternalProviderError('DeviantArt did not return a published deviation ID', 'invalid_response');
+    return {
+      externalContentId,
+      externalUrl: asString(published.url) || asString(nestedDeviation.url),
+      rawMetadata: published
+    };
+  }
   async moveContent(): Promise<never> { throw new ExternalProviderError('Remote writes are not enabled for DeviantArt', 'unsupported'); }
 
   private async request(path: string, accessToken: string, query?: Record<string, string>): Promise<Record<string, unknown>> {
@@ -394,6 +495,20 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
         'Content-Type': 'application/x-www-form-urlencoded'
       },
       body: form.toString()
+    });
+    const payload = asRecord(await response.json().catch(() => ({})));
+    if (!response.ok) {
+      const error = this.errorFromResponse(response.status, payload, response.headers.get('retry-after'));
+      throw new ExternalProviderError(`DeviantArt ${path}: ${error.message}`, error.code, error.retryAfterSeconds);
+    }
+    return payload;
+  }
+
+  private async requestMultipart(path: string, accessToken: string, form: FormData): Promise<Record<string, unknown>> {
+    const response = await fetch(`${DeviantArtProvider.apiBaseUrl}${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+      body: form
     });
     const payload = asRecord(await response.json().catch(() => ({})));
     if (!response.ok) {

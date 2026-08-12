@@ -585,7 +585,7 @@ export type UbeeqCollectionType = 'collection' | 'gallery' | 'series';
 export type MetadataSyncPolicy = 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
 export type SpaceHostingMode = 'linked' | 'hosted';
 export type SpaceContentSyncStatus = 'not_requested' | 'queued' | 'syncing' | 'hosted' | 'failed';
-export type ExternalPublicationSyncStatus = 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
+export type ExternalPublicationSyncStatus = 'pending_publish' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
 export type ExternalCollectionSyncMode = 'continuous' | 'initial_only' | 'manual' | 'ignored';
 export type ExternalSyncJobType =
   | 'account_import'

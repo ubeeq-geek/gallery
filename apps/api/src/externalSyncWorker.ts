@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { AppConfig } from './config';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
-import { storeExternalContent } from './externalContentStorage';
+import { readStoredUbeeqWorkImage, storeExternalContent } from './externalContentStorage';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 import { createExternalPlatformProvider, ExternalProviderError, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteContent } from './externalPlatformProvider';
 import type { Asset, ExternalAccount, ExternalPublication, ExternalSyncJob, SpacePublication } from './domain';
@@ -308,6 +308,87 @@ const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: Ext
   await addLog(store, job.externalSyncJobId, 'info', 'Integration metadata update completed', { externalPublicationId, fields: Object.keys(update) });
 };
 
+const executePublish = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
+  const assetId = typeof job.payload?.assetId === 'string' ? job.payload.assetId : '';
+  const asset = assetId ? await store.getAsset(assetId) : null;
+  const spacePublication = asset ? await store.getSpacePublication(asset.assetId) : null;
+  if (!asset || !spacePublication?.hostedObjectKey || !spacePublication.hostedContentType) {
+    throw new ExternalProviderError('The uploaded work is not available for publishing', 'invalid_response');
+  }
+  const provider = await providerForAccount(store, config, account);
+  const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
+  const externalPublicationId = typeof job.payload?.externalPublicationId === 'string' ? job.payload.externalPublicationId : '';
+  const pendingPublication = externalPublicationId
+    ? (await store.listExternalPublications(account.externalAccountId)).find((publication) => publication.externalPublicationId === externalPublicationId && publication.assetId === asset.assetId)
+    : undefined;
+  if (!pendingPublication) throw new ExternalProviderError('The selected destination is no longer available for publishing', 'invalid_response');
+  const savedSettings = pendingPublication.rawMetadataJson || {};
+  const tags = Array.isArray(job.payload?.tags)
+    ? job.payload.tags.filter((tag): tag is string => typeof tag === 'string')
+    : pendingPublication.externalTags;
+  const isMature = typeof job.payload?.isMature === 'boolean' ? job.payload.isMature : savedSettings.is_mature === true;
+  const matureLevel = job.payload?.matureLevel === 'strict' || job.payload?.matureLevel === 'moderate'
+    ? job.payload.matureLevel
+    : (savedSettings.mature_level === 'strict' || savedSettings.mature_level === 'moderate' ? savedSettings.mature_level : undefined);
+  const matureClassification = Array.isArray(job.payload?.matureClassification)
+    ? job.payload.matureClassification.filter((classification): classification is 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology' => (
+      classification === 'nudity' || classification === 'sexual' || classification === 'gore' || classification === 'language' || classification === 'ideology'
+    ))
+    : (Array.isArray(savedSettings.mature_classification)
+      ? savedSettings.mature_classification.filter((classification): classification is 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology' => (
+        classification === 'nudity' || classification === 'sexual' || classification === 'gore' || classification === 'language' || classification === 'ideology'
+      ))
+      : undefined);
+  const filename = typeof job.payload?.originalFilename === 'string' && job.payload.originalFilename.trim()
+    ? job.payload.originalFilename.trim()
+    : `${asset.assetId}.jpg`;
+  const published = await provider.publishContent(session.accessToken, {
+    body: await readStoredUbeeqWorkImage(config, spacePublication.hostedObjectKey),
+    filename,
+    contentType: spacePublication.hostedContentType,
+    title: pendingPublication.externalTitle || asset.canonicalTitle || filename,
+    description: pendingPublication.externalDescription ?? asset.canonicalDescription,
+    tags,
+    isMature,
+    matureLevel,
+    matureClassification,
+    allowComments: typeof job.payload?.allowComments === 'boolean' ? job.payload.allowComments : (typeof savedSettings.allow_comments === 'boolean' ? savedSettings.allow_comments : undefined),
+    isAiGenerated: typeof job.payload?.isAiGenerated === 'boolean' ? job.payload.isAiGenerated : (typeof savedSettings.is_ai_generated === 'boolean' ? savedSettings.is_ai_generated : undefined),
+    noAi: typeof job.payload?.noAi === 'boolean' ? job.payload.noAi : (typeof savedSettings.noai === 'boolean' ? savedSettings.noai : undefined)
+  });
+  const now = new Date().toISOString();
+  const publication: ExternalPublication = {
+    ...(pendingPublication || { externalPublicationId: randomUUID(), createdAt: now }),
+    assetId: asset.assetId,
+    externalAccountId: account.externalAccountId,
+    platform: account.platform,
+    externalContentId: published.externalContentId,
+    externalUrl: published.externalUrl,
+    externalTitle: pendingPublication.externalTitle || asset.canonicalTitle,
+    externalDescription: pendingPublication.externalDescription ?? asset.canonicalDescription,
+    externalTags: tags,
+    syncStatus: 'active',
+    rawMetadataJson: { ...savedSettings, ...published.rawMetadata },
+    publishedAt: now,
+    remoteCreatedAt: now,
+    remoteUpdatedAt: now,
+    lastSyncedAt: now,
+    lastSeenAt: now,
+    createdAt: pendingPublication?.createdAt || now,
+    updatedAt: now
+  };
+  if (pendingPublication) await store.updateExternalPublication(publication);
+  else await store.createExternalPublication(publication);
+  await updateJob(store, job, {
+    status: 'successful',
+    progress: { discovered: 1, synchronized: 1, remaining: 0 },
+    errorCode: undefined,
+    errorMessage: undefined,
+    nextAttemptAt: undefined
+  });
+  await addLog(store, job.externalSyncJobId, 'info', 'Ubeeq work published to DeviantArt', { assetId: asset.assetId, externalContentId: published.externalContentId });
+};
+
 const executeAccountImport = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount, queue?: ExternalSyncQueue): Promise<void> => {
   const provider = await providerForAccount(store, config, account);
   const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
@@ -347,7 +428,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
       const hasCompleteLabelMetadata = ['is_ai_generated', 'ai_generated', 'created_with_ai', 'noai', 'no_ai']
         .some((key) => Object.prototype.hasOwnProperty.call(item.rawMetadata, key));
       let resolvedItem = item;
-      if (!item.tags.length || !hasCompleteLabelMetadata) {
+      if (!item.description || !item.tags.length || !hasCompleteLabelMetadata) {
         try {
           resolvedItem = await provider.getContent(session.accessToken, item.externalContentId);
         } catch (error) {
@@ -424,6 +505,10 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
     }
     if (job.type === 'remote_update') {
       await executeRemoteUpdate(store, config, processingJob, account);
+      return;
+    }
+    if (job.type === 'publish') {
+      await executePublish(store, config, processingJob, account);
       return;
     }
     throw new ExternalProviderError(`Sync job type ${job.type} is not implemented yet`, 'unsupported');

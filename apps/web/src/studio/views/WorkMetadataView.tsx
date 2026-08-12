@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { Card } from '../components/Card';
-import type { StudioCreator, StudioExternalAsset, StudioExternalPublication } from '../types';
+import type { StudioCreator, StudioDeviantArtAccount, StudioExternalAsset, StudioExternalPublication } from '../types';
 
 const sourceLabel = (publication?: StudioExternalPublication): string => {
   if (publication?.platform === 'deviantart') return 'DeviantArt';
   if (publication?.platform) return publication.platform.replace(/(^|[-_ ])([a-z])/g, (_, prefix: string, letter: string) => `${prefix}${letter.toUpperCase()}`);
-  return 'Integration source';
+  return 'Integration';
 };
 
 const isMetadataLinked = (asset: StudioExternalAsset): boolean => (
@@ -24,6 +24,11 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const workId = params.get('workId') || '';
   const collectionId = params.get('collectionId') || '';
   const [asset, setAsset] = useState<StudioExternalAsset | null>(null);
+  const [accounts, setAccounts] = useState<StudioDeviantArtAccount[]>([]);
+  const [selectedPublicationId, setSelectedPublicationId] = useState('');
+  const [newDestinationAccountId, setNewDestinationAccountId] = useState('');
+  const [destinationBusy, setDestinationBusy] = useState(false);
+  const [destinationMessage, setDestinationMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -57,7 +62,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     let active = true;
     setLoading(true);
     setError('');
-    void api.studioListDeviantArtCatalogue(creatorId).then((result) => {
+    void Promise.all([api.studioListDeviantArtCatalogue(creatorId), api.studioListDeviantArtAccounts(creatorId)]).then(([result, accountResult]) => {
       if (!active) return;
       const found = ((result as { items?: StudioExternalAsset[] }).items || []).find((item) => item.assetId === workId) || null;
       if (!found) {
@@ -65,18 +70,22 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         return;
       }
       setAsset(found);
-      setLinked(isMetadataLinked(found));
-      setTitle(found.canonicalTitle || found.publications[0]?.externalTitle || '');
-      setDescription(found.canonicalDescription || found.publications[0]?.externalDescription || '');
-      setIntegrationTitle(found.publications[0]?.externalTitle || '');
-      setIntegrationDescription(found.publications[0]?.externalDescription || '');
-      setTags(found.publications[0]?.externalTags || []);
-      setAllowComments(found.publications[0]?.displayOptions?.allowComments ?? true);
-      setIsMature(found.publications[0]?.displayOptions?.isMature ?? false);
-      setMatureLevel(found.publications[0]?.displayOptions?.matureLevel ?? 'moderate');
-      setMatureClassification(found.publications[0]?.displayOptions?.matureClassification || []);
-      setIsAiGenerated(found.publications[0]?.displayOptions?.isAiGenerated ?? false);
-      setAllowAiTraining(found.publications[0]?.displayOptions?.allowAiTraining ?? true);
+      const destinations = found.publications.filter((publication) => publication.syncStatus !== 'deleted');
+      const selected = destinations[0];
+      setAccounts(((accountResult as { accounts?: StudioDeviantArtAccount[] }).accounts || []).filter((account) => account.connectionStatus === 'connected'));
+      setSelectedPublicationId(selected?.externalPublicationId || '');
+      setLinked(selected ? isMetadataLinked(found) : false);
+      setTitle(found.canonicalTitle || selected?.externalTitle || '');
+      setDescription(found.canonicalDescription || selected?.externalDescription || '');
+      setIntegrationTitle(selected?.externalTitle || '');
+      setIntegrationDescription(selected?.externalDescription || '');
+      setTags(selected?.externalTags || []);
+      setAllowComments(selected?.displayOptions?.allowComments ?? true);
+      setIsMature(selected?.displayOptions?.isMature ?? false);
+      setMatureLevel(selected?.displayOptions?.matureLevel ?? 'moderate');
+      setMatureClassification(selected?.displayOptions?.matureClassification || []);
+      setIsAiGenerated(selected?.displayOptions?.isAiGenerated ?? false);
+      setAllowAiTraining(selected?.displayOptions?.allowAiTraining ?? true);
     }).catch((loadError: unknown) => {
       if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load this work.');
     }).finally(() => {
@@ -85,7 +94,8 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     return () => { active = false; };
   }, [creatorId, workId]);
 
-  const integration = asset?.publications[0];
+  const destinations = (asset?.publications || []).filter((publication) => publication.syncStatus !== 'deleted');
+  const integration = destinations.find((publication) => publication.externalPublicationId === selectedPublicationId) || destinations[0];
   const integrationLabel = sourceLabel(integration);
   const sourceTitle = integration?.externalTitle || '';
   const sourceDescription = integration?.externalDescription || '';
@@ -98,6 +108,91 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const sourceAllowAiTraining = integration?.displayOptions?.allowAiTraining ?? true;
   const canLink = Boolean(integration);
   const creatorName = creators.find((creator) => creator.creatorId === creatorId)?.name || 'Creator';
+  const availableDestinationAccounts = accounts.filter((account) => !destinations.some((publication) => publication.externalAccountId === account.externalAccountId));
+
+  const selectDestination = (publication: StudioExternalPublication) => {
+    setSelectedPublicationId(publication.externalPublicationId);
+    setIntegrationTitle(publication.externalTitle || '');
+    setIntegrationDescription(publication.externalDescription || '');
+    setTags(publication.externalTags || []);
+    setAllowComments(publication.displayOptions?.allowComments ?? true);
+    setIsMature(publication.displayOptions?.isMature ?? false);
+    setMatureLevel(publication.displayOptions?.matureLevel ?? 'moderate');
+    setMatureClassification(publication.displayOptions?.matureClassification || []);
+    setIsAiGenerated(publication.displayOptions?.isAiGenerated ?? false);
+    setAllowAiTraining(publication.displayOptions?.allowAiTraining ?? true);
+  };
+
+  const addDestination = async () => {
+    if (!asset || !newDestinationAccountId) return;
+    setDestinationBusy(true);
+    setError('');
+    setDestinationMessage('');
+    try {
+      const result = await api.studioAddDeviantArtWorkDestination(asset.assetId, newDestinationAccountId) as { publication: Omit<StudioExternalPublication, 'externalUsername' | 'externalCollectionIds' | 'displayOptions'> };
+      const account = accounts.find((item) => item.externalAccountId === newDestinationAccountId);
+      const publication: StudioExternalPublication = {
+        ...result.publication,
+        externalUsername: account?.externalUsername || 'connected account',
+        externalCollectionIds: [],
+        displayOptions: { allowComments: true, isMature: false, isAiGenerated: false, allowAiTraining: true }
+      };
+      setAsset((current) => current ? { ...current, titleSyncPolicy: 'mirrored', descriptionSyncPolicy: 'mirrored', publications: [...current.publications.filter((item) => item.externalPublicationId !== publication.externalPublicationId), publication] } : current);
+      setLinked(true);
+      setNewDestinationAccountId('');
+      selectDestination(publication);
+      setDestinationMessage(`DeviantArt was added as a destination. Review its settings, then sync when ready.`);
+    } catch (destinationError) {
+      setError(destinationError instanceof Error ? destinationError.message : 'Unable to add this destination.');
+    } finally {
+      setDestinationBusy(false);
+    }
+  };
+
+  const removeDestination = async (publication: StudioExternalPublication) => {
+    const isPublished = publication.syncStatus === 'active';
+    const confirmation = isPublished
+      ? `Unpublish ${sourceLabel(publication)} for ${publication.externalUsername}? The Ubeeq copy will remain private. On DeviantArt this will ultimately move the work back to Sta.sh, rather than delete it.`
+      : `Remove ${sourceLabel(publication)} as a destination for ${publication.externalUsername}? The work will remain a private draft in Ubeeq Space.`;
+    if (!asset || !window.confirm(confirmation)) return;
+    if (isPublished) {
+      setDestinationMessage(`Unpublishing ${sourceLabel(publication)} is not available through its connected API yet, so this destination remains published for now.`);
+      return;
+    }
+    setDestinationBusy(true);
+    setError('');
+    setDestinationMessage('');
+    try {
+      await api.studioRemoveDeviantArtWorkDestination(asset.assetId, publication.externalAccountId);
+      const remaining = destinations.filter((item) => item.externalPublicationId !== publication.externalPublicationId);
+      setAsset((current) => current ? { ...current, publications: current.publications.filter((item) => item.externalPublicationId !== publication.externalPublicationId) } : current);
+      if (publication.externalPublicationId === integration?.externalPublicationId) {
+        const next = remaining[0];
+        setSelectedPublicationId(next?.externalPublicationId || '');
+        if (next) selectDestination(next);
+      }
+      setDestinationMessage(`${sourceLabel(publication)} destination removed.`);
+    } catch (destinationError) {
+      setError(destinationError instanceof Error ? destinationError.message : 'Unable to remove this destination.');
+    } finally {
+      setDestinationBusy(false);
+    }
+  };
+
+  const syncDestination = async (publication: StudioExternalPublication) => {
+    if (!asset) return;
+    setDestinationBusy(true);
+    setError('');
+    setDestinationMessage('');
+    try {
+      await api.studioSyncDeviantArtWorkDestination(asset.assetId, publication.externalAccountId);
+      setDestinationMessage(`Sync to ${sourceLabel(publication)} has been queued.`);
+    } catch (destinationError) {
+      setError(destinationError instanceof Error ? destinationError.message : 'Unable to start this sync.');
+    } finally {
+      setDestinationBusy(false);
+    }
+  };
 
   const handleLinkChange = (nextLinked: boolean) => {
     setLinked(nextLinked);
@@ -120,6 +215,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         classification === 'nudity' || classification === 'sexual' || classification === 'gore' || classification === 'language' || classification === 'ideology'
       )))];
       const integrationMetadata = integration ? {
+        externalPublicationId: integration.externalPublicationId,
         ...(nextIntegrationTitle !== sourceTitle ? { title: nextIntegrationTitle } : {}),
         ...(nextIntegrationDescription !== sourceDescription ? { description: nextIntegrationDescription } : {}),
         ...(normalizedTags.join('\u0000') !== sourceTags.join('\u0000') ? { tags: normalizedTags } : {}),
@@ -220,10 +316,40 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
           <div className="studio-work-metadata-heading">
             <div>
               <h4>{asset.canonicalTitle || sourceTitle || 'Untitled work'}</h4>
-              <p>{integration ? `Connected to ${integrationLabel}${integration.externalUsername ? ` · ${integration.externalUsername}` : ''}` : 'Ubeeq work'}</p>
+              <p>{integration ? `Destination settings for ${integrationLabel}${integration.externalUsername ? ` · ${integration.externalUsername}` : ''}` : 'Stored in Ubeeq Space'}</p>
             </div>
             <span className="studio-collection-visibility">{asset.visibility}</span>
           </div>
+
+          <section className="studio-work-destinations">
+            <div className="studio-work-destinations-heading">
+              <div>
+                <p className="studio-work-metadata-field-heading">Destinations</p>
+                <p>Keep this work in Ubeeq Space, then add a platform only when you are ready to prepare and sync it.</p>
+              </div>
+              {availableDestinationAccounts.length > 0 && <div className="studio-work-destination-add">
+                <select value={newDestinationAccountId} disabled={destinationBusy} onChange={(event) => setNewDestinationAccountId(event.target.value)} aria-label="Add DeviantArt destination">
+                  <option value="">Add DeviantArt destination…</option>
+                  {availableDestinationAccounts.map((account) => (
+                    <option key={account.externalAccountId} value={account.externalAccountId}>DeviantArt · {account.externalUsername}</option>
+                  ))}
+                </select>
+                <button type="button" className="auth-secondary-btn" disabled={destinationBusy || !newDestinationAccountId} onClick={() => void addDestination()}>Add destination</button>
+              </div>}
+            </div>
+            {destinations.length ? <div className="studio-work-destination-list">
+              {destinations.map((publication) => <article key={publication.externalPublicationId} className={`studio-work-destination-row${publication.externalPublicationId === integration?.externalPublicationId ? ' studio-work-destination-row-active' : ''}`}>
+                <button type="button" className="studio-work-destination-select" onClick={() => selectDestination(publication)}>
+                  <strong>{sourceLabel(publication)} · {publication.externalUsername}</strong>
+                  <span>{publication.syncStatus === 'pending_publish' ? 'Ready to sync' : publication.syncStatus === 'active' ? 'Synced' : publication.syncStatus}</span>
+                </button>
+                <div className="studio-work-destination-actions">
+                  {publication.syncStatus === 'pending_publish' && <button type="button" className="auth-primary-btn" disabled={destinationBusy} onClick={() => void syncDestination(publication)}>Sync to {sourceLabel(publication)}</button>}
+                  <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => void removeDestination(publication)}>{publication.syncStatus === 'active' ? 'Unpublish…' : 'Remove destination'}</button>
+                </div>
+              </article>)}
+            </div> : <p className="small">No destinations yet. You can edit Ubeeq metadata now, then add DeviantArt or another connected platform when you are ready.</p>}
+          </section>
 
           {canLink && <label className="studio-work-metadata-link">
             <input type="checkbox" checked={linked} onChange={(event) => handleLinkChange(event.target.checked)} />

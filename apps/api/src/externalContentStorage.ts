@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { AppConfig } from './config';
 import { ExternalProviderError } from './externalPlatformProvider';
 
@@ -12,6 +12,8 @@ export interface HostedExternalContent {
   byteSize: number;
   checksumSha256: string;
 }
+
+export interface HostedUbeeqWorkImage extends HostedExternalContent {}
 
 const isApprovedDeviantArtContentUrl = (value: string): boolean => {
   try {
@@ -31,6 +33,64 @@ const extensionForContentType = (contentType: string): string => {
   if (contentType.includes('webp')) return '.webp';
   if (contentType.includes('mp4')) return '.mp4';
   return '';
+};
+
+const writeStoredObject = async (config: AppConfig, key: string, body: Buffer, contentType: string, metadata?: Record<string, string>): Promise<void> => {
+  if (config.localMediaDirectory) {
+    const target = path.join(config.localMediaDirectory, key);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, body);
+    return;
+  }
+  await new S3Client({ region: config.awsRegion }).send(new PutObjectCommand({
+    Bucket: config.mediaBucket,
+    Key: key,
+    Body: body,
+    ContentType: contentType,
+    CacheControl: 'public, max-age=31536000, immutable',
+    Metadata: metadata
+  }));
+};
+
+const createThumbnail = async (body: Buffer): Promise<Buffer | undefined> => {
+  try {
+    const sharp = (await import('sharp')).default;
+    return await sharp(body, { limitInputPixels: false })
+      .rotate()
+      .resize(320, 320, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 82, mozjpeg: true })
+      .toBuffer();
+  } catch {
+    return undefined;
+  }
+};
+
+export const storeUbeeqWorkImage = async (
+  config: AppConfig,
+  input: { userId: string; creatorIdentityId: string; assetId: string; contentType: string; body: Buffer }
+): Promise<HostedUbeeqWorkImage> => {
+  if (!input.contentType.startsWith('image/')) throw new Error('Only image uploads are supported for works right now.');
+  if (input.body.byteLength > config.externalContentMaxBytes) throw new Error('This image exceeds the configured upload limit.');
+  const objectKey = `ubeeq-works/${input.userId}/${input.creatorIdentityId}/${input.assetId}/source${extensionForContentType(input.contentType)}`;
+  const thumbnailObjectKey = `ubeeq-works/${input.userId}/${input.creatorIdentityId}/${input.assetId}/thumbnail.jpg`;
+  const checksumSha256 = createHash('sha256').update(input.body).digest('hex');
+  await writeStoredObject(config, objectKey, input.body, input.contentType, { sha256: checksumSha256, source: 'ubeeq-upload' });
+  const thumbnail = await createThumbnail(input.body);
+  if (thumbnail) await writeStoredObject(config, thumbnailObjectKey, thumbnail, 'image/jpeg', { source: 'ubeeq-thumbnail' });
+  return {
+    objectKey,
+    thumbnailObjectKey: thumbnail ? thumbnailObjectKey : undefined,
+    contentType: input.contentType,
+    byteSize: input.body.byteLength,
+    checksumSha256
+  };
+};
+
+export const readStoredUbeeqWorkImage = async (config: AppConfig, objectKey: string): Promise<Buffer> => {
+  if (config.localMediaDirectory) return readFile(path.join(config.localMediaDirectory, objectKey));
+  const response = await new S3Client({ region: config.awsRegion }).send(new GetObjectCommand({ Bucket: config.mediaBucket, Key: objectKey }));
+  if (!response.Body) throw new Error('The stored work image is unavailable.');
+  return Buffer.from(await response.Body.transformToByteArray());
 };
 
 export const storeExternalContent = async (

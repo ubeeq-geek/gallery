@@ -947,6 +947,46 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/catalogue?${params.toString()}`);
     return handleJson(response);
   },
+  async studioCreateWork(payload: { creatorId: string; originalFilename: string; title?: string; description?: string }) {
+    const response = await fetch(`${API_BASE}/studio/works`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response) as Promise<{ asset: { assetId: string } }>;
+  },
+  async studioUploadWorkImage(assetId: string, file: File) {
+    const params = new URLSearchParams({ originalFilename: file.name });
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}/image?${params.toString()}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type || 'image/jpeg', ...(await authHeaders()) },
+      body: file
+    });
+    return handleJson(response);
+  },
+  async studioAddDeviantArtWorkDestination(assetId: string, externalAccountId: string) {
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}/destinations/deviantart`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ externalAccountId })
+    });
+    return handleJson(response);
+  },
+  async studioRemoveDeviantArtWorkDestination(assetId: string, externalAccountId: string) {
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}/destinations/deviantart/${encodeURIComponent(externalAccountId)}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async studioSyncDeviantArtWorkDestination(assetId: string, externalAccountId: string) {
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}/destinations/deviantart/${encodeURIComponent(externalAccountId)}/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({})
+    });
+    return handleJson(response);
+  },
   async studioUpdateExternalAsset(assetId: string, payload: {
     canonicalTitle?: string;
     canonicalDescription?: string;
@@ -954,6 +994,7 @@ export const api = {
     titleSyncPolicy?: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
     descriptionSyncPolicy?: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
     integrationMetadata?: {
+      externalPublicationId?: string;
       title?: string;
       description?: string;
       tags?: string[];

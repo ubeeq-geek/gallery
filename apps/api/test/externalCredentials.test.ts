@@ -57,4 +57,77 @@ describe('external credentials', () => {
     expect(requestUrl.searchParams.get('limit')).toBe('24');
     fetchSpy.mockRestore();
   });
+
+  it('uses extended DeviantArt metadata for imported image descriptions', async () => {
+    const provider = new DeviantArtProvider({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://fanadmin.top:4000/integrations/deviantart/callback'
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deviationid: 'deviation-1', title: 'Example' }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          metadata: [{
+            deviationid: 'deviation-1',
+            description: '<p>The full DeviantArt description</p>',
+            tags: [{ tag_name: 'history' }]
+          }]
+        }),
+        headers: { get: () => null }
+      } as unknown as Response);
+
+    const content = await provider.getContent('access-token', 'deviation-1');
+
+    expect(content.description).toBe('<p>The full DeviantArt description</p>');
+    expect(content.tags).toEqual(['history']);
+    const metadataRequestUrl = new URL(String(fetchSpy.mock.calls[1][0]));
+    expect(metadataRequestUrl.pathname).toContain('/deviation/metadata');
+    expect(metadataRequestUrl.searchParams.get('deviationids[0]')).toBe('deviation-1');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    fetchSpy.mockRestore();
+  });
+
+  it('falls back to browse content for descriptions on legacy connections', async () => {
+    const provider = new DeviantArtProvider({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://fanadmin.top:4000/integrations/deviantart/callback'
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ deviationid: 'deviation-legacy', title: 'Legacy work' }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ metadata: [{ deviationid: 'deviation-legacy' }] }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: 'unauthorized', error_description: 'Missing user.manage scope' }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ html: '<p>Legacy connection description</p>' }),
+        headers: { get: () => null }
+      } as unknown as Response);
+
+    const content = await provider.getContent('access-token', 'deviation-legacy');
+
+    expect(content.description).toBe('<p>Legacy connection description</p>');
+    const fallbackUrl = new URL(String(fetchSpy.mock.calls[3][0]));
+    expect(fallbackUrl.pathname).toContain('/deviation/content');
+    expect(fallbackUrl.searchParams.get('for_edit')).toBeNull();
+    fetchSpy.mockRestore();
+  });
 });

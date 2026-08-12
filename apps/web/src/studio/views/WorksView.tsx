@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { api } from '../../api';
 import { Card } from '../components/Card';
 import { WorkMetadataView } from './WorkMetadataView';
+import { WorkUploadView } from './WorkUploadView';
 import type {
   StudioCreator,
   StudioExternalAsset,
@@ -18,6 +19,30 @@ type CollectionResponse = {
   mappings: StudioExternalCollectionMapping[];
   collectionAssetIdsByCollection: Record<string, string[]>;
 };
+
+type WorkLifecycle = 'draft' | 'ready' | 'published';
+
+const lifecycleFor = (asset: StudioExternalAsset): WorkLifecycle => {
+  const destinations = asset.publications.filter((publication) => publication.syncStatus !== 'deleted');
+  if (destinations.some((publication) => publication.syncStatus === 'active')) return 'published';
+  return destinations.length ? 'ready' : 'draft';
+};
+
+const lifecycleLabel = (lifecycle: WorkLifecycle): string => lifecycle[0].toUpperCase() + lifecycle.slice(1);
+
+function PlatformIcons({ asset }: { asset: StudioExternalAsset }) {
+  const destinations = asset.publications.filter((publication) => publication.syncStatus !== 'deleted');
+  return <div className="studio-work-platform-icons" aria-label="Connected platforms">
+    <span className="studio-work-platform-icon studio-work-platform-icon-ubeeq" title="Stored in Ubeeq Space" aria-label="Stored in Ubeeq Space">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" strokeWidth="2" /><circle cx="10" cy="10" r="2.5" fill="currentColor" /></svg>
+    </span>
+    {destinations.map((publication) => <span key={publication.externalPublicationId} className="studio-work-platform-icon studio-work-platform-icon-deviantart" title={`${sourcePlatformLabel(publication)} · ${publication.syncStatus === 'active' ? 'published' : 'targeted'}`} aria-label={`${sourcePlatformLabel(publication)} ${publication.syncStatus === 'active' ? 'published' : 'targeted'}`}>
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 16.5 10 10 17.5 3.5 10 10 2.5Z" fill="none" stroke="currentColor" strokeWidth="2" /><path d="M8.2 6.4h3.1l1.7 3.6-1.7 3.6H8.2l1.6-3.6-1.6-3.6Z" fill="currentColor" /></svg>
+    </span>)}
+  </div>;
+}
+
+const sourcePlatformLabel = (publication: StudioExternalAsset['publications'][number]): string => publication.platform === 'deviantart' ? 'DeviantArt' : (publication.platform || 'Integration');
 
 const assetTypeLabel = (asset: StudioExternalAsset): string => {
   if (asset.assetType === 'image') return 'Image';
@@ -50,7 +75,9 @@ function WorkThumbnail({ asset }: { asset: StudioExternalAsset }) {
 export function WorksView({ creators }: { creators: StudioCreator[] }) {
   const location = useLocation();
   const workId = new URLSearchParams(location.search).get('workId');
+  const create = new URLSearchParams(location.search).get('create') === '1';
   if (workId) return <WorkMetadataView creators={creators} />;
+  if (create) return <WorkUploadView creators={creators} />;
   return <WorksIndex creators={creators} />;
 }
 
@@ -58,9 +85,11 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   const location = useLocation();
   const requestedCreatorId = new URLSearchParams(location.search).get('creatorId') || '';
   const requestedCollectionId = new URLSearchParams(location.search).get('collectionId') || '';
+  const requestedStatus = new URLSearchParams(location.search).get('status');
   const [creatorId, setCreatorId] = useState('');
   const [collectionId, setCollectionId] = useState('');
   const [query, setQuery] = useState('');
+  const [lifecycle, setLifecycle] = useState<'all' | WorkLifecycle>(requestedStatus === 'draft' || requestedStatus === 'ready' || requestedStatus === 'published' ? requestedStatus : 'all');
   const [assets, setAssets] = useState<StudioExternalAsset[]>([]);
   const [collections, setCollections] = useState<CollectionResponse>({ ubeeqCollections: [], externalCollections: [], mappings: [], collectionAssetIdsByCollection: {} });
   const [loading, setLoading] = useState(false);
@@ -145,11 +174,12 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
         publication.externalCollectionIds.some((externalCollectionId) => mappedExternalCollectionIds.has(externalCollectionId))
       )) || manuallyAssignedAssetIds.has(asset.assetId);
       if (!inCollection) return false;
+      if (lifecycle !== 'all' && lifecycleFor(asset) !== lifecycle) return false;
       if (!normalizedQuery) return true;
       return [asset.canonicalTitle || '', asset.canonicalDescription || '', ...asset.publications.flatMap((publication) => [publication.externalTitle || '', ...publication.externalTags])]
         .some((value) => value.toLowerCase().includes(normalizedQuery));
     });
-  }, [assets, collectionId, manuallyAssignedAssetIds, mappedExternalCollectionIds, query]);
+  }, [assets, collectionId, lifecycle, manuallyAssignedAssetIds, mappedExternalCollectionIds, query]);
   const displayedAssets = useMemo(() => visibleAssets.slice(0, 100), [visibleAssets]);
   const displayedAssetIds = useMemo(() => new Set(displayedAssets.map((asset) => asset.assetId)), [displayedAssets]);
   const selectedDisplayedAssetIds = useMemo(
@@ -235,7 +265,11 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
 
   return (
     <section className="studio-works-layout">
-      <Card title="Works" eyebrow="Creator catalogue">
+      <Card
+        title="Works"
+        eyebrow="Creator catalogue"
+        actions={<Link className="auth-primary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}&create=1`}>Upload works</Link>}
+      >
         <div className="studio-works-controls">
           <label>
             <span>Creator</span>
@@ -250,14 +284,23 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
               {collections.ubeeqCollections.map((collection) => <option key={collection.ubeeqCollectionId} value={collection.ubeeqCollectionId}>{collection.name}</option>)}
             </select>
           </label>
+          <label>
+            <span>Status</span>
+            <select value={lifecycle} onChange={(event) => setLifecycle(event.target.value as 'all' | WorkLifecycle)}>
+              <option value="all">All works</option>
+              <option value="draft">Draft</option>
+              <option value="ready">Ready</option>
+              <option value="published">Published</option>
+            </select>
+          </label>
           <label className="studio-works-search">
             <span>Search works</span>
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Title, description, or tag" />
           </label>
         </div>
 
-        <p className="studio-works-context"><strong>{activeCreator?.name || 'Creator'}</strong>{selectedCollection ? ` · ${selectedCollection.name}` : ' · All works'}</p>
-        {!selectedCollection && <p className="studio-works-space-note">Adding a work to a collection also queues a private Ubeeq Space backup when DeviantArt makes a source file available.</p>}
+        <p className="studio-works-context"><strong>{activeCreator?.name || 'Creator'}</strong>{selectedCollection ? ` · ${selectedCollection.name}` : ' · All works'}{lifecycle !== 'all' ? ` · ${lifecycleLabel(lifecycle)}` : ''}</p>
+        {!selectedCollection && <p className="studio-works-space-note">Drafts are stored in Ubeeq Space. Add destinations during metadata review, then sync when each work is ready.</p>}
         {loading && <p className="small">Loading works…</p>}
         {error && <p className="error">{error}</p>}
 
@@ -294,6 +337,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
               collection.name.toLowerCase().includes(collectionPickerQuery.trim().toLowerCase())
             ));
             const isCollectionPickerOpen = collectionPickerAssetId === asset.assetId;
+            const assetLifecycle = lifecycleFor(asset);
             return (
               <article className="studio-work-row" key={asset.assetId}>
                 <label className="studio-work-select" aria-label={`Select ${asset.canonicalTitle || 'work'}`}>
@@ -303,6 +347,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                 <div className="studio-work-details">
                   <strong>{asset.canonicalTitle || asset.publications[0]?.externalTitle || 'Untitled work'}</strong>
                   <span>{assetTypeLabel(asset)} · {asset.publications.map((publication) => publication.externalUsername).filter(Boolean).join(', ') || 'Ubeeq'}</span>
+                  <div className="studio-work-lifecycle"><span className={`studio-work-lifecycle-badge studio-work-lifecycle-${assetLifecycle}`}>{lifecycleLabel(assetLifecycle)}</span><PlatformIcons asset={asset} /></div>
                 </div>
                 <div className="studio-work-actions">
                   <span className="studio-collection-visibility">{asset.visibility}</span>

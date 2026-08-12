@@ -155,7 +155,7 @@ export type StudioExternalPublication = {
   externalCollectionIds: string[];
   publishedAt?: string;
   remoteUpdatedAt?: string;
-  syncStatus: string;
+  syncStatus: 'pending_publish' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
 };
 
 export type StudioExternalAsset = {
