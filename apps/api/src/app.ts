@@ -33,6 +33,7 @@ import type {
   UserCapabilities,
   UserProfile,
   Asset,
+  ExternalPublication,
   SpacePublication,
   ExternalAccount,
   ExternalPlatformCredential,
@@ -670,6 +671,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     userId: account.userId,
     creatorIdentityId: account.creatorIdentityId,
     primaryCreatorIdentityId: account.primaryCreatorIdentityId || account.creatorIdentityId,
+    externalPlatformCredentialId: account.externalPlatformCredentialId,
     platform: account.platform,
     externalUserId: account.externalUserId,
     externalUsername: account.externalUsername,
@@ -677,6 +679,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     connectionStatus: account.connectionStatus,
     lastSuccessfulSyncAt: account.lastSuccessfulSyncAt,
     lastSyncAttemptAt: account.lastSyncAttemptAt,
+    includeSourceFilesOnSync: account.includeSourceFilesOnSync === true,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt
   });
@@ -685,6 +688,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     externalPlatformCredentialId: credential.externalPlatformCredentialId,
     creatorIdentityId: credential.creatorIdentityId,
     platform: credential.platform,
+    applicationLabel: credential.applicationLabel,
     clientId: credential.clientId,
     redirectUri: credential.redirectUri,
     createdAt: credential.createdAt,
@@ -757,8 +761,11 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   ];
 
   const encodeS3LikePath = (key: string): string => key.split('/').map((part) => encodeURIComponent(part)).join('/');
-  const publicMediaUrl = async (key?: string): Promise<string | undefined> => {
+  const publicMediaUrl = async (key?: string, localOrigin?: string): Promise<string | undefined> => {
     if (!key) return undefined;
+    if (config.localMediaDirectory) {
+      return `${(localOrigin || 'http://localhost:4000').replace(/\/$/, '')}/media/local/${encodeS3LikePath(key)}`;
+    }
     if (mediaCdnDomain) {
       return `https://${mediaCdnDomain}/${encodeS3LikePath(key)}`;
     }
@@ -1966,6 +1973,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   }));
   app.use(express.json());
   app.use(createOptionalAuthMiddleware(config));
+  if (config.localMediaDirectory) app.use('/media/local', express.static(config.localMediaDirectory));
 
   const resolvePlatformRole = async (userId: string): Promise<PlatformRole> => {
     if (store.getUserIdentity) {
@@ -4218,6 +4226,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       configured: Boolean(credential && config.externalTokenEncryptionKey && config.externalOAuthRedirectUri),
       callbackUrl: config.externalOAuthRedirectUri,
       credential: credential ? toExternalPlatformCredentialResponse(credential) : null,
+      credentials: credentials.filter((item) => item.platform === 'deviantart').map(toExternalPlatformCredentialResponse),
       requiredConfiguration: [
         ...(config.externalTokenEncryptionKey ? [] : ['EXTERNAL_TOKEN_ENCRYPTION_KEY']),
         ...(config.externalOAuthRedirectUri ? [] : ['EXTERNAL_OAUTH_REDIRECT_URI']),
@@ -4234,10 +4243,18 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
     const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.trim().slice(0, 512) : '';
     const clientSecret = typeof req.body?.clientSecret === 'string' ? req.body.clientSecret.trim() : '';
-    const existing = (creatorIdentityId
+    const applicationLabel = typeof req.body?.applicationLabel === 'string' ? req.body.applicationLabel.trim().slice(0, 120) : '';
+    const credentials = (creatorIdentityId
       ? await store.listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId)
-      : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId))
-      .find((item) => item.platform === 'deviantart');
+      : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId));
+    const requestedCredentialId = typeof req.body?.externalPlatformCredentialId === 'string' ? req.body.externalPlatformCredentialId.trim() : '';
+    const createNew = req.body?.createNew === true;
+    const existing = createNew
+      ? undefined
+      : requestedCredentialId
+      ? credentials.find((item) => item.platform === 'deviantart' && item.externalPlatformCredentialId === requestedCredentialId)
+      : credentials.find((item) => item.platform === 'deviantart');
+    if (requestedCredentialId && !existing) return res.status(404).json({ message: 'DeviantArt application not found.' });
     if (!clientId) return res.status(400).json({ message: 'A DeviantArt client ID is required.' });
     if (!clientSecret && !existing) return res.status(400).json({ message: 'A DeviantArt client secret is required.' });
     const now = new Date().toISOString();
@@ -4246,6 +4263,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       userId: existing?.userId || req.authUser!.userId,
       creatorIdentityId: creatorIdentityId || undefined,
       platform: 'deviantart',
+      applicationLabel: applicationLabel || existing?.applicationLabel,
       clientId,
       clientSecretEncrypted: clientSecret
         ? encryptExternalCredential(clientSecret, config.externalTokenEncryptionKey)
@@ -4262,10 +4280,13 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.post('/studio/integrations/deviantart/connect', requireAuth, async (req, res) => {
     const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
     if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
-    const credential = (creatorIdentityId
+    const requestedCredentialId = typeof req.body?.externalPlatformCredentialId === 'string' ? req.body.externalPlatformCredentialId.trim() : '';
+    const credentials = (creatorIdentityId
       ? await store.listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId)
-      : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId))
-      .find((item) => item.platform === 'deviantart');
+      : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId));
+    const credential = requestedCredentialId
+      ? credentials.find((item) => item.platform === 'deviantart' && item.externalPlatformCredentialId === requestedCredentialId)
+      : credentials.find((item) => item.platform === 'deviantart');
     const provider = credential ? providerForCredential(credential) : null;
     if (!credential || !provider?.isConfigured()) {
       return res.status(409).json({ message: 'Add your DeviantArt application credentials before connecting an account.' });
@@ -4274,12 +4295,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const returnPath = requestedReturnPath.startsWith('/studio/')
       ? requestedReturnPath
       : '/studio/workspace?section=integrations';
+    const syncContentOnInitialImport = req.body?.syncContentOnInitialImport === true;
     const issuedState = issueExternalOAuthState(config, {
       userId: req.authUser!.userId,
       ...(creatorIdentityId ? { creatorIdentityId } : {}),
       externalPlatformCredentialId: credential.externalPlatformCredentialId,
       platform: 'deviantart',
-      returnPath
+      returnPath,
+      syncContentOnInitialImport
     });
     return res.json({ authorizationUrl: provider.createAuthorizationUrl(issuedState.state, externalOAuthPkce(config, issuedState.nonce)) });
   });
@@ -4345,11 +4368,19 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       const existing = (await store.listExternalAccountsByUser(state.userId)).find((account) => (
         account.platform === 'deviantart' && account.externalUserId === remoteAccount.externalUserId
       ));
+      const candidateCreators = !state.creatorIdentityId && !existing?.primaryCreatorIdentityId && !existing?.creatorIdentityId
+        ? await store.listCreatorsByUserId(state.userId)
+        : [];
+      const soleCreator = candidateCreators.length === 1 ? candidateCreators[0] : undefined;
+      const destinationCreatorIdentityId = state.creatorIdentityId
+        || existing?.primaryCreatorIdentityId
+        || existing?.creatorIdentityId
+        || soleCreator?.creatorId;
       const account: ExternalAccount = {
         externalAccountId: existing?.externalAccountId || randomUUID(),
         userId: state.userId,
-        creatorIdentityId: state.creatorIdentityId || existing?.creatorIdentityId,
-        primaryCreatorIdentityId: state.creatorIdentityId || existing?.primaryCreatorIdentityId || existing?.creatorIdentityId,
+        creatorIdentityId: destinationCreatorIdentityId,
+        primaryCreatorIdentityId: destinationCreatorIdentityId,
         externalPlatformCredentialId: credential.externalPlatformCredentialId,
         platform: 'deviantart',
         externalUserId: remoteAccount.externalUserId,
@@ -4362,23 +4393,25 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         connectionStatus: 'connected',
         lastSyncAttemptAt: existing?.lastSyncAttemptAt,
         lastSuccessfulSyncAt: existing?.lastSuccessfulSyncAt,
+        initialContentSyncRequested: state.syncContentOnInitialImport === true || existing?.initialContentSyncRequested === true,
         createdAt: existing?.createdAt || now,
         updatedAt: now
       };
       if (existing) await store.updateExternalAccount(account);
       else await store.createExternalAccount(account);
-      let queued = false;
-      if (account.primaryCreatorIdentityId || account.creatorIdentityId) {
-        try {
-          await enqueueExternalSyncJob(account.externalAccountId, 'account_import');
-          queued = true;
-        } catch (queueError) {
-          logServerError('deviantart.callback.queue', queueError);
-        }
+      if (destinationCreatorIdentityId) {
+        await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, [{
+          externalAccountId: account.externalAccountId,
+          creatorIdentityId: destinationCreatorIdentityId,
+          userId: account.userId,
+          createdAt: now,
+          updatedAt: now
+        }]);
       }
       return redirect({
-        deviantart: queued ? 'connected' : 'connected_assignment_required',
-        account: account.externalUsername
+        deviantart: soleCreator ? 'connected_destination_defaulted' : 'connected_assignment_required',
+        account: account.externalAccountId,
+        application: credential.externalPlatformCredentialId
       });
     } catch (error) {
       const reason = error instanceof ExternalProviderError ? error.code : 'connection_failed';
@@ -4397,7 +4430,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const accounts = creatorIdentityId
       ? await store.listExternalAccountsByCreatorIdentity(creatorIdentityId)
       : await store.listExternalAccountsByUser(req.authUser!.userId);
-    const responses = await Promise.all(accounts.map(async (account) => {
+    const responses = await Promise.all(accounts
+      .filter((account) => account.connectionStatus !== 'disabled')
+      .map(async (account) => {
       const storedAssignments = (await store.listExternalAccountCreatorAssignments(account.externalAccountId))
         .map((assignment) => assignment.creatorIdentityId);
       return {
@@ -4406,8 +4441,35 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
           ? storedAssignments
           : [account.primaryCreatorIdentityId || account.creatorIdentityId].filter((item): item is string => Boolean(item))
       };
-    }));
+      }));
     return res.json(responses);
+  });
+
+  app.delete('/studio/integrations/deviantart/accounts/:externalAccountId', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const now = new Date().toISOString();
+    await store.updateExternalAccount({
+      ...account,
+      accessTokenEncrypted: '',
+      refreshTokenEncrypted: undefined,
+      tokenExpiresAt: undefined,
+      connectionStatus: 'disabled',
+      updatedAt: now
+    });
+    const jobs = await store.listExternalSyncJobs(account.externalAccountId, 100);
+    await Promise.all(jobs
+      .filter((job) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status))
+      .map((job) => store.updateExternalSyncJob({
+        ...job,
+        status: 'cancelled',
+        errorCode: 'ACCOUNT_REMOVED',
+        errorMessage: 'Synchronization stopped because the DeviantArt account was removed',
+        updatedAt: now
+      })));
+    auditLog(req, 'deviantart.account.removed', { externalAccountId: account.externalAccountId });
+    return res.status(204).end();
   });
 
   app.put('/studio/integrations/deviantart/accounts/:externalAccountId/creators', requireAuth, async (req, res) => {
@@ -4421,6 +4483,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       .filter((item): item is string => typeof item === 'string')
       .map((item) => item.trim())
       .filter(Boolean))];
+    if (creatorIdentityIds.length > 1) {
+      return res.status(400).json({ message: 'Choose one destination creator for this DeviantArt account. Advanced split synchronization is not available yet.' });
+    }
     for (const creatorIdentityId of creatorIdentityIds) {
       if (!(await store.hasCreatorAccess(req.authUser!.userId, creatorIdentityId))) {
         return res.status(403).json({ message: 'You can only assign integrations to creators you manage.' });
@@ -4447,13 +4512,17 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       updatedAt: now
     };
     await store.updateExternalAccount(updatedAccount);
-    let job: ExternalSyncJob | undefined;
-    if (primaryCreatorIdentityId) {
-      try {
-        job = await enqueueExternalSyncJob(account.externalAccountId, 'account_import');
-      } catch (error) {
-        logServerError('deviantart.assignment.enqueue', error);
-      }
+    if (!primaryCreatorIdentityId) {
+      const pendingJobs = await store.listExternalSyncJobs(account.externalAccountId, 100);
+      await Promise.all(pendingJobs
+        .filter((job) => job.status === 'queued' || job.status === 'retry_scheduled' || job.status === 'rate_limited')
+        .map((job) => store.updateExternalSyncJob({
+          ...job,
+          status: 'cancelled',
+          errorCode: 'CREATOR_DISCONNECTED',
+          errorMessage: 'Synchronization stopped because the destination creator was disconnected',
+          updatedAt: now
+        })));
     }
     auditLog(req, 'deviantart.creators.assigned', {
       externalAccountId: account.externalAccountId,
@@ -4462,8 +4531,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     });
     return res.json({
       ...toExternalAccountResponse(updatedAccount),
-      creatorAssignments: creatorIdentityIds,
-      ...(job ? { job } : {})
+      creatorAssignments: creatorIdentityIds
     });
   });
 
@@ -4475,8 +4543,12 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return res.status(409).json({ message: 'Assign this DeviantArt account to at least one creator before synchronizing.' });
     }
     try {
-      const job = await enqueueExternalSyncJob(account.externalAccountId, 'full_reconciliation');
-      auditLog(req, 'deviantart.sync.requested', { externalAccountId: account.externalAccountId, jobId: job.externalSyncJobId });
+      const includeSourceFilesOnSync = req.body?.syncContent === true;
+      await store.updateExternalAccount({ ...account, includeSourceFilesOnSync, updatedAt: new Date().toISOString() });
+      const job = await enqueueExternalSyncJob(account.externalAccountId, 'full_reconciliation', {
+        syncContent: includeSourceFilesOnSync
+      });
+      auditLog(req, 'deviantart.sync.requested', { externalAccountId: account.externalAccountId, jobId: job.externalSyncJobId, includeSourceFilesOnSync });
       return res.status(202).json(job);
     } catch (error) {
       logServerError('deviantart.sync.enqueue', error);
@@ -4522,20 +4594,75 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       publicationByAssetId.set(publication.assetId, current);
     });
     const query = typeof req.query.query === 'string' ? req.query.query.trim().toLowerCase() : '';
-    const rows = assets
-      .map((asset) => {
+    const deviantArtPreviewUrl = (publication: ExternalPublication): string | undefined => {
+      const metadata = publication.rawMetadataJson;
+      if (!metadata || typeof metadata !== 'object') return undefined;
+      const record = metadata as Record<string, unknown>;
+      const thumbnail = Array.isArray(record.thumbs)
+        ? record.thumbs.find((item) => item && typeof item === 'object' && typeof (item as Record<string, unknown>).src === 'string')
+        : undefined;
+      if (thumbnail && typeof (thumbnail as Record<string, unknown>).src === 'string') return (thumbnail as Record<string, unknown>).src as string;
+      for (const key of ['preview', 'content']) {
+        const value = record[key];
+        if (value && typeof value === 'object' && typeof (value as Record<string, unknown>).src === 'string') {
+          return (value as Record<string, unknown>).src as string;
+        }
+      }
+      return undefined;
+    };
+    const metadataBoolean = (metadata: Record<string, unknown>, ...keys: string[]): boolean | undefined => {
+      const nested = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
+        ? metadata.submission as Record<string, unknown>
+        : {};
+      for (const key of keys) {
+        const value = metadata[key] ?? nested[key];
+        if (typeof value === 'boolean') return value;
+        if (value === 'true' || value === 1 || value === '1') return true;
+        if (value === 'false' || value === 0 || value === '0') return false;
+      }
+      return undefined;
+    };
+    const rows = await Promise.all(assets
+      .map(async (asset) => {
         const linkedPublications = publicationByAssetId.get(asset.assetId) || [];
+        const spacePublication = spacePublicationByAssetId.get(asset.assetId);
+        const thumbnailUrl = spacePublication?.contentSyncStatus === 'hosted'
+          && spacePublication.hostedObjectKey
+          ? await publicMediaUrl(
+            spacePublication.hostedThumbnailObjectKey || spacePublication.hostedObjectKey,
+            `${req.protocol}://${req.get('host')}`
+          )
+          : undefined;
         return {
           ...asset,
-          spacePublication: spacePublicationByAssetId.get(asset.assetId),
+          thumbnailUrl,
+          spacePublication,
           publications: linkedPublications.map((publication) => ({
             externalPublicationId: publication.externalPublicationId,
             externalAccountId: publication.externalAccountId,
+            platform: publication.platform,
             externalUsername: accountById.get(publication.externalAccountId)?.externalUsername || '',
             externalContentId: publication.externalContentId,
             externalUrl: publication.externalUrl,
+            previewUrl: deviantArtPreviewUrl(publication),
             externalTitle: publication.externalTitle,
+            externalDescription: publication.externalDescription,
             externalTags: publication.externalTags || [],
+            displayOptions: {
+              allowComments: metadataBoolean(publication.rawMetadataJson, 'allow_comments', 'allowComments'),
+              isMature: metadataBoolean(publication.rawMetadataJson, 'is_mature', 'isMature'),
+              matureLevel: publication.rawMetadataJson?.mature_level === 'strict' || publication.rawMetadataJson?.mature_level === 'moderate'
+                ? publication.rawMetadataJson.mature_level
+                : undefined,
+              matureClassification: Array.isArray(publication.rawMetadataJson?.mature_classification)
+                ? publication.rawMetadataJson.mature_classification.filter((item): item is string => typeof item === 'string')
+                : undefined,
+              isAiGenerated: metadataBoolean(publication.rawMetadataJson, 'is_ai_generated', 'ai_generated', 'created_with_ai'),
+              allowAiTraining: (() => {
+                const noAi = metadataBoolean(publication.rawMetadataJson, 'noai', 'no_ai');
+                return noAi === undefined ? undefined : !noAi;
+              })()
+            },
             externalCollectionIds: publication.externalCollectionIds || [],
             publishedAt: publication.publishedAt,
             remoteUpdatedAt: publication.remoteUpdatedAt,
@@ -4543,13 +4670,15 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
           }))
         };
       })
+    );
+    const filteredRows = rows
       .filter((asset) => !query || [
         asset.canonicalTitle,
         asset.canonicalDescription || '',
         ...asset.publications.flatMap((publication) => [publication.externalTitle || '', publication.externalUsername, ...publication.externalTags])
       ].some((value) => value.toLowerCase().includes(query)))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    return res.json({ items: rows, total: rows.length });
+    return res.json({ items: filteredRows, total: filteredRows.length });
   });
 
   app.patch('/studio/integrations/assets/:assetId', requireAuth, async (req, res) => {
@@ -4562,6 +4691,29 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const descriptionPolicy = req.body?.descriptionSyncPolicy === 'mirrored' || req.body?.descriptionSyncPolicy === 'independent' || req.body?.descriptionSyncPolicy === 'initially_mirrored' || req.body?.descriptionSyncPolicy === 'manual'
       ? req.body.descriptionSyncPolicy
       : (req.body?.canonicalDescription !== undefined ? 'independent' : asset.descriptionSyncPolicy);
+    const integrationMetadata = req.body?.integrationMetadata && typeof req.body.integrationMetadata === 'object' && !Array.isArray(req.body.integrationMetadata)
+      ? req.body.integrationMetadata as Record<string, unknown>
+      : null;
+    const integrationTitle = typeof integrationMetadata?.title === 'string' ? integrationMetadata.title.trim().slice(0, 300) : undefined;
+    const integrationDescription = typeof integrationMetadata?.description === 'string' ? sanitizeOptional(integrationMetadata.description, 20_000) : undefined;
+    const integrationTags = Array.isArray(integrationMetadata?.tags)
+      ? [...new Set(integrationMetadata.tags
+        .filter((tag): tag is string => typeof tag === 'string')
+        .map((tag) => tag.trim().replace(/\s+/g, '_').slice(0, 64))
+        .filter(Boolean))].slice(0, 30)
+      : undefined;
+    const allowComments = typeof integrationMetadata?.allowComments === 'boolean' ? integrationMetadata.allowComments : undefined;
+    const isMature = typeof integrationMetadata?.isMature === 'boolean' ? integrationMetadata.isMature : undefined;
+    const matureLevel = integrationMetadata?.matureLevel === 'strict' || integrationMetadata?.matureLevel === 'moderate'
+      ? integrationMetadata.matureLevel
+      : undefined;
+    const matureClassification = Array.isArray(integrationMetadata?.matureClassification)
+      ? [...new Set(integrationMetadata.matureClassification.filter((classification): classification is 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology' => (
+        classification === 'nudity' || classification === 'sexual' || classification === 'gore' || classification === 'language' || classification === 'ideology'
+      )))]
+      : undefined;
+    const isAiGenerated = typeof integrationMetadata?.isAiGenerated === 'boolean' ? integrationMetadata.isAiGenerated : undefined;
+    const allowAiTraining = typeof integrationMetadata?.allowAiTraining === 'boolean' ? integrationMetadata.allowAiTraining : undefined;
     const updated: Asset = {
       ...asset,
       canonicalTitle: req.body?.canonicalTitle !== undefined ? String(req.body.canonicalTitle).trim().slice(0, 300) : asset.canonicalTitle,
@@ -4572,7 +4724,60 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       updatedAt: new Date().toISOString()
     };
     await store.updateAsset(updated);
-    return res.json(updated);
+    const publications = (await Promise.all(
+      (await store.listExternalAccountsByCreatorIdentity(asset.creatorIdentityId))
+        .map((account) => store.listExternalPublications(account.externalAccountId))
+    )).flat().filter((publication) => publication.assetId === asset.assetId && publication.syncStatus === 'active');
+    const externalMetadataChanged = integrationTitle !== undefined
+      || integrationDescription !== undefined
+      || integrationTags !== undefined
+      || allowComments !== undefined
+      || isMature !== undefined
+      || matureLevel !== undefined
+      || matureClassification !== undefined
+      || isAiGenerated !== undefined
+      || allowAiTraining !== undefined;
+    if (!externalMetadataChanged || !publications.length) return res.json(updated);
+    const now = new Date().toISOString();
+    await Promise.all(publications.map(async (publication) => {
+      const rawMetadataJson = { ...publication.rawMetadataJson };
+      if (allowComments !== undefined) rawMetadataJson.allow_comments = allowComments;
+      if (isMature !== undefined) rawMetadataJson.is_mature = isMature;
+      if (matureLevel !== undefined) rawMetadataJson.mature_level = matureLevel;
+      if (matureClassification !== undefined) rawMetadataJson.mature_classification = matureClassification;
+      if (isAiGenerated !== undefined) rawMetadataJson.is_ai_generated = isAiGenerated;
+      if (allowAiTraining !== undefined) rawMetadataJson.noai = !allowAiTraining;
+      await store.updateExternalPublication({
+        ...publication,
+        externalTitle: integrationTitle ?? publication.externalTitle,
+        externalDescription: integrationDescription ?? publication.externalDescription,
+        externalTags: integrationTags ?? publication.externalTags,
+        rawMetadataJson,
+        updatedAt: now
+      });
+    }));
+    const remoteUpdateJobs = await Promise.all(publications.map(async (publication) => {
+      const payload: Record<string, unknown> = {
+        externalPublicationId: publication.externalPublicationId,
+        ...(integrationTitle !== undefined ? { title: integrationTitle } : {}),
+        ...(integrationDescription !== undefined ? { description: integrationDescription } : {}),
+        ...(integrationTags !== undefined ? { tags: integrationTags } : {}),
+        ...(allowComments !== undefined ? { allowComments } : {}),
+        ...(isMature !== undefined ? { isMature } : {}),
+        ...(matureLevel !== undefined ? { matureLevel } : {}),
+        ...(matureClassification !== undefined ? { matureClassification } : {}),
+        ...(isAiGenerated !== undefined ? { isAiGenerated } : {}),
+        ...(allowAiTraining !== undefined ? { allowAiTraining } : {})
+      };
+      if (!Object.keys(payload).some((key) => key !== 'externalPublicationId')) return null;
+      try {
+        return await enqueueExternalSyncJob(publication.externalAccountId, 'remote_update', payload);
+      } catch (queueError) {
+        logServerError('integration.metadata-update.enqueue', queueError);
+        return null;
+      }
+    }));
+    return res.json({ ...updated, remoteUpdateJobs: remoteUpdateJobs.filter(Boolean) });
   });
 
   app.put('/studio/integrations/assets/:assetId/space-publication', requireAuth, async (req, res) => {
@@ -4581,21 +4786,42 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
     const current = await store.getSpacePublication(asset.assetId);
     const published = Boolean(req.body?.published);
-    const hostingMode = req.body?.hostingMode === 'hosted' ? 'hosted' : 'linked';
+    const contentSyncRequested = published && req.body?.hostingMode === 'hosted';
     const visibility = req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' ? req.body.visibility : 'private';
+    const candidatePublications = (await Promise.all(
+      (await store.listExternalAccountsByCreatorIdentity(asset.creatorIdentityId))
+        .map((account) => store.listExternalPublications(account.externalAccountId))
+    )).flat().filter((publication) => publication.assetId === asset.assetId);
+    const sourcePublication = candidatePublications[0];
+    if (contentSyncRequested && !sourcePublication) {
+      return res.status(409).json({ message: 'This work has no connected source available for a Ubeeq Space backup.' });
+    }
     const now = new Date().toISOString();
     const publication = {
       assetId: asset.assetId,
       published,
-      hostingMode,
+      // The work remains linked while the background transfer is in progress.
+      hostingMode: contentSyncRequested ? (current?.hostingMode === 'hosted' ? 'hosted' : 'linked') : 'linked',
       publishedAt: published ? (current?.publishedAt || now) : undefined,
       ubeeqTitleOverride: sanitizeOptional(req.body?.ubeeqTitleOverride, 300),
       ubeeqDescriptionOverride: sanitizeOptional(req.body?.ubeeqDescriptionOverride, 20_000),
       visibility,
+      contentSyncStatus: contentSyncRequested ? 'queued' : (published ? current?.contentSyncStatus || 'not_requested' : 'not_requested'),
+      contentSyncError: contentSyncRequested ? undefined : current?.contentSyncError,
       updatedAt: now
     } satisfies SpacePublication;
     await store.upsertSpacePublication(publication);
-    return res.json(publication);
+    if (!contentSyncRequested) return res.json(publication);
+    try {
+      const job = await enqueueExternalSyncJob(sourcePublication!.externalAccountId, 'content_sync', {
+        assetId: asset.assetId,
+        externalPublicationId: sourcePublication!.externalPublicationId
+      });
+      return res.status(202).json({ ...publication, contentSyncJob: job });
+    } catch (error) {
+      logServerError('space.content-sync.enqueue', error);
+      return res.status(503).json({ message: 'The Ubeeq Space backup queue is unavailable. Please try again.' });
+    }
   });
 
   app.get('/studio/integrations/deviantart/collections', requireAuth, async (req, res) => {

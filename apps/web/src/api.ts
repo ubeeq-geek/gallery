@@ -889,22 +889,23 @@ export const api = {
       configured: boolean;
       callbackUrl?: string;
       requiredConfiguration: string[];
-      credential: null | { externalPlatformCredentialId: string; clientId: string; redirectUri: string; updatedAt: string };
+      credential: null | { externalPlatformCredentialId: string; applicationLabel?: string; clientId: string; redirectUri: string; updatedAt: string };
+      credentials?: Array<{ externalPlatformCredentialId: string; applicationLabel?: string; clientId: string; redirectUri: string; updatedAt: string }>;
     }>;
   },
-  async studioSaveDeviantArtCredentials(payload: { creatorId?: string; clientId: string; clientSecret?: string }) {
+  async studioSaveDeviantArtCredentials(payload: { creatorId?: string; externalPlatformCredentialId?: string; createNew?: boolean; applicationLabel?: string; clientId: string; clientSecret?: string }) {
     const response = await fetch(`${API_BASE}/studio/integrations/deviantart/credentials`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
-    return handleJson(response) as Promise<{ externalPlatformCredentialId: string; clientId: string; redirectUri: string; updatedAt: string }>;
+    return handleJson(response) as Promise<{ externalPlatformCredentialId: string; applicationLabel?: string; clientId: string; redirectUri: string; updatedAt: string }>;
   },
-  async studioStartDeviantArtConnection(creatorId?: string, returnPath = '/studio/workspace?section=integrations') {
+  async studioStartDeviantArtConnection(creatorId?: string, returnPath = '/studio/workspace?section=integrations', syncContentOnInitialImport = false, externalPlatformCredentialId?: string) {
     const response = await fetch(`${API_BASE}/studio/integrations/deviantart/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-      body: JSON.stringify({ ...(creatorId ? { creatorId } : {}), returnPath })
+      body: JSON.stringify({ ...(creatorId ? { creatorId } : {}), returnPath, syncContentOnInitialImport, ...(externalPlatformCredentialId ? { externalPlatformCredentialId } : {}) })
     });
     return handleJson(response) as Promise<{ authorizationUrl: string }>;
   },
@@ -912,6 +913,13 @@ export const api = {
     const query = creatorId ? `?creatorId=${encodeURIComponent(creatorId)}` : '';
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts${query}`);
     return handleJson(response);
+  },
+  async studioRemoveDeviantArtAccount(externalAccountId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    if (!response.ok) return handleJson(response);
   },
   async studioAssignDeviantArtAccountCreators(externalAccountId: string, payload: { creatorIdentityIds: string[]; primaryCreatorIdentityId?: string }) {
     const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/creators`, {
@@ -921,10 +929,11 @@ export const api = {
     });
     return handleJson(response);
   },
-  async studioSyncDeviantArtAccount(externalAccountId: string) {
+  async studioSyncDeviantArtAccount(externalAccountId: string, syncContent = false) {
     const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/sync`, {
       method: 'POST',
-      headers: await authHeaders()
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ syncContent })
     });
     return handleJson(response);
   },
@@ -944,6 +953,17 @@ export const api = {
     visibility?: 'private' | 'unlisted' | 'public';
     titleSyncPolicy?: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
     descriptionSyncPolicy?: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
+    integrationMetadata?: {
+      title?: string;
+      description?: string;
+      tags?: string[];
+      allowComments?: boolean;
+      isMature?: boolean;
+      matureLevel?: 'strict' | 'moderate';
+      matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
+      isAiGenerated?: boolean;
+      allowAiTraining?: boolean;
+    };
   }) {
     const response = await fetch(`${API_BASE}/studio/integrations/assets/${encodeURIComponent(assetId)}`, {
       method: 'PATCH',

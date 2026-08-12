@@ -108,6 +108,7 @@ export type StudioUser = {
 
 export type StudioDeviantArtAccount = {
   externalAccountId: string;
+  externalPlatformCredentialId: string;
   creatorIdentityId?: string;
   primaryCreatorIdentityId?: string;
   creatorAssignments?: string[];
@@ -118,6 +119,7 @@ export type StudioDeviantArtAccount = {
   connectionStatus: 'connected' | 'authentication_required' | 'rate_limited' | 'temporarily_unavailable' | 'disabled';
   lastSuccessfulSyncAt?: string;
   lastSyncAttemptAt?: string;
+  includeSourceFilesOnSync?: boolean;
 };
 
 export type StudioExternalSyncJob = {
@@ -134,11 +136,22 @@ export type StudioExternalSyncJob = {
 export type StudioExternalPublication = {
   externalPublicationId: string;
   externalAccountId: string;
+  platform?: string;
   externalUsername: string;
   externalContentId: string;
   externalUrl?: string;
+  previewUrl?: string;
   externalTitle?: string;
+  externalDescription?: string;
   externalTags: string[];
+  displayOptions?: {
+    allowComments?: boolean;
+    isMature?: boolean;
+    matureLevel?: 'strict' | 'moderate';
+    matureClassification?: string[];
+    isAiGenerated?: boolean;
+    allowAiTraining?: boolean;
+  };
   externalCollectionIds: string[];
   publishedAt?: string;
   remoteUpdatedAt?: string;
@@ -155,6 +168,8 @@ export type StudioExternalAsset = {
   titleSyncPolicy: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
   descriptionSyncPolicy: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
   updatedAt: string;
+  /** A preview from the Ubeeq Space backup, when one is available. */
+  thumbnailUrl?: string;
   spacePublication?: StudioSpacePublication | null;
   publications: StudioExternalPublication[];
 };
@@ -163,6 +178,10 @@ export type StudioSpacePublication = {
   assetId: string;
   published: boolean;
   hostingMode: 'linked' | 'hosted';
+  contentSyncStatus?: 'not_requested' | 'queued' | 'syncing' | 'hosted' | 'failed';
+  hostedByteSize?: number;
+  lastContentSyncAt?: string;
+  contentSyncError?: string;
   publishedAt?: string;
   visibility: 'private' | 'unlisted' | 'public';
 };

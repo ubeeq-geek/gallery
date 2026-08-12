@@ -30,6 +30,8 @@ export interface AppConfig {
   externalSyncQueueUrl?: string;
   externalSyncBaseDelaySeconds: number;
   externalAccountScanIntervalSeconds: number;
+  externalContentMaxBytes: number;
+  localMediaDirectory?: string;
   appOrigin?: string;
   localAuthUserId?: string;
 }
@@ -66,6 +68,8 @@ export const loadConfig = (): AppConfig => ({
   externalSyncQueueUrl: process.env.EXTERNAL_SYNC_QUEUE_URL,
   externalSyncBaseDelaySeconds: Number(process.env.EXTERNAL_SYNC_BASE_DELAY_SECONDS || 60),
   externalAccountScanIntervalSeconds: Number(process.env.EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS || 21600),
+  externalContentMaxBytes: Number(process.env.EXTERNAL_CONTENT_MAX_BYTES || 50 * 1024 * 1024),
+  localMediaDirectory: process.env.LOCAL_MEDIA_DIRECTORY || (process.env.LOCAL_AUTH_USER_ID ? '/tmp/ubeeq-media' : undefined),
   appOrigin: process.env.APP_ORIGIN,
   localAuthUserId: process.env.LOCAL_AUTH_USER_ID
 });

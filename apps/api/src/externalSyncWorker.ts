@@ -1,8 +1,10 @@
 import { randomUUID } from 'crypto';
 import type { AppConfig } from './config';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
-import { createExternalPlatformProvider, ExternalProviderError, type ExternalPlatformProvider, type ExternalRemoteContent } from './externalPlatformProvider';
-import type { Asset, ExternalAccount, ExternalPublication, ExternalSyncJob } from './domain';
+import { storeExternalContent } from './externalContentStorage';
+import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
+import { createExternalPlatformProvider, ExternalProviderError, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteContent } from './externalPlatformProvider';
+import type { Asset, ExternalAccount, ExternalPublication, ExternalSyncJob, SpacePublication } from './domain';
 import type { DataStore } from './store';
 
 const retryDelaySeconds = (attempt: number, configuredBase: number): number => {
@@ -80,7 +82,7 @@ const upsertContent = async (
   account: ExternalAccount,
   remote: ExternalRemoteContent,
   now: string
-): Promise<void> => {
+): Promise<{ asset: Asset; publication: ExternalPublication }> => {
   const primaryCreatorIdentityId = account.primaryCreatorIdentityId || account.creatorIdentityId;
   if (!primaryCreatorIdentityId) {
     throw new ExternalProviderError('Assign this DeviantArt account to a creator before importing its catalogue', 'unsupported');
@@ -153,9 +155,160 @@ const upsertContent = async (
       otherMetricsJson: remote.metrics.other
     });
   }
+  return { asset, publication };
 };
 
-const executeAccountImport = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
+const enqueueContentSyncJob = async (
+  store: DataStore,
+  config: AppConfig,
+  externalAccountId: string,
+  assetId: string,
+  externalPublicationId: string,
+  queue?: ExternalSyncQueue
+): Promise<void> => {
+  const now = new Date().toISOString();
+  const contentJob: ExternalSyncJob = {
+    externalSyncJobId: randomUUID(),
+    externalAccountId,
+    type: 'content_sync',
+    status: 'queued',
+    payload: { assetId, externalPublicationId },
+    progress: { discovered: 1, synchronized: 0, remaining: 1 },
+    attemptCount: 0,
+    createdAt: now,
+    updatedAt: now
+  };
+  await store.createExternalSyncJob(contentJob);
+  try {
+    await (queue || createExternalSyncQueue(config)).enqueue(contentJob.externalSyncJobId);
+  } catch {
+    await store.updateExternalSyncJob({
+      ...contentJob,
+      status: 'retry_scheduled',
+      nextAttemptAt: new Date(Date.now() + config.externalSyncBaseDelaySeconds * 1000).toISOString(),
+      errorCode: 'QUEUE_UNAVAILABLE',
+      errorMessage: 'The content synchronization queue is unavailable',
+      updatedAt: new Date().toISOString()
+    });
+    throw new ExternalProviderError('The content synchronization queue is unavailable', 'temporarily_unavailable');
+  }
+};
+
+const queueSpaceContentSync = async (
+  store: DataStore,
+  config: AppConfig,
+  account: ExternalAccount,
+  asset: Asset,
+  publication: ExternalPublication,
+  queue?: ExternalSyncQueue
+): Promise<void> => {
+  const current = await store.getSpacePublication(asset.assetId);
+  const now = new Date().toISOString();
+  const spacePublication: SpacePublication = {
+    assetId: asset.assetId,
+    published: true,
+    hostingMode: current?.hostingMode === 'hosted' ? 'hosted' : 'linked',
+    publishedAt: current?.publishedAt || now,
+    ubeeqTitleOverride: current?.ubeeqTitleOverride,
+    ubeeqDescriptionOverride: current?.ubeeqDescriptionOverride,
+    visibility: current?.visibility || 'private',
+    contentSyncStatus: 'queued',
+    contentSyncError: undefined,
+    updatedAt: now
+  };
+  await store.upsertSpacePublication(spacePublication);
+  await enqueueContentSyncJob(store, config, account.externalAccountId, asset.assetId, publication.externalPublicationId, queue);
+};
+
+const executeContentSync = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
+  const assetId = typeof job.payload?.assetId === 'string' ? job.payload.assetId : '';
+  const externalPublicationId = typeof job.payload?.externalPublicationId === 'string' ? job.payload.externalPublicationId : '';
+  const publication = (await store.listExternalPublications(account.externalAccountId))
+    .find((item) => item.externalPublicationId === externalPublicationId && item.assetId === assetId);
+  const asset = assetId ? await store.getAsset(assetId) : null;
+  if (!asset || !publication) throw new ExternalProviderError('The work is no longer available for content synchronization', 'invalid_response');
+  const current = await store.getSpacePublication(asset.assetId);
+  const now = new Date().toISOString();
+  await store.upsertSpacePublication({
+    assetId: asset.assetId,
+    published: true,
+    hostingMode: current?.hostingMode || 'linked',
+    publishedAt: current?.publishedAt || now,
+    ubeeqTitleOverride: current?.ubeeqTitleOverride,
+    ubeeqDescriptionOverride: current?.ubeeqDescriptionOverride,
+    visibility: current?.visibility || 'private',
+    contentSyncStatus: 'syncing',
+    updatedAt: now
+  });
+  const provider = await providerForAccount(store, config, account);
+  const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
+  const remote = await provider.getContent(session.accessToken, publication.externalContentId);
+  if (!remote.content?.sourceUrl) {
+    throw new ExternalProviderError('DeviantArt did not provide a downloadable source file for this work', 'unsupported');
+  }
+  const stored = await storeExternalContent(config, {
+    userId: asset.userId,
+    creatorIdentityId: asset.creatorIdentityId,
+    assetId: asset.assetId,
+    externalContentId: publication.externalContentId,
+    sourceUrl: remote.content.sourceUrl,
+    contentType: remote.content.contentType,
+    expectedByteSize: remote.content.byteSize
+  });
+  await store.upsertSpacePublication({
+    assetId: asset.assetId,
+    published: true,
+    hostingMode: 'hosted',
+    publishedAt: current?.publishedAt || now,
+    ubeeqTitleOverride: current?.ubeeqTitleOverride,
+    ubeeqDescriptionOverride: current?.ubeeqDescriptionOverride,
+    visibility: current?.visibility || 'private',
+    contentSyncStatus: 'hosted',
+    hostedObjectKey: stored.objectKey,
+    hostedThumbnailObjectKey: stored.thumbnailObjectKey,
+    hostedContentType: stored.contentType,
+    hostedByteSize: stored.byteSize,
+    hostedChecksumSha256: stored.checksumSha256,
+    lastContentSyncAt: new Date().toISOString(),
+    contentSyncError: undefined,
+    updatedAt: new Date().toISOString()
+  });
+  await updateJob(store, job, { status: 'successful', progress: { discovered: 1, synchronized: 1, remaining: 0 }, errorCode: undefined, errorMessage: undefined });
+  await addLog(store, job.externalSyncJobId, 'info', 'DeviantArt source file stored in Ubeeq Space', { assetId, bytes: stored.byteSize });
+};
+
+const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
+  const externalPublicationId = typeof job.payload?.externalPublicationId === 'string' ? job.payload.externalPublicationId : '';
+  const publication = (await store.listExternalPublications(account.externalAccountId))
+    .find((item) => item.externalPublicationId === externalPublicationId);
+  if (!publication) throw new ExternalProviderError('The connected work is no longer available for an outbound update', 'invalid_response');
+  const update: ExternalContentUpdate = {};
+  if (typeof job.payload?.title === 'string') update.title = job.payload.title;
+  if (typeof job.payload?.description === 'string') update.description = job.payload.description;
+  if (Array.isArray(job.payload?.tags)) update.tags = job.payload.tags.filter((tag): tag is string => typeof tag === 'string');
+  if (typeof job.payload?.allowComments === 'boolean') update.allowComments = job.payload.allowComments;
+  if (typeof job.payload?.isMature === 'boolean') update.isMature = job.payload.isMature;
+  if (job.payload?.matureLevel === 'strict' || job.payload?.matureLevel === 'moderate') update.matureLevel = job.payload.matureLevel;
+  if (Array.isArray(job.payload?.matureClassification)) update.matureClassification = job.payload.matureClassification
+    .filter((classification): classification is 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology' => (
+      classification === 'nudity' || classification === 'sexual' || classification === 'gore' || classification === 'language' || classification === 'ideology'
+    ));
+  if (typeof job.payload?.isAiGenerated === 'boolean') update.isAiGenerated = job.payload.isAiGenerated;
+  if (typeof job.payload?.allowAiTraining === 'boolean') update.allowAiTraining = job.payload.allowAiTraining;
+  const provider = await providerForAccount(store, config, account);
+  const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
+  await provider.updateContent(session.accessToken, publication.externalContentId, update);
+  await updateJob(store, job, {
+    status: 'successful',
+    progress: { discovered: 1, synchronized: 1, remaining: 0 },
+    errorCode: undefined,
+    errorMessage: undefined,
+    nextAttemptAt: undefined
+  });
+  await addLog(store, job.externalSyncJobId, 'info', 'Integration metadata update completed', { externalPublicationId, fields: Object.keys(update) });
+};
+
+const executeAccountImport = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount, queue?: ExternalSyncQueue): Promise<void> => {
   const provider = await providerForAccount(store, config, account);
   const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
   const now = new Date().toISOString();
@@ -191,7 +344,23 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     });
     discovered += page.items.length;
     for (const item of page.items) {
-      await upsertContent(store, account, item, now);
+      const hasCompleteLabelMetadata = ['is_ai_generated', 'ai_generated', 'created_with_ai', 'noai', 'no_ai']
+        .some((key) => Object.prototype.hasOwnProperty.call(item.rawMetadata, key));
+      let resolvedItem = item;
+      if (!item.tags.length || !hasCompleteLabelMetadata) {
+        try {
+          resolvedItem = await provider.getContent(session.accessToken, item.externalContentId);
+        } catch (error) {
+          await addLog(store, job.externalSyncJobId, 'warning', 'Could not load complete DeviantArt metadata; retaining catalogue values', {
+            externalContentId: item.externalContentId,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+      const imported = await upsertContent(store, account, resolvedItem, now);
+      if (job.payload?.syncContent === true) {
+        await queueSpaceContentSync(store, config, account, imported.asset, imported.publication, queue);
+      }
       synchronized += 1;
     }
     cursor = page.nextCursor;
@@ -201,11 +370,22 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     });
   } while (cursor);
 
+  const currentAccount = await store.getExternalAccount(account.externalAccountId);
+  if (currentAccount?.connectionStatus === 'disabled') {
+    await updateJob(store, currentJob, {
+      status: 'cancelled',
+      errorCode: 'ACCOUNT_REMOVED',
+      errorMessage: 'Synchronization stopped because the DeviantArt account was removed'
+    });
+    return;
+  }
+
   await store.updateExternalAccount({
     ...session.account,
     connectionStatus: 'connected',
     lastSuccessfulSyncAt: now,
     lastSyncAttemptAt: now,
+    initialContentSyncRequested: false,
     updatedAt: now
   });
   await updateJob(store, currentJob, {
@@ -218,7 +398,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
   await addLog(store, job.externalSyncJobId, 'info', 'DeviantArt account import completed', { discovered, synchronized, collections: collections.length });
 };
 
-export const processExternalSyncJob = async (store: DataStore, config: AppConfig, externalSyncJobId: string): Promise<void> => {
+export const processExternalSyncJob = async (store: DataStore, config: AppConfig, externalSyncJobId: string, queue?: ExternalSyncQueue): Promise<void> => {
   const job = await store.getExternalSyncJob(externalSyncJobId);
   if (!job || job.status === 'cancelled' || job.status === 'successful') return;
   const account = await store.getExternalAccount(job.externalAccountId);
@@ -226,18 +406,39 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
     await updateJob(store, job, { status: 'failed', errorCode: 'ACCOUNT_NOT_FOUND', errorMessage: 'Connected account no longer exists' });
     return;
   }
+  if (account.connectionStatus === 'disabled') {
+    await updateJob(store, job, { status: 'cancelled', errorCode: 'ACCOUNT_REMOVED', errorMessage: 'Synchronization stopped because the DeviantArt account was removed' });
+    return;
+  }
   const attemptCount = job.attemptCount + 1;
   const processingJob = await updateJob(store, job, { status: 'processing', attemptCount, lastAttemptAt: new Date().toISOString() });
   await addLog(store, job.externalSyncJobId, 'info', 'Sync job started', { type: job.type, attemptCount });
   try {
     if (job.type === 'account_import' || job.type === 'full_reconciliation' || job.type === 'account_scan') {
-      await executeAccountImport(store, config, processingJob, account);
+      await executeAccountImport(store, config, processingJob, account, queue);
+      return;
+    }
+    if (job.type === 'content_sync') {
+      await executeContentSync(store, config, processingJob, account);
+      return;
+    }
+    if (job.type === 'remote_update') {
+      await executeRemoteUpdate(store, config, processingJob, account);
       return;
     }
     throw new ExternalProviderError(`Sync job type ${job.type} is not implemented yet`, 'unsupported');
   } catch (error) {
     const providerError = error instanceof ExternalProviderError ? error : new ExternalProviderError('External synchronization failed', 'temporarily_unavailable');
     const latest = await store.getExternalSyncJob(externalSyncJobId) || { ...job, attemptCount };
+    const currentAccount = await store.getExternalAccount(account.externalAccountId);
+    if (currentAccount?.connectionStatus === 'disabled') {
+      await updateJob(store, latest, {
+        status: 'cancelled',
+        errorCode: 'ACCOUNT_REMOVED',
+        errorMessage: 'Synchronization stopped because the DeviantArt account was removed'
+      });
+      return;
+    }
     if (providerError.code === 'authentication_required') {
       await store.updateExternalAccount({ ...account, connectionStatus: 'authentication_required', lastSyncAttemptAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       await updateJob(store, latest, { status: 'authentication_required', errorCode: providerError.code, errorMessage: providerError.message });
@@ -257,6 +458,18 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
       });
     } else {
       await updateJob(store, latest, { status: 'failed', errorCode: providerError.code, errorMessage: providerError.message });
+    }
+    if (job.type === 'content_sync' && typeof job.payload?.assetId === 'string') {
+      const current = await store.getSpacePublication(job.payload.assetId);
+      if (current) {
+        await store.upsertSpacePublication({
+          ...current,
+          hostingMode: current.hostingMode === 'hosted' ? 'hosted' : 'linked',
+          contentSyncStatus: 'failed',
+          contentSyncError: providerError.message,
+          updatedAt: new Date().toISOString()
+        });
+      }
     }
     await addLog(store, externalSyncJobId, 'error', providerError.message, { code: providerError.code, attemptCount });
   }

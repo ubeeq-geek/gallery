@@ -25,6 +25,7 @@ const buildConfig = (): AppConfig => ({
   trendingCandidateLimit: 1500,
   externalSyncBaseDelaySeconds: 60,
   externalAccountScanIntervalSeconds: 21600,
+  externalContentMaxBytes: 50 * 1024 * 1024,
   externalTokenEncryptionKey: 'test-external-encryption-key',
   externalOAuthRedirectUri: 'http://localhost:4000/integrations/deviantart/callback'
 });
@@ -196,7 +197,7 @@ describe('API contract', () => {
     expect(selectedCatalogueResponse.body.items[0].spacePublication.published).toBe(true);
   });
 
-  it('keeps a DeviantArt integration account-owned and assigns one account to multiple creators', async () => {
+  it('keeps a DeviantArt integration account-owned and uses one sync destination creator', async () => {
     const store = new InMemoryStore();
     const app = createApp({ config: buildConfig(), store });
     const now = new Date().toISOString();
@@ -228,9 +229,9 @@ describe('API contract', () => {
     const assignment = await request(app)
       .put('/studio/integrations/deviantart/accounts/shared-da-account/creators')
       .set('x-user-id', 'u-da-owner')
-      .send({ creatorIdentityIds: ['creator-a', 'creator-b'], primaryCreatorIdentityId: 'creator-b' });
+      .send({ creatorIdentityIds: ['creator-b'], primaryCreatorIdentityId: 'creator-b' });
     expect(assignment.status).toBe(200);
-    expect(assignment.body.creatorAssignments).toEqual(['creator-a', 'creator-b']);
+    expect(assignment.body.creatorAssignments).toEqual(['creator-b']);
     expect(assignment.body.primaryCreatorIdentityId).toBe('creator-b');
 
     const [allAccounts, creatorAAccounts, creatorBAccounts] = await Promise.all([
@@ -240,7 +241,13 @@ describe('API contract', () => {
     ]);
     expect(allAccounts.status).toBe(200);
     expect(allAccounts.body).toHaveLength(1);
-    expect(creatorAAccounts.body[0].externalAccountId).toBe('shared-da-account');
+    expect(creatorAAccounts.body).toEqual([]);
     expect(creatorBAccounts.body[0].externalAccountId).toBe('shared-da-account');
+
+    const unsupportedSplit = await request(app)
+      .put('/studio/integrations/deviantart/accounts/shared-da-account/creators')
+      .set('x-user-id', 'u-da-owner')
+      .send({ creatorIdentityIds: ['creator-a', 'creator-b'], primaryCreatorIdentityId: 'creator-b' });
+    expect(unsupportedSplit.status).toBe(400);
   });
 });

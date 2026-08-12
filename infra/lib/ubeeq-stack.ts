@@ -427,6 +427,7 @@ export class UbeeqStack extends Stack {
     contentCoreTable.grantReadWriteData(externalSyncFn);
     contentCoreTable.grantReadWriteData(externalSyncSchedulerFn);
     mediaBucket.grantReadWrite(apiFn);
+    mediaBucket.grantReadWrite(externalSyncFn);
     contentStatsTable.grantReadWriteData(trendingRankerFn);
     trendingFeedTable.grantReadWriteData(trendingRankerFn);
     contentCoreTable.grantReadData(trendingRankerFn);

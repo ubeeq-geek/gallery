@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { api } from '../../api';
 import { Card } from '../components/Card';
+import { WorkMetadataView } from './WorkMetadataView';
 import type {
   StudioCreator,
   StudioExternalAsset,
   StudioExternalCollection,
   StudioExternalCollectionMapping,
+  StudioSpacePublication,
   StudioUbeeqCollection
 } from '../types';
 
@@ -17,7 +19,42 @@ type CollectionResponse = {
   collectionAssetIdsByCollection: Record<string, string[]>;
 };
 
+const assetTypeLabel = (asset: StudioExternalAsset): string => {
+  if (asset.assetType === 'image') return 'Image';
+  if (asset.assetType === 'literature') return 'Literature';
+  if (asset.assetType === 'video') return 'Video';
+  if (asset.assetType === 'animation') return 'Animation';
+  return asset.publications.length ? 'Imported DeviantArt work' : 'Ubeeq work';
+};
+
+function WorkThumbnail({ asset }: { asset: StudioExternalAsset }) {
+  const deviantArtThumbnailUrl = asset.publications.find((publication) => publication.previewUrl)?.previewUrl;
+  const [url, setUrl] = useState(asset.thumbnailUrl || deviantArtThumbnailUrl);
+
+  useEffect(() => {
+    setUrl(asset.thumbnailUrl || deviantArtThumbnailUrl);
+  }, [asset.thumbnailUrl, deviantArtThumbnailUrl]);
+
+  const handleLoadError = () => {
+    setUrl((currentUrl) => currentUrl === asset.thumbnailUrl ? deviantArtThumbnailUrl : undefined);
+  };
+
+  return (
+    <div className="studio-work-thumbnail" aria-hidden="true">
+      <span>{assetTypeLabel(asset).slice(0, 1)}</span>
+      {url && <img src={url} alt="" onError={handleLoadError} />}
+    </div>
+  );
+}
+
 export function WorksView({ creators }: { creators: StudioCreator[] }) {
+  const location = useLocation();
+  const workId = new URLSearchParams(location.search).get('workId');
+  if (workId) return <WorkMetadataView creators={creators} />;
+  return <WorksIndex creators={creators} />;
+}
+
+function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   const location = useLocation();
   const requestedCreatorId = new URLSearchParams(location.search).get('creatorId') || '';
   const requestedCollectionId = new URLSearchParams(location.search).get('collectionId') || '';
@@ -29,6 +66,12 @@ export function WorksView({ creators }: { creators: StudioCreator[] }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [updatingAssetId, setUpdatingAssetId] = useState('');
+  const [selectedWorkAssetIds, setSelectedWorkAssetIds] = useState<string[]>([]);
+  const [bulkCollectionId, setBulkCollectionId] = useState('');
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [collectionPickerAssetId, setCollectionPickerAssetId] = useState('');
+  const [collectionPickerQuery, setCollectionPickerQuery] = useState('');
+  const appliedRouteCollectionFilter = useRef('');
 
   const activeCreator = useMemo(() => creators.find((creator) => creator.creatorId === creatorId), [creatorId, creators]);
   const selectedCollection = useMemo(
@@ -66,12 +109,15 @@ export function WorksView({ creators }: { creators: StudioCreator[] }) {
 
   useEffect(() => {
     if (!collections.ubeeqCollections.length) return;
+    const routeFilterKey = `${requestedCreatorId}:${requestedCollectionId}`;
+    if (appliedRouteCollectionFilter.current === routeFilterKey) return;
     if (requestedCollectionId && collections.ubeeqCollections.some((collection) => collection.ubeeqCollectionId === requestedCollectionId)) {
       setCollectionId(requestedCollectionId);
-    } else if (collectionId && !collections.ubeeqCollections.some((collection) => collection.ubeeqCollectionId === collectionId)) {
+    } else if (requestedCollectionId) {
       setCollectionId('');
     }
-  }, [collectionId, collections.ubeeqCollections, requestedCollectionId]);
+    appliedRouteCollectionFilter.current = routeFilterKey;
+  }, [collections.ubeeqCollections, requestedCollectionId, requestedCreatorId]);
 
   const mappedExternalCollectionIds = useMemo(() => {
     if (!collectionId) return new Set<string>();
@@ -104,11 +150,24 @@ export function WorksView({ creators }: { creators: StudioCreator[] }) {
         .some((value) => value.toLowerCase().includes(normalizedQuery));
     });
   }, [assets, collectionId, manuallyAssignedAssetIds, mappedExternalCollectionIds, query]);
+  const displayedAssets = useMemo(() => visibleAssets.slice(0, 100), [visibleAssets]);
+  const displayedAssetIds = useMemo(() => new Set(displayedAssets.map((asset) => asset.assetId)), [displayedAssets]);
+  const selectedDisplayedAssetIds = useMemo(
+    () => selectedWorkAssetIds.filter((assetId) => displayedAssetIds.has(assetId)),
+    [displayedAssetIds, selectedWorkAssetIds]
+  );
 
-  const addAssetToCollection = async (targetCollectionId: string, assetId: string) => {
+  useEffect(() => {
+    setSelectedWorkAssetIds((current) => current.filter((assetId) => displayedAssetIds.has(assetId)));
+  }, [displayedAssetIds]);
+
+  const setAssetCollectionMembership = async (asset: StudioExternalAsset, targetCollectionId: string, shouldInclude: boolean) => {
     if (!targetCollectionId || !creatorId) return;
-    const assetIds = [...new Set([...(collections.collectionAssetIdsByCollection[targetCollectionId] || []), assetId])];
-    setUpdatingAssetId(assetId);
+    const assignedAssetIds = new Set(collections.collectionAssetIdsByCollection[targetCollectionId] || []);
+    if (shouldInclude) assignedAssetIds.add(asset.assetId);
+    else assignedAssetIds.delete(asset.assetId);
+    const assetIds = [...assignedAssetIds];
+    setUpdatingAssetId(asset.assetId);
     setError('');
     try {
       await api.studioReplaceIntegrationCollectionAssets(targetCollectionId, { creatorIdentityId: creatorId, assetIds });
@@ -116,10 +175,61 @@ export function WorksView({ creators }: { creators: StudioCreator[] }) {
         ...current,
         collectionAssetIdsByCollection: { ...current.collectionAssetIdsByCollection, [targetCollectionId]: assetIds }
       }));
+      if (shouldInclude && !asset.spacePublication?.published) {
+        const spacePublication = await api.studioUpdateSpacePublication(asset.assetId, {
+          published: true,
+          hostingMode: 'hosted',
+          visibility: 'private'
+        }) as StudioSpacePublication;
+        setAssets((current) => current.map((item) => item.assetId === asset.assetId ? { ...item, spacePublication } : item));
+      }
     } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : 'Unable to add this work to the collection.');
+      setError(updateError instanceof Error ? updateError.message : 'Unable to update this work’s collections.');
     } finally {
       setUpdatingAssetId('');
+    }
+  };
+
+  const toggleWorkSelection = (assetId: string, checked: boolean) => {
+    setSelectedWorkAssetIds((current) => checked
+      ? [...new Set([...current, assetId])]
+      : current.filter((item) => item !== assetId));
+  };
+
+  const addSelectedWorksToCollection = async () => {
+    if (!bulkCollectionId || !creatorId || !selectedDisplayedAssetIds.length) return;
+    const selectedAssets = displayedAssets.filter((asset) => selectedDisplayedAssetIds.includes(asset.assetId));
+    const assetIds = [...new Set([
+      ...(collections.collectionAssetIdsByCollection[bulkCollectionId] || []),
+      ...selectedDisplayedAssetIds
+    ])];
+    setBulkUpdating(true);
+    setError('');
+    try {
+      await api.studioReplaceIntegrationCollectionAssets(bulkCollectionId, { creatorIdentityId: creatorId, assetIds });
+      setCollections((current) => ({
+        ...current,
+        collectionAssetIdsByCollection: { ...current.collectionAssetIdsByCollection, [bulkCollectionId]: assetIds }
+      }));
+      const backups = await Promise.all(selectedAssets
+        .filter((asset) => !asset.spacePublication?.published)
+        .map(async (asset) => [
+          asset.assetId,
+          await api.studioUpdateSpacePublication(asset.assetId, { published: true, hostingMode: 'hosted', visibility: 'private' }) as StudioSpacePublication
+        ] as const));
+      if (backups.length) {
+        const backupByAssetId = new Map(backups);
+        setAssets((current) => current.map((asset) => ({
+          ...asset,
+          ...(backupByAssetId.has(asset.assetId) ? { spacePublication: backupByAssetId.get(asset.assetId) } : {})
+        })));
+      }
+      setBulkCollectionId('');
+      setSelectedWorkAssetIds([]);
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : 'Unable to add the selected works to this collection.');
+    } finally {
+      setBulkUpdating(false);
     }
   };
 
@@ -147,37 +257,97 @@ export function WorksView({ creators }: { creators: StudioCreator[] }) {
         </div>
 
         <p className="studio-works-context"><strong>{activeCreator?.name || 'Creator'}</strong>{selectedCollection ? ` · ${selectedCollection.name}` : ' · All works'}</p>
+        {!selectedCollection && <p className="studio-works-space-note">Adding a work to a collection also queues a private Ubeeq Space backup when DeviantArt makes a source file available.</p>}
         {loading && <p className="small">Loading works…</p>}
         {error && <p className="error">{error}</p>}
 
+        {!!displayedAssets.length && <div className="studio-works-bulk-bar">
+          <label className="studio-work-select-all">
+            <input
+              type="checkbox"
+              checked={selectedDisplayedAssetIds.length === displayedAssets.length}
+              onChange={(event) => setSelectedWorkAssetIds(event.target.checked ? displayedAssets.map((asset) => asset.assetId) : [])}
+            />
+            <span>Select all {displayedAssets.length}{visibleAssets.length > displayedAssets.length ? ' shown' : ''}</span>
+          </label>
+          <span className="studio-works-selection-count">{selectedDisplayedAssetIds.length} selected</span>
+          <label className="studio-works-bulk-collection">
+            <span>Add selected to collection</span>
+            <select value={bulkCollectionId} onChange={(event) => setBulkCollectionId(event.target.value)}>
+              <option value="">Choose a collection…</option>
+              {collections.ubeeqCollections.map((collection) => <option key={collection.ubeeqCollectionId} value={collection.ubeeqCollectionId}>{collection.name}</option>)}
+            </select>
+          </label>
+          <button type="button" className="auth-primary-btn" disabled={!bulkCollectionId || !selectedDisplayedAssetIds.length || bulkUpdating} onClick={() => void addSelectedWorksToCollection()}>
+            {bulkUpdating ? 'Adding…' : 'Add selected'}
+          </button>
+        </div>}
+        {visibleAssets.length > 100 && <p className="studio-works-limit-note">Showing the first 100 matching works. Refine your search to select others.</p>}
+
         <div className="studio-works-list">
-          {visibleAssets.map((asset) => {
+          {displayedAssets.map((asset) => {
             const manuallyAssigned = manuallyAssignedAssetIds.has(asset.assetId);
+            const assignedCollections = collections.ubeeqCollections.filter((collection) => (
+              (collections.collectionAssetIdsByCollection[collection.ubeeqCollectionId] || []).includes(asset.assetId)
+            ));
+            const visiblePickerCollections = collections.ubeeqCollections.filter((collection) => (
+              collection.name.toLowerCase().includes(collectionPickerQuery.trim().toLowerCase())
+            ));
+            const isCollectionPickerOpen = collectionPickerAssetId === asset.assetId;
             return (
               <article className="studio-work-row" key={asset.assetId}>
-                <div>
+                <label className="studio-work-select" aria-label={`Select ${asset.canonicalTitle || 'work'}`}>
+                  <input type="checkbox" checked={selectedDisplayedAssetIds.includes(asset.assetId)} onChange={(event) => toggleWorkSelection(asset.assetId, event.target.checked)} />
+                </label>
+                <WorkThumbnail asset={asset} />
+                <div className="studio-work-details">
                   <strong>{asset.canonicalTitle || asset.publications[0]?.externalTitle || 'Untitled work'}</strong>
-                  <span>{asset.assetType} · {asset.publications.map((publication) => publication.externalUsername).filter(Boolean).join(', ') || 'Ubeeq'}</span>
+                  <span>{assetTypeLabel(asset)} · {asset.publications.map((publication) => publication.externalUsername).filter(Boolean).join(', ') || 'Ubeeq'}</span>
                 </div>
                 <div className="studio-work-actions">
                   <span className="studio-collection-visibility">{asset.visibility}</span>
+                  {asset.spacePublication?.published && <span className="studio-work-space-status">{asset.spacePublication.contentSyncStatus === 'hosted' ? 'Stored and available in your Ubeeq Space' : asset.spacePublication.contentSyncStatus === 'failed' ? 'Space backup needs attention' : 'Backing up to Ubeeq Space'}</span>}
                   {selectedCollection && manuallyAssigned && <span className="studio-work-membership">Added to this collection</span>}
-                  {!selectedCollection && (
-                    <select
-                      aria-label={`Add ${asset.canonicalTitle || 'work'} to a collection`}
-                      defaultValue=""
-                      disabled={updatingAssetId === asset.assetId}
-                      onChange={(event) => {
-                        const targetCollectionId = event.target.value;
-                        event.target.value = '';
-                        if (targetCollectionId) void addAssetToCollection(targetCollectionId, asset.assetId);
-                      }}
-                    >
-                      <option value="">Add to collection…</option>
-                      {collections.ubeeqCollections.map((collection) => <option key={collection.ubeeqCollectionId} value={collection.ubeeqCollectionId}>{collection.name}</option>)}
-                    </select>
-                  )}
+                  <div className="studio-work-collection-summary">
+                    <span>Collections</span>
+                    {assignedCollections.length
+                      ? <div>{assignedCollections.map((collection) => <span className="studio-work-collection-chip" key={collection.ubeeqCollectionId}>{collection.name}</span>)}</div>
+                      : <small>Not in a collection</small>}
+                  </div>
+                  <button
+                    type="button"
+                    className="auth-secondary-btn"
+                    disabled={updatingAssetId === asset.assetId}
+                    onClick={() => {
+                      setCollectionPickerAssetId(isCollectionPickerOpen ? '' : asset.assetId);
+                      setCollectionPickerQuery('');
+                    }}
+                  >
+                    {isCollectionPickerOpen ? 'Done' : 'Manage collections'}
+                  </button>
+                  <Link
+                    className="auth-secondary-btn no-underline"
+                    to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}&workId=${encodeURIComponent(asset.assetId)}`}
+                  >
+                    Edit metadata
+                  </Link>
                 </div>
+                {isCollectionPickerOpen && <div className="studio-work-collection-picker">
+                  <label>
+                    <span>Filter collections</span>
+                    <input value={collectionPickerQuery} onChange={(event) => setCollectionPickerQuery(event.target.value)} placeholder="Search collections…" autoFocus />
+                  </label>
+                  <div>
+                    {visiblePickerCollections.map((collection) => {
+                      const checked = (collections.collectionAssetIdsByCollection[collection.ubeeqCollectionId] || []).includes(asset.assetId);
+                      return <label className="studio-work-collection-option" key={collection.ubeeqCollectionId}>
+                        <input type="checkbox" checked={checked} disabled={updatingAssetId === asset.assetId} onChange={(event) => void setAssetCollectionMembership(asset, collection.ubeeqCollectionId, event.target.checked)} />
+                        <span>{collection.name}</span>
+                      </label>;
+                    })}
+                    {!visiblePickerCollections.length && <p className="small">No collections match this filter.</p>}
+                  </div>
+                </div>}
               </article>
             );
           })}

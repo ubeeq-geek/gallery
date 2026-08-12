@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { api } from '../../api';
 import { Card } from '../components/Card';
 import type {
@@ -17,6 +17,8 @@ type CollectionResponse = {
 };
 
 export function CollectionsView({ creators }: { creators: StudioCreator[] }) {
+  const location = useLocation();
+  const requestedCreatorId = new URLSearchParams(location.search).get('creatorId') || '';
   const [creatorId, setCreatorId] = useState('');
   const [data, setData] = useState<CollectionResponse>({ ubeeqCollections: [], externalCollections: [], mappings: [], collectionAssetIdsByCollection: {} });
   const [collectionName, setCollectionName] = useState('');
@@ -57,8 +59,9 @@ export function CollectionsView({ creators }: { creators: StudioCreator[] }) {
   };
 
   useEffect(() => {
-    if (!creatorId && creators.length) setCreatorId(creators[0].creatorId);
-  }, [creatorId, creators]);
+    if (creatorId || !creators.length) return;
+    setCreatorId(creators.some((creator) => creator.creatorId === requestedCreatorId) ? requestedCreatorId : creators[0].creatorId);
+  }, [creatorId, creators, requestedCreatorId]);
 
   useEffect(() => {
     void load();

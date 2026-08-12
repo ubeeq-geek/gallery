@@ -53,6 +53,11 @@ export interface ExternalRemoteContent {
   remoteCreatedAt?: string;
   remoteUpdatedAt?: string;
   collectionExternalIds: string[];
+  content?: {
+    sourceUrl: string;
+    contentType?: string;
+    byteSize?: number;
+  };
   metrics?: {
     views?: number;
     favourites?: number;
@@ -60,6 +65,18 @@ export interface ExternalRemoteContent {
     other?: Record<string, unknown>;
   };
   rawMetadata: Record<string, unknown>;
+}
+
+export interface ExternalContentUpdate {
+  title?: string;
+  description?: string;
+  tags?: string[];
+  allowComments?: boolean;
+  isMature?: boolean;
+  matureLevel?: 'strict' | 'moderate';
+  matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
+  isAiGenerated?: boolean;
+  allowAiTraining?: boolean;
 }
 
 export interface ExternalRemoteComment {
@@ -87,7 +104,7 @@ export interface ExternalPlatformProvider {
   getContent(accessToken: string, externalContentId: string): Promise<ExternalRemoteContent>;
   listCollections(accessToken: string, username: string): Promise<ExternalRemoteCollection[]>;
   listComments(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteComment[]; nextCursor?: string }>;
-  updateContent(): Promise<never>;
+  updateContent(accessToken: string, externalContentId: string, update: ExternalContentUpdate): Promise<void>;
   publishContent(): Promise<never>;
   moveContent(): Promise<never>;
 }
@@ -136,6 +153,8 @@ const normalizeContent = (value: unknown): ExternalRemoteContent | null => {
     asString(item.folderid),
     ...((Array.isArray(item.gallery_folders) ? item.gallery_folders : []).map((folder) => asString(folder)).filter((folder): folder is string => Boolean(folder)))
   ].filter((item, index, values): item is string => Boolean(item) && values.indexOf(item) === index);
+  const content = asRecord(item.content);
+  const sourceUrl = asString(content.src);
   return {
     externalContentId,
     externalUrl: asString(item.url),
@@ -147,6 +166,13 @@ const normalizeContent = (value: unknown): ExternalRemoteContent | null => {
     remoteCreatedAt: asIsoDate(item.published_time) || asIsoDate(item.created_time),
     remoteUpdatedAt: asIsoDate(item.updated_time) || asIsoDate(item.updated_at),
     collectionExternalIds: galleryIds,
+    ...(sourceUrl ? {
+      content: {
+        sourceUrl,
+        contentType: asString(content.content_type) || asString(item.mime_type),
+        byteSize: asNumber(content.filesize) || asNumber(item.filesize)
+      }
+    } : {}),
     metrics: {
       views: asNumber(stats.views) || asNumber(item.views),
       favourites: asNumber(stats.favourites) || asNumber(stats.favorites) || asNumber(item.favourites),
@@ -161,7 +187,7 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
   readonly platform = 'deviantart' as const;
   private static readonly oauthBaseUrl = 'https://www.deviantart.com/oauth2';
   private static readonly apiBaseUrl = 'https://www.deviantart.com/api/v1/oauth2';
-  private static readonly scopes = ['user', 'browse', 'gallery', 'collection'];
+  private static readonly scopes = ['user', 'browse', 'gallery', 'collection', 'stash', 'publish'];
 
   constructor(private readonly credentials?: ExternalPlatformApplicationCredentials) {}
 
@@ -328,7 +354,20 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     return { items, nextCursor: Boolean(payload.has_more) && nextOffset !== undefined ? String(nextOffset) : undefined };
   }
 
-  async updateContent(): Promise<never> { throw new ExternalProviderError('Remote writes are not enabled for DeviantArt', 'unsupported'); }
+  async updateContent(accessToken: string, externalContentId: string, update: ExternalContentUpdate): Promise<void> {
+    const form = new URLSearchParams();
+    if (update.title !== undefined) form.set('title', update.title);
+    if (update.description !== undefined) form.set('description', update.description);
+    if (update.tags !== undefined) update.tags.forEach((tag) => form.append('tags[]', tag));
+    if (update.allowComments !== undefined) form.set('allow_comments', String(update.allowComments));
+    if (update.isMature !== undefined) form.set('is_mature', String(update.isMature));
+    if (update.isMature && update.matureLevel) form.set('mature_level', update.matureLevel);
+    if (update.matureClassification !== undefined) update.matureClassification.forEach((classification) => form.append('mature_classification[]', classification));
+    if (update.isAiGenerated !== undefined) form.set('is_ai_generated', String(update.isAiGenerated));
+    if (update.allowAiTraining !== undefined) form.set('noai', String(!update.allowAiTraining));
+    if (![...form.keys()].length) return;
+    await this.requestForm(`/deviation/edit/${encodeURIComponent(externalContentId)}`, accessToken, form);
+  }
   async publishContent(): Promise<never> { throw new ExternalProviderError('Remote writes are not enabled for DeviantArt', 'unsupported'); }
   async moveContent(): Promise<never> { throw new ExternalProviderError('Remote writes are not enabled for DeviantArt', 'unsupported'); }
 
@@ -337,6 +376,24 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     Object.entries(query || {}).forEach(([key, value]) => url.searchParams.set(key, value));
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }
+    });
+    const payload = asRecord(await response.json().catch(() => ({})));
+    if (!response.ok) {
+      const error = this.errorFromResponse(response.status, payload, response.headers.get('retry-after'));
+      throw new ExternalProviderError(`DeviantArt ${path}: ${error.message}`, error.code, error.retryAfterSeconds);
+    }
+    return payload;
+  }
+
+  private async requestForm(path: string, accessToken: string, form: URLSearchParams): Promise<Record<string, unknown>> {
+    const response = await fetch(`${DeviantArtProvider.apiBaseUrl}${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: form.toString()
     });
     const payload = asRecord(await response.json().catch(() => ({})));
     if (!response.ok) {

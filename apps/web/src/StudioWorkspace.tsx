@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { api } from './api';
 import { readStudioSection, studioSectionDefs } from './studio/config';
 import { roleDisplayLabel } from './studio/rolePresentation';
@@ -49,6 +49,10 @@ export function StudioWorkspace() {
   const [challenges, setChallenges] = useState<StudioChallenge[]>([]);
   const [entries, setEntries] = useState<StudioEntry[]>([]);
   const [users, setUsers] = useState<StudioUser[]>([]);
+  const requestedCreatorId = new URLSearchParams(location.search).get('creatorId') || '';
+  const activeCreatorId = creators.some((creator) => creator.creatorId === requestedCreatorId)
+    ? requestedCreatorId
+    : creators[0]?.creatorId || '';
 
   const load = async () => {
     setLoading(true);
@@ -106,7 +110,34 @@ export function StudioWorkspace() {
             files={files}
             posts={posts}
             entries={entries}
+            activeCreatorId={activeCreatorId}
           />
+        );
+      case 'publishing':
+        return (
+          <Card title="Publishing" eyebrow="Choose the next publishing task">
+            <div className="studio-task-grid">
+              <Link className="studio-task-link no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(activeCreatorId)}`}>
+                <strong>Choose a work</strong><span>Review your local catalogue before preparing a publication.</span>
+              </Link>
+              <Link className="studio-task-link no-underline" to={`/studio/workspace?section=integrations&creatorId=${encodeURIComponent(activeCreatorId)}`}>
+                <strong>Prepare DeviantArt</strong><span>Connect accounts, review sync status, and manage DeviantArt-specific work.</span>
+              </Link>
+            </div>
+          </Card>
+        );
+      case 'settings':
+        return (
+          <Card title="Creator and Studio settings" eyebrow="Preferences">
+            <div className="studio-task-grid">
+              <Link className="studio-task-link no-underline" to={`/studio/workspace?section=creators&creatorId=${encodeURIComponent(activeCreatorId)}`}>
+                <strong>Manage creators</strong><span>Update creator identities, branding, and ownership.</span>
+              </Link>
+              <Link className="studio-task-link no-underline" to="/settings">
+                <strong>Account settings</strong><span>Manage account-wide preferences and sign-in settings.</span>
+              </Link>
+            </div>
+          </Card>
         );
       case 'creators':
         return (
@@ -114,7 +145,15 @@ export function StudioWorkspace() {
             creators={creators}
             posts={posts}
             files={files}
-            onCreateCreator={(payload) => api.studioCreateCreator(payload).then(() => load())}
+            onCreateCreator={async (payload) => {
+              const creator = await api.studioCreateCreator(payload) as StudioCreator;
+              await load();
+              return creator;
+            }}
+            onUpdateCreator={async (creatorId, payload) => {
+              await api.studioUpdateCreator(creatorId, payload);
+              await load();
+            }}
             onUploadProfileImage={async (creatorId, file) => {
               const upload = await api.studioCreateCreatorBrandingUploadUrl(creatorId, { kind: 'profile', contentType: file.type || 'image/jpeg' });
               await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': upload.contentType }, body: file });
@@ -272,6 +311,8 @@ export function StudioWorkspace() {
       title={creators.length ? sectionMeta.label : 'Welcome to Ubeeq Studio'}
       description={creators.length ? sectionMeta.description : 'Create a free Space when you are ready to share or manage your creative work.'}
       onboarding={!creators.length}
+      creators={creators}
+      activeCreatorId={activeCreatorId}
     >
       {(loading || error) && (
         <Card title="Workspace status" eyebrow="Live data">
@@ -280,15 +321,6 @@ export function StudioWorkspace() {
         </Card>
       )}
       {renderSection()}
-      {creators.length > 0 && <Card title="Scope summary" eyebrow="Studio contract">
-        <p className="small">
-          Studio now reads from `/studio/*` resources as the primary API surface. Creator, files, posts,
-          entries, and challenge workflows are no longer modeled as a separate product area.
-        </p>
-        <p className="small">
-          Loaded: {creators.length} creators · {files.length} files · {posts.length} posts · {groupings.length} groupings · {users.length} users.
-        </p>
-      </Card>}
     </StudioLayout>
   );
 }

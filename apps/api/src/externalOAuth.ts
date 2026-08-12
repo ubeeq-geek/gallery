@@ -8,6 +8,7 @@ interface OAuthStatePayload {
   externalPlatformCredentialId: string;
   platform: 'deviantart';
   returnPath: string;
+  syncContentOnInitialImport?: boolean;
   nonce: string;
 }
 
@@ -49,6 +50,9 @@ export const verifyExternalOAuthState = (config: AppConfig, value: string): OAut
     || typeof state.returnPath !== 'string'
     || typeof state.nonce !== 'string'
   ) {
+    throw new Error('OAuth state is invalid');
+  }
+  if (state.syncContentOnInitialImport !== undefined && typeof state.syncContentOnInitialImport !== 'boolean') {
     throw new Error('OAuth state is invalid');
   }
   return state as OAuthStatePayload;

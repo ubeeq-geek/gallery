@@ -584,10 +584,12 @@ export type AssetVisibility = 'private' | 'unlisted' | 'public';
 export type UbeeqCollectionType = 'collection' | 'gallery' | 'series';
 export type MetadataSyncPolicy = 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
 export type SpaceHostingMode = 'linked' | 'hosted';
+export type SpaceContentSyncStatus = 'not_requested' | 'queued' | 'syncing' | 'hosted' | 'failed';
 export type ExternalPublicationSyncStatus = 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
 export type ExternalCollectionSyncMode = 'continuous' | 'initial_only' | 'manual' | 'ignored';
 export type ExternalSyncJobType =
   | 'account_import'
+  | 'content_sync'
   | 'account_scan'
   | 'content_metadata_sync'
   | 'gallery_sync'
@@ -625,6 +627,10 @@ export interface ExternalAccount {
   connectionStatus: ExternalAccountConnectionStatus;
   lastSuccessfulSyncAt?: string;
   lastSyncAttemptAt?: string;
+  /** One-time import preference selected before the account was connected. */
+  initialContentSyncRequested?: boolean;
+  /** Whether subsequent synchronizations should also copy available source files into Ubeeq Space. */
+  includeSourceFilesOnSync?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -635,6 +641,7 @@ export interface ExternalPlatformCredential {
   /** Legacy creator-scoped credential retained for backwards compatibility. */
   creatorIdentityId?: string;
   platform: ExternalPlatform;
+  applicationLabel?: string;
   clientId: string;
   clientSecretEncrypted: string;
   redirectUri: string;
@@ -694,6 +701,14 @@ export interface SpacePublication {
   assetId: string;
   published: boolean;
   hostingMode: SpaceHostingMode;
+  contentSyncStatus?: SpaceContentSyncStatus;
+  hostedObjectKey?: string;
+  hostedThumbnailObjectKey?: string;
+  hostedContentType?: string;
+  hostedByteSize?: number;
+  hostedChecksumSha256?: string;
+  lastContentSyncAt?: string;
+  contentSyncError?: string;
   publishedAt?: string;
   ubeeqTitleOverride?: string;
   ubeeqDescriptionOverride?: string;

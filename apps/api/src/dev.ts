@@ -5,7 +5,7 @@ import { createApp } from './app';
 import { loadConfig } from './config';
 import { InMemoryStore } from './inMemoryStore';
 import { processExternalSyncJob } from './externalSyncWorker';
-import { createInProcessExternalSyncQueue } from './externalSyncQueue';
+import { createInProcessExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 
 const config = { ...loadConfig(), localAuthUserId: process.env.LOCAL_AUTH_USER_ID || 'local-user' };
 const store = new InMemoryStore();
@@ -24,10 +24,13 @@ store.groupings.push({
   createdAt: now
 });
 
+let externalSyncQueue: ExternalSyncQueue;
+externalSyncQueue = createInProcessExternalSyncQueue((externalSyncJobId) => processExternalSyncJob(store, config, externalSyncJobId, externalSyncQueue));
+
 const app = createApp({
   config,
   store,
-  externalSyncQueue: createInProcessExternalSyncQueue((externalSyncJobId) => processExternalSyncJob(store, config, externalSyncJobId))
+  externalSyncQueue
 });
 const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || '127.0.0.1';
