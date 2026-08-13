@@ -819,6 +819,11 @@ export class InMemoryStore implements DataStore {
     await this.createExternalPlatformCredential(credential);
   }
 
+  async deleteExternalPlatformCredential(externalPlatformCredentialId: string): Promise<void> {
+    this.externalPlatformCredentials = this.externalPlatformCredentials
+      .filter((item) => item.externalPlatformCredentialId !== externalPlatformCredentialId);
+  }
+
   async listAssetsByCreatorIdentity(creatorIdentityId: string): Promise<Asset[]> {
     return this.assets
       .filter((item) => item.creatorIdentityId === creatorIdentityId)
@@ -857,7 +862,13 @@ export class InMemoryStore implements DataStore {
     this.externalPublications.push(publication);
   }
 
-  async updateExternalPublication(publication: ExternalPublication): Promise<void> {
+  async updateExternalPublication(publication: ExternalPublication, previousExternalContentId?: string): Promise<void> {
+    if (previousExternalContentId && previousExternalContentId !== publication.externalContentId) {
+      this.externalPublications = this.externalPublications.filter((item) => !(
+        item.externalAccountId === publication.externalAccountId
+        && item.externalContentId === previousExternalContentId
+      ));
+    }
     await this.createExternalPublication(publication);
   }
 

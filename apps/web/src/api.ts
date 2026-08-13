@@ -901,6 +901,13 @@ export const api = {
     });
     return handleJson(response) as Promise<{ externalPlatformCredentialId: string; applicationLabel?: string; clientId: string; redirectUri: string; updatedAt: string }>;
   },
+  async studioDeleteDeviantArtCredentials(externalPlatformCredentialId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/credentials/${encodeURIComponent(externalPlatformCredentialId)}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
   async studioStartDeviantArtConnection(creatorId?: string, returnPath = '/studio/workspace?section=integrations', syncContentOnInitialImport = false, externalPlatformCredentialId?: string) {
     const response = await fetch(`${API_BASE}/studio/integrations/deviantart/connect`, {
       method: 'POST',
@@ -941,6 +948,22 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/jobs`);
     return handleJson(response);
   },
+  async studioListDeviantArtComments(externalAccountId: string, externalContentId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/publications/${encodeURIComponent(externalContentId)}/comments`);
+    return handleJson(response);
+  },
+  async studioSyncDeviantArtComments(externalAccountId: string, externalContentId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/publications/${encodeURIComponent(externalContentId)}/comments/sync`, {
+      method: 'POST', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async studioReplyToDeviantArtComment(externalAccountId: string, externalContentId: string, externalCommentId: string, body: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/publications/${encodeURIComponent(externalContentId)}/comments/${encodeURIComponent(externalCommentId)}/reply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ body })
+    });
+    return handleJson(response);
+  },
   async studioListDeviantArtCatalogue(creatorId: string, query = '') {
     const params = new URLSearchParams({ creatorId });
     if (query.trim()) params.set('query', query.trim());
@@ -964,11 +987,11 @@ export const api = {
     });
     return handleJson(response);
   },
-  async studioAddDeviantArtWorkDestination(assetId: string, externalAccountId: string) {
+  async studioAddDeviantArtWorkDestination(assetId: string, externalAccountId: string, targetStatus: 'draft' | 'published' = 'published') {
     const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}/destinations/deviantart`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-      body: JSON.stringify({ externalAccountId })
+      body: JSON.stringify({ externalAccountId, targetStatus })
     });
     return handleJson(response);
   },
@@ -1003,7 +1026,7 @@ export const api = {
       matureLevel?: 'strict' | 'moderate';
       matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
       isAiGenerated?: boolean;
-      allowAiTraining?: boolean;
+      noAi?: boolean;
     };
   }) {
     const response = await fetch(`${API_BASE}/studio/integrations/assets/${encodeURIComponent(assetId)}`, {

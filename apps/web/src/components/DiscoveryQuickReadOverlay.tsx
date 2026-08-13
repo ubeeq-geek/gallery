@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
+import { sanitizeInlineHtml } from '../blockContent';
 
 type SurfaceAssetType = 'image' | 'video' | 'audio';
 type PostType = 'image' | 'video' | 'story' | 'audio';
@@ -226,7 +227,8 @@ const splitParagraphs = (text?: string): string[] => {
     .filter(Boolean);
 };
 
-const renderInlineText = (text?: string) => {
+const renderInlineText = (text?: string, html?: string) => {
+  if (html) return <span dangerouslySetInnerHTML={{ __html: sanitizeInlineHtml(html) }} />;
   if (!text) return '';
   const normalized = text
     .replace(/<\s*i\s*>/gi, '<em>')
@@ -825,14 +827,17 @@ const StandardPostRenderer = ({
     }
     if (block.type === 'heading') {
       const level = Math.max(1, Math.min(6, block.level || 2));
-      if (level === 1) return <h1 key={key}>{renderInlineText(block.text)}</h1>;
-      if (level === 2) return <h2 key={key} className={storyMode ? 'post-part-title' : undefined}>{renderInlineText(block.text)}</h2>;
-      if (level === 3) return <h3 key={key} className={storyMode ? 'post-part-label' : undefined}>{renderInlineText(block.text)}</h3>;
-      if (level === 4) return <h4 key={key}>{renderInlineText(block.text)}</h4>;
-      if (level === 5) return <h5 key={key}>{renderInlineText(block.text)}</h5>;
-      return <h6 key={key}>{renderInlineText(block.text)}</h6>;
+      if (level === 1) return <h1 key={key}>{renderInlineText(block.text, block.html)}</h1>;
+      if (level === 2) return <h2 key={key} className={storyMode ? 'post-part-title' : undefined}>{renderInlineText(block.text, block.html)}</h2>;
+      if (level === 3) return <h3 key={key} className={storyMode ? 'post-part-label' : undefined}>{renderInlineText(block.text, block.html)}</h3>;
+      if (level === 4) return <h4 key={key}>{renderInlineText(block.text, block.html)}</h4>;
+      if (level === 5) return <h5 key={key}>{renderInlineText(block.text, block.html)}</h5>;
+      return <h6 key={key}>{renderInlineText(block.text, block.html)}</h6>;
     }
     if (block.type === 'paragraph') {
+      if (block.html) {
+        return <p key={key}>{renderInlineText(block.text, block.html)}</p>;
+      }
       const paragraphs = splitParagraphs(block.text);
       if (paragraphs.length === 0) return null;
       return (
@@ -846,7 +851,7 @@ const StandardPostRenderer = ({
     if (block.type === 'quote') {
       return (
         <blockquote key={key} className={storyMode ? 'post-inline-quote' : 'panel'}>
-          <p>{renderInlineText(block.quote || block.text || '')}</p>
+          <p>{renderInlineText(block.quote || block.text || '', block.html)}</p>
           {block.author ? <footer className="small">— {block.author}</footer> : null}
         </blockquote>
       );

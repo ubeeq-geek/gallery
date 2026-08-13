@@ -3,6 +3,7 @@ dist
 coverage
 .env
 .env.*
+!apps/api/.env.example
 cdk.out
 .DS_Store
 *.mp4

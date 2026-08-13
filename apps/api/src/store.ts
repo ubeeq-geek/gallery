@@ -220,6 +220,7 @@ export interface DataStore {
   listExternalPlatformCredentialsByUser(userId: string): Promise<ExternalPlatformCredential[]>;
   createExternalPlatformCredential(credential: ExternalPlatformCredential): Promise<void>;
   updateExternalPlatformCredential(credential: ExternalPlatformCredential): Promise<void>;
+  deleteExternalPlatformCredential(externalPlatformCredentialId: string): Promise<void>;
   listAssetsByCreatorIdentity(creatorIdentityId: string): Promise<Asset[]>;
   getAsset(assetId: string): Promise<Asset | null>;
   createAsset(asset: Asset): Promise<void>;
@@ -227,7 +228,7 @@ export interface DataStore {
   getExternalPublication(externalAccountId: string, externalContentId: string): Promise<ExternalPublication | null>;
   listExternalPublications(externalAccountId: string): Promise<ExternalPublication[]>;
   createExternalPublication(publication: ExternalPublication): Promise<void>;
-  updateExternalPublication(publication: ExternalPublication): Promise<void>;
+  updateExternalPublication(publication: ExternalPublication, previousExternalContentId?: string): Promise<void>;
   getSpacePublication(assetId: string): Promise<SpacePublication | null>;
   upsertSpacePublication(publication: SpacePublication): Promise<void>;
   listExternalCollections(externalAccountId: string): Promise<ExternalCollection[]>;

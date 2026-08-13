@@ -15,7 +15,7 @@
     "build": "npm run -ws build",
     "test": "npm run -ws test",
     "lint": "npm run -ws lint",
-    "dev:api": "npm --workspace @gallery/api run dev",
+    "dev:api": "npm --workspace @gallery/api run dev:local",
     "dev:web": "npm --workspace @gallery/web run dev",
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\""
   },

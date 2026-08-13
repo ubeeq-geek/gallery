@@ -313,6 +313,7 @@ export class UbeeqStack extends Stack {
         COGNITO_TOKEN_USE: 'id',
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
+        DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true',
         EXTERNAL_OAUTH_REDIRECT_URI: process.env.EXTERNAL_OAUTH_REDIRECT_URI || '',
         EXTERNAL_TOKEN_ENCRYPTION_KEY: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '',
         APP_ORIGIN: process.env.APP_ORIGIN || '',
@@ -363,7 +364,8 @@ export class UbeeqStack extends Stack {
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
         EXTERNAL_TOKEN_ENCRYPTION_KEY: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '',
         EXTERNAL_SYNC_BASE_DELAY_SECONDS: '60',
-        EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600'
+        EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
+        DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true'
       }
     });
     const externalSyncSchedulerFn = new lambdaNodejs.NodejsFunction(this, 'ExternalSyncSchedulerFunction', {
@@ -426,6 +428,12 @@ export class UbeeqStack extends Stack {
     contentCoreTable.grantReadWriteData(apiFn);
     contentCoreTable.grantReadWriteData(externalSyncFn);
     contentCoreTable.grantReadWriteData(externalSyncSchedulerFn);
+    const externalPublicationTransactionPolicy = new iam.PolicyStatement({
+      actions: ['dynamodb:TransactWriteItems'],
+      resources: [contentCoreTable.tableArn]
+    });
+    apiFn.addToRolePolicy(externalPublicationTransactionPolicy);
+    externalSyncFn.addToRolePolicy(externalPublicationTransactionPolicy);
     mediaBucket.grantReadWrite(apiFn);
     mediaBucket.grantReadWrite(externalSyncFn);
     contentStatsTable.grantReadWriteData(trendingRankerFn);

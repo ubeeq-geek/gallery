@@ -31,11 +31,37 @@ AWS-first creator platform with:
 
 ```bash
 npm install
-npm --workspace @gallery/api run dev
+npm run dev:api
 npm --workspace @gallery/web run dev
 ```
 
-API local defaults to `http://localhost:4000`.
+`npm run dev:api` starts the local API at `https://fanadmin.top:4000`; it supplies the HTTPS, local-media, OAuth callback, and local-auth defaults documented below. The web app must use `VITE_API_BASE_URL=https://fanadmin.top:4000`.
+
+## Local API environment
+
+The API reads environment variables from the shell that starts it; it does **not** load `apps/api/.env` automatically. `npm run dev:api` provides suitable local defaults for the variables below. Override an individual value by exporting it before the command.
+
+| Variable | Local default | Purpose |
+| --- | --- | --- |
+| `HOST` / `PORT` | `127.0.0.1` / `4000` | API listener. |
+| `DEV_HTTPS` | `true` | Enables the `certs/fanadmin.top*.pem` development certificate. |
+| `LOCAL_AUTH_USER_ID` | `local-user` | Enables the local authenticated creator identity. Never set in deployment. |
+| `LOCAL_MEDIA_DIRECTORY` | `/tmp/ubeeq-media` | Where imported and uploaded work copies are stored locally. |
+| `APP_ORIGIN` | `https://fanadmin.top:5174` | Trusted return origin for external OAuth callbacks. Match the local web server. |
+| `EXTERNAL_OAUTH_REDIRECT_URI` | `https://fanadmin.top:4000/integrations/deviantart/callback` | Register this exact URL in the local DeviantArt application. |
+| `EXTERNAL_TOKEN_ENCRYPTION_KEY` | A generated value for the process | Encrypts stored external client secrets and OAuth tokens. Set a stable value yourself when you need it to survive an API restart. |
+| `EXTERNAL_CONTENT_MAX_BYTES` | `52428800` | Maximum downloaded external source-file size (50 MiB). |
+| `DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE` | `true` | Enables supported published-description updates through retained Sta.sh IDs. |
+| `COGNITO_USER_POOL_ID` / `COGNITO_CLIENT_ID` | unset | Leave unset for local-header auth. Set both only when testing Cognito token verification locally. |
+
+For a stable local encryption key, run this once and export the result before starting the API:
+
+```bash
+export EXTERNAL_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 48)"
+npm run dev:api
+```
+
+The local development server uses an in-memory database. Restarting or hot-reloading it clears local Spaces, DeviantArt credentials, connected accounts, and imports; the local media files under `/tmp/ubeeq-media` are not automatically deleted.
 
 ## Build and Test
 
@@ -160,15 +186,15 @@ export APP_ORIGIN=https://<web-host>
 
 Creators register `EXTERNAL_OAUTH_REDIRECT_URI` as the callback URL in their own DeviantArt application, then enter that application’s client ID and secret under Studio Integrations. `EXTERNAL_TOKEN_ENCRYPTION_KEY` encrypts both creator application secrets and OAuth tokens at rest. Keep it in managed secret storage in the deployment environment and rotate it through a planned credential migration; changing it without migration prevents existing encrypted credentials from being decrypted. `EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS` defaults to `21600` (six hours) and can be adjusted per environment.
 
-For local OAuth testing, run the API with a local creator identity and point the web app at it. The local API queues sync work in-process, and its state is reset when the API restarts.
+New Ubeeq-to-DeviantArt publications retain the Sta.sh `itemid` returned by `stash/submit` before calling `stash/publish`. Published-description updates are enabled by default after local validation; set `DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE=false` to disable them. The worker submits `itemid` plus `artist_comments` to `stash/submit` without a file, then reads the published deviation back and only marks the job synchronized when the description matches. Existing imported publications and older Ubeeq publications without a retained Sta.sh item ID remain read-only for published descriptions.
+
+Outbound DeviantArt destinations default to **Published**, but can instead target a **Draft in Sta.sh** per work or in bulk from Works. Draft synchronization stops after `stash/submit`; changing that destination to Published later reuses the retained Sta.sh `itemid` and continues with `stash/publish`.
+
+For local OAuth testing, `npm run dev:api` supplies the required local API environment and queues sync work in-process. Register the exact local callback URL with DeviantArt, then point the web app at the local API.
 
 ```bash
-export LOCAL_AUTH_USER_ID=local-user
-export DEV_HTTPS=true
-export EXTERNAL_OAUTH_REDIRECT_URI=https://fanadmin.top:4000/integrations/deviantart/callback
-export EXTERNAL_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 48)"
-export APP_ORIGIN=https://fanadmin.top:5174
-npm --workspace @gallery/api run dev
+export EXTERNAL_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 48)" # optional: stable across restarts
+npm run dev:api
 
 VITE_API_BASE_URL=https://fanadmin.top:4000 npm --workspace @gallery/web run dev
 ```

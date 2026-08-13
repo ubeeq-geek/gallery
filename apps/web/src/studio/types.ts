@@ -1,3 +1,5 @@
+import type { PostBlock } from '../domainTypes';
+
 export type StudioMetrics = {
   totalUsers: number;
   creators: number;
@@ -66,7 +68,13 @@ export type StudioPost = {
   summary?: string;
   updatedAt?: string;
   primaryMediaId?: string;
-  media?: Array<{ mediaId: string }>;
+  blocks: PostBlock[];
+  media?: Array<{
+    mediaId: string;
+    caption?: string;
+    sortOrder?: number;
+    discoverable?: boolean;
+  }>;
 };
 
 export type StudioGrouping = {
@@ -133,12 +141,27 @@ export type StudioExternalSyncJob = {
   updatedAt: string;
 };
 
+export type StudioExternalComment = {
+  externalCommentId: string;
+  externalCommentExternalId: string;
+  externalPublicationId: string;
+  externalAuthorId?: string;
+  externalAuthorName?: string;
+  body: string;
+  createdAtRemote?: string;
+  parentExternalCommentExternalId?: string;
+  lastSyncedAt: string;
+};
+
 export type StudioExternalPublication = {
   externalPublicationId: string;
   externalAccountId: string;
   platform?: string;
   externalUsername: string;
   externalContentId: string;
+  targetStatus?: 'draft' | 'published';
+  canUpdatePublishedDescription?: boolean;
+  publishedDescriptionUpdateMode?: 'stash';
   externalUrl?: string;
   previewUrl?: string;
   externalTitle?: string;
@@ -150,12 +173,12 @@ export type StudioExternalPublication = {
     matureLevel?: 'strict' | 'moderate';
     matureClassification?: string[];
     isAiGenerated?: boolean;
-    allowAiTraining?: boolean;
+    noAi?: boolean;
   };
   externalCollectionIds: string[];
   publishedAt?: string;
   remoteUpdatedAt?: string;
-  syncStatus: 'pending_publish' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
+  syncStatus: 'pending_publish' | 'draft' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
 };
 
 export type StudioExternalAsset = {

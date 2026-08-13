@@ -31,6 +31,16 @@ const accountTone = (status: StudioDeviantArtAccount['connectionStatus']): 'succ
   return 'default';
 };
 
+const copySyncSummary = (jobs: StudioExternalSyncJob[], catalogueJob?: StudioExternalSyncJob) => {
+  const startedAt = catalogueJob?.createdAt || '';
+  const copyJobs = jobs.filter((job) => job.type === 'content_sync' && (!startedAt || job.createdAt >= startedAt));
+  if (!copyJobs.length) return null;
+  const stored = copyJobs.filter((job) => job.status === 'successful').length;
+  const unavailable = copyJobs.filter((job) => ['failed', 'cancelled', 'authentication_required'].includes(job.status)).length;
+  const inProgress = copyJobs.length - stored - unavailable;
+  return { requested: copyJobs.length, stored, unavailable, inProgress };
+};
+
 export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const location = useLocation();
   const requestedCreatorId = new URLSearchParams(location.search).get('creatorId') || '';
@@ -53,6 +63,8 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [activeCredentialId, setActiveCredentialId] = useState('');
   const [editingApplication, setEditingApplication] = useState(false);
   const [creatingApplication, setCreatingApplication] = useState(false);
+  const [deletingApplication, setDeletingApplication] = useState(false);
+  const [connectionGuideExpanded, setConnectionGuideExpanded] = useState(true);
   const [recentlyConnectedAccountId, setRecentlyConnectedAccountId] = useState('');
   const [includeSourceFilesByAccount, setIncludeSourceFilesByAccount] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
@@ -75,6 +87,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     const connectedApplicationId = url.searchParams.get('application') || '';
     const failureReason = url.searchParams.get('reason');
     const failureStage = url.searchParams.get('stage');
+    const failureDetail = url.searchParams.get('detail');
     if (!connectionState) return;
     if (connectionState === 'connected_assignment_required') {
       setRecentlyConnectedAccountId(connectedAccountId);
@@ -87,14 +100,18 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     } else if (connectionState === 'connected') {
       setMessage('DeviantArt account connected and its import has been queued.');
     } else if (connectionState === 'cancelled') {
-      setConnectionError('DeviantArt authorization was cancelled.');
+      setConnectionError(failureDetail
+        ? `DeviantArt authorization was cancelled: ${failureDetail}`
+        : 'DeviantArt authorization was cancelled before access was granted.');
     } else if (connectionState === 'failed') {
       if (failureReason === 'authentication_required' && failureStage === 'token_exchange') {
         setConnectionError('DeviantArt rejected this application during token exchange. Verify the saved client ID and client secret, and confirm the application is Confidential with this exact callback URL.');
       } else if (failureReason === 'authentication_required' && failureStage === 'account_lookup') {
         setConnectionError('DeviantArt issued a token but did not allow account verification. Ubeeq has updated the requested permission; connect again to approve it.');
       } else {
-        setConnectionError('DeviantArt authorization did not complete. Try connecting the account again.');
+        setConnectionError(failureDetail
+          ? `DeviantArt authorization did not complete: ${failureDetail}`
+          : `DeviantArt authorization did not complete${failureReason ? ` (${failureReason})` : ''}. Try connecting the account again.`);
       }
     }
     url.searchParams.delete('deviantart');
@@ -102,6 +119,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     url.searchParams.delete('application');
     url.searchParams.delete('reason');
     url.searchParams.delete('stage');
+    url.searchParams.delete('detail');
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
@@ -188,6 +206,10 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     [accounts, activeCredentialId, recentlyConnectedAccountId]
   );
 
+  useEffect(() => {
+    if (accounts.length) setConnectionGuideExpanded(false);
+  }, [accounts.length]);
+
   const hasActiveSync = useMemo(
     () => Object.values(jobsByAccount).flat().some((job) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status)),
     [jobsByAccount]
@@ -249,6 +271,28 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     setCreatingApplication(true);
     setEditingApplication(true);
     setError('');
+  };
+
+  const deleteApplication = async () => {
+    if (!activeCredential) return;
+    if (activeAccounts.length) {
+      setError('Remove every account connected with this application before deleting it.');
+      return;
+    }
+    const applicationName = activeCredential.applicationLabel || `DeviantArt app ${activeCredential.clientId}`;
+    if (!window.confirm(`Delete the DeviantArt application “${applicationName}”? Its saved client secret will be permanently removed.`)) return;
+    setDeletingApplication(true);
+    setError('');
+    try {
+      await api.studioDeleteDeviantArtCredentials(activeCredential.externalPlatformCredentialId);
+      setActiveCredentialId('');
+      setMessage(`The DeviantArt application “${applicationName}” has been deleted.`);
+      await load();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete this DeviantArt application.');
+    } finally {
+      setDeletingApplication(false);
+    }
   };
 
   const sync = async (externalAccountId: string) => {
@@ -375,16 +419,24 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
         </div>
         <section className="studio-da-setup-wizard" aria-label="Connect DeviantArt tutorial">
             <div className="studio-da-setup-heading">
-              <p className="auth-eyebrow">Connection guide</p>
-              <h3>Connect one or more DeviantArt accounts</h3>
-              <p className="small">The application and connected accounts belong to your Ubeeq account. Each connected account has one destination creator for now.</p>
+              <div>
+                <p className="auth-eyebrow">Connection guide</p>
+                <h3>Connect one or more DeviantArt accounts</h3>
+                {!connectionGuideExpanded && <p className="small">Application setup and account connection steps.</p>}
+              </div>
+              <button type="button" className="auth-secondary-btn" aria-expanded={connectionGuideExpanded} onClick={() => setConnectionGuideExpanded((expanded) => !expanded)}>
+                {connectionGuideExpanded ? 'Collapse guide' : 'Show guide'}
+              </button>
             </div>
-            <ol>
-              <li><strong>Create your own DA OAuth application.</strong><span>Ubeeq does not use a shared DA application; your client credentials remain encrypted at rest.</span></li>
-              <li><strong>Add this callback URL to that application.</strong>{configuration?.callbackUrl && <code>{configuration.callbackUrl}</code>}</li>
-              <li><strong>Save the application once.</strong><span>Use it to connect any DeviantArt accounts you manage. The secret is encrypted at rest and never returned to your browser.</span></li>
-              <li><strong>Connect an account, then choose its destination creator.</strong><span>Only after that choice is saved can you start synchronization.</span></li>
-            </ol>
+            {connectionGuideExpanded && <>
+              <p className="small">The application and connected accounts belong to your Ubeeq account. Each connected account has one destination creator for now.</p>
+              <ol>
+                <li><strong>Create your own DA OAuth application.</strong><span>Ubeeq does not use a shared DA application; your client credentials remain encrypted at rest.</span></li>
+                <li><strong>Add this callback URL to that application.</strong>{configuration?.callbackUrl && <code>{configuration.callbackUrl}</code>}</li>
+                <li><strong>Save the application once.</strong><span>Use it to connect any DeviantArt accounts you manage. The secret is encrypted at rest and never returned to your browser.</span></li>
+                <li><strong>Connect an account, then choose its destination creator.</strong><span>Only after that choice is saved can you start synchronization.</span></li>
+              </ol>
+            </>}
           </section>
         {activeCredential && !editingApplication ? (
           <>
@@ -402,6 +454,9 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
               </div>
               <div className="studio-inline-actions">
                 <button type="button" className="auth-secondary-btn" onClick={() => { setCreatingApplication(false); setEditingApplication(true); }}>Edit application</button>
+                <button type="button" className="auth-secondary-btn" disabled={deletingApplication || activeAccounts.length > 0} title={activeAccounts.length ? 'Remove the connected DeviantArt accounts before deleting this application.' : undefined} onClick={() => void deleteApplication()}>
+                  {deletingApplication ? 'Deleting…' : 'Delete application'}
+                </button>
               </div>
             </section>
           </>
@@ -441,8 +496,10 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
         {activeAccounts.length ? (
           <div className="studio-integration-account-list">
             {activeAccounts.map((account) => {
-              const catalogueJob = jobsByAccount[account.externalAccountId]
+              const accountJobs = jobsByAccount[account.externalAccountId] || [];
+              const catalogueJob = accountJobs
                 ?.find((job) => ['account_import', 'full_reconciliation', 'account_scan'].includes(job.type));
+              const copySummary = copySyncSummary(accountJobs, catalogueJob);
               const savedDestinationCreatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
               const destinationCreatorId = destinationCreatorByAccount[account.externalAccountId] || '';
               const destinationCreator = creators.find((creator) => creator.creatorId === savedDestinationCreatorId);
@@ -452,7 +509,8 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                     <strong>{account.externalUsername}</strong>
                     <span>Last successful sync: {formatDate(account.lastSuccessfulSyncAt)}</span>
                     <span className={destinationCreator ? undefined : 'studio-integration-assignment-needed'}>{destinationCreator ? `Sync destination: ${destinationCreator.name}` : 'Creator assignment required before synchronization.'}</span>
-                    {catalogueJob?.progress && <span>{catalogueJob.progress.discovered} deviations discovered · {catalogueJob.progress.synchronized} synchronized · {catalogueJob.progress.remaining} remaining</span>}
+                    {catalogueJob?.progress && <span>Metadata: {catalogueJob.progress.discovered} discovered · {catalogueJob.progress.synchronized} synchronized · {catalogueJob.progress.remaining} remaining</span>}
+                    {copySummary && <span>Source copies: {copySummary.requested} requested · {copySummary.stored} stored · {copySummary.unavailable} unavailable{copySummary.inProgress ? ` · ${copySummary.inProgress} in progress` : ''}</span>}
                     {catalogueJob?.errorMessage && <span className="error">{catalogueJob.errorMessage}</span>}
                   </div>
                   <div className="studio-integration-row-actions">

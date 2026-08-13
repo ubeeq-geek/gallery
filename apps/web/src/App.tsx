@@ -862,18 +862,22 @@ function HeaderAuth({
   const isAdmin = normalizedGroups.includes('admin') || normalizedGroups.includes('admins');
   const primaryManagedArtist = (managedArtists || []).find((artist) => Boolean(artist.slug)) || managedArtists?.[0];
   const canAccessStudio = Boolean(primaryManagedArtist);
-  const showCreatorNav = Boolean(user) && (canAccessStudio || isAdmin);
+  const showCreatorNav = Boolean(user);
   const studioCount = sanitizeNotificationCount(roleNotificationCounts?.studio);
   const adminCount = sanitizeNotificationCount(roleNotificationCounts?.admin);
+  // Every signed-in Ubeeqer has a personal profile; a Space simply upgrades
+  // this link to their public creator profile.
   const artistProfileHref = primaryManagedArtist?.slug ? `/creators/${primaryManagedArtist.slug}` : '/settings';
   const studioHref = '/studio';
   const adminHref = studioHref;
   const isExternalAdminHref = false;
-  const compactNavLabel = canAccessStudio ? 'Creator' : 'Studio';
-  const compactNavHref = studioHref;
+  const compactNavLabel = canAccessStudio ? 'Creator' : 'Profile';
+  const compactNavHref = canAccessStudio ? studioHref : artistProfileHref;
   const isExternalCompactNavHref = false;
   const compactNavCount = studioCount;
-  const isArtistNavActive = location.pathname.startsWith('/creators/');
+  const isArtistNavActive = canAccessStudio
+    ? location.pathname.startsWith('/creators/')
+    : location.pathname.startsWith('/settings');
   const isStudioNavActive = location.pathname.startsWith('/studio');
   const isAdminNavActive = false;
   const showMobileDiscoveryButton = discoveryDock?.viewport === 'mobile';
@@ -972,14 +976,12 @@ function HeaderAuth({
                           Creator
                         </span>
                       )}
-                      {canAccessStudio && (
-                        <Link
-                          to={artistProfileHref}
-                          className={`inline-flex items-center rounded-full px-3 py-1.5 text-sm font-semibold no-underline transition-colors ${isArtistNavActive ? 'bg-emerald-100 text-emerald-900' : 'text-emerald-900 hover:bg-emerald-100'}`}
-                        >
-                          <span>Profile</span>
-                        </Link>
-                      )}
+                      <Link
+                        to={artistProfileHref}
+                        className={`inline-flex items-center rounded-full px-3 py-1.5 text-sm font-semibold no-underline transition-colors ${isArtistNavActive ? 'bg-emerald-100 text-emerald-900' : 'text-emerald-900 hover:bg-emerald-100'}`}
+                      >
+                        <span>Profile</span>
+                      </Link>
                       {canAccessStudio && (
                         <Link
                           to={studioHref}
@@ -1076,7 +1078,7 @@ function HeaderAuth({
                   </summary>
                   <div className="user-menu-items">
                     <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
-                    {canAccessStudio && <Link to={artistProfileHref} onClick={closeUserMenus}>Creator</Link>}
+                    <Link to={artistProfileHref} onClick={closeUserMenus}>{canAccessStudio ? 'Creator profile' : 'Profile'}</Link>
                     {canAccessStudio && (
                       <Link to={studioHref} onClick={closeUserMenus}>
                         Studio{studioCount > 0 ? ` (${formatNotificationBadge(studioCount)})` : ''}

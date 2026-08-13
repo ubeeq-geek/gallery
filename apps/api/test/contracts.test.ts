@@ -25,6 +25,7 @@ const buildConfig = (): AppConfig => ({
   trendingCandidateLimit: 1500,
   externalSyncBaseDelaySeconds: 60,
   externalAccountScanIntervalSeconds: 21600,
+  deviantArtPublishedDescriptionUpdate: false,
   externalContentMaxBytes: 50 * 1024 * 1024,
   externalTokenEncryptionKey: 'test-external-encryption-key',
   externalOAuthRedirectUri: 'http://localhost:4000/integrations/deviantart/callback'
@@ -113,6 +114,47 @@ describe('API contract', () => {
     expect(creators[0].slug).toBe('open-studio');
   });
 
+  it('deletes a DeviantArt application only after its connected accounts are removed', async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ config: buildConfig(), store });
+    const saved = await request(app)
+      .put('/studio/integrations/deviantart/credentials')
+      .set('x-user-id', 'u-da-delete')
+      .send({ applicationLabel: 'Disposable DA app', clientId: 'delete-client', clientSecret: 'delete-secret' });
+    expect(saved.status).toBe(200);
+
+    const now = new Date().toISOString();
+    await store.createExternalAccount({
+      externalAccountId: 'account-da-delete',
+      userId: 'u-da-delete',
+      externalPlatformCredentialId: saved.body.externalPlatformCredentialId,
+      platform: 'deviantart',
+      externalUserId: 'remote-da-delete',
+      externalUsername: 'da-delete-user',
+      accessTokenEncrypted: 'encrypted-access-token',
+      connectionStatus: 'connected',
+      createdAt: now,
+      updatedAt: now
+    });
+
+    const blocked = await request(app)
+      .delete(`/studio/integrations/deviantart/credentials/${saved.body.externalPlatformCredentialId}`)
+      .set('x-user-id', 'u-da-delete');
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.connectedAccountCount).toBe(1);
+
+    const removed = await request(app)
+      .delete('/studio/integrations/deviantart/accounts/account-da-delete')
+      .set('x-user-id', 'u-da-delete');
+    expect(removed.status).toBe(204);
+
+    const deleted = await request(app)
+      .delete(`/studio/integrations/deviantart/credentials/${saved.body.externalPlatformCredentialId}`)
+      .set('x-user-id', 'u-da-delete');
+    expect(deleted.status).toBe(204);
+    expect(await store.getExternalPlatformCredential(saved.body.externalPlatformCredentialId)).toBeNull();
+  });
+
   it('returns only the connected creator catalogue and never token fields', async () => {
     const store = new InMemoryStore();
     const app = createApp({ config: buildConfig(), store });
@@ -161,9 +203,19 @@ describe('API contract', () => {
       platform: 'deviantart',
       externalContentId: 'deviation-uuid',
       externalTitle: 'Imported work',
+      externalDescription: '<p>Original DeviantArt description</p>',
       externalTags: ['portrait'],
       syncStatus: 'active',
-      rawMetadataJson: {},
+      rawMetadataJson: {
+        submission: {
+          allows_comments: false,
+          is_mature: true,
+          mature_level: 'moderate',
+          mature_classification: ['ideology'],
+          is_ai_generated: true,
+          noai: true
+        }
+      },
       createdAt: now,
       updatedAt: now
     });
@@ -182,6 +234,35 @@ describe('API contract', () => {
     expect(catalogueResponse.status).toBe(200);
     expect(catalogueResponse.body.total).toBe(1);
     expect(catalogueResponse.body.items[0].publications[0].externalContentId).toBe('deviation-uuid');
+    expect(catalogueResponse.body.items[0].publications[0].canUpdatePublishedDescription).toBe(false);
+    expect(catalogueResponse.body.items[0].publications[0].publishedDescriptionUpdateMode).toBeUndefined();
+    expect(catalogueResponse.body.items[0].publications[0].displayOptions).toMatchObject({
+      allowComments: false,
+      isMature: true,
+      matureLevel: 'moderate',
+      matureClassification: ['ideology'],
+      isAiGenerated: true,
+      noAi: true
+    });
+
+    const metadataResponse = await request(app)
+      .patch('/studio/integrations/assets/asset-da')
+      .set('x-user-id', 'u-da')
+      .send({
+        canonicalDescription: '<p>Independent Ubeeq description</p>',
+        descriptionSyncPolicy: 'independent',
+        integrationMetadata: {
+          externalPublicationId: 'publication-da',
+          description: '<p>Unsupported published DeviantArt description</p>'
+        }
+      });
+    expect(metadataResponse.status).toBe(200);
+    expect(metadataResponse.body.canonicalDescription).toBe('<p>Independent Ubeeq description</p>');
+    expect(metadataResponse.body.remoteUpdateJobs).toEqual([]);
+    expect(metadataResponse.body.remoteUpdateWarnings).toEqual([
+      'DeviantArt does not permit description changes for already-published deviations through its API. The Ubeeq description was saved, but the DeviantArt description remains unchanged.'
+    ]);
+    expect((await store.getExternalPublication('account-da', 'deviation-uuid'))?.externalDescription).toBe('<p>Original DeviantArt description</p>');
 
     const spaceResponse = await request(app)
       .put('/studio/integrations/assets/asset-da/space-publication')
@@ -195,6 +276,36 @@ describe('API contract', () => {
       .get('/studio/integrations/deviantart/catalogue?creatorId=creator-da')
       .set('x-user-id', 'u-da');
     expect(selectedCatalogueResponse.body.items[0].spacePublication.published).toBe(true);
+
+    await store.createAsset({
+      assetId: 'asset-da-draft',
+      userId: 'u-da',
+      creatorIdentityId: 'creator-da',
+      assetType: 'image',
+      canonicalTitle: 'New Ubeeq work',
+      visibility: 'private',
+      titleSyncPolicy: 'independent',
+      descriptionSyncPolicy: 'independent',
+      createdAt: now,
+      updatedAt: now
+    });
+    const draftDestination = await request(app)
+      .post('/studio/works/asset-da-draft/destinations/deviantart')
+      .set('x-user-id', 'u-da')
+      .send({ externalAccountId: 'account-da', targetStatus: 'draft' });
+    expect(draftDestination.status).toBe(201);
+    expect(draftDestination.body.publication).toMatchObject({
+      assetId: 'asset-da-draft',
+      targetStatus: 'draft',
+      syncStatus: 'pending_publish'
+    });
+
+    const publishInstead = await request(app)
+      .post('/studio/works/asset-da-draft/destinations/deviantart')
+      .set('x-user-id', 'u-da')
+      .send({ externalAccountId: 'account-da', targetStatus: 'published' });
+    expect(publishInstead.status).toBe(200);
+    expect(publishInstead.body.publication.targetStatus).toBe('published');
   });
 
   it('keeps a DeviantArt integration account-owned and uses one sync destination creator', async () => {

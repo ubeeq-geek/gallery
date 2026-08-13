@@ -1484,6 +1484,7 @@ export class DynamoStore implements DataStore {
   async listExternalPlatformCredentialsByUser(userId: string): Promise<ExternalPlatformCredential[]> { return this.externalPlatform().listExternalPlatformCredentialsByUser(userId); }
   async createExternalPlatformCredential(credential: ExternalPlatformCredential): Promise<void> { await this.externalPlatform().createExternalPlatformCredential(credential); }
   async updateExternalPlatformCredential(credential: ExternalPlatformCredential): Promise<void> { await this.externalPlatform().updateExternalPlatformCredential(credential); }
+  async deleteExternalPlatformCredential(externalPlatformCredentialId: string): Promise<void> { await this.externalPlatform().deleteExternalPlatformCredential(externalPlatformCredentialId); }
   async listAssetsByCreatorIdentity(creatorIdentityId: string): Promise<Asset[]> { return this.externalPlatform().listAssetsByCreatorIdentity(creatorIdentityId); }
   async getAsset(assetId: string): Promise<Asset | null> { return this.externalPlatform().getAsset(assetId); }
   async createAsset(asset: Asset): Promise<void> { await this.externalPlatform().createAsset(asset); }
@@ -1491,7 +1492,7 @@ export class DynamoStore implements DataStore {
   async getExternalPublication(externalAccountId: string, externalContentId: string): Promise<ExternalPublication | null> { return this.externalPlatform().getExternalPublication(externalAccountId, externalContentId); }
   async listExternalPublications(externalAccountId: string): Promise<ExternalPublication[]> { return this.externalPlatform().listExternalPublications(externalAccountId); }
   async createExternalPublication(publication: ExternalPublication): Promise<void> { await this.externalPlatform().createExternalPublication(publication); }
-  async updateExternalPublication(publication: ExternalPublication): Promise<void> { await this.externalPlatform().updateExternalPublication(publication); }
+  async updateExternalPublication(publication: ExternalPublication, previousExternalContentId?: string): Promise<void> { await this.externalPlatform().updateExternalPublication(publication, previousExternalContentId); }
   async getSpacePublication(assetId: string): Promise<SpacePublication | null> { return this.externalPlatform().getSpacePublication(assetId); }
   async upsertSpacePublication(publication: SpacePublication): Promise<void> { await this.externalPlatform().upsertSpacePublication(publication); }
   async listExternalCollections(externalAccountId: string): Promise<ExternalCollection[]> { return this.externalPlatform().listExternalCollections(externalAccountId); }

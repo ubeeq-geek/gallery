@@ -585,7 +585,8 @@ export type UbeeqCollectionType = 'collection' | 'gallery' | 'series';
 export type MetadataSyncPolicy = 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
 export type SpaceHostingMode = 'linked' | 'hosted';
 export type SpaceContentSyncStatus = 'not_requested' | 'queued' | 'syncing' | 'hosted' | 'failed';
-export type ExternalPublicationSyncStatus = 'pending_publish' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
+export type ExternalPublicationSyncStatus = 'pending_publish' | 'draft' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
+export type ExternalPublicationTargetStatus = 'draft' | 'published';
 export type ExternalCollectionSyncMode = 'continuous' | 'initial_only' | 'manual' | 'ignored';
 export type ExternalSyncJobType =
   | 'account_import'
@@ -681,6 +682,10 @@ export interface ExternalPublication {
   externalAccountId: string;
   platform: ExternalPlatform;
   externalContentId: string;
+  /** Provider-side draft/source identifier retained when a publish workflow exposes one. */
+  externalDraftId?: string;
+  /** Desired provider-side state for the next outbound synchronization. */
+  targetStatus?: ExternalPublicationTargetStatus;
   externalUrl?: string;
   externalTitle?: string;
   externalDescription?: string;
@@ -782,6 +787,8 @@ export interface ExternalComment {
   body: string;
   createdAtRemote?: string;
   parentExternalCommentExternalId?: string;
+  /** Provider payload retained for adapter migrations and diagnostics. */
+  rawPayload?: Record<string, unknown>;
   lastSyncedAt: string;
 }
 

@@ -181,7 +181,7 @@ export function StudioWorkspace() {
           />
         );
       case 'posts':
-        return <PostsView posts={posts} creators={creators} />;
+        return <PostsView posts={posts} creators={creators} onPostSaved={async () => { await load(); }} />;
       case 'groupings':
         return (
           <ResourceView

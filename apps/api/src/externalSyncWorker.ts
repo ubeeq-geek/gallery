@@ -3,8 +3,8 @@ import type { AppConfig } from './config';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
 import { readStoredUbeeqWorkImage, storeExternalContent } from './externalContentStorage';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
-import { createExternalPlatformProvider, ExternalProviderError, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteContent } from './externalPlatformProvider';
-import type { Asset, ExternalAccount, ExternalPublication, ExternalSyncJob, SpacePublication } from './domain';
+import { createExternalPlatformProvider, ExternalProviderError, type ExternalContentPublish, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteContent } from './externalPlatformProvider';
+import type { Asset, ExternalAccount, ExternalComment, ExternalPublication, ExternalSyncJob, SpacePublication } from './domain';
 import type { DataStore } from './store';
 
 const retryDelaySeconds = (attempt: number, configuredBase: number): number => {
@@ -32,6 +32,117 @@ const addLog = async (store: DataStore, externalSyncJobId: string, level: 'info'
     detail,
     createdAt: new Date().toISOString()
   });
+};
+
+const decodeComparableHtml = (value: string): string => value
+  .replace(/<\s*br\s*\/?>/gi, '\n')
+  .replace(/<\/(?:p|div|li|blockquote|h[1-6])\s*>/gi, '\n')
+  .replace(/<[^>]*>/g, '')
+  .replace(/&nbsp;|&#160;/gi, ' ')
+  .replace(/&amp;/gi, '&')
+  .replace(/&lt;/gi, '<')
+  .replace(/&gt;/gi, '>')
+  .replace(/&quot;|&#34;/gi, '"')
+  .replace(/&#39;|&apos;/gi, "'")
+  .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+  .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
+  .replace(/\r\n?/g, '\n')
+  .replace(/[ \t]+/g, ' ')
+  .replace(/ *\n */g, '\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim();
+
+const metadataBoolean = (metadata: Record<string, unknown>, ...keys: string[]): boolean | undefined => {
+  const submission = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
+    ? metadata.submission as Record<string, unknown>
+    : {};
+  for (const key of keys) {
+    const value = metadata[key] ?? submission[key];
+    if (typeof value === 'boolean') return value;
+    if (value === 'true' || value === 1 || value === '1') return true;
+    if (value === 'false' || value === 0 || value === '0') return false;
+  }
+  return undefined;
+};
+
+const metadataString = (metadata: Record<string, unknown>, ...keys: string[]): string | undefined => {
+  const submission = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
+    ? metadata.submission as Record<string, unknown>
+    : {};
+  for (const key of keys) {
+    const value = metadata[key] ?? submission[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
+};
+
+const metadataIdentifier = (metadata: Record<string, unknown>, ...keys: string[]): string | undefined => {
+  const submission = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
+    ? metadata.submission as Record<string, unknown>
+    : {};
+  for (const key of keys) {
+    const value = metadata[key] ?? submission[key];
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return String(value);
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) return value.trim();
+  }
+  return undefined;
+};
+
+const metadataStrings = (metadata: Record<string, unknown>, ...keys: string[]): string[] | undefined => {
+  const submission = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
+    ? metadata.submission as Record<string, unknown>
+    : {};
+  for (const key of keys) {
+    const value = metadata[key] ?? submission[key];
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => typeof item === 'string' ? item : '')
+        .filter(Boolean);
+    }
+  }
+  return undefined;
+};
+
+export const mergeExternalMetadata = (
+  previous: Record<string, unknown>,
+  incoming: Record<string, unknown>
+): Record<string, unknown> => {
+  const previousSubmission = previous.submission && typeof previous.submission === 'object' && !Array.isArray(previous.submission)
+    ? previous.submission as Record<string, unknown>
+    : {};
+  const incomingSubmission = incoming.submission && typeof incoming.submission === 'object' && !Array.isArray(incoming.submission)
+    ? incoming.submission as Record<string, unknown>
+    : {};
+  const merged = { ...previous, ...incoming };
+  if (Object.keys(previousSubmission).length || Object.keys(incomingSubmission).length) {
+    merged.submission = { ...previousSubmission, ...incomingSubmission };
+  }
+  return merged;
+};
+
+const comparableTags = (tags: string[]): string => [...new Set(tags.map((tag) => tag.trim().toLowerCase()).filter(Boolean))]
+  .sort()
+  .join('\u0000');
+
+export const externalContentUpdateMismatches = (remote: ExternalRemoteContent, update: ExternalContentUpdate): string[] => {
+  const mismatches: string[] = [];
+  if (update.title !== undefined && remote.title.trim() !== update.title.trim()) mismatches.push('title');
+  if (update.description !== undefined && decodeComparableHtml(remote.description || '') !== decodeComparableHtml(update.description)) mismatches.push('description');
+  if (update.tags !== undefined && comparableTags(remote.tags) !== comparableTags(update.tags)) mismatches.push('tags');
+  if (update.allowComments !== undefined && metadataBoolean(remote.rawMetadata, 'allows_comments', 'allow_comments', 'allowComments') !== update.allowComments) mismatches.push('comment setting');
+  if (update.isMature !== undefined && metadataBoolean(remote.rawMetadata, 'is_mature', 'isMature') !== update.isMature) mismatches.push('mature setting');
+  if (update.matureLevel !== undefined && metadataString(remote.rawMetadata, 'mature_level', 'matureLevel') !== update.matureLevel) mismatches.push('mature level');
+  if (update.matureClassification !== undefined) {
+    const remoteClassifications = metadataStrings(remote.rawMetadata, 'mature_classification', 'matureClassification');
+    if (!remoteClassifications || comparableTags(remoteClassifications) !== comparableTags(update.matureClassification)) mismatches.push('mature classification');
+  }
+  const remoteAiGenerated = metadataBoolean(remote.rawMetadata, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai');
+  if (update.isAiGenerated !== undefined && remoteAiGenerated !== undefined && remoteAiGenerated !== update.isAiGenerated) mismatches.push('AI-generated setting');
+  if (update.noAi !== undefined) {
+    const noAi = metadataBoolean(remote.rawMetadata, 'noai', 'noAI', 'noAi', 'no_ai');
+    if (noAi !== undefined && noAi !== update.noAi) mismatches.push('NoAI setting');
+  }
+  return mismatches;
 };
 
 const providerForAccount = async (store: DataStore, config: AppConfig, account: ExternalAccount): Promise<ExternalPlatformProvider> => {
@@ -126,6 +237,14 @@ const upsertContent = async (
     externalAccountId: account.externalAccountId,
     platform: account.platform,
     externalContentId: remote.externalContentId,
+    externalDraftId: currentPublication?.externalDraftId || metadataIdentifier(
+      remote.rawMetadata,
+      'itemid',
+      'item_id',
+      'stash_itemid',
+      'stashItemId',
+      'stashid'
+    ),
     externalUrl: remote.externalUrl,
     externalTitle: remote.title,
     externalDescription: remote.description,
@@ -137,7 +256,10 @@ const upsertContent = async (
     lastSyncedAt: now,
     lastSeenAt: now,
     syncStatus: 'active',
-    rawMetadataJson: remote.rawMetadata,
+    // DeviantArt's read API currently omits newer AI label values. Retain any
+    // values Ubeeq previously submitted while refreshing the fields DA reports,
+    // including values nested inside the extended `submission` object.
+    rawMetadataJson: mergeExternalMetadata(currentPublication?.rawMetadataJson || {}, remote.rawMetadata),
     createdAt: currentPublication?.createdAt || now,
     updatedAt: now
   };
@@ -191,6 +313,51 @@ const enqueueContentSyncJob = async (
       updatedAt: new Date().toISOString()
     });
     throw new ExternalProviderError('The content synchronization queue is unavailable', 'temporarily_unavailable');
+  }
+};
+
+const enqueueAccountScanIfIdle = async (
+  store: DataStore,
+  config: AppConfig,
+  account: ExternalAccount,
+  triggeredByJobId: string,
+  queue?: ExternalSyncQueue
+): Promise<ExternalSyncJob> => {
+  const activeStatuses = new Set<ExternalSyncJob['status']>(['queued', 'processing', 'retry_scheduled', 'rate_limited']);
+  const existing = (await store.listExternalSyncJobs(account.externalAccountId, 100))
+    .find((candidate) => (
+      (candidate.type === 'account_scan' || candidate.type === 'account_import' || candidate.type === 'full_reconciliation')
+      && activeStatuses.has(candidate.status)
+    ));
+  if (existing) return existing;
+
+  const now = new Date().toISOString();
+  const scanJob: ExternalSyncJob = {
+    externalSyncJobId: randomUUID(),
+    externalAccountId: account.externalAccountId,
+    type: 'account_scan',
+    status: 'queued',
+    payload: { reason: 'remote_update_verification', triggeredByJobId },
+    progress: { discovered: 0, synchronized: 0, remaining: 0 },
+    attemptCount: 0,
+    createdAt: now,
+    updatedAt: now
+  };
+  await store.createExternalSyncJob(scanJob);
+  try {
+    await (queue || createExternalSyncQueue(config)).enqueue(scanJob.externalSyncJobId);
+    return scanJob;
+  } catch {
+    const retryJob: ExternalSyncJob = {
+      ...scanJob,
+      status: 'retry_scheduled',
+      nextAttemptAt: new Date(Date.now() + config.externalSyncBaseDelaySeconds * 1000).toISOString(),
+      errorCode: 'QUEUE_UNAVAILABLE',
+      errorMessage: 'The verification synchronization queue is unavailable',
+      updatedAt: new Date().toISOString()
+    };
+    await store.updateExternalSyncJob(retryJob);
+    return retryJob;
   }
 };
 
@@ -277,7 +444,7 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
   await addLog(store, job.externalSyncJobId, 'info', 'DeviantArt source file stored in Ubeeq Space', { assetId, bytes: stored.byteSize });
 };
 
-const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
+const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount, queue?: ExternalSyncQueue): Promise<void> => {
   const externalPublicationId = typeof job.payload?.externalPublicationId === 'string' ? job.payload.externalPublicationId : '';
   const publication = (await store.listExternalPublications(account.externalAccountId))
     .find((item) => item.externalPublicationId === externalPublicationId);
@@ -294,10 +461,36 @@ const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: Ext
       classification === 'nudity' || classification === 'sexual' || classification === 'gore' || classification === 'language' || classification === 'ideology'
     ));
   if (typeof job.payload?.isAiGenerated === 'boolean') update.isAiGenerated = job.payload.isAiGenerated;
-  if (typeof job.payload?.allowAiTraining === 'boolean') update.allowAiTraining = job.payload.allowAiTraining;
+  if (typeof job.payload?.noAi === 'boolean') update.noAi = job.payload.noAi;
+  // Accept already-queued jobs from the previous inverted DTO during rollout.
+  else if (typeof job.payload?.allowAiTraining === 'boolean') update.noAi = !job.payload.allowAiTraining;
   const provider = await providerForAccount(store, config, account);
   const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
-  await provider.updateContent(session.accessToken, publication.externalContentId, update);
+  await provider.updateContent(session.accessToken, publication.externalContentId, update, {
+    externalDraftId: publication.externalDraftId,
+    publishedDescriptionUpdate: config.deviantArtPublishedDescriptionUpdate
+  });
+  const remote = await provider.getContent(session.accessToken, publication.externalContentId);
+  const mismatches = externalContentUpdateMismatches(remote, update);
+  if (mismatches.length) {
+    throw new ExternalProviderError(
+      `DeviantArt accepted the edit request, but read-back verification did not match: ${mismatches.join(', ')}`,
+      'invalid_response'
+    );
+  }
+  // DeviantArt's read API currently omits the AI label fields. Preserve the
+  // values Ubeeq just wrote so subsequent edits show known state rather than
+  // incorrectly reverting to an unchecked/unknown presentation.
+  const verifiedRemote: ExternalRemoteContent = {
+    ...remote,
+    rawMetadata: {
+      ...remote.rawMetadata,
+      ...(update.isAiGenerated !== undefined ? { is_ai_generated: update.isAiGenerated } : {}),
+      ...(update.noAi !== undefined ? { noai: update.noAi } : {})
+    }
+  };
+  await upsertContent(store, session.account, verifiedRemote, new Date().toISOString());
+  const followUpJob = await enqueueAccountScanIfIdle(store, config, session.account, job.externalSyncJobId, queue);
   await updateJob(store, job, {
     status: 'successful',
     progress: { discovered: 1, synchronized: 1, remaining: 0 },
@@ -305,7 +498,12 @@ const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: Ext
     errorMessage: undefined,
     nextAttemptAt: undefined
   });
-  await addLog(store, job.externalSyncJobId, 'info', 'Integration metadata update completed', { externalPublicationId, fields: Object.keys(update) });
+  await addLog(store, job.externalSyncJobId, 'info', 'Integration metadata update completed and verified', {
+    externalPublicationId,
+    fields: Object.keys(update),
+    followUpJobId: followUpJob.externalSyncJobId,
+    followUpJobStatus: followUpJob.status
+  });
 };
 
 const executePublish = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
@@ -326,23 +524,31 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
   const tags = Array.isArray(job.payload?.tags)
     ? job.payload.tags.filter((tag): tag is string => typeof tag === 'string')
     : pendingPublication.externalTags;
-  const isMature = typeof job.payload?.isMature === 'boolean' ? job.payload.isMature : savedSettings.is_mature === true;
+  const isMature = typeof job.payload?.isMature === 'boolean'
+    ? job.payload.isMature
+    : (metadataBoolean(savedSettings, 'is_mature', 'isMature') ?? false);
   const matureLevel = job.payload?.matureLevel === 'strict' || job.payload?.matureLevel === 'moderate'
     ? job.payload.matureLevel
-    : (savedSettings.mature_level === 'strict' || savedSettings.mature_level === 'moderate' ? savedSettings.mature_level : undefined);
+    : (() => {
+      const savedLevel = metadataString(savedSettings, 'mature_level', 'matureLevel');
+      return savedLevel === 'strict' || savedLevel === 'moderate' ? savedLevel : undefined;
+    })();
   const matureClassification = Array.isArray(job.payload?.matureClassification)
     ? job.payload.matureClassification.filter((classification): classification is 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology' => (
       classification === 'nudity' || classification === 'sexual' || classification === 'gore' || classification === 'language' || classification === 'ideology'
     ))
-    : (Array.isArray(savedSettings.mature_classification)
-      ? savedSettings.mature_classification.filter((classification): classification is 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology' => (
+    : (() => {
+      const savedClassifications = metadataStrings(savedSettings, 'mature_classification', 'matureClassification');
+      return Array.isArray(savedClassifications)
+      ? savedClassifications.filter((classification): classification is 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology' => (
         classification === 'nudity' || classification === 'sexual' || classification === 'gore' || classification === 'language' || classification === 'ideology'
       ))
-      : undefined);
+      : undefined;
+    })();
   const filename = typeof job.payload?.originalFilename === 'string' && job.payload.originalFilename.trim()
     ? job.payload.originalFilename.trim()
     : `${asset.assetId}.jpg`;
-  const published = await provider.publishContent(session.accessToken, {
+  const content: ExternalContentPublish = {
     body: await readStoredUbeeqWorkImage(config, spacePublication.hostedObjectKey),
     filename,
     contentType: spacePublication.hostedContentType,
@@ -352,23 +558,64 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
     isMature,
     matureLevel,
     matureClassification,
-    allowComments: typeof job.payload?.allowComments === 'boolean' ? job.payload.allowComments : (typeof savedSettings.allow_comments === 'boolean' ? savedSettings.allow_comments : undefined),
-    isAiGenerated: typeof job.payload?.isAiGenerated === 'boolean' ? job.payload.isAiGenerated : (typeof savedSettings.is_ai_generated === 'boolean' ? savedSettings.is_ai_generated : undefined),
-    noAi: typeof job.payload?.noAi === 'boolean' ? job.payload.noAi : (typeof savedSettings.noai === 'boolean' ? savedSettings.noai : undefined)
-  });
+    allowComments: typeof job.payload?.allowComments === 'boolean'
+      ? job.payload.allowComments
+      : metadataBoolean(savedSettings, 'allows_comments', 'allow_comments', 'allowComments'),
+    isAiGenerated: typeof job.payload?.isAiGenerated === 'boolean'
+      ? job.payload.isAiGenerated
+      : metadataBoolean(savedSettings, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai'),
+    noAi: typeof job.payload?.noAi === 'boolean'
+      ? job.payload.noAi
+      : metadataBoolean(savedSettings, 'noai', 'noAI', 'noAi', 'no_ai')
+  };
+  // The publication record is authoritative so a creator can change their
+  // choice while a queued job is still waiting to run.
+  const targetStatus = pendingPublication.targetStatus === 'draft' ? 'draft' : 'published';
+  const draft = await provider.submitContent(session.accessToken, content, pendingPublication.externalDraftId);
   const now = new Date().toISOString();
+  if (targetStatus === 'draft') {
+    const draftPublication: ExternalPublication = {
+      ...pendingPublication,
+      externalContentId: `stash:${draft.externalDraftId}`,
+      externalDraftId: draft.externalDraftId,
+      externalUrl: draft.externalUrl,
+      externalTitle: pendingPublication.externalTitle || asset.canonicalTitle,
+      externalDescription: pendingPublication.externalDescription ?? asset.canonicalDescription,
+      externalTags: tags,
+      targetStatus: 'draft',
+      syncStatus: 'draft',
+      rawMetadataJson: { ...savedSettings, ...draft.rawMetadata },
+      remoteUpdatedAt: now,
+      lastSyncedAt: now,
+      lastSeenAt: now,
+      updatedAt: now
+    };
+    await store.updateExternalPublication(draftPublication, pendingPublication.externalContentId);
+    await updateJob(store, job, {
+      status: 'successful',
+      progress: { discovered: 1, synchronized: 1, remaining: 0 },
+      errorCode: undefined,
+      errorMessage: undefined,
+      nextAttemptAt: undefined
+    });
+    await addLog(store, job.externalSyncJobId, 'info', 'Ubeeq work saved as a DeviantArt Sta.sh draft', { assetId: asset.assetId, externalDraftId: draft.externalDraftId });
+    return;
+  }
+  const published = await provider.publishDraft(session.accessToken, draft.externalDraftId, content);
   const publication: ExternalPublication = {
     ...(pendingPublication || { externalPublicationId: randomUUID(), createdAt: now }),
     assetId: asset.assetId,
     externalAccountId: account.externalAccountId,
     platform: account.platform,
     externalContentId: published.externalContentId,
+    externalDraftId: published.externalDraftId,
     externalUrl: published.externalUrl,
     externalTitle: pendingPublication.externalTitle || asset.canonicalTitle,
     externalDescription: pendingPublication.externalDescription ?? asset.canonicalDescription,
     externalTags: tags,
+    targetStatus: 'published',
     syncStatus: 'active',
-    rawMetadataJson: { ...savedSettings, ...published.rawMetadata },
+    rawMetadataJson: { ...savedSettings, ...draft.rawMetadata, ...published.rawMetadata },
     publishedAt: now,
     remoteCreatedAt: now,
     remoteUpdatedAt: now,
@@ -377,7 +624,7 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
     createdAt: pendingPublication?.createdAt || now,
     updatedAt: now
   };
-  if (pendingPublication) await store.updateExternalPublication(publication);
+  if (pendingPublication) await store.updateExternalPublication(publication, pendingPublication.externalContentId);
   else await store.createExternalPublication(publication);
   await updateJob(store, job, {
     status: 'successful',
@@ -425,10 +672,12 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     });
     discovered += page.items.length;
     for (const item of page.items) {
-      const hasCompleteLabelMetadata = ['is_ai_generated', 'ai_generated', 'created_with_ai', 'noai', 'no_ai']
-        .some((key) => Object.prototype.hasOwnProperty.call(item.rawMetadata, key));
+      const hasPublishedSettings = metadataBoolean(item.rawMetadata, 'is_mature', 'isMature') !== undefined
+        && metadataBoolean(item.rawMetadata, 'allows_comments', 'allow_comments', 'allowComments') !== undefined
+        && metadataBoolean(item.rawMetadata, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai') !== undefined
+        && metadataBoolean(item.rawMetadata, 'noai', 'noAI', 'noAi', 'no_ai') !== undefined;
       let resolvedItem = item;
-      if (!item.description || !item.tags.length || !hasCompleteLabelMetadata) {
+      if (!item.description || !item.tags.length || !hasPublishedSettings) {
         try {
           resolvedItem = await provider.getContent(session.accessToken, item.externalContentId);
         } catch (error) {
@@ -479,6 +728,72 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
   await addLog(store, job.externalSyncJobId, 'info', 'DeviantArt account import completed', { discovered, synchronized, collections: collections.length });
 };
 
+const upsertRemoteComment = async (
+  store: DataStore,
+  publication: ExternalPublication,
+  remote: Awaited<ReturnType<ExternalPlatformProvider['listComments']>>['items'][number],
+  now: string
+): Promise<ExternalComment> => {
+  const existing = (await store.listExternalComments(publication.externalPublicationId, 500))
+    .find((item) => item.externalCommentExternalId === remote.externalCommentId);
+  const comment: ExternalComment = {
+    externalCommentId: existing?.externalCommentId || randomUUID(),
+    platform: publication.platform,
+    externalCommentExternalId: remote.externalCommentId,
+    externalPublicationId: publication.externalPublicationId,
+    externalAuthorId: remote.authorId,
+    externalAuthorName: remote.authorName,
+    body: remote.body,
+    createdAtRemote: remote.createdAt,
+    parentExternalCommentExternalId: remote.parentExternalCommentId,
+    rawPayload: remote.rawPayload,
+    lastSyncedAt: now
+  };
+  if (existing) await store.updateExternalComment(comment);
+  else await store.createExternalComment(comment);
+  return comment;
+};
+
+const executeCommentSync = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
+  const provider = await providerForAccount(store, config, account);
+  const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
+  const requestedContentId = typeof job.payload?.externalContentId === 'string' ? job.payload.externalContentId : undefined;
+  const publications = (await store.listExternalPublications(account.externalAccountId))
+    .filter((publication) => publication.syncStatus === 'active' && (!requestedContentId || publication.externalContentId === requestedContentId));
+  let discovered = 0;
+  let synchronized = 0;
+  const now = new Date().toISOString();
+  for (const publication of publications) {
+    let cursor: string | undefined;
+    do {
+      const page = await provider.listComments(session.accessToken, publication.externalContentId, cursor);
+      discovered += page.items.length;
+      for (const remote of page.items) {
+        await upsertRemoteComment(store, publication, remote, now);
+        synchronized += 1;
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+  }
+  await store.updateExternalAccount({ ...session.account, lastSuccessfulSyncAt: now, lastSyncAttemptAt: now, updatedAt: now });
+  await updateJob(store, job, { status: 'successful', progress: { discovered, synchronized, remaining: 0 }, errorCode: undefined, errorMessage: undefined, nextAttemptAt: undefined });
+  await addLog(store, job.externalSyncJobId, 'info', 'DeviantArt comments synchronized', { publications: publications.length, discovered, synchronized });
+};
+
+export const replyToExternalComment = async (
+  store: DataStore,
+  config: AppConfig,
+  account: ExternalAccount,
+  publication: ExternalPublication,
+  body: string,
+  parentExternalCommentId?: string
+): Promise<ExternalComment> => {
+  const provider = await providerForAccount(store, config, account);
+  const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
+  const remote = await provider.postComment(session.accessToken, publication.externalContentId, body, parentExternalCommentId);
+  return upsertRemoteComment(store, publication, remote, new Date().toISOString());
+};
+
 export const processExternalSyncJob = async (store: DataStore, config: AppConfig, externalSyncJobId: string, queue?: ExternalSyncQueue): Promise<void> => {
   const job = await store.getExternalSyncJob(externalSyncJobId);
   if (!job || job.status === 'cancelled' || job.status === 'successful') return;
@@ -503,8 +818,12 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
       await executeContentSync(store, config, processingJob, account);
       return;
     }
+    if (job.type === 'comment_sync') {
+      await executeCommentSync(store, config, processingJob, account);
+      return;
+    }
     if (job.type === 'remote_update') {
-      await executeRemoteUpdate(store, config, processingJob, account);
+      await executeRemoteUpdate(store, config, processingJob, account, queue);
       return;
     }
     if (job.type === 'publish') {
@@ -513,7 +832,12 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
     }
     throw new ExternalProviderError(`Sync job type ${job.type} is not implemented yet`, 'unsupported');
   } catch (error) {
-    const providerError = error instanceof ExternalProviderError ? error : new ExternalProviderError('External synchronization failed', 'temporarily_unavailable');
+    const providerError = error instanceof ExternalProviderError
+      ? error
+      : new ExternalProviderError(
+        error instanceof Error && error.message ? error.message : 'External synchronization failed',
+        'temporarily_unavailable'
+      );
     const latest = await store.getExternalSyncJob(externalSyncJobId) || { ...job, attemptCount };
     const currentAccount = await store.getExternalAccount(account.externalAccountId);
     if (currentAccount?.connectionStatus === 'disabled') {
@@ -524,10 +848,14 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
       });
       return;
     }
-    if (providerError.code === 'authentication_required') {
+    // A failed optional Space copy does not invalidate the DeviantArt
+    // connection. Keep its failure on the content-sync job/publication so a
+    // healthy catalogue connection does not appear unavailable.
+    const isContentSync = job.type === 'content_sync';
+    if (providerError.code === 'authentication_required' && !isContentSync) {
       await store.updateExternalAccount({ ...account, connectionStatus: 'authentication_required', lastSyncAttemptAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       await updateJob(store, latest, { status: 'authentication_required', errorCode: providerError.code, errorMessage: providerError.message });
-    } else if (providerError.code === 'rate_limited' || providerError.code === 'temporarily_unavailable') {
+    } else if ((providerError.code === 'rate_limited' || providerError.code === 'temporarily_unavailable') && !isContentSync) {
       const delay = providerError.retryAfterSeconds || retryDelaySeconds(attemptCount, config.externalSyncBaseDelaySeconds);
       await store.updateExternalAccount({
         ...account,

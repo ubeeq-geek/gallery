@@ -1,4 +1,4 @@
-import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import type {
   Asset,
   ExternalAccount,
@@ -219,6 +219,10 @@ export class ExternalPlatformRepository {
     await this.createExternalPlatformCredential(credential);
   }
 
+  async deleteExternalPlatformCredential(externalPlatformCredentialId: string): Promise<void> {
+    await this.delete(`EXTERNAL_PLATFORM_CREDENTIAL#${externalPlatformCredentialId}`, 'PROFILE');
+  }
+
   async listExternalAccountsForScheduledScan(limit = 100): Promise<ExternalAccount[]> {
     const schedule = await this.listByPartition<{ externalAccountId: string }>(
       'EXTERNAL_ACCOUNT_SCHEDULE#deviantart',
@@ -288,7 +292,38 @@ export class ExternalPlatformRepository {
     });
   }
 
-  async updateExternalPublication(publication: ExternalPublication): Promise<void> {
+  async updateExternalPublication(publication: ExternalPublication, previousExternalContentId?: string): Promise<void> {
+    if (previousExternalContentId && previousExternalContentId !== publication.externalContentId) {
+      await this.client.send(new TransactWriteCommand({
+        TransactItems: [
+          {
+            Delete: {
+              TableName: this.tableName,
+              Key: {
+                PK: `EXTERNAL_ACCOUNT#${publication.externalAccountId}`,
+                SK: `PUBLICATION#${previousExternalContentId}`
+              }
+            }
+          },
+          {
+            Put: {
+              TableName: this.tableName,
+              Item: {
+                PK: `EXTERNAL_ACCOUNT#${publication.externalAccountId}`,
+                SK: `PUBLICATION#${publication.externalContentId}`,
+                GSI1PK: `ASSET_PUBLICATION#${publication.assetId}`,
+                GSI1SK: `PUBLICATION#${publication.updatedAt}#${publication.externalPublicationId}`,
+                GSI2PK: `EXTERNAL_PUBLICATION#${publication.externalPublicationId}`,
+                GSI2SK: 'PROFILE',
+                entityType: 'EXTERNAL_PUBLICATION',
+                ...publication
+              }
+            }
+          }
+        ]
+      }));
+      return;
+    }
     await this.createExternalPublication(publication);
   }
 

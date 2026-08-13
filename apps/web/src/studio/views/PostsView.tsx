@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { Card } from '../components/Card';
 import { CrudTable, type CrudRow } from '../components/CrudTable';
 import { DataToolbar } from '../components/DataToolbar';
 import { InspectorPanel } from '../components/InspectorPanel';
 import { Pill } from '../components/Pill';
 import type { StudioCreator, StudioPost } from '../types';
+import { PostEditorView } from './PostEditorView';
 
 const postTypeOptions = [
   { value: 'image', label: 'Image' },
@@ -21,11 +23,15 @@ const getPostType = (post: StudioPost): 'image' | 'video' | 'story' | 'audio' =>
 
 export function PostsView({
   posts,
-  creators
+  creators,
+  onPostSaved
 }: {
   posts: StudioPost[];
   creators: StudioCreator[];
+  onPostSaved?: (post: StudioPost) => void | Promise<void>;
 }) {
+  const location = useLocation();
+  const editingPostId = useMemo(() => new URLSearchParams(location.search).get('postId') || '', [location.search]);
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'image' | 'video' | 'story' | 'audio'>('all');
@@ -65,6 +71,9 @@ export function PostsView({
     )
   }));
 
+  const editingPost = posts.find((post) => post.postId === editingPostId);
+  if (editingPost) return <PostEditorView post={editingPost} creators={creators} onSaved={onPostSaved} />;
+
   return (
     <section className="studio-surface-grid">
       <Card title="Posts" eyebrow="Canonical media references">
@@ -99,7 +108,7 @@ export function PostsView({
             status={<Pill label={selected.status} tone={selected.status === 'published' ? 'success' : 'warning'} />}
             actions={
               <>
-                <button type="button" className="auth-secondary-btn">Edit</button>
+                <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=posts&creatorId=${encodeURIComponent(selected.creatorId)}&postId=${encodeURIComponent(selected.postId)}`}>Edit</Link>
                 <button type="button" className="auth-secondary-btn">Media refs</button>
               </>
             }

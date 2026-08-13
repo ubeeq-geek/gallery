@@ -82,6 +82,7 @@ import { storeUbeeqWorkImage } from './externalContentStorage';
 import { externalOAuthPkce, issueExternalOAuthState, resolveExternalOAuthReturnUrl, verifyExternalOAuthState } from './externalOAuth';
 import { createExternalSyncQueue } from './externalSyncQueue';
 import type { ExternalSyncQueue } from './externalSyncQueue';
+import { replyToExternalComment } from './externalSyncWorker';
 
 interface CreateAppOptions {
   config: AppConfig;
@@ -4278,6 +4279,30 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return res.json(toExternalPlatformCredentialResponse(credential));
   });
 
+  app.delete('/studio/integrations/deviantart/credentials/:externalPlatformCredentialId', requireAuth, async (req, res) => {
+    const credential = await store.getExternalPlatformCredential(req.params.externalPlatformCredentialId);
+    if (!credential || credential.platform !== 'deviantart') {
+      return res.status(404).json({ message: 'DeviantArt application not found.' });
+    }
+    if (credential.userId !== req.authUser!.userId) {
+      return res.status(403).json({ message: 'You do not control this DeviantArt application.' });
+    }
+    const connectedAccounts = (await store.listExternalAccountsByUser(req.authUser!.userId))
+      .filter((account) => account.externalPlatformCredentialId === credential.externalPlatformCredentialId)
+      .filter((account) => account.connectionStatus !== 'disabled');
+    if (connectedAccounts.length) {
+      return res.status(409).json({
+        message: `Remove ${connectedAccounts.length === 1 ? 'the connected DeviantArt account' : 'all connected DeviantArt accounts'} before deleting this application.`,
+        connectedAccountCount: connectedAccounts.length
+      });
+    }
+    await store.deleteExternalPlatformCredential(credential.externalPlatformCredentialId);
+    auditLog(req, 'deviantart.application.deleted', {
+      externalPlatformCredentialId: credential.externalPlatformCredentialId
+    });
+    return res.status(204).end();
+  });
+
   app.post('/studio/integrations/deviantart/connect', requireAuth, async (req, res) => {
     const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
     if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
@@ -4349,7 +4374,13 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       }
     };
     if (typeof req.query.error === 'string') {
-      return redirect({ deviantart: 'cancelled' });
+      const reason = req.query.error.trim().slice(0, 120);
+      const detail = typeof req.query.error_description === 'string'
+        ? req.query.error_description.trim().slice(0, 300)
+        : '';
+      // DeviantArt uses this callback for both a user cancellation and OAuth
+      // configuration failures. Preserve the provider code for the Studio UI.
+      return redirect({ deviantart: reason === 'access_denied' ? 'cancelled' : 'failed', reason, ...(detail ? { detail } : {}) });
     }
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     if (!code) return redirect({ deviantart: 'failed', reason: 'missing_authorization_code' });
@@ -4633,6 +4664,16 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       }
       return undefined;
     };
+    const metadataStrings = (metadata: Record<string, unknown>, ...keys: string[]): string[] | undefined => {
+      const nested = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
+        ? metadata.submission as Record<string, unknown>
+        : {};
+      for (const key of keys) {
+        const value = metadata[key] ?? nested[key];
+        if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+      }
+      return undefined;
+    };
     const rows = await Promise.all(assets
       .map(async (asset) => {
         const linkedPublications = publicationByAssetId.get(asset.assetId) || [];
@@ -4654,25 +4695,30 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
             platform: publication.platform,
             externalUsername: accountById.get(publication.externalAccountId)?.externalUsername || '',
             externalContentId: publication.externalContentId,
+            targetStatus: publication.targetStatus || (publication.syncStatus === 'draft' ? 'draft' : 'published'),
+            canUpdatePublishedDescription: publication.platform !== 'deviantart' || Boolean(
+              config.deviantArtPublishedDescriptionUpdate && publication.externalDraftId
+            ),
+            publishedDescriptionUpdateMode: publication.platform === 'deviantart'
+              && config.deviantArtPublishedDescriptionUpdate
+              && publication.externalDraftId
+              ? 'stash'
+              : undefined,
             externalUrl: publication.externalUrl,
             previewUrl: deviantArtPreviewUrl(publication),
             externalTitle: publication.externalTitle,
             externalDescription: publication.externalDescription || metadataText(publication.rawMetadataJson, 'description', 'description_html', 'artist_comments', 'html', 'excerpt'),
             externalTags: publication.externalTags || [],
             displayOptions: {
-              allowComments: metadataBoolean(publication.rawMetadataJson, 'allow_comments', 'allowComments'),
+              allowComments: metadataBoolean(publication.rawMetadataJson, 'allows_comments', 'allow_comments', 'allowComments'),
               isMature: metadataBoolean(publication.rawMetadataJson, 'is_mature', 'isMature'),
-              matureLevel: publication.rawMetadataJson?.mature_level === 'strict' || publication.rawMetadataJson?.mature_level === 'moderate'
-                ? publication.rawMetadataJson.mature_level
-                : undefined,
-              matureClassification: Array.isArray(publication.rawMetadataJson?.mature_classification)
-                ? publication.rawMetadataJson.mature_classification.filter((item): item is string => typeof item === 'string')
-                : undefined,
-              isAiGenerated: metadataBoolean(publication.rawMetadataJson, 'is_ai_generated', 'ai_generated', 'created_with_ai'),
-              allowAiTraining: (() => {
-                const noAi = metadataBoolean(publication.rawMetadataJson, 'noai', 'no_ai');
-                return noAi === undefined ? undefined : !noAi;
-              })()
+              matureLevel: (() => {
+                const level = metadataText(publication.rawMetadataJson, 'mature_level', 'matureLevel');
+                return level === 'strict' || level === 'moderate' ? level : undefined;
+              })(),
+              matureClassification: metadataStrings(publication.rawMetadataJson, 'mature_classification', 'matureClassification'),
+              isAiGenerated: metadataBoolean(publication.rawMetadataJson, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai'),
+              noAi: metadataBoolean(publication.rawMetadataJson, 'noai', 'noAI', 'noAi', 'no_ai')
             },
             externalCollectionIds: publication.externalCollectionIds || [],
             publishedAt: publication.publishedAt,
@@ -4727,7 +4773,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       )))]
       : undefined;
     const isAiGenerated = typeof integrationMetadata?.isAiGenerated === 'boolean' ? integrationMetadata.isAiGenerated : undefined;
-    const allowAiTraining = typeof integrationMetadata?.allowAiTraining === 'boolean' ? integrationMetadata.allowAiTraining : undefined;
+    const noAi = typeof integrationMetadata?.noAi === 'boolean'
+      ? integrationMetadata.noAi
+      : (typeof integrationMetadata?.allowAiTraining === 'boolean' ? !integrationMetadata.allowAiTraining : undefined);
     const updated: Asset = {
       ...asset,
       canonicalTitle: req.body?.canonicalTitle !== undefined ? String(req.body.canonicalTitle).trim().slice(0, 300) : asset.canonicalTitle,
@@ -4741,7 +4789,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const publications = (await Promise.all(
       (await store.listExternalAccountsByCreatorIdentity(asset.creatorIdentityId))
         .map((account) => store.listExternalPublications(account.externalAccountId))
-    )).flat().filter((publication) => publication.assetId === asset.assetId && (publication.syncStatus === 'active' || publication.syncStatus === 'pending_publish'));
+    )).flat().filter((publication) => publication.assetId === asset.assetId && (publication.syncStatus === 'active' || publication.syncStatus === 'pending_publish' || publication.syncStatus === 'draft'));
     const destinationPublications = integrationPublicationId
       ? publications.filter((publication) => publication.externalPublicationId === integrationPublicationId)
       : publications;
@@ -4756,17 +4804,21 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       || matureLevel !== undefined
       || matureClassification !== undefined
       || isAiGenerated !== undefined
-      || allowAiTraining !== undefined;
+      || noAi !== undefined;
     if (!externalMetadataChanged || !destinationPublications.length) return res.json(updated);
+    const remoteUpdateWarnings: string[] = [];
     const now = new Date().toISOString();
-    await Promise.all(destinationPublications.map(async (publication) => {
+    // Draft destinations have no remote state yet, so their settings can be
+    // persisted immediately. Active publications are updated only after the
+    // worker reads the deviation back and verifies that DeviantArt applied it.
+    await Promise.all(destinationPublications.filter((publication) => publication.syncStatus !== 'active').map(async (publication) => {
       const rawMetadataJson = { ...publication.rawMetadataJson };
       if (allowComments !== undefined) rawMetadataJson.allow_comments = allowComments;
       if (isMature !== undefined) rawMetadataJson.is_mature = isMature;
       if (matureLevel !== undefined) rawMetadataJson.mature_level = matureLevel;
       if (matureClassification !== undefined) rawMetadataJson.mature_classification = matureClassification;
       if (isAiGenerated !== undefined) rawMetadataJson.is_ai_generated = isAiGenerated;
-      if (allowAiTraining !== undefined) rawMetadataJson.noai = !allowAiTraining;
+      if (noAi !== undefined) rawMetadataJson.noai = noAi;
       await store.updateExternalPublication({
         ...publication,
         externalTitle: integrationTitle ?? publication.externalTitle,
@@ -4780,24 +4832,41 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       const payload: Record<string, unknown> = {
         externalPublicationId: publication.externalPublicationId,
         ...(integrationTitle !== undefined ? { title: integrationTitle } : {}),
-        ...(integrationDescription !== undefined ? { description: integrationDescription } : {}),
         ...(integrationTags !== undefined ? { tags: integrationTags } : {}),
         ...(allowComments !== undefined ? { allowComments } : {}),
         ...(isMature !== undefined ? { isMature } : {}),
         ...(matureLevel !== undefined ? { matureLevel } : {}),
         ...(matureClassification !== undefined ? { matureClassification } : {}),
         ...(isAiGenerated !== undefined ? { isAiGenerated } : {}),
-        ...(allowAiTraining !== undefined ? { allowAiTraining } : {})
+        ...(noAi !== undefined ? { noAi } : {})
       };
+      if (
+        integrationDescription !== undefined
+        && publication.platform === 'deviantart'
+        && !(config.deviantArtPublishedDescriptionUpdate && publication.externalDraftId)
+      ) {
+        remoteUpdateWarnings.push('DeviantArt does not permit description changes for already-published deviations through its API. The Ubeeq description was saved, but the DeviantArt description remains unchanged.');
+      } else if (integrationDescription !== undefined) {
+        payload.description = integrationDescription;
+      }
       if (!Object.keys(payload).some((key) => key !== 'externalPublicationId')) return null;
       try {
         return await enqueueExternalSyncJob(publication.externalAccountId, 'remote_update', payload);
       } catch (queueError) {
         logServerError('integration.metadata-update.enqueue', queueError);
-        return null;
+        const queuedJobs = await store.listExternalSyncJobs(publication.externalAccountId, 20);
+        return queuedJobs.find((job) => (
+          job.type === 'remote_update'
+          && job.payload?.externalPublicationId === publication.externalPublicationId
+          && job.createdAt >= now
+        )) || null;
       }
     }));
-    return res.json({ ...updated, remoteUpdateJobs: remoteUpdateJobs.filter(Boolean) });
+    return res.json({
+      ...updated,
+      remoteUpdateJobs: remoteUpdateJobs.filter(Boolean),
+      remoteUpdateWarnings: [...new Set(remoteUpdateWarnings)]
+    });
   });
 
   app.post('/studio/works', requireAuth, async (req, res) => {
@@ -4868,6 +4937,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!asset) return res.status(404).json({ message: 'Work not found' });
     if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
     const externalAccountId = typeof req.body?.externalAccountId === 'string' ? req.body.externalAccountId.trim() : '';
+    const targetStatus = req.body?.targetStatus === 'draft' ? 'draft' : 'published';
     const account = externalAccountId ? await store.getExternalAccount(externalAccountId) : null;
     if (!account || account.platform !== 'deviantart' || account.userId !== req.authUser!.userId || account.connectionStatus !== 'connected') {
       return res.status(400).json({ message: 'Choose a connected DeviantArt account.' });
@@ -4877,7 +4947,18 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return res.status(403).json({ message: 'This DeviantArt account is not connected to the work’s creator.' });
     }
     const existing = (await store.listExternalPublications(account.externalAccountId)).find((publication) => publication.assetId === asset.assetId && publication.syncStatus !== 'deleted');
-    if (existing) return res.status(200).json({ publication: existing });
+    if (existing) {
+      if (existing.syncStatus === 'active' && targetStatus === 'draft') {
+        return res.status(409).json({ message: 'This work is already published on DeviantArt. Unpublishing it to Sta.sh is not available through the connected API.' });
+      }
+      const updatedExisting: ExternalPublication = existing.targetStatus === targetStatus ? existing : {
+        ...existing,
+        targetStatus,
+        updatedAt: new Date().toISOString()
+      };
+      if (updatedExisting !== existing) await store.updateExternalPublication(updatedExisting);
+      return res.status(200).json({ publication: updatedExisting });
+    }
     const now = new Date().toISOString();
     const publication: ExternalPublication = {
       externalPublicationId: randomUUID(),
@@ -4888,6 +4969,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       externalTitle: asset.canonicalTitle,
       externalDescription: asset.canonicalDescription,
       externalTags: [],
+      targetStatus,
       syncStatus: 'pending_publish',
       rawMetadataJson: {},
       createdAt: now,
@@ -4921,12 +5003,13 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!asset) return res.status(404).json({ message: 'Work not found' });
     if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
     const publication = (await store.listExternalPublications(req.params.externalAccountId))
-      .find((item) => item.assetId === asset.assetId && item.platform === 'deviantart' && item.syncStatus === 'pending_publish');
+      .find((item) => item.assetId === asset.assetId && item.platform === 'deviantart' && (item.syncStatus === 'pending_publish' || item.syncStatus === 'draft'));
     if (!publication) return res.status(409).json({ message: 'This DeviantArt destination is already published or has been removed.' });
     try {
       const job = await enqueueExternalSyncJob(publication.externalAccountId, 'publish', {
         assetId: asset.assetId,
-        externalPublicationId: publication.externalPublicationId
+        externalPublicationId: publication.externalPublicationId,
+        targetStatus: publication.targetStatus || 'published'
       });
       return res.status(202).json(job);
     } catch (error) {
@@ -5123,6 +5206,38 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
     if (!publication) return res.status(404).json({ message: 'Publication not found' });
     return res.json(await store.listExternalComments(publication.externalPublicationId, 100));
+  });
+
+  app.post('/studio/integrations/deviantart/accounts/:externalAccountId/publications/:externalContentId/comments/sync', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication || publication.syncStatus !== 'active') return res.status(404).json({ message: 'Published DeviantArt work not found' });
+    const job = await enqueueExternalSyncJob(account.externalAccountId, 'comment_sync', { externalContentId: publication.externalContentId });
+    return res.status(202).json(job);
+  });
+
+  app.post('/studio/integrations/deviantart/accounts/:externalAccountId/publications/:externalContentId/comments/:externalCommentId/reply', requireAuth, async (req, res) => {
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+    if (!body) return res.status(400).json({ message: 'A reply cannot be empty.' });
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication || publication.syncStatus !== 'active') return res.status(404).json({ message: 'Published DeviantArt work not found' });
+    const parent = (await store.listExternalComments(publication.externalPublicationId, 500))
+      .find((comment) => comment.externalCommentExternalId === req.params.externalCommentId);
+    if (!parent) return res.status(404).json({ message: 'The DeviantArt comment has not been synchronized yet.' });
+    try {
+      const comment = await replyToExternalComment(store, config, account, publication, body, parent.externalCommentExternalId);
+      return res.status(201).json(comment);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to post the DeviantArt reply.';
+      if (error instanceof ExternalProviderError && error.code === 'authentication_required') return res.status(409).json({ message: 'DeviantArt needs to be reconnected before you can reply.' });
+      if (error instanceof ExternalProviderError && error.code === 'rate_limited') return res.status(429).json({ message });
+      return res.status(502).json({ message });
+    }
   });
 
   app.post('/studio/creators', requireAuth, async (req, res) => {
