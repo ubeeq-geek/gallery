@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
+import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import type { StudioExternalActivity } from '../types';
 
@@ -141,13 +142,13 @@ export function ActivityView({ creatorId }: { creatorId: string }) {
   };
 
   const dismiss = async (activity: StudioExternalActivity) => {
-    if (!window.confirm('Dismiss this notification from DeviantArt? This removes the remote notification but keeps Ubeeq’s cached activity record.')) return;
+    if (!window.confirm(`Dismiss this notification from DeviantArt? This removes the remote notification but keeps ${brand.productName}’s cached activity record.`)) return;
     setTriaging(true);
     setError('');
     try {
       const updated = await api.studioDismissDeviantArtActivity(activity.externalAccountId, activity.remoteActivityId) as StudioExternalActivity;
       setItems((current) => current.map((item) => item.externalActivityId === activity.externalActivityId ? { ...item, ...updated } : item));
-      setMessage('Notification dismissed from DeviantArt. Its cached Ubeeq history was retained.');
+      setMessage(`Notification dismissed from DeviantArt. Its cached ${brand.productName} history was retained.`);
     } catch (dismissError) {
       setError(dismissError instanceof Error ? dismissError.message : 'Unable to dismiss the DeviantArt notification.');
     } finally {

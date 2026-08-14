@@ -1,4 +1,5 @@
 export interface AppConfig {
+  productBrand?: 'eversally' | 'ubeeq';
   awsRegion: string;
   creators: string;
   groupingsTable: string;
@@ -39,6 +40,7 @@ export interface AppConfig {
 }
 
 export const loadConfig = (): AppConfig => ({
+  productBrand: process.env.PRODUCT_BRAND === 'eversally' ? 'eversally' : 'ubeeq',
   awsRegion: process.env.AWS_REGION || 'ca-central-1',
   creators: process.env.CREATORS || 'creators',
   groupingsTable: process.env.GROUPINGS_TABLE || 'groupings',

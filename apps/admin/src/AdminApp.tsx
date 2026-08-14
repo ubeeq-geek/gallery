@@ -9,11 +9,12 @@ import {
   signOut,
   type CurrentUser
 } from './cognitoAuth';
+import { adminBrand } from './brand';
 
 type View = 'creators' | 'galleries' | 'media' | 'posts' | 'settings' | 'moderation' | 'users';
 type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
 const ROLE_DISPLAY_LABELS: Partial<Record<PlatformRole, string>> = {
-  contributor: 'Ubeeqer'
+  contributor: adminBrand.memberName
 };
 const roleDisplayLabel = (role: PlatformRole): string => ROLE_DISPLAY_LABELS[role] || role[0].toUpperCase() + role.slice(1);
 type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
@@ -396,7 +397,7 @@ export function StudioApp() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
-  const [siteSettings, setSiteSettings] = useState<SiteSettings>({ siteName: 'Ubeeq', theme: 'ubeeq' });
+  const [siteSettings, setSiteSettings] = useState<SiteSettings>({ siteName: adminBrand.productName, theme: 'ubeeq' });
 
   const [authMode, setAuthMode] = useState<AuthMode>('signin');
   const [user, setUser] = useState<CurrentUser>(() => getCurrentUser());

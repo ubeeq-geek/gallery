@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
+import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import type {
   StudioCreator,
@@ -116,7 +117,7 @@ export function WorkActivityView({ creators: _creators }: { creators: StudioCrea
   return <div className="studio-work-metadata">
     <div className="studio-work-metadata-topbar"><button type="button" className="auth-secondary-btn" onClick={back}>← Works</button><span>Work activity</span></div>
     <Card title={asset.canonicalTitle || 'Untitled work'}>
-      <p>Activity is stored in Ubeeq and refreshed automatically. Manual refresh checks feedback, comments, favourites, and engagement totals.</p>
+      <p>Activity is stored in {brand.productName} and refreshed automatically. Manual refresh checks feedback, comments, favourites, and engagement totals.</p>
       {destinations.length
         ? <button type="button" className="auth-secondary-btn" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? 'Refreshing…' : 'Refresh activity'}</button>
         : <p className="small">Publish this work to a connected platform to receive activity here.</p>}
@@ -142,12 +143,12 @@ export function WorkActivityView({ creators: _creators }: { creators: StudioCrea
         <input type="checkbox" checked={showRemovedComments} onChange={(event) => setShowRemovedComments(event.target.checked)} />
         <span>Show {removedCommentCount} comment{removedCommentCount === 1 ? '' : 's'} removed from DeviantArt</span>
       </label>}
-      {destinations.some((destination) => destination.capabilities?.remoteCommentModeration === false) && <p className="small">Replies can be posted from Ubeeq. DeviantArt’s public API does not provide comment hide or delete operations, so moderation links remain on DeviantArt.</p>}
+      {destinations.some((destination) => destination.capabilities?.remoteCommentModeration === false) && <p className="small">Replies can be posted from {brand.productName}. DeviantArt’s public API does not provide comment hide or delete operations, so moderation links remain on DeviantArt.</p>}
       {!comments.length ? <p className="small">No comments have been imported yet.</p> : comments.map(({ comment, destination }) => <article key={`${destination.publication.externalPublicationId}:${comment.externalCommentId}`} className="studio-work-destination-row">
         <strong>{comment.externalAuthorName ? `@${comment.externalAuthorName}` : 'Platform member'}</strong>
         <small>{relativeDate(comment.createdAtRemote || comment.lastSyncedAt)}</small>
         <p>{comment.body}</p>
-        {comment.remoteDeletedAt && <small>Removed from DeviantArt · cached history retained by Ubeeq</small>}
+        {comment.remoteDeletedAt && <small>Removed from DeviantArt · cached history retained by {brand.productName}</small>}
         {comment.parentExternalCommentExternalId && <small>Reply in thread</small>}
         {typeof comment.likeCount === 'number' && <small>{comment.likeCount} likes</small>}
         {!comment.remoteDeletedAt && destination.capabilities?.reply !== false && <button type="button" className="auth-secondary-btn" onClick={() => { setReplyingTo(comment.externalCommentId); setDraft(''); setFailedReplyTo(''); }}>Reply</button>}

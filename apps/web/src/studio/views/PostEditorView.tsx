@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
+import { brand } from '../../brand';
 import { BlockEditor, type BlockEditorMediaOption } from '../../components/BlockEditor';
 import type { PostBlock } from '../../domainTypes';
 import { Card } from '../components/Card';
@@ -32,7 +33,7 @@ export function PostEditorView({
     setBlocks(post.blocks || []);
   }, [post]);
 
-  const creatorName = creators.find((creator) => creator.creatorId === post.creatorId)?.name || 'Creator';
+  const creatorName = creators.find((creator) => creator.creatorId === post.creatorId)?.name || brand.creatorName;
   const mediaOptions = useMemo<BlockEditorMediaOption[]>(() => (post.media || []).map((media, index) => ({
     mediaId: media.mediaId,
     label: media.caption || `Attached image ${index + 1}`,
@@ -116,4 +117,3 @@ export function PostEditorView({
     </section>
   );
 }
-

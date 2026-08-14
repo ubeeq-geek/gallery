@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
+import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import type { StudioCreator } from '../types';
 
@@ -69,13 +70,13 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
     <section className="studio-work-upload-layout">
       <Card
         title="Upload works"
-        eyebrow={`Works / ${activeCreator?.name || 'Creator'}`}
+        eyebrow={`Works / ${activeCreator?.name || brand.creatorName}`}
         actions={<button type="button" className="auth-secondary-btn" onClick={() => navigate(`/studio/workspace?section=works${creatorId ? `&creatorId=${encodeURIComponent(creatorId)}` : ''}`)}>Back to Works</button>}
       >
-        <p className="studio-work-upload-lede">Select one or more images. Each image becomes its own Ubeeq work; multi-image works will arrive as a separate composition workflow.</p>
+        <p className="studio-work-upload-lede">Select one or more images. Each image becomes its own {brand.productName} work; multi-image works will arrive as a separate composition workflow.</p>
         <div className="studio-work-upload-form">
           <label>
-            <span>Creator</span>
+            <span>{brand.creatorName}</span>
             <select value={creatorId} disabled={uploading} onChange={(event) => setCreatorId(event.target.value)}>
               {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
             </select>

@@ -33,6 +33,21 @@ const buildConfig = (): AppConfig => ({
 });
 
 describe('API contract', () => {
+  it('returns canonical Eversally identity and domains in hosted mode', async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ config: { ...buildConfig(), productBrand: 'eversally' }, store });
+
+    const response = await request(app).get('/site-settings');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      siteName: 'Eversally',
+      productBrand: 'eversally',
+      siteUrl: 'https://eversally.com',
+      creatorBaseUrl: 'https://eversally.com/creators/'
+    }));
+  });
+
   it('uses normalized offset cursor for /collections random order', async () => {
     const store = new InMemoryStore();
     const app = createApp({ config: buildConfig(), store });
@@ -100,7 +115,7 @@ describe('API contract', () => {
     expect(lastStatus).toBe(429);
   });
 
-  it('lets every signed-in Ubeeqer create a free Space without creator approval', async () => {
+  it('lets every signed-in member create a free creator workspace without creator approval', async () => {
     const store = new InMemoryStore();
     const app = createApp({ config: buildConfig(), store });
     const response = await request(app)

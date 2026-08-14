@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { AppConfig } from './config';
+import { brandForConfig } from './brand';
 import { ExternalProviderError } from './externalPlatformProvider';
 
 export interface HostedExternalContent {
@@ -115,7 +116,7 @@ export const storeExternalContent = async (
     throw new ExternalProviderError('DeviantArt did not provide an approved source file URL', 'invalid_response');
   }
   if (input.expectedByteSize && input.expectedByteSize > config.externalContentMaxBytes) {
-    throw new ExternalProviderError('This source file exceeds the configured Ubeeq Space backup limit', 'unsupported');
+    throw new ExternalProviderError(`This source file exceeds the configured ${brandForConfig(config).workspaceFullName} backup limit`, 'unsupported');
   }
   let response: Response;
   try {
@@ -128,11 +129,11 @@ export const storeExternalContent = async (
   }
   const declaredLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(declaredLength) && declaredLength > config.externalContentMaxBytes) {
-    throw new ExternalProviderError('This source file exceeds the configured Ubeeq Space backup limit', 'unsupported');
+    throw new ExternalProviderError(`This source file exceeds the configured ${brandForConfig(config).workspaceFullName} backup limit`, 'unsupported');
   }
   const body = Buffer.from(await response.arrayBuffer());
   if (body.byteLength > config.externalContentMaxBytes) {
-    throw new ExternalProviderError('This source file exceeds the configured Ubeeq Space backup limit', 'unsupported');
+    throw new ExternalProviderError(`This source file exceeds the configured ${brandForConfig(config).workspaceFullName} backup limit`, 'unsupported');
   }
   const contentType = input.contentType || response.headers.get('content-type') || 'application/octet-stream';
   const checksumSha256 = createHash('sha256').update(body).digest('hex');

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import type { AppConfig } from './config';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
 import { readStoredUbeeqWorkImage, storeExternalContent } from './externalContentStorage';
+import { brandForConfig } from './brand';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 import { createExternalPlatformProvider, DEVIANTART_METADATA_BATCH_SIZE, ExternalProviderError, type ExternalContentPublish, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteActivity, type ExternalRemoteComment, type ExternalRemoteContent, type ExternalRemoteEngagement } from './externalPlatformProvider';
 import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalActivity, ExternalCollection, ExternalCollectionMapping, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, SpacePublication, UbeeqCollection, UbeeqCollectionAsset } from './domain';
@@ -653,9 +654,10 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
     updatedAt: new Date().toISOString()
   });
   await updateJob(store, job, { status: 'successful', progress: { discovered: 1, synchronized: 1, remaining: 0 }, errorCode: undefined, errorMessage: undefined });
+  const brand = brandForConfig(config);
   await addLog(store, job.externalSyncJobId, 'info', stored.unchanged
-    ? 'DeviantArt source file is unchanged; existing Ubeeq Space copy retained'
-    : 'DeviantArt source file stored as a new Ubeeq Space version', {
+    ? `DeviantArt source file is unchanged; existing ${brand.workspaceFullName} copy retained`
+    : `DeviantArt source file stored as a new ${brand.workspaceFullName} version`, {
     assetId,
     bytes: stored.byteSize,
     checksumSha256: stored.checksumSha256,
@@ -842,7 +844,7 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
       errorMessage: undefined,
       nextAttemptAt: undefined
     });
-    await addLog(store, job.externalSyncJobId, 'info', 'Ubeeq work saved as a DeviantArt Sta.sh draft', { assetId: asset.assetId, externalDraftId: draft.externalDraftId });
+    await addLog(store, job.externalSyncJobId, 'info', `${brandForConfig(config).productName} work saved as a DeviantArt Sta.sh draft`, { assetId: asset.assetId, externalDraftId: draft.externalDraftId });
     return;
   }
   const published = await provider.publishDraft(session.accessToken, draft.externalDraftId, content);
@@ -877,7 +879,7 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
     errorMessage: undefined,
     nextAttemptAt: undefined
   });
-  await addLog(store, job.externalSyncJobId, 'info', 'Ubeeq work published to DeviantArt', { assetId: asset.assetId, externalContentId: published.externalContentId });
+  await addLog(store, job.externalSyncJobId, 'info', `${brandForConfig(config).productName} work published to DeviantArt`, { assetId: asset.assetId, externalContentId: published.externalContentId });
 };
 
 const reconcilePublicationLifecycle = async (
@@ -971,7 +973,7 @@ const reconcileCollectionMappings = async (
       errors += 1;
       await store.updateExternalCollectionMapping({
         ...mapping,
-        lastMembershipError: !targetCollection ? 'Mapped Ubeeq collection is unavailable' : 'DeviantArt gallery folder is unavailable',
+        lastMembershipError: !targetCollection ? 'Mapped destination collection is unavailable' : 'DeviantArt gallery folder is unavailable',
         updatedAt: now
       });
       continue;

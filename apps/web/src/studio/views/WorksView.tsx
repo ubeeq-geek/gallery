@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api } from '../../api';
+import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { WorkMetadataView } from './WorkMetadataView';
 import { WorkActivityView } from './WorkActivityView';
@@ -37,7 +38,7 @@ const engagementNumber = (value: number): string => new Intl.NumberFormat().form
 function PlatformIcons({ asset }: { asset: StudioExternalAsset }) {
   const destinations = asset.publications.filter((publication) => publication.syncStatus !== 'deleted');
   return <div className="studio-work-platform-icons" aria-label="Connected platforms">
-    <span className="studio-work-platform-icon studio-work-platform-icon-ubeeq" title="Stored in Ubeeq Space" aria-label="Stored in Ubeeq Space">
+    <span className="studio-work-platform-icon studio-work-platform-icon-ubeeq" title={`Stored in ${brand.workspaceFullName}`} aria-label={`Stored in ${brand.workspaceFullName}`}>
       <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" strokeWidth="2" /><circle cx="10" cy="10" r="2.5" fill="currentColor" /></svg>
     </span>
     {destinations.map((publication) => {
@@ -60,7 +61,7 @@ const assetTypeLabel = (asset: StudioExternalAsset): string => {
   if (asset.assetType === 'literature') return 'Literature';
   if (asset.assetType === 'video') return 'Video';
   if (asset.assetType === 'animation') return 'Animation';
-  return asset.publications.length ? 'Imported DeviantArt work' : 'Ubeeq work';
+  return asset.publications.length ? 'Imported DeviantArt work' : `${brand.productName} work`;
 };
 
 function WorkThumbnail({ asset }: { asset: StudioExternalAsset }) {
@@ -373,12 +374,12 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     <section className="studio-works-layout">
       <Card
         title="Works"
-        eyebrow="Creator catalogue"
+        eyebrow={`${brand.creatorName} catalogue`}
         actions={<Link className="auth-primary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}&create=1`}>Upload works</Link>}
       >
         <div className="studio-works-controls">
           <label>
-            <span>Creator</span>
+            <span>{brand.creatorName}</span>
             <select value={creatorId} onChange={(event) => { setCreatorId(event.target.value); setCollectionId(''); }}>
               {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
             </select>
@@ -405,8 +406,8 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
           </label>
         </div>
 
-        <p className="studio-works-context"><strong>{activeCreator?.name || 'Creator'}</strong>{selectedCollection ? ` · ${selectedCollection.name}` : ' · All works'}{lifecycle !== 'all' ? ` · ${lifecycleLabel(lifecycle)}` : ''}</p>
-        {!selectedCollection && <p className="studio-works-space-note">Drafts are stored in Ubeeq Space. Choose a destination here or during metadata review, then sync when each work is ready.</p>}
+        <p className="studio-works-context"><strong>{activeCreator?.name || brand.creatorName}</strong>{selectedCollection ? ` · ${selectedCollection.name}` : ' · All works'}{lifecycle !== 'all' ? ` · ${lifecycleLabel(lifecycle)}` : ''}</p>
+        {!selectedCollection && <p className="studio-works-space-note">Drafts are stored in {brand.workspaceFullName}. Choose a destination here or during metadata review, then sync when each work is ready.</p>}
         {loading && <p className="small">Loading works…</p>}
         {error && <p className="error">{error}</p>}
 
@@ -476,7 +477,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                 <WorkThumbnail asset={asset} />
                 <div className="studio-work-details">
                   <strong>{asset.canonicalTitle || asset.publications[0]?.externalTitle || 'Untitled work'}</strong>
-                  <span>{assetTypeLabel(asset)} · {asset.publications.map((publication) => publication.externalUsername).filter(Boolean).join(', ') || 'Ubeeq'}</span>
+                  <span>{assetTypeLabel(asset)} · {asset.publications.map((publication) => publication.externalUsername).filter(Boolean).join(', ') || brand.productName}</span>
                   <div className="studio-work-lifecycle"><span className={`studio-work-lifecycle-badge studio-work-lifecycle-${assetLifecycle}`}>{lifecycleLabel(assetLifecycle)}</span><PlatformIcons asset={asset} /></div>
                   {asset.engagement && <div className="studio-work-engagement" title={asset.engagement.capturedAt ? `Updated ${new Date(asset.engagement.capturedAt).toLocaleString()}` : undefined}>
                     <span><strong>{engagementNumber(asset.engagement.views)}</strong> views</span>
@@ -530,18 +531,18 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                   {asset.spacePublication?.published && <span
                     className="studio-work-space-status"
                     title={asset.spacePublication.contentSyncStatus === 'failed'
-                      ? asset.spacePublication.contentSyncError || 'Ubeeq could not copy the remote source file.'
+                      ? asset.spacePublication.contentSyncError || `${brand.productName} could not copy the remote source file.`
                       : undefined}
                   >
                     {asset.spacePublication.contentSyncStatus === 'hosted'
                       ? asset.spacePublication.sourceCopyQuality === 'display_copy'
                         ? 'Display copy stored; DeviantArt original unavailable'
-                        : 'Original stored and available in your Ubeeq Space'
+                        : `Original stored and available in your ${brand.workspaceFullName}`
                       : asset.spacePublication.contentSyncStatus === 'not_available'
                         ? 'DeviantArt does not provide a downloadable copy'
                       : asset.spacePublication.contentSyncStatus === 'failed'
-                        ? 'Ubeeq copy unavailable'
-                        : 'Copying to Ubeeq Space'}
+                        ? `${brand.productName} copy unavailable`
+                        : `Copying to ${brand.workspaceFullName}`}
                   </span>}
                   {selectedCollection && manuallyAssigned && <span className="studio-work-membership">Added to this collection</span>}
                   <div className="studio-work-collection-summary">

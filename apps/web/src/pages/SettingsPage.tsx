@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { api } from '../api';
+import {
+  APPEARANCE_CHANGE_EVENT,
+  readAppearancePreference,
+  setAppearancePreference,
+  type AppearancePreference
+} from '../appearance';
+import { brand } from '../brand';
 import { changePassword, signOut, type CurrentUser } from '../cognitoAuth';
 import type { AiFilterPreference, ContentRating, ManagedCreator, ManagedCollection, ManagedFavorite, UserProfile } from '../domainTypes';
 import { aiFilterOptions, contentRatingOptions, heavyTopicLabels } from '../discoveryUtils';
@@ -41,6 +48,7 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [appearance, setAppearance] = useState<AppearancePreference>(() => readAppearancePreference());
   const selectedArtistId = selectedProfileKey.startsWith('creator:') ? selectedProfileKey.slice('creator:'.length) : '';
   const selectedArtist = managedArtists.find((creator) => creator.creatorId === selectedArtistId) || null;
   const profileUrlPreview = `${window.location.origin.replace(/\/$/, '')}/${selectedArtist ? 'creators' : 'u'}/${(usernameInput || '').trim() || 'your-profile-url'}`;
@@ -60,6 +68,15 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
   };
 
   if (!user) return <Navigate to="/auth/signin" replace />;
+
+  useEffect(() => {
+    const handleAppearanceChange = (event: Event) => {
+      const preference = (event as CustomEvent<AppearancePreference>).detail;
+      setAppearance(preference || readAppearancePreference());
+    };
+    window.addEventListener(APPEARANCE_CHANGE_EVENT, handleAppearanceChange);
+    return () => window.removeEventListener(APPEARANCE_CHANGE_EVENT, handleAppearanceChange);
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -102,7 +119,7 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
           name: displayName || selectedArtist.name
         }) as ManagedCreator;
         setManagedArtists((prev) => prev.map((item) => (item.creatorId === updatedArtist.creatorId ? { ...item, ...updatedArtist } : item)));
-        setMessage('Creator profile updated');
+        setMessage(`${brand.creatorName} profile updated`);
         return;
       }
       const updated = await api.updateMyProfile({
@@ -169,7 +186,7 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
         setManagedArtists((prev) => prev.map((item) => (item.creatorId === updatedArtist.creatorId ? { ...item, ...updatedArtist } : item)));
         setUsernameInput(updatedArtist.slug);
         setUsernameSuggestions([]);
-        setMessage('Creator profile URL updated');
+        setMessage(`${brand.creatorName} profile URL updated`);
         return;
       }
       const updated = await api.updateMyUsername(usernameInput) as UserProfile;
@@ -347,6 +364,23 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
     <div className="layout">
       <div className="panel max-w-6xl">
         <h1>Settings</h1>
+        <h2>Appearance</h2>
+        <div className="grid">
+          <div className="settings-field settings-appearance-field">
+            <label htmlFor="settings-appearance" className="settings-field-label">Colour mode</label>
+            <select
+              id="settings-appearance"
+              className="settings-select"
+              value={appearance}
+              onChange={(event) => setAppearancePreference(event.target.value as AppearancePreference)}
+            >
+              <option value="system">System preference</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+            <p className="small">System preference follows this device and updates automatically.</p>
+          </div>
+        </div>
         <h2>Profile Context</h2>
         <div className="grid">
           <div className="settings-field">
@@ -357,10 +391,10 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
               value={selectedProfileKey}
               onChange={(e) => setSelectedProfileKey(e.target.value)}
             >
-              <option value="user">User Profile</option>
+              <option value="user">{brand.memberName} profile</option>
               {managedArtists.map((creator) => (
                 <option key={creator.creatorId} value={`creator:${creator.creatorId}`}>
-                  Creator: {creator.name} ({creator.memberRole || 'editor'})
+                  {brand.creatorName}: {creator.name} ({creator.memberRole || 'editor'})
                 </option>
               ))}
             </select>
@@ -372,13 +406,13 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
             <label htmlFor="settings-display-name" className="settings-field-label">Display Name</label>
             <input
               id="settings-display-name"
-              placeholder="Ubeeq Girl"
+              placeholder="Creative display name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
             />
-            <p className="small">{selectedArtist ? 'The name shown on this creator profile' : 'The name shown on your profile'}</p>
+            <p className="small">{selectedArtist ? `The name shown on this ${brand.creatorName.toLowerCase()} profile` : 'The name shown on your profile'}</p>
           </div>
-          <button onClick={saveProfile}>{selectedArtist ? 'Save Creator Name' : 'Save Display Name'}</button>
+          <button onClick={saveProfile}>{selectedArtist ? `Save ${brand.creatorName} Name` : 'Save Display Name'}</button>
           {!selectedArtist && (
             <>
               <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
@@ -479,15 +513,15 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              placeholder="ubeeq-girl"
+              placeholder="your-profile"
               data-lpignore="true"
               value={usernameInput}
               onChange={(e) => setUsernameInput(e.target.value)}
             />
-            <p className="small">{selectedArtist ? 'This creator profile will be available at:' : 'Your profile will be available at:'}</p>
+            <p className="small">{selectedArtist ? `This ${brand.creatorName.toLowerCase()} profile will be available at:` : 'Your profile will be available at:'}</p>
             <p className="small settings-profile-url-preview">{profileUrlPreview}</p>
           </div>
-          <button onClick={changeUsername}>{selectedArtist ? 'Save Creator URL' : 'Save Profile URL'}</button>
+          <button onClick={changeUsername}>{selectedArtist ? `Save ${brand.creatorName} URL` : 'Save Profile URL'}</button>
           {!selectedArtist && profile?.lastUsernameChangeAt && (
             <p className="small">Last changed: {new Date(profile.lastUsernameChangeAt).toLocaleDateString()}</p>
           )}

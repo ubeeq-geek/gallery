@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { DataToolbar } from '../components/DataToolbar';
 import { Pill } from '../components/Pill';
@@ -87,13 +88,13 @@ export function CreatorsView({
   const workAsCreator = (creator: StudioCreator) => navigate(`/studio/workspace?section=dashboard&creatorId=${encodeURIComponent(creator.creatorId)}`);
 
   const archiveCreator = async (creator: StudioCreator) => {
-    if (!window.confirm(`Archive “${creator.name}”? This creator will no longer be active, but its existing work and settings will be retained.`)) return;
+    if (!window.confirm(`Archive “${creator.name}”? This ${brand.creatorName.toLowerCase()} will no longer be active, but its existing work and settings will be retained.`)) return;
     setSaving(true);
     setFormError('');
     try {
       await onUpdateCreator(creator.creatorId, { name: creator.name, slug: creator.slug, status: 'inactive' });
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Unable to archive this creator.');
+      setFormError(error instanceof Error ? error.message : `Unable to archive this ${brand.creatorName.toLowerCase()}.`);
     } finally {
       setSaving(false);
     }
@@ -119,7 +120,7 @@ export function CreatorsView({
         closeForm(editingCreator.creatorId);
       }
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Unable to save this creator.');
+      setFormError(error instanceof Error ? error.message : `Unable to save this ${brand.creatorName.toLowerCase()}.`);
     } finally {
       setSaving(false);
     }
@@ -129,21 +130,21 @@ export function CreatorsView({
     const isCreate = formMode === 'create';
     return (
       <Card
-        title={isCreate ? 'Create a creator' : `Edit ${editingCreator?.name || 'creator'}`}
-        eyebrow={isCreate ? 'Creators / Create' : 'Creators / Edit'}
+        title={isCreate ? `Create ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.creatorName}` : `Edit ${editingCreator?.name || brand.creatorName.toLowerCase()}`}
+        eyebrow={isCreate ? `${brand.creatorPlural} / Create` : `${brand.creatorPlural} / Edit`}
         actions={<button type="button" className="auth-secondary-btn" onClick={() => closeForm()}>Cancel</button>}
         className="studio-creator-form-card"
       >
-        <p className="studio-creator-form-lede">{isCreate ? 'Set up a new creator identity. You can connect integrations afterward.' : 'Update this creator identity and its public profile details.'}</p>
+        <p className="studio-creator-form-lede">{isCreate ? `Set up a new ${brand.creatorName.toLowerCase()} identity. You can connect integrations afterward.` : `Update this ${brand.creatorName.toLowerCase()} identity and its public profile details.`}</p>
         <div className="studio-creator-form">
-          <label><span>Creator name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Rex Studio" autoComplete="organization" /></label>
+          <label><span>{brand.creatorName} name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Rex Studio" autoComplete="organization" /></label>
           <label><span>Handle / slug</span><input value={slug} onChange={(event) => setSlug(event.target.value)} placeholder={slugSuggestion(name) || 'rex-studio'} autoCapitalize="none" autoCorrect="off" /></label>
           <label><span>Profile image</span><input type="file" accept="image/*" onChange={(event) => setProfileImage(event.target.files?.[0])} /></label>
           <label><span>Cover image</span><input type="file" accept="image/*" onChange={(event) => setCoverImage(event.target.files?.[0])} /></label>
-          <label><span>Creator status</span><select value={status} onChange={(event) => setStatus(event.target.value as 'active' | 'inactive')}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+          <label><span>{brand.creatorName} status</span><select value={status} onChange={(event) => setStatus(event.target.value as 'active' | 'inactive')}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
         </div>
         <div className="studio-inline-actions">
-          <button type="button" className="auth-primary-btn" disabled={!name.trim() || saving} onClick={() => void submit()}>{saving ? 'Saving…' : isCreate ? 'Create creator' : 'Save creator'}</button>
+          <button type="button" className="auth-primary-btn" disabled={!name.trim() || saving} onClick={() => void submit()}>{saving ? 'Saving…' : isCreate ? `Create ${brand.creatorName}` : `Save ${brand.creatorName}`}</button>
           {!isCreate && editingCreator?.branding?.profileImage && <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => void onRemoveProfileImage(editingCreator.creatorId)}>Remove profile image</button>}
           {!isCreate && editingCreator?.branding?.coverImage && <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => void onRemoveCoverImage(editingCreator.creatorId)}>Remove cover image</button>}
           <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => closeForm()}>Cancel</button>
@@ -154,8 +155,8 @@ export function CreatorsView({
   }
 
   return (
-    <Card title="Creators" eyebrow="Ownership and identity" actions={<button type="button" className="auth-primary-btn" onClick={openCreate}>Add a New Creator</button>}>
-      <DataToolbar search={search} onSearchChange={setSearch} searchPlaceholder="Search creators..." />
+    <Card title={brand.creatorPlural} eyebrow="Ownership and identity" actions={<button type="button" className="auth-primary-btn" onClick={openCreate}>Add a New {brand.creatorName}</button>}>
+      <DataToolbar search={search} onSearchChange={setSearch} searchPlaceholder={`Search ${brand.creatorPlural.toLowerCase()}...`} />
       {filtered.length ? (
         <div className="studio-creator-management-list">
           {filtered.map((creator) => (
@@ -167,14 +168,14 @@ export function CreatorsView({
               </div>
               <div className="studio-creator-row-actions">
                 <Pill label={creator.status === 'inactive' ? 'Archived' : 'Active'} tone={creator.status === 'inactive' ? 'warning' : 'success'} />
-                <button type="button" className="auth-secondary-btn" onClick={() => workAsCreator(creator)}>Work as this Creator</button>
-                <button type="button" className="auth-secondary-btn" onClick={() => openEdit(creator)}>Edit Creator</button>
-                {creator.status !== 'inactive' && <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => void archiveCreator(creator)}>Archive Creator</button>}
+                <button type="button" className="auth-secondary-btn" onClick={() => workAsCreator(creator)}>Work as this {brand.creatorName}</button>
+                <button type="button" className="auth-secondary-btn" onClick={() => openEdit(creator)}>Edit {brand.creatorName}</button>
+                {creator.status !== 'inactive' && <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => void archiveCreator(creator)}>Archive {brand.creatorName}</button>}
               </div>
             </article>
           ))}
         </div>
-      ) : <div className="studio-empty-state">No creators match this search.</div>}
+      ) : <div className="studio-empty-state">No {brand.creatorPlural.toLowerCase()} match this search.</div>}
       {formError && <p className="error">{formError}</p>}
     </Card>
   );
