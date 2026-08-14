@@ -3,8 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -p tsconfig.json && vite build",
+    "dev": "npm run dev:eversally",
+    "dev:eversally": "VITE_PRODUCT_BRAND=eversally VITE_API_BASE_URL=https://fanadmin.top:4000 vite --port 5174",
+    "dev:oss": "VITE_PRODUCT_BRAND=ubeeq VITE_API_BASE_URL=https://fanadmin.top:4001 vite --port 5175",
+    "build": "tsc -p tsconfig.json && VITE_PRODUCT_BRAND=eversally vite build",
+    "build:oss": "tsc -p tsconfig.json && VITE_PRODUCT_BRAND=ubeeq vite build",
     "test": "echo \"no tests\"",
     "lint": "echo \"no lint\""
   },

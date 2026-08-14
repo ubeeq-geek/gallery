@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../../api';
+import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { Pill } from '../components/Pill';
 import type {
@@ -92,11 +93,11 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     if (connectionState === 'connected_assignment_required') {
       setRecentlyConnectedAccountId(connectedAccountId);
       setActiveCredentialId(connectedApplicationId);
-      setMessage('DeviantArt account connected. Choose its creator assignments below to start the import.');
+      setMessage(`DeviantArt account connected. Choose its ${brand.creatorName} assignment below to start the import.`);
     } else if (connectionState === 'connected_destination_defaulted') {
       setRecentlyConnectedAccountId(connectedAccountId);
       setActiveCredentialId(connectedApplicationId);
-      setMessage('DeviantArt account connected. Its destination creator was selected automatically.');
+      setMessage(`DeviantArt account connected. Its destination ${brand.creatorName} was selected automatically.`);
     } else if (connectionState === 'connected') {
       setMessage('DeviantArt account connected and its import has been queued.');
     } else if (connectionState === 'cancelled') {
@@ -107,7 +108,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       if (failureReason === 'authentication_required' && failureStage === 'token_exchange') {
         setConnectionError('DeviantArt rejected this application during token exchange. Verify the saved client ID and client secret, and confirm the application is Confidential with this exact callback URL.');
       } else if (failureReason === 'authentication_required' && failureStage === 'account_lookup') {
-        setConnectionError('DeviantArt issued a token but did not allow account verification. Ubeeq has updated the requested permission; connect again to approve it.');
+        setConnectionError(`DeviantArt issued a token but did not allow account verification. ${brand.productName} has updated the requested permission; connect again to approve it.`);
       } else {
         setConnectionError(failureDetail
           ? `DeviantArt authorization did not complete: ${failureDetail}`
@@ -321,10 +322,10 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       });
       setMessage(destinationCreatorId
         ? 'Sync destination saved. You can start the first synchronization when you are ready.'
-        : 'This creator has been disconnected. The DeviantArt account remains connected, but future synchronization is stopped.');
+        : `This ${brand.creatorName.toLowerCase()} has been disconnected. The DeviantArt account remains connected, but future synchronization is stopped.`);
       await load();
     } catch (assignmentError) {
-      setError(assignmentError instanceof Error ? assignmentError.message : 'Unable to save creator assignments.');
+      setError(assignmentError instanceof Error ? assignmentError.message : `Unable to save ${brand.creatorName.toLowerCase()} assignments.`);
     } finally {
       setWorkingAccountId('');
     }
@@ -354,7 +355,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     try {
       await api.studioCreateIntegrationCollection({ creatorIdentityId: creatorId, name });
       setCollectionName('');
-      setMessage('Independent Ubeeq collection created.');
+      setMessage(`Independent ${brand.productName} collection created.`);
       await load();
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Unable to create collection.');
@@ -390,7 +391,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
         : syncMode === 'initial_only'
           ? 'This gallery will populate once and then remain independent.'
           : syncMode === 'manual'
-            ? 'Automatic gallery membership changes are paused; current Ubeeq works were preserved.'
+            ? `Automatic gallery membership changes are paused; current ${brand.productName} works were preserved.`
             : 'This DeviantArt gallery is ignored by automatic synchronization.');
       await load();
     } catch (mappingError) {
@@ -413,10 +414,10 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
         ubeeqCollectionId: collection.ubeeqCollectionId,
         syncMode: 'initial_only'
       });
-      setMessage(`Created the Ubeeq collection “${collection.name}” and mapped this DeviantArt gallery to it.`);
+      setMessage(`Created the ${brand.productName} collection “${collection.name}” and mapped this DeviantArt gallery to it.`);
       await load();
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Unable to create and map this Ubeeq collection.');
+      setError(createError instanceof Error ? createError.message : `Unable to create and map this ${brand.productName} collection.`);
     } finally {
       setWorkingExternalCollectionId('');
     }
@@ -431,7 +432,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       >
         <div className="studio-integration-toolbar">
           <label>
-            <span>Browse creator catalogue</span>
+            <span>Browse {brand.creatorName} catalogue</span>
             <select value={creatorId} onChange={(event) => setCreatorId(event.target.value)}>
               {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
             </select>
@@ -450,12 +451,12 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
               </button>
             </div>
             {connectionGuideExpanded && <>
-              <p className="small">The application and connected accounts belong to your Ubeeq account. Each connected account has one destination creator for now.</p>
+              <p className="small">The application and connected accounts belong to your {brand.productName} account. Each connected account has one destination {brand.creatorName} for now.</p>
               <ol>
-                <li><strong>Create your own DA OAuth application.</strong><span>Ubeeq does not use a shared DA application; your client credentials remain encrypted at rest.</span></li>
+                <li><strong>Create your own DA OAuth application.</strong><span>{brand.productName} does not use a shared DA application; your client credentials remain encrypted at rest.</span></li>
                 <li><strong>Add this callback URL to that application.</strong>{configuration?.callbackUrl && <code>{configuration.callbackUrl}</code>}</li>
                 <li><strong>Save the application once.</strong><span>Use it to connect any DeviantArt accounts you manage. The secret is encrypted at rest and never returned to your browser.</span></li>
-                <li><strong>Connect an account, then choose its destination creator.</strong><span>Only after that choice is saved can you start synchronization.</span></li>
+                <li><strong>Connect an account, then choose its destination {brand.creatorName}.</strong><span>Only after that choice is saved can you start synchronization.</span></li>
               </ol>
             </>}
           </section>
@@ -529,14 +530,14 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                   <div>
                     <strong>{account.externalUsername}</strong>
                     <span>Last successful sync: {formatDate(account.lastSuccessfulSyncAt)}</span>
-                    <span className={destinationCreator ? undefined : 'studio-integration-assignment-needed'}>{destinationCreator ? `Sync destination: ${destinationCreator.name}` : 'Creator assignment required before synchronization.'}</span>
+                    <span className={destinationCreator ? undefined : 'studio-integration-assignment-needed'}>{destinationCreator ? `Sync destination: ${destinationCreator.name}` : `${brand.creatorName} assignment required before synchronization.`}</span>
                     {catalogueJob?.progress && <span>Metadata: {catalogueJob.progress.discovered} discovered · {catalogueJob.progress.synchronized} synchronized · {catalogueJob.progress.remaining} remaining</span>}
                     {copySummary && <span>Source copies: {copySummary.requested} requested · {copySummary.stored} stored · {copySummary.unavailable} unavailable{copySummary.inProgress ? ` · ${copySummary.inProgress} in progress` : ''}</span>}
                     {catalogueJob?.errorMessage && <span className="error">{catalogueJob.errorMessage}</span>}
                   </div>
                   <div className="studio-integration-row-actions">
                     <Pill label={account.connectionStatus.replace(/_/g, ' ')} tone={accountTone(account.connectionStatus)} />
-                    {!savedDestinationCreatorId && <Pill label="Needs creator" tone="warning" />}
+                    {!savedDestinationCreatorId && <Pill label={`Needs ${brand.creatorName}`} tone="warning" />}
                     {savedDestinationCreatorId && <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void sync(account.externalAccountId)}>
                       {workingAccountId === account.externalAccountId ? 'Queueing…' : 'Sync now'}
                     </button>}
@@ -546,25 +547,25 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                   </div>
                   {savedDestinationCreatorId && <label className="studio-da-account-source-files">
                     <input type="checkbox" checked={includeSourceFilesByAccount[account.externalAccountId] === true} onChange={(event) => setIncludeSourceFilesByAccount((current) => ({ ...current, [account.externalAccountId]: event.target.checked }))} />
-                    <span><strong>Include source files in this sync</strong><small>Copies available DeviantArt source files into private Ubeeq Space storage.</small></span>
+                    <span><strong>Include source files in this sync</strong><small>Copies available DeviantArt source files into private {brand.workspaceFullName} storage.</small></span>
                   </label>}
                   <div className="studio-integration-assignment-form">
-                    <label><span>Destination creator</span><select value={destinationCreatorId} onChange={(event) => setDestinationCreatorByAccount((current) => ({ ...current, [account.externalAccountId]: event.target.value }))}><option value="">Choose a creator…</option>{creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}</select></label>
+                    <label><span>Destination {brand.creatorName}</span><select value={destinationCreatorId} onChange={(event) => setDestinationCreatorByAccount((current) => ({ ...current, [account.externalAccountId]: event.target.value }))}><option value="">Choose {brand.id === 'eversally' ? 'an' : 'a'} {brand.creatorName}…</option>{creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}</select></label>
                     <div className="studio-inline-actions">
-                      <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId || !destinationCreatorId} onClick={() => void saveAccountDestination(account)}>Save destination creator</button>
-                      {savedDestinationCreatorId && <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void saveAccountDestination(account, true)}>Disconnect creator</button>}
+                      <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId || !destinationCreatorId} onClick={() => void saveAccountDestination(account)}>Save destination {brand.creatorName}</button>
+                      {savedDestinationCreatorId && <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void saveAccountDestination(account, true)}>Disconnect {brand.creatorName}</button>}
                     </div>
                   </div>
                 </div>
               );
             })}
           </div>
-        ) : !loading && <div className="studio-empty-state">Connect an account to import its catalogue, galleries, and engagement history into Ubeeq.</div>}
+        ) : !loading && <div className="studio-empty-state">Connect an account to import its catalogue, galleries, and engagement history into {brand.productName}.</div>}
       </Card>
 
-      <Card title="Gallery mapping" eyebrow="Independent Ubeeq collections" className="studio-integration-gallery-mapping">
+      <Card title="Gallery mapping" eyebrow={`Independent ${brand.productName} collections`} className="studio-integration-gallery-mapping">
         <div className="studio-inline-form">
-          <input value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="New Ubeeq collection" />
+          <input value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder={`New ${brand.productName} collection`} />
           <button type="button" className="auth-secondary-btn" onClick={() => void createCollection()}>Create collection</button>
         </div>
         <div className="studio-integration-mapping-list">
@@ -581,7 +582,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                 </span>
                 <div className="studio-integration-mapping-actions">
                   <select disabled={externalCollection.syncStatus === 'missing'} value={mapping?.ubeeqCollectionId || ''} onChange={(event) => void saveMapping(externalCollection, event.target.value)}>
-                    <option value="">Map to Ubeeq collection…</option>
+                    <option value="">Map to {brand.productName} collection…</option>
                     {collections.ubeeqCollections.map((collection) => <option key={collection.ubeeqCollectionId} value={collection.ubeeqCollectionId}>{collection.name}</option>)}
                   </select>
                   {mapping && <select aria-label={`${externalCollection.name} synchronization mode`} value={mapping.syncMode} onChange={(event) => void updateMappingMode(externalCollection, mapping, event.target.value as StudioExternalCollectionMapping['syncMode'])}>
@@ -597,7 +598,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                       disabled={workingExternalCollectionId === externalCollection.externalCollectionId}
                       onClick={() => void createCollectionForGallery(externalCollection)}
                     >
-                      {workingExternalCollectionId === externalCollection.externalCollectionId ? 'Creating…' : 'Create this Gallery as a Ubeeq Gallery'}
+                      {workingExternalCollectionId === externalCollection.externalCollectionId ? 'Creating…' : `Create this Gallery as a ${brand.productName} Gallery`}
                     </button>
                   )}
                 </div>
@@ -605,7 +606,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
             );
           })}
         </div>
-        {!collections.externalCollections.length && <div className="studio-empty-state">Gallery folders appear after the account's first import. Ubeeq collections remain independent unless you map them here.</div>}
+        {!collections.externalCollections.length && <div className="studio-empty-state">Gallery folders appear after the account's first import. {brand.productName} collections remain independent unless you map them here.</div>}
       </Card>
     </section>
   );

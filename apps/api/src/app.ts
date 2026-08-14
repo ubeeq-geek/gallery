@@ -9,6 +9,7 @@ import { createOptionalAuthMiddleware, requireAdmin, requireAuth, resolveRole } 
 import { checkRateLimit } from './rateLimit';
 import { issueRememberAccessToken, issueUnlockToken, verifyPassword, verifyUnlockToken } from './unlock';
 import type { AppConfig } from './config';
+import { brandForConfig } from './brand';
 import type { DataStore } from './store';
 import { hashPassword } from './unlock';
 import type {
@@ -515,6 +516,7 @@ const encodePassthroughCursor = (value: string): string =>
   encodeCursorToken({ v: 1, type: 'passthrough', value });
 
 export const createApp = ({ config, store, externalSyncQueue: injectedExternalSyncQueue }: CreateAppOptions) => {
+  const brand = brandForConfig(config);
   const app = express();
   const s3Client = new S3Client({ region: config.awsRegion });
   const cognitoClient = new CognitoIdentityProviderClient({ region: config.awsRegion });
@@ -2489,7 +2491,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     addServerTiming(res, 'media', logoMs, 'resolveLogoUrl');
     res.setHeader('x-media-ms', logoMs.toFixed(1));
 
-    return res.json({ ...settings, logoUrl });
+    return res.json({
+      ...settings,
+      siteName: settings.siteName === 'Ubeeq' ? brand.productName : settings.siteName,
+      productBrand: brand.id,
+      siteUrl: brand.siteUrl,
+      creatorBaseUrl: brand.creatorBaseUrl,
+      logoUrl
+    });
   });
 
   app.get('/discovery/trending-content', async (req, res) => {
@@ -4896,7 +4905,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         && publication.platform === 'deviantart'
         && !(config.deviantArtPublishedDescriptionUpdate && publication.externalDraftId)
       ) {
-        remoteUpdateWarnings.push('DeviantArt does not permit description changes for already-published deviations through its API. The Ubeeq description was saved, but the DeviantArt description remains unchanged.');
+        remoteUpdateWarnings.push(`DeviantArt does not permit description changes for already-published deviations through its API. The ${brand.productName} description was saved, but the DeviantArt description remains unchanged.`);
       } else if (integrationDescription !== undefined) {
         payload.description = integrationDescription;
       }
@@ -5088,7 +5097,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     )).flat().filter((publication) => publication.assetId === asset.assetId);
     const sourcePublication = candidatePublications[0];
     if (contentSyncRequested && !sourcePublication) {
-      return res.status(409).json({ message: 'This work has no connected source available for a Ubeeq Space backup.' });
+      return res.status(409).json({ message: `This work has no connected source available for a ${brand.workspaceFullName} backup.` });
     }
     const now = new Date().toISOString();
     const publication = {
@@ -5114,7 +5123,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return res.status(202).json({ ...publication, contentSyncJob: job });
     } catch (error) {
       logServerError('space.content-sync.enqueue', error);
-      return res.status(503).json({ message: 'The Ubeeq Space backup queue is unavailable. Please try again.' });
+      return res.status(503).json({ message: `The ${brand.workspaceFullName} backup queue is unavailable. Please try again.` });
     }
   });
 
@@ -5185,7 +5194,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
     const collection = (await store.listUbeeqCollectionsByCreatorIdentity(creatorIdentityId))
       .find((item) => item.ubeeqCollectionId === req.params.ubeeqCollectionId);
-    if (!collection) return res.status(404).json({ message: 'Ubeeq collection not found' });
+    if (!collection) return res.status(404).json({ message: `${brand.productName} collection not found` });
     const visibility = req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' || req.body?.visibility === 'private'
       ? req.body.visibility
       : collection.visibility;
@@ -5207,7 +5216,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
     const collection = (await store.listUbeeqCollectionsByCreatorIdentity(creatorIdentityId))
       .find((item) => item.ubeeqCollectionId === req.params.ubeeqCollectionId);
-    if (!collection) return res.status(404).json({ message: 'Ubeeq collection not found' });
+    if (!collection) return res.status(404).json({ message: `${brand.productName} collection not found` });
     const rawAssetIds: unknown[] = Array.isArray(req.body?.assetIds) ? req.body.assetIds as unknown[] : [];
     const assetIds: string[] = [...new Set(rawAssetIds
       .filter((item): item is string => typeof item === 'string')
@@ -5603,7 +5612,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
 
   app.post('/studio/creators', requireAuth, async (req, res) => {
     const name = String(req.body?.name || '').trim();
-    if (!name) return res.status(400).json({ message: 'A Space name is required.' });
+    if (!name) return res.status(400).json({ message: `A ${brand.workspaceName} name is required.` });
     const slug = slugify(String(req.body?.slug || name || randomUUID().slice(0, 8)));
     const creators = await store.listCreators();
     const conflict = creators.find((item) => creatorMatchesSlug(item, slug));

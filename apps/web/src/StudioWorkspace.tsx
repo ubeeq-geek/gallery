@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api } from './api';
+import { brand } from './brand';
 import { readStudioSection, studioSectionDefs } from './studio/config';
 import { roleDisplayLabel } from './studio/rolePresentation';
 import { StudioLayout } from './studio/components/StudioLayout';
@@ -131,10 +132,10 @@ export function StudioWorkspace() {
         return <ActivityView creatorId={activeCreatorId} />;
       case 'settings':
         return (
-          <Card title="Creator and Studio settings" eyebrow="Preferences">
+          <Card title={`${brand.creatorName} and Studio settings`} eyebrow="Preferences">
             <div className="studio-task-grid">
               <Link className="studio-task-link no-underline" to={`/studio/workspace?section=creators&creatorId=${encodeURIComponent(activeCreatorId)}`}>
-                <strong>Manage creators</strong><span>Update creator identities, branding, and ownership.</span>
+                <strong>Manage {brand.creatorPlural}</strong><span>Update {brand.creatorName.toLowerCase()} identities, branding, and ownership.</span>
               </Link>
               <Link className="studio-task-link no-underline" to="/settings">
                 <strong>Account settings</strong><span>Manage account-wide preferences and sign-in settings.</span>
@@ -189,7 +190,7 @@ export function StudioWorkspace() {
         return (
           <ResourceView
             title="Groupings"
-            eyebrow="Creator-owned content containers"
+            eyebrow={`${brand.creatorName}-owned content containers`}
             searchPlaceholder="Search groupings..."
             emptyMessage="No groupings are registered yet."
             items={groupings.map((grouping) => ({
@@ -259,11 +260,11 @@ export function StudioWorkspace() {
               id: user.userId,
               title: user.displayName || user.username,
               subtitle: user.username,
-              meta: `${user.managedCreatorCount || 0} creator accounts`,
+              meta: `${user.managedCreatorCount || 0} ${brand.creatorName.toLowerCase()} accounts`,
               status: user.role === 'contributor' ? roleDisplayLabel('contributor') : user.role,
               detail: [
                 { label: 'Role', value: user.role === 'contributor' ? roleDisplayLabel('contributor') : user.role },
-                { label: 'Managed creators', value: String(user.managedCreatorCount || 0) },
+                { label: `Managed ${brand.creatorPlural}`, value: String(user.managedCreatorCount || 0) },
                 { label: `${roleDisplayLabel('contributor')} flag`, value: user.isBeeker ? 'Yes' : 'No' }
               ]
             }))}
@@ -311,8 +312,8 @@ export function StudioWorkspace() {
   return (
     <StudioLayout
       section={section}
-      title={creators.length ? sectionMeta.label : 'Welcome to Ubeeq Studio'}
-      description={creators.length ? sectionMeta.description : 'Create a free Space when you are ready to share or manage your creative work.'}
+      title={creators.length ? sectionMeta.label : `Welcome to ${brand.studioName}`}
+      description={creators.length ? sectionMeta.description : `Create a free ${brand.workspaceName} when you are ready to share or manage your creative work.`}
       onboarding={!creators.length}
       creators={creators}
       activeCreatorId={activeCreatorId}

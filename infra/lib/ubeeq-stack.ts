@@ -32,6 +32,8 @@ export class UbeeqStack extends Stack {
     const cognitoDomainPrefix = process.env.COGNITO_DOMAIN_PREFIX?.trim();
     const sesFromAddress = process.env.SES_FROM_ADDRESS?.trim();
     const webAppUrl = process.env.WEB_APP_URL?.trim().replace(/\/$/, '');
+    const productBrand = process.env.PRODUCT_BRAND === 'eversally' ? 'eversally' : 'ubeeq';
+    const productName = productBrand === 'eversally' ? 'Eversally' : 'Ubeeq';
     const cognitoCallbackUrls = [
       'http://localhost:5173/auth/callback',
       'http://localhost:5174/auth/callback',
@@ -192,14 +194,14 @@ export class UbeeqStack extends Stack {
       email: sesFromAddress
         ? cognito.UserPoolEmail.withSES({
             fromEmail: sesFromAddress,
-            fromName: 'Ubeeq',
+            fromName: productName,
             replyTo: sesFromAddress
           })
         : undefined,
       userVerification: {
         emailStyle: cognito.VerificationEmailStyle.CODE,
-        emailSubject: 'Your Ubeeq verification code',
-        emailBody: '<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#10221a"><h1 style="margin:0 0 12px;font-size:28px">Welcome to Ubeeq</h1><p style="font-size:16px;line-height:1.5">Use this code to verify your email and finish setting up your Ubeeq account.</p><p style="margin:28px 0;padding:16px;background:#edf7ef;border-radius:8px;font-size:28px;font-weight:700;letter-spacing:4px;text-align:center">{####}</p><p style="font-size:14px;line-height:1.5;color:#52615a">If you did not create an account, you can ignore this email.</p><p style="font-size:14px;color:#52615a">Ubeeq</p></div>'
+        emailSubject: `Your ${productName} verification code`,
+        emailBody: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#10221a"><h1 style="margin:0 0 12px;font-size:28px">Welcome to ${productName}</h1><p style="font-size:16px;line-height:1.5">Use this code to verify your email and finish setting up your ${productName} account.</p><p style="margin:28px 0;padding:16px;background:#edf7ef;border-radius:8px;font-size:28px;font-weight:700;letter-spacing:4px;text-align:center">{####}</p><p style="font-size:14px;line-height:1.5;color:#52615a">If you did not create an account, you can ignore this email.</p><p style="font-size:14px;color:#52615a">${productName}</p></div>`
       }
     });
     const userPoolCfn = userPool.node.defaultChild as cognito.CfnUserPool;
@@ -315,6 +317,7 @@ export class UbeeqStack extends Stack {
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
         DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true',
+        PRODUCT_BRAND: productBrand,
         EXTERNAL_OAUTH_REDIRECT_URI: process.env.EXTERNAL_OAUTH_REDIRECT_URI || '',
         EXTERNAL_TOKEN_ENCRYPTION_KEY: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '',
         APP_ORIGIN: process.env.APP_ORIGIN || '',
@@ -367,7 +370,8 @@ export class UbeeqStack extends Stack {
         EXTERNAL_SYNC_BASE_DELAY_SECONDS: '60',
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
-        DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true'
+        DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true',
+        PRODUCT_BRAND: productBrand
       }
     });
     const externalSyncSchedulerFn = new lambdaNodejs.NodejsFunction(this, 'ExternalSyncSchedulerFunction', {

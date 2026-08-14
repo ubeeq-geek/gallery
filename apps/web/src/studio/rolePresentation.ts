@@ -1,9 +1,12 @@
+import { brand } from '../brand';
+
 export type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
 
 const configuredContributorLabel = import.meta.env.VITE_CONTRIBUTOR_LABEL?.trim();
 
 export const ROLE_DISPLAY_LABELS: Partial<Record<PlatformRole, string>> = {
-  contributor: configuredContributorLabel || 'Ubeeqer'
+  contributor: configuredContributorLabel || brand.memberName,
+  creator: brand.formalCreatorName
 };
 
 export const roleDisplayLabel = (role: PlatformRole): string =>

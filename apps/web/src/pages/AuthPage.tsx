@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
+import { brand } from '../brand';
 import {
   confirmForgotPassword,
   confirmRegistration,
@@ -243,7 +244,7 @@ export default function AuthPage({ user, setUser }: { user: CurrentUser; setUser
 
           <div className="small">
             {authMode === 'signin'
-              ? <>New to Ubeeq? <Link to="/auth/register">Create an account</Link></>
+              ? <>New to {brand.productName}? <Link to="/auth/register">Create an account</Link></>
               : <>Already have an account? <Link to="/auth/signin">Sign in</Link></>}
           </div>
 

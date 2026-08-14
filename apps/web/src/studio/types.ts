@@ -274,7 +274,7 @@ export type StudioExternalAsset = {
   titleSyncPolicy: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
   descriptionSyncPolicy: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
   updatedAt: string;
-  /** A preview from the Ubeeq Space backup, when one is available. */
+  /** A preview from the configured creator-workspace backup, when one is available. */
   thumbnailUrl?: string;
   spacePublication?: StudioSpacePublication | null;
   engagement?: {

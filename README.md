@@ -1,4 +1,4 @@
-# Studio Platform (MVP)
+# Ubeeq / Eversally Studio Platform
 
 AWS-first creator platform with:
 - Multi-creator and multi-grouping support.
@@ -15,11 +15,22 @@ AWS-first creator platform with:
 - `infra`: AWS CDK stack (API Gateway, Lambda, DynamoDB, S3, Cognito).
 - Includes migration-safe `GroupingCore` single-table support (`GROUPING_CORE_TABLE`, `USE_GROUPING_CORE_TABLE`).
 
-## Studio Workspace
+## Product editions
 
-- Every signed-in member is a **Ubeeqer**. They can browse, save work, and follow creators without setting up a public identity.
-- Every Ubeeqer can create a free **Ubeeq Space** from Studio. A Space is a creator identity with its own URL, catalogue, integrations, and members.
-- **Approved Creator** is an invitation-only support tier on a Space. It is never a prerequisite for creating or using a free Space.
+The same Ubeeq platform ships in two branded editions:
+
+| Edition | Public domain | Member | Creator | Creator workspace |
+| --- | --- | --- | --- | --- |
+| **Eversally** (commercial hosted service) | `eversally.com` | Ever / Evers | Ever Creator / Ever Creators | Eversally Space |
+| **Ubeeq** (open-source distribution) | `ubeeq.site` | Ubeeqer / Ubeeqers | Creator / Creators | Ubeeq Creator Area |
+
+Branding is selected at build and launch time; persisted field names and API routes retain their existing Ubeeq/Space identifiers for backward compatibility. See [Product branding](docs/product-branding.md) for the complete contract.
+
+## Studio workspace
+
+- Every signed-in Eversally member is an **Ever**; the equivalent Ubeeq member is a **Ubeeqer**. Members can browse, save work, and follow creators without setting up a public identity.
+- Every member can create a free **Eversally Space** or **Ubeeq Creator Area** from Studio. It is a creator identity with its own URL, catalogue, integrations, and members.
+- **Ever Creator** is the Eversally creator term. Invitation-only support or approval is a separate tier and is never a prerequisite for creating a free workspace.
 
 ## Requirements
 
@@ -31,11 +42,12 @@ AWS-first creator platform with:
 
 ```bash
 npm install
-npm run dev:api
-npm --workspace @gallery/web run dev
+npm run dev:eversally
 ```
 
-`npm run dev:api` starts the local API at `https://fanadmin.top:4000`; it supplies the HTTPS, local-media, OAuth callback, and local-auth defaults documented below. The web app must use `VITE_API_BASE_URL=https://fanadmin.top:4000`.
+This runs the Eversally web app at `https://fanadmin.top:5174` and its API at `https://fanadmin.top:4000`. The API supplies the HTTPS, local-media, OAuth callback, and local-auth defaults documented below.
+
+Run the Ubeeq OSS pair at `https://fanadmin.top:5175` and `https://fanadmin.top:4001` with `npm run dev:ubeeq`. Run both complete pairs side by side with `npm run dev:all`.
 
 ## Local API environment
 
@@ -43,12 +55,13 @@ The API reads environment variables from the shell that starts it; it does **not
 
 | Variable | Local default | Purpose |
 | --- | --- | --- |
-| `HOST` / `PORT` | `127.0.0.1` / `4000` | API listener. |
+| `PRODUCT_BRAND` | `eversally` in `dev:eversally`; `ubeeq` in `dev:ubeeq` | Selects API messages, verification emails, and other server-rendered product terminology. |
+| `HOST` / `PORT` | `127.0.0.1` / `4000` for Eversally; `4001` for Ubeeq | API listener. |
 | `DEV_HTTPS` | `true` | Enables the `certs/fanadmin.top*.pem` development certificate. |
 | `LOCAL_AUTH_USER_ID` | `local-user` | Enables the local authenticated creator identity. Never set in deployment. |
-| `LOCAL_MEDIA_DIRECTORY` | `/tmp/ubeeq-media` | Where imported and uploaded work copies are stored locally. |
-| `APP_ORIGIN` | `https://fanadmin.top:5174` | Trusted return origin for external OAuth callbacks. Match the local web server. |
-| `EXTERNAL_OAUTH_REDIRECT_URI` | `https://fanadmin.top:4000/integrations/deviantart/callback` | Register this exact URL in the local DeviantArt application. |
+| `LOCAL_MEDIA_DIRECTORY` | `/tmp/eversally-media` for Eversally; `/tmp/ubeeq-media` for Ubeeq | Isolated storage for imported and uploaded local work copies. |
+| `APP_ORIGIN` | `https://fanadmin.top:5174` for Eversally; `https://fanadmin.top:5175` for Ubeeq | Trusted return origin for external OAuth callbacks. Match the paired web server. |
+| `EXTERNAL_OAUTH_REDIRECT_URI` | Port `4000` for Eversally; `4001` for Ubeeq | Register the matching `/integrations/deviantart/callback` URL in each local DeviantArt application. |
 | `EXTERNAL_TOKEN_ENCRYPTION_KEY` | A generated value for the process | Encrypts stored external client secrets and OAuth tokens. Set a stable value yourself when you need it to survive an API restart. |
 | `EXTERNAL_CONTENT_MAX_BYTES` | `52428800` | Maximum downloaded external source-file size (50 MiB). |
 | `DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE` | `true` | Enables supported published-description updates through retained Sta.sh IDs. |
@@ -61,7 +74,7 @@ export EXTERNAL_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 48)"
 npm run dev:api
 ```
 
-The local development server uses an in-memory database. Restarting or hot-reloading it clears local Spaces, DeviantArt credentials, connected accounts, and imports; the local media files under `/tmp/ubeeq-media` are not automatically deleted.
+Each local API has its own in-memory database. Restarting or hot-reloading it clears that edition's local creator workspaces, DeviantArt credentials, connected accounts, and imports; files in the edition-specific media directory are not automatically deleted.
 
 ## Build and Test
 
@@ -71,6 +84,8 @@ npm --workspace @gallery/shared run build
 npm --workspace @gallery/api run build
 npm --workspace @gallery/infra run build
 npm --workspace @gallery/web run build
+# Verify the OSS-branded web build too.
+npm --workspace @gallery/web run build:oss
 ```
 
 ## Key API Endpoints
@@ -110,7 +125,7 @@ npm --workspace @gallery/api run ensure:core-indexes -- --dry-run --content-core
 # Create any missing GSI1/GSI2 definitions
 npm --workspace @gallery/api run ensure:core-indexes -- --content-core-table <ContentCoreTableName> --region ca-central-1
 ```
-4. Configure web env var `VITE_API_BASE_URL` to deployed API URL.
+4. Configure web env var `VITE_API_BASE_URL` to the deployed API URL. Build with `VITE_PRODUCT_BRAND=eversally` for `eversally.com` or `VITE_PRODUCT_BRAND=ubeeq` for `ubeeq.site`.
 5. Follow the Cognito setup below before enabling social sign-in in a deployed environment.
 
 ## Account Email and Social Sign-In
@@ -146,11 +161,11 @@ VITE_COGNITO_CLIENT_ID=<UserPoolClientId CloudFormation output>
 VITE_COGNITO_REDIRECT_URI=https://app.example.com/auth/callback
 ```
 
-For local use, the redirect URI must be `http://localhost:5173/auth/callback` or `http://localhost:5174/auth/callback`. The social sign-in flow uses OAuth authorization code + PKCE and completes the code exchange in the browser.
+For local use, the redirect URI must match the active edition: `https://fanadmin.top:5174/auth/callback` for Eversally or `https://fanadmin.top:5175/auth/callback` for Ubeeq. The social sign-in flow uses OAuth authorization code + PKCE and completes the code exchange in the browser.
 
 ### Branded verification email
 
-The stack supplies the Ubeeq subject and HTML code template. Configure `SES_FROM_ADDRESS` with a verified SES identity to send from Ubeeq rather than Cognito's default sender. Cognito requires the `{####}` token in a code template. See [Cognito email settings](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-email.html) and [message template requirements](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pool-settings-message-customizations.html).
+The stack uses `PRODUCT_BRAND` to supply either the Eversally or Ubeeq subject, sender name, and HTML code template. Configure `SES_FROM_ADDRESS` with a verified SES identity to send from the selected product rather than Cognito's default sender. Cognito requires the `{####}` token in a code template. See [Cognito email settings](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-email.html) and [message template requirements](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pool-settings-message-customizations.html).
 
 ### Google setup
 
@@ -174,7 +189,7 @@ Apple requires the Services ID, verified website configuration, and private key 
 
 ## DeviantArt Integration
 
-The Studio **Integrations** section connects one or more DeviantArt accounts to a creator identity. Each creator identity supplies its own DeviantArt OAuth application in Studio; Ubeeq does not use a shared DeviantArt client application. Imports run asynchronously through the `ExternalSyncQueue`; the local API uses an in-process worker and production uses SQS plus Lambda.
+The Studio **Integrations** section connects one or more DeviantArt accounts to a creator identity. Each creator identity supplies its own DeviantArt OAuth application in Studio; the platform does not use a shared DeviantArt client application. Imports run asynchronously through the `ExternalSyncQueue`; the local API uses an in-process worker and production uses SQS plus Lambda.
 
 Set these deployment-time API variables before deploying CDK:
 
@@ -186,19 +201,17 @@ export APP_ORIGIN=https://<web-host>
 
 Creators register `EXTERNAL_OAUTH_REDIRECT_URI` as the callback URL in their own DeviantArt application, then enter that application’s client ID and secret under Studio Integrations. `EXTERNAL_TOKEN_ENCRYPTION_KEY` encrypts both creator application secrets and OAuth tokens at rest. Keep it in managed secret storage in the deployment environment and rotate it through a planned credential migration; changing it without migration prevents existing encrypted credentials from being decrypted. `EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS` defaults to `21600` (six hours) for catalogues; `EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS` defaults to `120` (two minutes) for feedback activity. DeviantArt does not expose webhooks, so this bounded polling interval provides near-real-time updates while respecting adaptive rate limits.
 
-New Ubeeq-to-DeviantArt publications retain the Sta.sh `itemid` returned by `stash/submit` before calling `stash/publish`. Published-description updates are enabled by default after local validation; set `DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE=false` to disable them. The worker submits `itemid` plus `artist_comments` to `stash/submit` without a file, then reads the published deviation back and only marks the job synchronized when the description matches. Existing imported publications and older Ubeeq publications without a retained Sta.sh item ID remain read-only for published descriptions.
+New platform-to-DeviantArt publications retain the Sta.sh `itemid` returned by `stash/submit` before calling `stash/publish`. Published-description updates are enabled by default after local validation; set `DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE=false` to disable them. The worker submits `itemid` plus `artist_comments` to `stash/submit` without a file, then reads the published deviation back and only marks the job synchronized when the description matches. Existing imported publications and older publications without a retained Sta.sh item ID remain read-only for published descriptions.
 
 Outbound DeviantArt destinations default to **Published**, but can instead target a **Draft in Sta.sh** per work or in bulk from Works. Draft synchronization stops after `stash/submit`; changing that destination to Published later reuses the retained Sta.sh `itemid` and continues with `stash/publish`.
 
-Full account synchronization also reconciles DeviantArt gallery hierarchy and membership for continuous mappings, detects missing/deleted/restricted publications, and records metadata conflicts between queued Ubeeq changes and newer remote edits. The Activity inbox supports server-side filters, pagination, bulk read state, and remote DeviantArt message dismissal while retaining Ubeeq history. See [`docs/deviantart-activity-sync.md`](docs/deviantart-activity-sync.md) for the reconciliation and moderation boundaries.
+Full account synchronization also reconciles DeviantArt gallery hierarchy and membership for continuous mappings, detects missing/deleted/restricted publications, and records metadata conflicts between queued platform changes and newer remote edits. The Activity inbox supports server-side filters, pagination, bulk read state, and remote DeviantArt message dismissal while retaining local history. See [`docs/deviantart-activity-sync.md`](docs/deviantart-activity-sync.md) for the reconciliation and moderation boundaries.
 
-For local OAuth testing, `npm run dev:api` supplies the required local API environment and queues sync work in-process. Register the exact local callback URL with DeviantArt, then point the web app at the local API.
+For local OAuth testing, the paired launch command supplies the required local API environment and queues sync work in-process. Register the exact edition callback URL with DeviantArt.
 
 ```bash
 export EXTERNAL_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 48)" # optional: stable across restarts
-npm run dev:api
-
-VITE_API_BASE_URL=https://fanadmin.top:4000 npm --workspace @gallery/web run dev
+npm run dev:eversally
 ```
 
 Sign in through the existing local web flow, then open `/studio/workspace?section=integrations`. `LOCAL_AUTH_USER_ID` is accepted only when the API has no Cognito verifier configured; do not set it in a deployed environment.

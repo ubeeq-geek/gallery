@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { api } from '../../api';
+import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import type {
   StudioCreator,
@@ -53,7 +54,7 @@ export function CollectionsView({ creators }: { creators: StudioCreator[] }) {
     try {
       setData(await api.studioListDeviantArtCollections(nextCreatorId) as CollectionResponse);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load this creator’s Ubeeq galleries.');
+      setError(loadError instanceof Error ? loadError.message : `Unable to load this creator’s ${brand.productName} galleries.`);
     } finally {
       setLoading(false);
     }
@@ -77,10 +78,10 @@ export function CollectionsView({ creators }: { creators: StudioCreator[] }) {
     try {
       await api.studioCreateIntegrationCollection({ creatorIdentityId: creatorId, name, collectionType });
       setCollectionName('');
-      setMessage(`Created “${name}” for ${activeCreator?.name || 'this creator'}.`);
+      setMessage(`Created “${name}” for ${activeCreator?.name || `this ${brand.creatorName.toLowerCase()}`}.`);
       await load();
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Unable to create the Ubeeq gallery.');
+      setError(createError instanceof Error ? createError.message : `Unable to create the ${brand.productName} gallery.`);
     } finally {
       setSaving(false);
     }
@@ -102,7 +103,7 @@ export function CollectionsView({ creators }: { creators: StudioCreator[] }) {
 
   return (
     <section className="studio-collections-layout">
-      <Card title="Ubeeq galleries" eyebrow="Creator collection structure">
+      <Card title={`${brand.productName} galleries`} eyebrow={`${brand.creatorName} collection structure`}>
         <div className="studio-collection-creator-bar">
           <label>
             <span>Viewing galleries for</span>
@@ -110,32 +111,32 @@ export function CollectionsView({ creators }: { creators: StudioCreator[] }) {
               {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
             </select>
           </label>
-          <p><strong>{activeCreator?.name || 'Choose a creator'}</strong><span>Creator identity</span></p>
+          <p><strong>{activeCreator?.name || `Choose ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.creatorName}`}</strong><span>{brand.creatorName} identity</span></p>
         </div>
 
         <div className="studio-inline-form">
-          <input value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder="New Ubeeq Gallery" />
+          <input value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder={`New ${brand.productName} Gallery`} />
           <select aria-label="New collection type" value={collectionType} onChange={(event) => setCollectionType(event.target.value as typeof collectionType)}>
             <option value="collection">Collection</option>
             <option value="gallery">Gallery</option>
             <option value="series">Series</option>
           </select>
           <button type="button" className="auth-primary-btn" disabled={!collectionName.trim() || saving} onClick={() => void createCollection()}>
-            {saving ? 'Creating…' : `Create Ubeeq ${collectionType === 'series' ? 'Series' : collectionType === 'gallery' ? 'Gallery' : 'Collection'}`}
+            {saving ? 'Creating…' : `Create ${brand.productName} ${collectionType === 'series' ? 'Series' : collectionType === 'gallery' ? 'Gallery' : 'Collection'}`}
           </button>
         </div>
 
         <label className="studio-collection-filter">
           <span>Show</span>
           <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as typeof typeFilter)}>
-            <option value="all">All Ubeeq Collections</option>
+            <option value="all">All {brand.productName} Collections</option>
             <option value="gallery">Galleries</option>
             <option value="series">Series</option>
             <option value="collection">Other Collections</option>
           </select>
         </label>
 
-        {loading && <p className="small">Loading Ubeeq galleries…</p>}
+        {loading && <p className="small">Loading {brand.productName} galleries…</p>}
         {message && <p className="studio-integration-message">{message}</p>}
         {error && <p className="error">{error}</p>}
 
@@ -153,7 +154,7 @@ export function CollectionsView({ creators }: { creators: StudioCreator[] }) {
                   <strong>{collection.name}</strong>
                   <span>{linkedSources.length
                     ? `Mapped from DeviantArt: ${linkedSources.map((source) => source.name).join(', ')}`
-                    : `Independent Ubeeq ${collectionTypeFor(collection)}`}{totalWorkCount ? ` · ${totalWorkCount} work${totalWorkCount === 1 ? '' : 's'}${membership?.synchronized ? ` (${membership.synchronized} synchronized, ${membership.manual} manual)` : ''}` : ''}</span>
+                    : `Independent ${brand.productName} ${collectionTypeFor(collection)}`}{totalWorkCount ? ` · ${totalWorkCount} work${totalWorkCount === 1 ? '' : 's'}${membership?.synchronized ? ` (${membership.synchronized} synchronized, ${membership.manual} manual)` : ''}` : ''}</span>
                 </div>
                 <div className="studio-collection-actions">
                   <span className="studio-collection-type">{collectionTypeFor(collection)}</span>
@@ -176,7 +177,7 @@ export function CollectionsView({ creators }: { creators: StudioCreator[] }) {
           })}
         </div>
         {!loading && !visibleCollections.length && (
-          <div className="studio-empty-state">No Ubeeq Galleries exist for {activeCreator?.name || 'this creator'} yet. Create one here, or create one directly from a DeviantArt gallery in Integrations.</div>
+          <div className="studio-empty-state">No {brand.productName} Galleries exist for {activeCreator?.name || `this ${brand.creatorName.toLowerCase()}`} yet. Create one here, or create one directly from a DeviantArt gallery in Integrations.</div>
         )}
       </Card>
     </section>

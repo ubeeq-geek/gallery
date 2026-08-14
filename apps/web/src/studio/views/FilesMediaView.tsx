@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { CrudTable, type CrudRow } from '../components/CrudTable';
 import { DataToolbar } from '../components/DataToolbar';
@@ -112,7 +113,7 @@ export function FilesMediaView({
           >
             <div className="studio-inspector-list">
               <div><strong>Storage key</strong><span>{selected.storageKey}</span></div>
-              <div><strong>Creator</strong><span>{creatorById.get(selected.creatorId)?.name || selected.creatorId}</span></div>
+              <div><strong>{brand.creatorName}</strong><span>{creatorById.get(selected.creatorId)?.name || selected.creatorId}</span></div>
               <div><strong>Flags</strong><span>{selected.restricted ? 'Restricted' : 'Standard'} · {selected.premium ? 'Premium' : 'Public'}</span></div>
             </div>
           </InspectorPanel>

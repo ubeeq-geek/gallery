@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { studioManagementNavSections, studioPrimaryNavSections, studioSectionDefs, type StudioSection } from '../config';
 import { roleDisplayLabel } from '../rolePresentation';
 import type { StudioCreator } from '../types';
+import { brand } from '../../brand';
 
 export function StudioLayout({
   section,
@@ -46,29 +47,30 @@ export function StudioLayout({
     <div className="layout studio-dashboard-shell">
       <aside className="studio-sidebar">
         <div className="studio-brand-card">
-          <strong>Ubeeq</strong>
+          <strong>{brand.productName}</strong>
           <span>STUDIO</span>
+          {brand.attribution && <small>{brand.attribution}</small>}
         </div>
         {!onboarding && creators.length > 0 && (
           <div className="studio-creator-controls">
             <label className="studio-creator-switcher">
-              <span>Creator</span>
+              <span>{brand.creatorName}</span>
               <select
-                aria-label="Active creator"
+                aria-label={`Active ${brand.creatorName}`}
                 value={activeCreatorId}
                 onChange={(event) => navigate(destination(section, event.target.value))}
               >
                 {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
               </select>
-              <small>{activeCreator?.slug ? `@${activeCreator.slug}` : 'Creator identity'}</small>
+              <small>{activeCreator?.slug ? `@${activeCreator.slug}` : `${brand.creatorName} identity`}</small>
             </label>
             <div className="studio-creator-actions">
-              <Link className="auth-primary-btn no-underline" to="/studio/workspace?section=creators&create=1">Add a New Creator</Link>
-              <Link className="auth-secondary-btn no-underline" to={destination('creators')}>Manage Creators</Link>
+              <Link className="auth-primary-btn no-underline" to="/studio/workspace?section=creators&create=1">Add a New {brand.creatorName}</Link>
+              <Link className="auth-secondary-btn no-underline" to={destination('creators')}>Manage {brand.creatorPlural}</Link>
             </div>
           </div>
         )}
-        {onboarding && <div className="studio-contributor-label"><strong>Your next step</strong><p>A free Space is ready whenever you are.</p></div>}
+        {onboarding && <div className="studio-contributor-label"><strong>Your next step</strong><p>A free {brand.workspaceName} is ready whenever you are.</p></div>}
         <nav className="studio-sidebar-nav">
           {!onboarding && studioPrimaryNavSections.map(navItem)}
         </nav>
@@ -78,13 +80,13 @@ export function StudioLayout({
             <nav className="studio-sidebar-nav">{studioManagementNavSections.map(navItem)}</nav>
           </details>
         )}
-        {!onboarding && <p className="studio-account-note">You are a {roleDisplayLabel('contributor')}.</p>}
+        {!onboarding && <p className="studio-account-note">You are {brand.id === 'eversally' ? 'an' : 'a'} {roleDisplayLabel('contributor')}.</p>}
       </aside>
 
       <section className="studio-main">
         <header className="studio-section-header">
           <div>
-            <p className="studio-page-eyebrow">{activeCreator ? activeCreator.name : 'Ubeeq Studio'}</p>
+            <p className="studio-page-eyebrow">{activeCreator ? activeCreator.name : brand.studioName}</p>
             <h1>{title}</h1>
             <p>{description}</p>
           </div>

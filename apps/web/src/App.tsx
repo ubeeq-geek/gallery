@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api';
+import { brand } from './brand';
 import { StudioWorkspace } from './StudioWorkspace';
 import { ForCreatorsPage } from './pages/ForCreatorsPage';
 import { SpaceRulesPage } from './pages/SpaceRulesPage';
@@ -51,7 +52,9 @@ type DiscoveryDockSummary = {
   searchActive: boolean;
 };
 const DISCOVERY_FILTER_EVENT_NAME = 'ubeeq:discovery-filters';
-const DEFAULT_PROFILE_ICON_SRC = '/default-profile-icon.svg';
+const DEFAULT_PROFILE_ICON_SRC = brand.id === 'eversally'
+  ? '/default-profile-icon-eversally.svg'
+  : '/default-profile-icon.svg';
 const OTP_TRUST_DAYS = 30;
 const otpTrustStorageKey = (email: string) => `ubeeq.otpTrust.${email.trim().toLowerCase()}`;
 const hasValidOtpTrust = (email: string): boolean => {
@@ -73,7 +76,8 @@ const rememberOtpTrust = (email: string) => {
 type RoleNotificationCounts = { studio: number; admin: number };
 type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
 const ROLE_DISPLAY_LABELS: Partial<Record<PlatformRole, string>> = {
-  contributor: 'Ubeeqer'
+  contributor: brand.memberName,
+  creator: brand.formalCreatorName
 };
 const roleDisplayLabel = (role: PlatformRole): string => ROLE_DISPLAY_LABELS[role] || role[0].toUpperCase() + role.slice(1);
 const ROLE_NOTIFICATION_STORAGE_KEY = 'ubeeq.roleNotifications';
@@ -865,13 +869,13 @@ function HeaderAuth({
   const showCreatorNav = Boolean(user);
   const studioCount = sanitizeNotificationCount(roleNotificationCounts?.studio);
   const adminCount = sanitizeNotificationCount(roleNotificationCounts?.admin);
-  // Every signed-in Ubeeqer has a personal profile; a Space simply upgrades
+  // Every signed-in member has a personal profile; a creator workspace simply upgrades
   // this link to their public creator profile.
   const artistProfileHref = primaryManagedArtist?.slug ? `/creators/${primaryManagedArtist.slug}` : '/settings';
   const studioHref = '/studio';
   const adminHref = studioHref;
   const isExternalAdminHref = false;
-  const compactNavLabel = canAccessStudio ? 'Creator' : 'Profile';
+  const compactNavLabel = canAccessStudio ? brand.creatorName : 'Profile';
   const compactNavHref = canAccessStudio ? studioHref : artistProfileHref;
   const isExternalCompactNavHref = false;
   const compactNavCount = studioCount;
@@ -968,28 +972,28 @@ function HeaderAuth({
                 {showCreatorNav && (
                   <>
                     <nav
-                      className="hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-2 shadow-sm lg:flex"
-                      aria-label="Creator navigation"
+                      className="creator-nav creator-nav-desktop shadow-sm"
+                      aria-label={`${brand.creatorName} navigation`}
                     >
                       {canAccessStudio && (
-                        <span className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.18em] text-white">
-                          Creator
+                        <span className="creator-nav-role">
+                          {brand.creatorName}
                         </span>
                       )}
                       <Link
                         to={artistProfileHref}
-                        className={`inline-flex items-center rounded-full px-3 py-1.5 text-sm font-semibold no-underline transition-colors ${isArtistNavActive ? 'bg-emerald-100 text-emerald-900' : 'text-emerald-900 hover:bg-emerald-100'}`}
+                        className={`creator-nav-link${isArtistNavActive ? ' is-active' : ''}`}
                       >
                         <span>Profile</span>
                       </Link>
                       {canAccessStudio && (
                         <Link
                           to={studioHref}
-                          className={`inline-flex items-center rounded-full px-3 py-1.5 text-sm font-semibold no-underline transition-colors ${isStudioNavActive ? 'bg-emerald-100 text-emerald-900' : 'text-emerald-900 hover:bg-emerald-100'}`}
+                          className={`creator-nav-link${isStudioNavActive ? ' is-active' : ''}`}
                         >
                           <span>Studio</span>
                           {studioCount > 0 && (
-                            <span className="ml-2 inline-flex min-w-[1.15rem] items-center justify-center rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                            <span className="creator-nav-notification">
                               {formatNotificationBadge(studioCount)}
                             </span>
                           )}
@@ -1023,15 +1027,15 @@ function HeaderAuth({
                         )
                       )}
                     </nav>
-                    <nav className="inline-flex items-center lg:hidden" aria-label="Creator navigation">
+                    <nav className="creator-nav creator-nav-compact" aria-label={`${brand.creatorName} navigation`}>
                       {canAccessStudio ? (
                         <Link
                           to={compactNavHref}
-                          className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-900 no-underline transition-colors hover:bg-emerald-100"
+                          className="creator-nav-link"
                         >
                           <span>{compactNavLabel}</span>
                           {compactNavCount > 0 && (
-                            <span className="ml-2 inline-flex min-w-[1.05rem] items-center justify-center rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                            <span className="creator-nav-notification">
                               {formatNotificationBadge(compactNavCount)}
                             </span>
                           )}
@@ -1039,11 +1043,11 @@ function HeaderAuth({
                       ) : isExternalCompactNavHref ? (
                         <a
                           href={compactNavHref}
-                          className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-900 no-underline transition-colors hover:bg-emerald-100"
+                          className="creator-nav-link"
                         >
                           <span>{compactNavLabel}</span>
                           {compactNavCount > 0 && (
-                            <span className="ml-2 inline-flex min-w-[1.05rem] items-center justify-center rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                            <span className="creator-nav-notification">
                               {formatNotificationBadge(compactNavCount)}
                             </span>
                           )}
@@ -1051,11 +1055,11 @@ function HeaderAuth({
                       ) : (
                         <Link
                           to={compactNavHref}
-                          className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-900 no-underline transition-colors hover:bg-emerald-100"
+                          className="creator-nav-link"
                         >
                           <span>{compactNavLabel}</span>
                           {compactNavCount > 0 && (
-                            <span className="ml-2 inline-flex min-w-[1.05rem] items-center justify-center rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                            <span className="creator-nav-notification">
                               {formatNotificationBadge(compactNavCount)}
                             </span>
                           )}
@@ -1069,7 +1073,7 @@ function HeaderAuth({
                     to="/studio"
                     className="auth-nav-btn auth-nav-btn-primary hidden sm:inline-flex"
                   >
-                    Create a Space
+                    Create a {brand.workspaceName}
                   </Link>
                 )}
                 <details className="user-menu">
@@ -1078,13 +1082,13 @@ function HeaderAuth({
                   </summary>
                   <div className="user-menu-items">
                     <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
-                    <Link to={artistProfileHref} onClick={closeUserMenus}>{canAccessStudio ? 'Creator profile' : 'Profile'}</Link>
+                    <Link to={artistProfileHref} onClick={closeUserMenus}>{canAccessStudio ? `${brand.creatorName} profile` : 'Profile'}</Link>
                     {canAccessStudio && (
                       <Link to={studioHref} onClick={closeUserMenus}>
                         Studio{studioCount > 0 ? ` (${formatNotificationBadge(studioCount)})` : ''}
                       </Link>
                     )}
-                    {!canAccessStudio && <Link to="/studio" onClick={closeUserMenus}>Create a Space</Link>}
+                    {!canAccessStudio && <Link to="/studio" onClick={closeUserMenus}>Create a {brand.workspaceName}</Link>}
                     {false && isAdmin && (isExternalAdminHref ? (
                       <a href={adminHref} onClick={closeUserMenus}>
                         Admin{adminCount > 0 ? ` (${formatNotificationBadge(adminCount)})` : ''}
@@ -1106,7 +1110,7 @@ function HeaderAuth({
                     to="/for-creators"
                     className={`auth-nav-btn auth-nav-btn-secondary${location.pathname.startsWith('/for-creators') ? ' is-active' : ''}`}
                   >
-                    For Creators
+                    For {brand.creatorPlural}
                   </Link>
                   <Link
                     to="/auth/signin"
@@ -1258,9 +1262,9 @@ function AuthCallbackPage({ setUser }: { setUser: (u: CurrentUser) => void }) {
   return (
     <main className="auth-single-page">
       <section className="auth-card panel">
-        <p className="auth-eyebrow">Ubeeq account</p>
+        <p className="auth-eyebrow">{brand.productName} account</p>
         <h1>{error ? 'Sign-in needs another try' : 'Finishing sign-in'}</h1>
-        <p className="small">{error || 'Please wait while Ubeeq securely completes your sign-in.'}</p>
+        <p className="small">{error || `Please wait while ${brand.productName} securely completes your sign-in.`}</p>
         {error && <Link className="auth-primary-btn" to="/auth/signin">Back to sign in</Link>}
       </section>
     </main>
@@ -1434,7 +1438,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
       <div className="layout auth-layout">
         <div className="panel auth-card">
           <div className="auth-card-header">
-            <h2>{authMode === 'signin' ? 'Welcome back' : 'Join Ubeeq'}</h2>
+            <h2>{authMode === 'signin' ? 'Welcome back' : `Join ${brand.productName}`}</h2>
             <span className="badge">Secure sign-in</span>
           </div>
           <p className="small">
@@ -1444,7 +1448,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
                 : signinMethod === 'email_otp'
                 ? 'Sign in with a one-time code sent to your email.'
                 : 'Sign in to continue to your account.')
-              : 'Join as a Ubeeqer to follow work, save collections, and create a Space whenever you are ready.'}
+              : `Join as ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.memberName} to follow work, save collections, and create a ${brand.workspaceName} whenever you are ready.`}
           </p>
           {authMode === 'signin' && otpContext !== 'mfa' && (
             <div className="auth-method-switch">
@@ -1521,7 +1525,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
                       : <button className="auth-primary-btn w-full" onClick={doStartOtpSignIn}>Send code</button>
                   )
               )
-              : <button className="auth-primary-btn w-full" onClick={doRegister}>Create Ubeeq account</button>}
+              : <button className="auth-primary-btn w-full" onClick={doRegister}>Create {brand.productName} account</button>}
             <button className="auth-secondary-btn w-full" onClick={() => navigate('/')}>Cancel</button>
           </div>
 
@@ -1535,11 +1539,11 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
             Need to confirm your account? <Link to="/auth/confirm">Confirm registration</Link>
           </div>
 
-          {authMode === 'register' && <p className="auth-legal-copy">By creating an account, you agree to the <Link to="/space-rules">Ubeeq Space Rules</Link>. A creator Space is optional and can be created later.</p>}
+          {authMode === 'register' && <p className="auth-legal-copy">By creating an account, you agree to the <Link to="/space-rules">{brand.rulesName}</Link>. A creator {brand.workspaceName} is optional and can be created later.</p>}
 
           <div className="small">
             {authMode === 'signin'
-              ? <>New to Ubeeq? <Link to="/auth/register">Create an account</Link></>
+              ? <>New to {brand.productName}? <Link to="/auth/register">Create an account</Link></>
               : <>Already have an account? <Link to="/auth/signin">Sign in</Link></>}
           </div>
 
@@ -1549,12 +1553,12 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
 
         <div className="auth-showcase panel">
           <span className="auth-chip">One account. Your pace.</span>
-          <h1>{authMode === 'signin' ? 'Return to the work and people you follow.' : 'Start as a Ubeeqer. Become a creator when it serves your work.'}</h1>
-          <p>Ubeeq membership is for participating in the community. A Ubeeq Space is a separate, free creator setup when you are ready to publish or manage a catalogue.</p>
+          <h1>{authMode === 'signin' ? 'Return to the work and people you follow.' : `Start as ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.memberName}. Become ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.formalCreatorName} when it serves your work.`}</h1>
+          <p>{brand.productName} membership is for participating in the community. A {brand.workspaceFullName} is a separate, free creator setup when you are ready to publish or manage a catalogue.</p>
           <div className="auth-feature-grid">
-            <article><strong>Follow creators</strong><p>Keep up with work from people and Spaces you care about.</p></article>
+            <article><strong>Follow creators</strong><p>Keep up with work from people and {brand.workspacePlural} you care about.</p></article>
             <article><strong>Save what matters</strong><p>Build private collections and return to work you want to revisit.</p></article>
-            <article><strong>Create later</strong><p>Open a free Space when you want a public home or creator tools.</p></article>
+            <article><strong>Create later</strong><p>Open a free {brand.workspaceName} when you want a public home or creator tools.</p></article>
           </div>
           <div className="auth-showcase-actions">
             {authMode === 'signin'
@@ -1570,9 +1574,9 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   return (
     <main className="auth-single-page">
       <section className="panel auth-card auth-flow-card">
-        <p className="auth-eyebrow">Ubeeq account</p>
+        <p className="auth-eyebrow">{brand.productName} account</p>
         <h1>{authMode === 'confirm' ? 'Check your email' : authMode === 'forgot' ? 'Reset your password' : 'Choose a new password'}</h1>
-        <p className="small">{authMode === 'confirm' ? 'Enter the code from your Ubeeq verification email to activate your account.' : authMode === 'forgot' ? 'We will send a code so you can set a new password.' : 'Set a password to complete your account setup.'}</p>
+        <p className="small">{authMode === 'confirm' ? `Enter the code from your ${brand.productName} verification email to activate your account.` : authMode === 'forgot' ? 'We will send a code so you can set a new password.' : 'Set a password to complete your account setup.'}</p>
 
         {(authMode === 'confirm' || authMode === 'forgot' || authMode === 'initial') && (
           <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -1699,7 +1703,7 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
           name: displayName || selectedArtist.name
         }) as ManagedArtist;
         setManagedArtists((prev) => prev.map((item) => (item.artistId === updatedArtist.artistId ? { ...item, ...updatedArtist } : item)));
-        setMessage('Creator profile updated');
+        setMessage(`${brand.creatorName} profile updated`);
         return;
       }
       const updated = await api.updateMyProfile({
@@ -1766,7 +1770,7 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
         setManagedArtists((prev) => prev.map((item) => (item.artistId === updatedArtist.artistId ? { ...item, ...updatedArtist } : item)));
         setUsernameInput(updatedArtist.slug);
         setUsernameSuggestions([]);
-        setMessage('Creator profile URL updated');
+        setMessage(`${brand.creatorName} profile URL updated`);
         return;
       }
       const updated = await api.updateMyUsername(usernameInput) as UserProfile;
@@ -1954,10 +1958,10 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
               value={selectedProfileKey}
               onChange={(e) => setSelectedProfileKey(e.target.value)}
             >
-              <option value="user">User Profile</option>
+              <option value="user">{brand.memberName} profile</option>
               {managedArtists.map((artist) => (
                 <option key={artist.artistId} value={`artist:${artist.artistId}`}>
-                  Creator: {artist.name} ({artist.memberRole || 'editor'})
+                  {brand.creatorName}: {artist.name} ({artist.memberRole || 'editor'})
                 </option>
               ))}
             </select>
@@ -1969,13 +1973,13 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
             <label htmlFor="settings-display-name" className="settings-field-label">Display Name</label>
             <input
               id="settings-display-name"
-              placeholder="Ubeeq Girl"
+              placeholder="Creative display name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
             />
-            <p className="small">{selectedArtist ? 'The name shown on this creator profile' : 'The name shown on your profile'}</p>
+            <p className="small">{selectedArtist ? `The name shown on this ${brand.creatorName.toLowerCase()} profile` : 'The name shown on your profile'}</p>
           </div>
-          <button onClick={saveProfile}>{selectedArtist ? 'Save Creator Name' : 'Save Display Name'}</button>
+          <button onClick={saveProfile}>{selectedArtist ? `Save ${brand.creatorName} Name` : 'Save Display Name'}</button>
           {!selectedArtist && (
             <>
               <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
@@ -2076,15 +2080,15 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              placeholder="ubeeq-girl"
+              placeholder="your-profile"
               data-lpignore="true"
               value={usernameInput}
               onChange={(e) => setUsernameInput(e.target.value)}
             />
-            <p className="small">{selectedArtist ? 'This creator profile will be available at:' : 'Your profile will be available at:'}</p>
+            <p className="small">{selectedArtist ? `This ${brand.creatorName.toLowerCase()} profile will be available at:` : 'Your profile will be available at:'}</p>
             <p className="small settings-profile-url-preview">{profileUrlPreview}</p>
           </div>
-          <button onClick={changeUsername}>{selectedArtist ? 'Save Creator URL' : 'Save Profile URL'}</button>
+          <button onClick={changeUsername}>{selectedArtist ? `Save ${brand.creatorName} URL` : 'Save Profile URL'}</button>
           {!selectedArtist && profile?.lastUsernameChangeAt && (
             <p className="small">Last changed: {new Date(profile.lastUsernameChangeAt).toLocaleDateString()}</p>
           )}
@@ -3924,7 +3928,7 @@ function HomePage({
     <div className="layout discovery-layout">
       <section className="panel discovery-hero discovery-home-hero">
         <div className="discovery-hero-copy">
-          <span className="discovery-hero-kicker">Welcome to Ubeeq</span>
+          <span className="discovery-hero-kicker">Welcome to {brand.productName}</span>
           <h1>Creativity. <span>Everywhere.</span></h1>
           <p>Explore original perspectives from creators around the world. Curated by humans, powered by openness.</p>
           <div className="discovery-hero-topics" role="tablist" aria-label="Discovery topics">
@@ -7495,16 +7499,16 @@ function StudioDashboardPage({
   const quickLinks = [
     { label: 'Files & Media', section: 'files-media' },
     { label: 'Posts', section: 'posts' },
-    { label: 'Creator Groupings', section: 'creator-groupings' },
+    { label: `${brand.creatorName} Groupings`, section: 'creator-groupings' },
     { label: 'Collections', section: 'collections' },
-    { label: 'Creators', section: 'creators' },
+    { label: brand.creatorPlural, section: 'creators' },
     { label: 'Challenges', section: 'challenges' },
     { label: 'Entries', section: 'entries' },
-    { label: 'Users', section: 'users' },
+    { label: brand.memberPlural, section: 'users' },
     { label: 'Moderation', section: 'moderation' }
   ];
   const queueItems = [
-    { title: 'Review approved challenge entries', detail: '12 items · recognizes an active Ubeeqer', tone: 'success' },
+    { title: 'Review approved challenge entries', detail: `12 items · recognizes an active ${brand.memberName}`, tone: 'success' },
     { title: 'Confirm bulk media deletion', detail: '2-step admin action · 41 assets', tone: 'warning' },
     { title: 'Resolve flagged user collection', detail: 'Mature-tag mismatch', tone: 'danger' },
     { title: 'Publish scheduled creator posts', detail: '6 items due today', tone: 'info' }
@@ -7575,11 +7579,11 @@ function StudioDashboardPage({
     <div className="layout studio-dashboard-shell">
       <aside className="studio-sidebar panel">
         <div className="studio-brand-card">
-          <strong>Ubeeq</strong>
+          <strong>{brand.productName}</strong>
           <span>STUDIO</span>
         </div>
         <div className="studio-contributor-label">
-          <strong>Ubeeqer account</strong>
+          <strong>{brand.memberName} account</strong>
           <p>Participation label: {roleDisplayLabel('contributor')}.</p>
         </div>
         <nav className="studio-sidebar-nav">
@@ -7598,7 +7602,7 @@ function StudioDashboardPage({
         </nav>
         <div className="studio-user-card">
           <strong>{user.displayName || user.username}</strong>
-          <span>{isAdmin ? 'Admin' : 'Creator'} · {managedArtists.length} creator accounts</span>
+          <span>{isAdmin ? 'Admin' : brand.creatorName} · {managedArtists.length} {brand.creatorName.toLowerCase()} accounts</span>
         </div>
       </aside>
 
@@ -7607,7 +7611,7 @@ function StudioDashboardPage({
           <div>
             <div className="studio-pills">
               <span>Admin controls inside Studio</span>
-              <span>Creators can manage multiple creators</span>
+              <span>{brand.creatorPlural} can manage multiple identities</span>
               <span>Approved entry = {roleDisplayLabel('contributor')}</span>
             </div>
             <h2>Studio dashboard</h2>
@@ -7625,8 +7629,8 @@ function StudioDashboardPage({
 
         <section className="studio-stat-grid">
           <article className="panel"><p>Total users</p><h3>{totalUsers.toLocaleString()}</h3><span>live from `/studio/metrics`</span></article>
-          <article className="panel"><p>Ubeeqers</p><h3>{ubeeqerCount.toLocaleString()}</h3><span>contributor role count</span></article>
-          <article className="panel"><p>Creators</p><h3>{creatorCount.toLocaleString()}</h3><span>live creator accounts</span></article>
+          <article className="panel"><p>{brand.memberPlural}</p><h3>{ubeeqerCount.toLocaleString()}</h3><span>contributor role count</span></article>
+          <article className="panel"><p>{brand.creatorPlural}</p><h3>{creatorCount.toLocaleString()}</h3><span>live {brand.creatorName.toLowerCase()} accounts</span></article>
           <article className="panel"><p>Admin review items</p><h3>{reviewCount.toLocaleString()}</h3><span>entries + moderation queue</span></article>
         </section>
 
@@ -7636,16 +7640,16 @@ function StudioDashboardPage({
               <h3>Studio overview</h3>
               <button type="button" className="auth-secondary-btn">+ New item</button>
             </div>
-            <p className="small">A single contribution surface for users, Ubeeqers, Creators, and Admins. No separate admin area.</p>
+            <p className="small">A single contribution surface for users, {brand.memberPlural}, {brand.creatorPlural}, and Admins. No separate admin area.</p>
             <div className="studio-overview-cards">
               <div className="studio-overview-card success">
-                <h4>Ubeeqer participation</h4>
-                <p>Challenge participation can recognize active Ubeeqers and unlock contributor tools.</p>
+                <h4>{brand.memberName} participation</h4>
+                <p>Challenge participation can recognize active {brand.memberPlural} and unlock contributor tools.</p>
                 <span>12 awaiting review</span>
               </div>
               <div className="studio-overview-card info">
-                <h4>Multi-creator accounts</h4>
-                <p>Creators and Admins can manage multiple creator identities under one user account.</p>
+                <h4>Multi-{brand.creatorName.toLowerCase()} accounts</h4>
+                <p>{brand.creatorPlural} and Admins can manage multiple identities under one member account.</p>
                 <span>48 users manage 2+ creators</span>
               </div>
               <div className="studio-overview-card warning">
@@ -7673,8 +7677,8 @@ function StudioDashboardPage({
         <section className="studio-detail-grid">
           <article className="panel">
             <div className="studio-title-row">
-              <h3>Your creator accounts</h3>
-              <button type="button" className="auth-primary-btn">+ New creator</button>
+              <h3>Your {brand.creatorName.toLowerCase()} accounts</h3>
+              <button type="button" className="auth-primary-btn">+ New {brand.creatorName}</button>
             </div>
             {hasCreatorProfiles ? (
               <div className="studio-creator-list">
@@ -7682,13 +7686,13 @@ function StudioDashboardPage({
                   <article key={artist.artistId} className="studio-creator-card">
                     <h4>{artist.name}</h4>
                     <p>/{artist.slug}</p>
-                    <span className="studio-creator-role">Creator</span>
+                    <span className="studio-creator-role">{brand.creatorName}</span>
                     <Link to={`/creators/${artist.slug}`} className="auth-secondary-btn no-underline">Open profile</Link>
                   </article>
                 ))}
               </div>
             ) : (
-              <p className="small">No creator accounts yet. Admins can assign creator ownership from Users in Studio.</p>
+              <p className="small">No {brand.creatorName.toLowerCase()} accounts yet. Admins can assign ownership from {brand.memberPlural} in Studio.</p>
             )}
           </article>
           <article className="panel">
@@ -7697,7 +7701,7 @@ function StudioDashboardPage({
             <ul className="studio-role-list">
               <li><strong>User</strong> — create collections, enter challenges, manage profile settings.</li>
               <li><strong>{roleDisplayLabel('contributor')}</strong> — contributor role for approved challenge workflows.</li>
-              <li><strong>Creator</strong> — publish content and manage creator groupings.</li>
+              <li><strong>{brand.formalCreatorName}</strong> — publish content and manage creator groupings.</li>
               <li><strong>Admin</strong> — moderation, challenge management, and destructive approvals.</li>
             </ul>
             <p className="small">Studio notifications: {studioCount > 0 ? formatNotificationBadge(studioCount) : '0'}.</p>
@@ -7709,14 +7713,14 @@ function StudioDashboardPage({
             <h3>Resource CRUD workbench</h3>
             <button type="button" className="auth-secondary-btn" onClick={() => void loadCrudData()}>Refresh data</button>
           </div>
-          <p className="small">This mirrors the prototype resource model with live API-backed forms for Creators, Files, Posts, and Media Items.</p>
+          <p className="small">This mirrors the prototype resource model with live API-backed forms for {brand.creatorPlural}, Files, Posts, and Media Items.</p>
           {crudError && <p className="error">{crudError}</p>}
           <div className="studio-crud-grid">
             <article className="studio-crud-card">
-              <h4>Creators</h4>
-              <input placeholder="Creator name" value={newCreatorName} onChange={(e) => setNewCreatorName(e.target.value)} />
+              <h4>{brand.creatorPlural}</h4>
+              <input placeholder={`${brand.creatorName} name`} value={newCreatorName} onChange={(e) => setNewCreatorName(e.target.value)} />
               <input placeholder="creator-slug" value={newCreatorSlug} onChange={(e) => setNewCreatorSlug(e.target.value)} />
-              <button type="button" className="auth-primary-btn" onClick={() => void createCreator()}>Create creator</button>
+              <button type="button" className="auth-primary-btn" onClick={() => void createCreator()}>Create {brand.creatorName}</button>
               <ul>
                 {crudCreators.slice(0, 6).map((creator) => <li key={creator.artistId}>{creator.name} / {creator.slug}</li>)}
               </ul>
@@ -7764,7 +7768,7 @@ export default function App() {
   const [myProfile, setMyProfile] = useState<UserProfile | null>(null);
   const [managedArtists, setManagedArtists] = useState<ManagedArtist[]>([]);
   const [roleNotificationCounts, setRoleNotificationCounts] = useState<RoleNotificationCounts>({ studio: 0, admin: 0 });
-  const [settings, setSettings] = useState<SiteSettings>({ siteName: 'Ubeeq', theme: 'ubeeq' });
+  const [settings, setSettings] = useState<SiteSettings>({ siteName: brand.productName, theme: 'ubeeq' });
   const [discoveryDock, setDiscoveryDock] = useState<DiscoveryDockSummary | null>(null);
 
   const handleSignOut = async () => {
@@ -7774,7 +7778,10 @@ export default function App() {
   };
 
   useEffect(() => {
-    api.getSiteSettings().then((data) => setSettings(data)).catch(console.error);
+    api.getSiteSettings().then((data) => setSettings({
+      ...data,
+      siteName: brand.id === 'eversally' && data.siteName === 'Ubeeq' ? brand.productName : data.siteName
+    })).catch(console.error);
   }, []);
 
   useEffect(() => {

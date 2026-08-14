@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { brand } from '../brand';
 
 export function SelfHostingPage() {
   return (
@@ -6,7 +7,7 @@ export function SelfHostingPage() {
       <section className="space-rules-heading">
         <p className="auth-eyebrow">Early deployment guide</p>
         <h1>Run Ubeeq in your own AWS account.</h1>
-        <p>This is a deliberately small starting point, not a production-ready managed-service promise. It will grow alongside the public Space product.</p>
+        <p>This is a deliberately small starting point, not a production-ready managed-service promise. It will grow alongside the hosted {brand.workspaceName} product.</p>
       </section>
       <section className="self-hosting-grid">
         <article className="panel space-rules-card">
@@ -33,7 +34,7 @@ export function SelfHostingPage() {
 npx cdk deploy --app "npx ts-node --prefer-ts-exts infra/bin/ubeeq.ts"</code></pre>
         <p className="small">A complete deploy guide, custom domains, backups, observability, and production hardening are placeholders. Do not treat this early path as a compliant production deployment without completing that work.</p>
       </section>
-      <Link className="auth-secondary-btn" to="/space-rules">Back to Ubeeq Space Rules</Link>
+      <Link className="auth-secondary-btn" to="/space-rules">Back to {brand.rulesName}</Link>
     </main>
   );
 }

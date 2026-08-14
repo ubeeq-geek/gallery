@@ -631,7 +631,7 @@ export interface ExternalAccount {
   lastSyncAttemptAt?: string;
   /** One-time import preference selected before the account was connected. */
   initialContentSyncRequested?: boolean;
-  /** Whether subsequent synchronizations should also copy available source files into Ubeeq Space. */
+  /** Whether subsequent synchronizations should also copy available source files into the local creator workspace. */
   includeSourceFilesOnSync?: boolean;
   createdAt: string;
   updatedAt: string;

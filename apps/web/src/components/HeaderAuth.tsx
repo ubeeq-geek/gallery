@@ -1,10 +1,13 @@
 import { useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { brand } from '../brand';
 import type { CurrentUser } from '../cognitoAuth';
 import { DISCOVERY_FILTER_EVENT_NAME, type DiscoveryDockSummary, type DiscoveryFilterSection, type SiteSettings, type UserProfile } from '../domainTypes';
 
 type DiscoveryMediaKind = 'image' | 'video' | 'post' | 'audio';
-const DEFAULT_PROFILE_ICON_SRC = '/default-profile-icon.svg';
+const DEFAULT_PROFILE_ICON_SRC = brand.id === 'eversally'
+  ? '/default-profile-icon-eversally.svg'
+  : '/default-profile-icon.svg';
 
 const DiscoveryMediaIcon = ({ kind, className }: { kind: DiscoveryMediaKind; className?: string }) => {
   if (kind === 'audio') {

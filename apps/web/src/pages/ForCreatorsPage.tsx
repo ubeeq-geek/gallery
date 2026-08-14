@@ -1,13 +1,14 @@
 import { Link } from 'react-router-dom';
+import { brand } from '../brand';
 
 export function ForCreatorsPage() {
   return (
     <div className="container py-10 space-y-8">
       <header className="space-y-3">
-        <p className="text-sm uppercase tracking-wide text-slate-400">For Creators</p>
-        <h1 className="text-3xl font-semibold">Creator invitations at Ubeeq</h1>
+        <p className="text-sm uppercase tracking-wide text-slate-400">For {brand.creatorPlural}</p>
+        <h1 className="text-3xl font-semibold">{brand.formalCreatorName} support at {brand.productName}</h1>
         <p className="text-slate-300 max-w-3xl">
-          Ubeeq is currently invite-only for Creators while we refine publishing and hosting tools.
+          Every {brand.memberName} can create a free {brand.workspaceName}. Invitations are for an additional support tier while we refine publishing and hosting tools.
         </p>
       </header>
 
@@ -29,8 +30,7 @@ export function ForCreatorsPage() {
       <section className="space-y-3">
         <h2 className="text-xl font-medium">What to expect</h2>
         <p className="text-slate-300 max-w-3xl">
-          Challenges are open to participate in for their own sake. Creator access is a possible outcome,
-          not the purpose.
+          Challenges are open to participate in for their own sake. An invitation to the approved {brand.formalCreatorName} support tier is a possible outcome, not the purpose.
         </p>
       </section>
 

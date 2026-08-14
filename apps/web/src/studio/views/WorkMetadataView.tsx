@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
+import { brand } from '../../brand';
 import {
   clonePostBlocks,
   parseDescriptionBlocks,
@@ -135,7 +136,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         if (!active) return;
         const watched = lists.flat().filter((job) => watchedIds.has(job.externalSyncJobId));
         if (!watched.length) {
-          setSuccess('Metadata was saved in Ubeeq, but the destination update status is not available yet.');
+          setSuccess(`Metadata was saved in ${brand.productName}, but the destination update status is not available yet.`);
           timer = setTimeout(() => void poll(), 2000);
           return;
         }
@@ -148,7 +149,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
             ? `${integrationLabel} is applying and verifying the metadata update…`
             : isRetrying
               ? `${integrationLabel} has not confirmed the update yet. A retry is scheduled.`
-              : `Metadata saved in Ubeeq. The ${integrationLabel} update is queued.`);
+              : `Metadata saved in ${brand.productName}. The ${integrationLabel} update is queued.`);
           timer = setTimeout(() => void poll(), 2000);
           return;
         }
@@ -156,7 +157,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         const failed = watched.find((job) => job.status !== 'successful');
         if (failed) {
           setSuccess('');
-          setError(`Metadata was saved in Ubeeq, but ${integrationLabel} did not confirm the update${failed.errorMessage ? `: ${failed.errorMessage}` : '.'}`);
+          setError(`Metadata was saved in ${brand.productName}, but ${integrationLabel} did not confirm the update${failed.errorMessage ? `: ${failed.errorMessage}` : '.'}`);
           setRemoteUpdateJobs([]);
           return;
         }
@@ -170,7 +171,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         setRemoteUpdateJobs([]);
       } catch (pollError) {
         if (!active) return;
-        setSuccess(`Metadata saved in Ubeeq. Waiting to confirm the ${integrationLabel} update…`);
+        setSuccess(`Metadata saved in ${brand.productName}. Waiting to confirm the ${integrationLabel} update…`);
         timer = setTimeout(() => void poll(), 3000);
       }
     };
@@ -201,7 +202,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     && integration.canUpdatePublishedDescription !== true
   );
   const usesStashPublishedDescriptionUpdate = integration?.publishedDescriptionUpdateMode === 'stash';
-  const creatorName = creators.find((creator) => creator.creatorId === creatorId)?.name || 'Creator';
+  const creatorName = creators.find((creator) => creator.creatorId === creatorId)?.name || brand.creatorName;
   const availableDestinationAccounts = accounts.filter((account) => !destinations.some((publication) => publication.externalAccountId === account.externalAccountId));
   const availableExternalCollections = externalCollections.filter((collection) => (
     collection.externalAccountId === integration?.externalAccountId
@@ -272,8 +273,8 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const removeDestination = async (publication: StudioExternalPublication) => {
     const isPublished = publication.syncStatus === 'active';
     const confirmation = isPublished
-      ? `Unpublish ${sourceLabel(publication)} for ${publication.externalUsername}? The Ubeeq copy will remain private. On DeviantArt this will ultimately move the work back to Sta.sh, rather than delete it.`
-      : `Remove ${sourceLabel(publication)} as a destination for ${publication.externalUsername}? The work will remain a private draft in Ubeeq Space.`;
+      ? `Unpublish ${sourceLabel(publication)} for ${publication.externalUsername}? The ${brand.productName} copy will remain private. On DeviantArt this will ultimately move the work back to Sta.sh, rather than delete it.`
+      : `Remove ${sourceLabel(publication)} as a destination for ${publication.externalUsername}? The work will remain a private draft in ${brand.workspaceFullName}.`;
     if (!asset || !window.confirm(confirmation)) return;
     if (isPublished) {
       setDestinationMessage(`Unpublishing ${sourceLabel(publication)} is not available through its connected API yet, so this destination remains published for now.`);
@@ -393,7 +394,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       setMatureClassification(normalizedMatureClassification);
       setRemoteUpdateJobs(queuedRemoteUpdates);
       setMetadataWarning(updateWarnings.join(' '));
-      setSuccess(queuedRemoteUpdates.length ? `Metadata saved in Ubeeq. The ${integrationLabel} update is queued.` : 'Metadata saved in Ubeeq.');
+      setSuccess(queuedRemoteUpdates.length ? `Metadata saved in ${brand.productName}. The ${integrationLabel} update is queued.` : `Metadata saved in ${brand.productName}.`);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to save this work’s metadata.');
     } finally {
@@ -422,9 +423,9 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         </label>)}
       <small>Gallery placement is applied through DeviantArt’s published-deviation edit API and verified after saving.</small>
     </fieldset>
-    {integration.metadataSyncStatus === 'conflict' && <p className="studio-work-metadata-warning">Both Ubeeq and DeviantArt changed this destination before synchronization completed. Review the fields above before saving again.</p>}
+    {integration.metadataSyncStatus === 'conflict' && <p className="studio-work-metadata-warning">Both {brand.productName} and DeviantArt changed this destination before synchronization completed. Review the fields above before saving again.</p>}
     {integration.metadataSyncStatus === 'remote_changed' && <p className="studio-work-metadata-warning">DeviantArt metadata changed since the previous synchronization. The current remote values are shown above.</p>}
-    {integration.metadataSyncStatus === 'local_update_pending' && <p className="small">A Ubeeq metadata update is queued or waiting for DeviantArt verification.</p>}
+    {integration.metadataSyncStatus === 'local_update_pending' && <p className="small">A {brand.productName} metadata update is queued or waiting for DeviantArt verification.</p>}
     {integration.syncStatus !== 'active' && integration.remoteStateReason && <p className="studio-work-metadata-warning">{integration.remoteStateReason}</p>}
     <label className="studio-work-metadata-option">
       <input type="checkbox" checked={allowComments} onChange={(event) => setAllowComments(event.target.checked)} />
@@ -463,10 +464,10 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         <option value="false">Disabled — allow third-party AI datasets</option>
       </select>
     </label>
-    {(!reportsAiGenerated || !reportsNoAi) && integration?.syncStatus === 'active' && <small className="studio-work-metadata-unknown">DeviantArt’s public read API may omit these AI label values. Ubeeq preserves values it has written; for an imported deviation, select an explicit value to set it on the next save.</small>}
+    {(!reportsAiGenerated || !reportsNoAi) && integration?.syncStatus === 'active' && <small className="studio-work-metadata-unknown">DeviantArt’s public read API may omit these AI label values. {brand.productName} preserves values it has written; for an imported deviation, select an explicit value to set it on the next save.</small>}
     <small>{canUpdatePublishedDescription
       ? usesStashPublishedDescriptionUpdate
-        ? `Description changes use the retained DeviantArt Sta.sh item. Ubeeq reads the deviation back before marking the update synchronized.`
+        ? `Description changes use the retained DeviantArt Sta.sh item. ${brand.productName} reads the deviation back before marking the update synchronized.`
         : `Changes to supported metadata, including the description, are submitted to ${integrationLabel} when you save.`
       : `Supported fields such as title, tags, display options, mature status, and AI settings are submitted to ${integrationLabel}. DeviantArt does not permit API updates to a published deviation’s description.`}</small>
   </>;
@@ -484,7 +485,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
           <div className="studio-work-metadata-heading">
             <div>
               <h4>{asset.canonicalTitle || sourceTitle || 'Untitled work'}</h4>
-              <p>{integration ? `Destination settings for ${integrationLabel}${integration.externalUsername ? ` · ${integration.externalUsername}` : ''}` : 'Stored in Ubeeq Space'}</p>
+              <p>{integration ? `Destination settings for ${integrationLabel}${integration.externalUsername ? ` · ${integration.externalUsername}` : ''}` : `Stored in ${brand.workspaceFullName}`}</p>
             </div>
             <span className="studio-collection-visibility">{asset.visibility}</span>
           </div>
@@ -493,7 +494,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
             <div className="studio-work-destinations-heading">
               <div>
                 <p className="studio-work-metadata-field-heading">Destinations</p>
-                <p>Keep this work in Ubeeq Space, then add a platform only when you are ready to prepare and sync it.</p>
+                <p>Keep this work in {brand.workspaceFullName}, then add a platform only when you are ready to prepare and sync it.</p>
               </div>
               {availableDestinationAccounts.length > 0 && <div className="studio-work-destination-add">
                 <select value={newDestinationAccountId} disabled={destinationBusy} onChange={(event) => setNewDestinationAccountId(event.target.value)} aria-label="Add DeviantArt destination">
@@ -534,14 +535,14 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
                   <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => void removeDestination(publication)}>{publication.syncStatus === 'active' ? 'Unpublish…' : 'Remove destination'}</button>
                 </div>
               </article>)}
-            </div> : <p className="small">No destinations yet. {accounts.length ? 'Choose the DeviantArt account above to prepare this work for synchronization.' : 'You can continue editing the Ubeeq metadata while you manage the creator’s connected platforms.'}</p>}
+            </div> : <p className="small">No destinations yet. {accounts.length ? 'Choose the DeviantArt account above to prepare this work for synchronization.' : `You can continue editing the ${brand.productName} metadata while you manage the creator’s connected platforms.`}</p>}
           </section>
 
           {canLink && <label className="studio-work-metadata-link">
             <input type="checkbox" checked={linked} onChange={(event) => handleLinkChange(event.target.checked)} />
             <span>
               <strong>Keep shared metadata combined with connected integrations</strong>
-              <small>When enabled, edits are shared with compatible integration fields. Fields that a destination cannot update remain independent in Ubeeq.</small>
+              <small>When enabled, edits are shared with compatible integration fields. Fields that a destination cannot update remain independent in {brand.productName}.</small>
             </span>
           </label>}
 
@@ -560,7 +561,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
                   ? usesStashPublishedDescriptionUpdate
                     ? 'Use portable blocks and formatting. DeviantArt description changes use the retained Sta.sh item and are verified after writing.'
                     : 'Use portable blocks and formatting. Compatible content is shared with connected destinations when you save.'
-                  : 'This description is saved in Ubeeq. DeviantArt does not expose description editing for an already-published deviation through its API.'}
+                  : `This description is saved in ${brand.productName}. DeviantArt does not expose description editing for an already-published deviation through its API.`}
               />
             </section>
             <section className="studio-work-metadata-source-fields">
@@ -569,7 +570,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
             </section>
           </div> : <div className="studio-work-metadata-fields">
             <section>
-              <p className="studio-work-metadata-field-heading">Ubeeq metadata</p>
+              <p className="studio-work-metadata-field-heading">{brand.productName} metadata</p>
               <label>
                 <span>Title</span>
                 <input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} />
@@ -578,7 +579,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
                 label="Description"
                 value={descriptionBlocks}
                 onChange={setDescriptionBlocks}
-                helpText="This is Ubeeq’s portable block document. It can also be reused by posts and future destinations."
+                helpText={`This is ${brand.productName}’s portable block document. It can also be reused by posts and future destinations.`}
               />
             </section>
             {integration && <section className="studio-work-metadata-source-fields">
@@ -607,7 +608,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
             <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}`}>Cancel</Link>
           </div>
           {success && <p className="studio-work-metadata-success">{success}</p>}
-          {(metadataWarning || !canUpdatePublishedDescription) && <p className="studio-work-metadata-warning">{metadataWarning || 'This published DeviantArt work predates retained Sta.sh identifiers. Its Ubeeq description remains editable, but cannot be synchronized back automatically.'}</p>}
+          {(metadataWarning || !canUpdatePublishedDescription) && <p className="studio-work-metadata-warning">{metadataWarning || `This published DeviantArt work predates retained Sta.sh identifiers. Its ${brand.productName} description remains editable, but cannot be synchronized back automatically.`}</p>}
         </div>}
       </Card>
     </section>

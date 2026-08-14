@@ -3,8 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "vite --port 5174",
-    "build": "tsc -p tsconfig.json && vite build",
+    "dev": "VITE_PRODUCT_BRAND=eversally vite --port 5184",
+    "dev:oss": "VITE_PRODUCT_BRAND=ubeeq vite --port 5185",
+    "build": "tsc -p tsconfig.json && VITE_PRODUCT_BRAND=eversally vite build",
+    "build:oss": "tsc -p tsconfig.json && VITE_PRODUCT_BRAND=ubeeq vite build",
     "test": "echo \"no tests\"",
     "lint": "echo \"no lint\""
   },
