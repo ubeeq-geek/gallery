@@ -2,6 +2,8 @@ import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCom
 import type {
   Asset,
   ExternalAccount,
+  ExternalAccountProfile,
+  ExternalAccountProfileSnapshot,
   ExternalAccountCreatorAssignment,
   ExternalPlatformCredential,
   ExternalCollection,
@@ -10,6 +12,7 @@ import type {
   ExternalEngagementSnapshot,
   ExternalEngagementCurrent,
   ExternalFavourite,
+  ExternalWatcher,
   ExternalActivity,
   ExternalSyncCheckpoint,
   ExternalPublication,
@@ -194,6 +197,38 @@ export class ExternalPlatformRepository {
 
   async updateExternalAccount(account: ExternalAccount): Promise<void> {
     await this.createExternalAccount(account);
+  }
+
+  async getExternalAccountProfile(externalAccountId: string): Promise<ExternalAccountProfile | null> {
+    return this.get(`EXTERNAL_ACCOUNT#${externalAccountId}`, 'PROFILE#CURRENT');
+  }
+
+  async upsertExternalAccountProfile(profile: ExternalAccountProfile): Promise<void> {
+    await this.put({
+      PK: `EXTERNAL_ACCOUNT#${profile.externalAccountId}`,
+      SK: 'PROFILE#CURRENT',
+      entityType: 'EXTERNAL_ACCOUNT_PROFILE',
+      ...profile
+    });
+  }
+
+  async listExternalAccountProfileSnapshots(externalAccountId: string, limit = 100): Promise<ExternalAccountProfileSnapshot[]> {
+    const items = await this.listByPartition<ExternalAccountProfileSnapshot>(
+      `EXTERNAL_ACCOUNT#${externalAccountId}`,
+      'PROFILE_SNAPSHOT#',
+      'EXTERNAL_ACCOUNT_PROFILE_SNAPSHOT',
+      limit
+    );
+    return items.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt));
+  }
+
+  async createExternalAccountProfileSnapshot(snapshot: ExternalAccountProfileSnapshot): Promise<void> {
+    await this.put({
+      PK: `EXTERNAL_ACCOUNT#${snapshot.externalAccountId}`,
+      SK: `PROFILE_SNAPSHOT#${snapshot.capturedAt}#${snapshot.externalAccountProfileSnapshotId}`,
+      entityType: 'EXTERNAL_ACCOUNT_PROFILE_SNAPSHOT',
+      ...snapshot
+    });
   }
 
   async getExternalPlatformCredential(externalPlatformCredentialId: string): Promise<ExternalPlatformCredential | null> {
@@ -532,6 +567,25 @@ export class ExternalPlatformRepository {
       SK: `FAVOURITE#${favourite.externalUserId}`,
       entityType: 'EXTERNAL_FAVOURITE',
       ...favourite
+    });
+  }
+
+  async listExternalWatchers(externalAccountId: string, limit = 50050): Promise<ExternalWatcher[]> {
+    const items = await this.listByPartition<ExternalWatcher>(
+      `EXTERNAL_ACCOUNT#${externalAccountId}`,
+      'WATCHER#',
+      'EXTERNAL_WATCHER',
+      limit
+    );
+    return items.sort((a, b) => a.externalUsername.localeCompare(b.externalUsername));
+  }
+
+  async upsertExternalWatcher(watcher: ExternalWatcher): Promise<void> {
+    await this.put({
+      PK: `EXTERNAL_ACCOUNT#${watcher.externalAccountId}`,
+      SK: `WATCHER#${watcher.externalUserId}`,
+      entityType: 'EXTERNAL_WATCHER',
+      ...watcher
     });
   }
 

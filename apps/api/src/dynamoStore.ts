@@ -40,6 +40,8 @@ import type {
   PrizeAward,
   PlatformRole,
   ExternalAccount,
+  ExternalAccountProfile,
+  ExternalAccountProfileSnapshot,
   ExternalAccountCreatorAssignment,
   ExternalPlatformCredential,
   Asset,
@@ -53,6 +55,7 @@ import type {
   ExternalEngagementCurrent,
   ExternalComment,
   ExternalFavourite,
+  ExternalWatcher,
   ExternalActivity,
   ExternalSyncCheckpoint,
   ExternalSyncJob,
@@ -1483,6 +1486,10 @@ export class DynamoStore implements DataStore {
   async getExternalAccount(externalAccountId: string): Promise<ExternalAccount | null> { return this.externalPlatform().getExternalAccount(externalAccountId); }
   async createExternalAccount(account: ExternalAccount): Promise<void> { await this.externalPlatform().createExternalAccount(account); }
   async updateExternalAccount(account: ExternalAccount): Promise<void> { await this.externalPlatform().updateExternalAccount(account); }
+  async getExternalAccountProfile(externalAccountId: string): Promise<ExternalAccountProfile | null> { return this.externalPlatform().getExternalAccountProfile(externalAccountId); }
+  async upsertExternalAccountProfile(profile: ExternalAccountProfile): Promise<void> { await this.externalPlatform().upsertExternalAccountProfile(profile); }
+  async listExternalAccountProfileSnapshots(externalAccountId: string, limit?: number): Promise<ExternalAccountProfileSnapshot[]> { return this.externalPlatform().listExternalAccountProfileSnapshots(externalAccountId, limit); }
+  async createExternalAccountProfileSnapshot(snapshot: ExternalAccountProfileSnapshot): Promise<void> { await this.externalPlatform().createExternalAccountProfileSnapshot(snapshot); }
   async getExternalPlatformCredential(externalPlatformCredentialId: string): Promise<ExternalPlatformCredential | null> { return this.externalPlatform().getExternalPlatformCredential(externalPlatformCredentialId); }
   async listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId: string): Promise<ExternalPlatformCredential[]> { return this.externalPlatform().listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId); }
   async listExternalPlatformCredentialsByUser(userId: string): Promise<ExternalPlatformCredential[]> { return this.externalPlatform().listExternalPlatformCredentialsByUser(userId); }
@@ -1519,6 +1526,8 @@ export class DynamoStore implements DataStore {
   async updateExternalComment(comment: ExternalComment): Promise<void> { await this.externalPlatform().updateExternalComment(comment); }
   async listExternalFavourites(externalPublicationId: string, limit?: number): Promise<ExternalFavourite[]> { return this.externalPlatform().listExternalFavourites(externalPublicationId, limit); }
   async upsertExternalFavourite(favourite: ExternalFavourite): Promise<void> { await this.externalPlatform().upsertExternalFavourite(favourite); }
+  async listExternalWatchers(externalAccountId: string, limit?: number): Promise<ExternalWatcher[]> { return this.externalPlatform().listExternalWatchers(externalAccountId, limit); }
+  async upsertExternalWatcher(watcher: ExternalWatcher): Promise<void> { await this.externalPlatform().upsertExternalWatcher(watcher); }
   async getExternalActivityByRemoteId(externalAccountId: string, remoteActivityId: string): Promise<ExternalActivity | null> { return this.externalPlatform().getExternalActivityByRemoteId(externalAccountId, remoteActivityId); }
   async listExternalActivitiesByAccount(externalAccountId: string, limit?: number): Promise<ExternalActivity[]> { return this.externalPlatform().listExternalActivitiesByAccount(externalAccountId, limit); }
   async listExternalActivitiesByPublication(externalPublicationId: string, limit?: number): Promise<ExternalActivity[]> { return this.externalPlatform().listExternalActivitiesByPublication(externalPublicationId, limit); }

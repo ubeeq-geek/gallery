@@ -4,7 +4,7 @@ import { decryptExternalCredential, encryptExternalCredential } from './external
 import { readStoredUbeeqWorkImage, storeExternalContent } from './externalContentStorage';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 import { createExternalPlatformProvider, DEVIANTART_METADATA_BATCH_SIZE, ExternalProviderError, type ExternalContentPublish, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteActivity, type ExternalRemoteComment, type ExternalRemoteContent, type ExternalRemoteEngagement } from './externalPlatformProvider';
-import type { Asset, ExternalAccount, ExternalActivity, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, SpacePublication } from './domain';
+import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalActivity, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, SpacePublication } from './domain';
 import type { DataStore } from './store';
 
 const retryDelaySeconds = (attempt: number, configuredBase: number): number => {
@@ -555,17 +555,53 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
   const provider = await providerForAccount(store, config, account);
   const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
   const remote = await provider.getContent(session.accessToken, publication.externalContentId);
-  if (!remote.content?.sourceUrl) {
-    throw new ExternalProviderError('DeviantArt did not provide a downloadable source file for this work', 'unsupported');
+  const original = await provider.getOriginalDownload(session.accessToken, publication.externalContentId);
+  const source = original.status === 'available' && original.sourceUrl
+    ? {
+      sourceUrl: original.sourceUrl,
+      expectedByteSize: original.byteSize,
+      quality: 'original' as const
+    }
+    : remote.content?.sourceUrl
+      ? {
+        sourceUrl: remote.content.sourceUrl,
+        contentType: remote.content.contentType,
+        expectedByteSize: remote.content.byteSize,
+        quality: 'display_copy' as const
+      }
+      : undefined;
+  if (!source) {
+    await store.upsertSpacePublication({
+      ...current,
+      assetId: asset.assetId,
+      published: true,
+      hostingMode: current?.hostingMode || 'linked',
+      publishedAt: current?.publishedAt || now,
+      ubeeqTitleOverride: current?.ubeeqTitleOverride,
+      ubeeqDescriptionOverride: current?.ubeeqDescriptionOverride,
+      visibility: current?.visibility || 'private',
+      contentSyncStatus: 'not_available',
+      originalDownloadStatus: original.status,
+      remoteContentFingerprint: remoteContentFingerprint(remote),
+      lastRemoteContentCheckedAt: new Date().toISOString(),
+      contentSyncError: undefined,
+      updatedAt: new Date().toISOString()
+    });
+    await updateJob(store, job, { status: 'successful', progress: { discovered: 1, synchronized: 0, remaining: 0 }, errorCode: undefined, errorMessage: undefined });
+    await addLog(store, job.externalSyncJobId, 'info', 'DeviantArt does not make a downloadable copy of this work available', {
+      assetId,
+      originalDownloadStatus: original.status
+    });
+    return;
   }
   const stored = await storeExternalContent(config, {
     userId: asset.userId,
     creatorIdentityId: asset.creatorIdentityId,
     assetId: asset.assetId,
     externalContentId: publication.externalContentId,
-    sourceUrl: remote.content.sourceUrl,
-    contentType: remote.content.contentType,
-    expectedByteSize: remote.content.byteSize,
+    sourceUrl: source.sourceUrl,
+    contentType: source.contentType,
+    expectedByteSize: source.expectedByteSize,
     existingChecksumSha256: current?.hostedChecksumSha256,
     existingObjectKey: current?.hostedObjectKey,
     existingThumbnailObjectKey: current?.hostedThumbnailObjectKey
@@ -580,6 +616,8 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
     ubeeqDescriptionOverride: current?.ubeeqDescriptionOverride,
     visibility: current?.visibility || 'private',
     contentSyncStatus: 'hosted',
+    sourceCopyQuality: source.quality,
+    originalDownloadStatus: original.status,
     hostedObjectKey: stored.objectKey,
     hostedThumbnailObjectKey: stored.thumbnailObjectKey,
     hostedContentType: stored.contentType,
@@ -600,7 +638,9 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
     assetId,
     bytes: stored.byteSize,
     checksumSha256: stored.checksumSha256,
-    unchanged: stored.unchanged
+    unchanged: stored.unchanged,
+    sourceCopyQuality: source.quality,
+    originalDownloadStatus: original.status
   });
 };
 
@@ -985,7 +1025,8 @@ const updateCheckpoint = async (
   resourceType: ExternalSyncCheckpoint['resourceType'],
   resourceId: string,
   now: string,
-  remoteIds: string[] = []
+  remoteIds: string[] = [],
+  summary?: Record<string, unknown>
 ): Promise<void> => {
   const current = await store.getExternalSyncCheckpoint(account.externalAccountId, resourceType, resourceId);
   await store.upsertExternalSyncCheckpoint({
@@ -998,6 +1039,7 @@ const updateCheckpoint = async (
     lastAttemptAt: now,
     lastSuccessfulSyncAt: now,
     lastError: undefined,
+    summary: summary || current?.summary,
     updatedAt: now
   });
 };
@@ -1118,6 +1160,164 @@ const executeCommentSync = async (store: DataStore, config: AppConfig, job: Exte
   await addLog(store, job.externalSyncJobId, 'info', 'DeviantArt comments synchronized', { publications: publications.length, discovered, synchronized });
 };
 
+const synchronizeAccountProfile = async (
+  store: DataStore,
+  provider: ExternalPlatformProvider,
+  accessToken: string,
+  account: ExternalAccount,
+  now: string
+): Promise<{ changed: boolean; profile: ExternalAccountProfile }> => {
+  const remote = await provider.getProfile(accessToken, account.externalUsername);
+  const profileFingerprint = fingerprint({
+    profileUrl: remote.profileUrl,
+    avatarUrl: remote.avatarUrl,
+    userIsArtist: remote.userIsArtist,
+    artistLevel: remote.artistLevel,
+    artistSpecialty: remote.artistSpecialty,
+    realName: remote.realName,
+    tagline: remote.tagline,
+    country: remote.country,
+    website: remote.website,
+    bio: remote.bio,
+    coverPhotoUrl: remote.coverPhotoUrl,
+    joinedAt: remote.joinedAt,
+    stats: remote.stats
+  });
+  const current = await store.getExternalAccountProfile(account.externalAccountId);
+  const profile: ExternalAccountProfile = {
+    externalAccountId: account.externalAccountId,
+    capturedAt: now,
+    profileUrl: remote.profileUrl,
+    avatarUrl: remote.avatarUrl,
+    userIsArtist: remote.userIsArtist,
+    artistLevel: remote.artistLevel,
+    artistSpecialty: remote.artistSpecialty,
+    realName: remote.realName,
+    tagline: remote.tagline,
+    country: remote.country,
+    website: remote.website,
+    bio: remote.bio,
+    coverPhotoUrl: remote.coverPhotoUrl,
+    joinedAt: remote.joinedAt,
+    stats: remote.stats,
+    profileFingerprint,
+    rawPayload: remote.rawPayload
+  };
+  await store.upsertExternalAccountProfile(profile);
+  const changed = current?.profileFingerprint !== profileFingerprint;
+  if (changed) {
+    await store.createExternalAccountProfileSnapshot({
+      ...profile,
+      externalAccountProfileSnapshotId: randomUUID()
+    });
+  }
+  return { changed, profile };
+};
+
+const reconcileWatchers = async (
+  store: DataStore,
+  provider: ExternalPlatformProvider,
+  accessToken: string,
+  account: ExternalAccount,
+  now: string
+): Promise<{ discovered: number; synchronized: number; added: number; removed: number; truncated: boolean }> => {
+  const existing = await store.listExternalWatchers(account.externalAccountId, 50050);
+  const existingByUserId = new Map(existing.map((watcher) => [watcher.externalUserId, watcher]));
+  const checkpoint = await store.getExternalSyncCheckpoint(account.externalAccountId, 'watchers', account.externalAccountId);
+  const isInitialBaseline = !checkpoint?.lastSuccessfulSyncAt;
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  let truncated = false;
+  let synchronized = 0;
+  let added = 0;
+  let removed = 0;
+  do {
+    const page = await provider.listWatchers(accessToken, account.externalUsername, cursor);
+    truncated ||= page.truncated === true;
+    for (const remote of page.items) {
+      seen.add(remote.externalUserId);
+      const current = existingByUserId.get(remote.externalUserId);
+      const becameActive = Boolean(current && !current.active) || Boolean(!current && !isInitialBaseline);
+      const stateVersion = current?.stateVersion || 0;
+      const lastActivityRemoteId = becameActive
+        ? `watcher:${remote.externalUserId}:${stateVersion + 1}:watch`
+        : current?.lastActivityRemoteId;
+      const watcher: ExternalWatcher = {
+        externalAccountId: account.externalAccountId,
+        externalUserId: remote.externalUserId,
+        externalUsername: remote.username,
+        externalUserAvatarUrl: remote.avatarUrl,
+        lastVisitAtRemote: remote.lastVisitAt,
+        watchSettings: remote.watchSettings,
+        firstSeenAt: current?.firstSeenAt || now,
+        lastSeenAt: now,
+        active: true,
+        removalDetectedAt: undefined,
+        stateVersion: becameActive ? stateVersion + 1 : stateVersion,
+        lastActivityRemoteId,
+        rawPayload: remote.rawPayload
+      };
+      await store.upsertExternalWatcher(watcher);
+      existingByUserId.set(remote.externalUserId, watcher);
+      if (becameActive && lastActivityRemoteId) {
+        added += 1;
+        await upsertActivity(store, account, {
+          remoteActivityId: lastActivityRemoteId,
+          sourceMessageId: remote.externalUserId,
+          type: 'watch',
+          occurredAt: now,
+          actorId: remote.externalUserId,
+          actorName: remote.username,
+          actorAvatarUrl: remote.avatarUrl,
+          body: `Started watching @${account.externalUsername}`,
+          rawPayload: remote.rawPayload
+        }, undefined, now);
+      }
+      synchronized += 1;
+    }
+    cursor = page.nextCursor;
+  } while (cursor);
+
+  if (!truncated) {
+    for (const watcher of existing) {
+      if (!watcher.active || seen.has(watcher.externalUserId)) continue;
+      const stateVersion = watcher.stateVersion + 1;
+      const lastActivityRemoteId = `watcher:${watcher.externalUserId}:${stateVersion}:unwatch`;
+      await store.upsertExternalWatcher({
+        ...watcher,
+        active: false,
+        removalDetectedAt: now,
+        lastSeenAt: now,
+        stateVersion,
+        lastActivityRemoteId
+      });
+      await upsertActivity(store, account, {
+        remoteActivityId: lastActivityRemoteId,
+        sourceMessageId: watcher.externalUserId,
+        type: 'unwatch',
+        occurredAt: now,
+        actorId: watcher.externalUserId,
+        actorName: watcher.externalUsername,
+        actorAvatarUrl: watcher.externalUserAvatarUrl,
+        body: `Stopped watching @${account.externalUsername}`,
+        rawPayload: watcher.rawPayload || {}
+      }, undefined, now);
+      removed += 1;
+    }
+  }
+  const activeCount = truncated
+    ? [...existingByUserId.values()].filter((watcher) => watcher.active).length
+    : seen.size;
+  await updateCheckpoint(store, account, 'watchers', account.externalAccountId, now, [...seen], {
+    activeCount,
+    added,
+    removed,
+    truncated,
+    lastReconciledAt: now
+  });
+  return { discovered: seen.size, synchronized, added, removed, truncated };
+};
+
 const executeActivitySync = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount, queue?: ExternalSyncQueue): Promise<void> => {
   const provider = await providerForAccount(store, config, account);
   const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
@@ -1126,6 +1326,26 @@ const executeActivitySync = async (store: DataStore, config: AppConfig, job: Ext
   const now = new Date().toISOString();
   let discovered = 0;
   let synchronized = 0;
+  const profileResult = await synchronizeAccountProfile(store, provider, session.accessToken, session.account, now);
+  discovered += 1;
+  synchronized += 1;
+  const storeRemoteActivity = async (remote: ExternalRemoteActivity): Promise<void> => {
+    const publication = remote.externalContentId ? publicationByContentId.get(remote.externalContentId) : undefined;
+    await upsertActivity(store, session.account, remote, publication, now);
+    if (publication && remote.externalCommentId) {
+      await upsertRemoteComment(store, publication, {
+        externalCommentId: remote.externalCommentId,
+        authorId: remote.actorId,
+        authorName: remote.actorName,
+        authorAvatarUrl: remote.actorAvatarUrl,
+        body: remote.body || '',
+        createdAt: remote.occurredAt,
+        parentExternalCommentId: remote.parentExternalCommentId,
+        rawPayload: remote.rawPayload
+      }, now);
+    }
+    synchronized += 1;
+  };
   for (const feedbackType of ['comments', 'replies', 'activity'] as const) {
     const resourceType = `feedback.${feedbackType}` as ExternalSyncCheckpoint['resourceType'];
     const checkpoint = await store.getExternalSyncCheckpoint(account.externalAccountId, resourceType, account.externalAccountId);
@@ -1139,32 +1359,66 @@ const executeActivitySync = async (store: DataStore, config: AppConfig, job: Ext
       for (const remote of page.items) {
         remoteIds.push(remote.remoteActivityId);
         if (!known.has(remote.remoteActivityId)) newOnPage += 1;
-        const publication = remote.externalContentId ? publicationByContentId.get(remote.externalContentId) : undefined;
-        await upsertActivity(store, session.account, remote, publication, now);
-        if (publication && remote.externalCommentId) {
-          await upsertRemoteComment(store, publication, {
-            externalCommentId: remote.externalCommentId,
-            authorId: remote.actorId,
-            authorName: remote.actorName,
-            authorAvatarUrl: remote.actorAvatarUrl,
-            body: remote.body || '',
-            createdAt: remote.occurredAt,
-            parentExternalCommentId: remote.parentExternalCommentId,
-            rawPayload: remote.rawPayload
-          }, now);
-        }
-        synchronized += 1;
+        await storeRemoteActivity(remote);
       }
       cursor = page.nextCursor;
       if (known.size && newOnPage === 0) cursor = undefined;
     } while (cursor);
     await updateCheckpoint(store, session.account, resourceType, account.externalAccountId, now, remoteIds);
   }
+
+  for (const source of ['feed', 'mentions'] as const) {
+    const resourceType = `messages.${source}` as ExternalSyncCheckpoint['resourceType'];
+    const checkpoint = await store.getExternalSyncCheckpoint(account.externalAccountId, resourceType, account.externalAccountId);
+    const known = new Set(checkpoint?.recentRemoteIds || []);
+    const remoteIds: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await provider.listMessages(session.accessToken, source, cursor);
+      discovered += page.items.length;
+      let newOnPage = 0;
+      for (const remote of page.items) {
+        remoteIds.push(remote.remoteActivityId);
+        if (!known.has(remote.remoteActivityId)) newOnPage += 1;
+        if (source === 'mentions' && remote.stackId && (remote.stackCount || 0) > 1) {
+          let stackCursor: string | undefined;
+          do {
+            const stackPage = await provider.listMessageStack(session.accessToken, 'mentions', remote.stackId, stackCursor);
+            discovered += stackPage.items.length;
+            for (const stackRemote of stackPage.items) {
+              const withStack = { ...stackRemote, stackId: stackRemote.stackId || remote.stackId };
+              remoteIds.push(withStack.remoteActivityId);
+              await storeRemoteActivity(withStack);
+            }
+            stackCursor = stackPage.nextCursor;
+          } while (stackCursor);
+        } else {
+          await storeRemoteActivity(remote);
+        }
+      }
+      cursor = page.nextCursor;
+      if (known.size && newOnPage === 0) cursor = undefined;
+    } while (cursor);
+    await updateCheckpoint(store, session.account, resourceType, account.externalAccountId, now, remoteIds);
+  }
+
+  const watchers = await reconcileWatchers(store, provider, session.accessToken, session.account, now);
+  discovered += watchers.discovered;
+  synchronized += watchers.synchronized;
+  if (watchers.truncated) {
+    await addLog(store, job.externalSyncJobId, 'warning', 'DeviantArt watcher reconciliation reached the API pagination limit; removals were not inferred', {
+      discovered: watchers.discovered
+    });
+  }
   const engagementJob = await enqueueRelatedSyncJob(store, config, session.account, 'engagement_sync', queue);
   await updateJob(store, job, { status: 'successful', progress: { discovered, synchronized, remaining: 0 }, errorCode: undefined, errorMessage: undefined, nextAttemptAt: undefined });
-  await addLog(store, job.externalSyncJobId, 'info', 'DeviantArt feedback activity synchronized', {
+  await addLog(store, job.externalSyncJobId, 'info', 'DeviantArt messages, mentions, and watchers synchronized', {
     discovered,
     synchronized,
+    watchersAdded: watchers.added,
+    watchersRemoved: watchers.removed,
+    watcherListTruncated: watchers.truncated,
+    profileChanged: profileResult.changed,
     engagementJobId: engagementJob.externalSyncJobId
   });
 };

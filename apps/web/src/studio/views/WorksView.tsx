@@ -523,7 +523,11 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                       : undefined}
                   >
                     {asset.spacePublication.contentSyncStatus === 'hosted'
-                      ? 'Stored and available in your Ubeeq Space'
+                      ? asset.spacePublication.sourceCopyQuality === 'display_copy'
+                        ? 'Display copy stored; DeviantArt original unavailable'
+                        : 'Original stored and available in your Ubeeq Space'
+                      : asset.spacePublication.contentSyncStatus === 'not_available'
+                        ? 'DeviantArt does not provide a downloadable copy'
                       : asset.spacePublication.contentSyncStatus === 'failed'
                         ? 'Ubeeq copy unavailable'
                         : 'Copying to Ubeeq Space'}

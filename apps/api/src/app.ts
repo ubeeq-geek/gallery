@@ -4478,6 +4478,24 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return res.json(responses);
   });
 
+  app.get('/studio/integrations/deviantart/accounts/:externalAccountId/profile', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const [current, snapshots] = await Promise.all([
+      store.getExternalAccountProfile(account.externalAccountId),
+      store.listExternalAccountProfileSnapshots(account.externalAccountId, 100)
+    ]);
+    const withoutProviderPayload = <T extends { rawPayload?: Record<string, unknown>; profileFingerprint: string }>(profile: T) => {
+      const { rawPayload: _rawPayload, profileFingerprint: _profileFingerprint, ...response } = profile;
+      return response;
+    };
+    return res.json({
+      current: current ? withoutProviderPayload(current) : null,
+      snapshots: snapshots.map(withoutProviderPayload)
+    });
+  });
+
   app.delete('/studio/integrations/deviantart/accounts/:externalAccountId', requireAuth, async (req, res) => {
     const account = await store.getExternalAccount(req.params.externalAccountId);
     if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
@@ -5275,9 +5293,11 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
     const accounts = await store.listExternalAccountsByCreatorIdentity(creatorIdentityId);
     const accountById = new Map(accounts.map((account) => [account.externalAccountId, account]));
-    const [activityLists, publicationLists] = await Promise.all([
+    const [activityLists, publicationLists, watcherCheckpoints, profiles] = await Promise.all([
       Promise.all(accounts.map((account) => store.listExternalActivitiesByAccount(account.externalAccountId, 250))),
-      Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId)))
+      Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId))),
+      Promise.all(accounts.map((account) => store.getExternalSyncCheckpoint(account.externalAccountId, 'watchers', account.externalAccountId))),
+      Promise.all(accounts.map((account) => store.getExternalAccountProfile(account.externalAccountId)))
     ]);
     const publications = publicationLists.flat();
     const publicationById = new Map(publications.map((publication) => [publication.externalPublicationId, publication]));
@@ -5330,6 +5350,18 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return undefined;
     };
     return res.json({
+      accounts: accounts.map((account, index) => {
+        const profile = profiles[index];
+        const { rawPayload: _rawPayload, profileFingerprint: _profileFingerprint, ...profileResponse } = profile || {};
+        return {
+          externalAccountId: account.externalAccountId,
+          platform: account.platform,
+          externalUsername: account.externalUsername,
+          watchers: watcherCheckpoints[index]?.summary,
+          watchersLastSyncedAt: watcherCheckpoints[index]?.lastSuccessfulSyncAt,
+          profile: profile ? profileResponse : undefined
+        };
+      }),
       items: items.map(({ rawPayload: _rawPayload, ...activity }) => {
         const account = accountById.get(activity.externalAccountId);
         const publication = (activity.externalPublicationId

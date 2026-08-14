@@ -190,7 +190,7 @@ export type StudioExternalActivity = {
   externalPublicationId?: string;
   assetId?: string;
   platform: string;
-  type: 'comment' | 'reply' | 'favourite' | 'watch' | 'mention' | 'activity';
+  type: 'comment' | 'reply' | 'favourite' | 'watch' | 'unwatch' | 'mention' | 'activity';
   direction: 'inbound' | 'outbound';
   remoteActivityId: string;
   externalActorName?: string;
@@ -280,7 +280,9 @@ export type StudioSpacePublication = {
   assetId: string;
   published: boolean;
   hostingMode: 'linked' | 'hosted';
-  contentSyncStatus?: 'not_requested' | 'queued' | 'syncing' | 'hosted' | 'failed';
+  contentSyncStatus?: 'not_requested' | 'queued' | 'syncing' | 'hosted' | 'not_available' | 'failed';
+  sourceCopyQuality?: 'original' | 'display_copy';
+  originalDownloadStatus?: 'available' | 'not_downloadable' | 'missing';
   hostedByteSize?: number;
   lastContentSyncAt?: string;
   contentSyncError?: string;

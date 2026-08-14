@@ -18,9 +18,38 @@ const activityName = (type: StudioExternalActivity['type']): string => ({
   reply: 'replied',
   favourite: 'favourited',
   watch: 'watched the account',
+  unwatch: 'stopped watching the account',
   mention: 'mentioned the account',
   activity: 'activity'
 })[type];
+
+type ActivityAccountSummary = {
+  externalAccountId: string;
+  platform: string;
+  externalUsername: string;
+  watchers?: {
+    activeCount?: number;
+    added?: number;
+    removed?: number;
+    truncated?: boolean;
+  };
+  watchersLastSyncedAt?: string;
+  profile?: {
+    capturedAt: string;
+    profileUrl?: string;
+    avatarUrl?: string;
+    tagline?: string;
+    stats: {
+      watchers?: number;
+      friends?: number;
+      deviations?: number;
+      favourites?: number;
+      comments?: number;
+      profilePageviews?: number;
+      profileComments?: number;
+    };
+  };
+};
 
 function ActivityThumbnail({ activity }: { activity: StudioExternalActivity }) {
   const [failed, setFailed] = useState(false);
@@ -36,6 +65,7 @@ function ActivityThumbnail({ activity }: { activity: StudioExternalActivity }) {
 
 export function ActivityView({ creatorId }: { creatorId: string }) {
   const [items, setItems] = useState<StudioExternalActivity[]>([]);
+  const [accountSummaries, setAccountSummaries] = useState<ActivityAccountSummary[]>([]);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -44,8 +74,9 @@ export function ActivityView({ creatorId }: { creatorId: string }) {
 
   const load = async () => {
     if (!creatorId) return;
-    const response = await api.studioListActivity(creatorId) as { items?: StudioExternalActivity[] };
+    const response = await api.studioListActivity(creatorId) as { items?: StudioExternalActivity[]; accounts?: ActivityAccountSummary[] };
     setItems(response.items || []);
+    setAccountSummaries(response.accounts || []);
   };
 
   useEffect(() => {
@@ -86,6 +117,25 @@ export function ActivityView({ creatorId }: { creatorId: string }) {
   return <div className="studio-work-metadata">
     <Card title="Activity inbox" eyebrow="Connected platforms">
       <p>Comments, replies, favourites, mentions, and other activity are stored here and refreshed automatically.</p>
+      {accountSummaries.map((account) => <div className="studio-work-destination-row" key={account.externalAccountId}>
+        <strong>{account.profile?.profileUrl
+          ? <a href={account.profile.profileUrl} target="_blank" rel="noreferrer">{platformName(account.platform)} · @{account.externalUsername}</a>
+          : <>{platformName(account.platform)} · @{account.externalUsername}</>}</strong>
+        {account.watchers
+          ? <span>{Number(account.watchers.activeCount || 0).toLocaleString()} current watchers</span>
+          : <span>Watcher reconciliation pending</span>}
+        {account.profile && <span>
+          {Number(account.profile.stats.profilePageviews || 0).toLocaleString()} profile views · {' '}
+          {Number(account.profile.stats.deviations || 0).toLocaleString()} deviations · {' '}
+          {Number(account.profile.stats.profileComments || 0).toLocaleString()} profile comments
+        </span>}
+        {account.profile?.tagline && <small>{account.profile.tagline}</small>}
+        {account.watchers && <small>
+          Latest refresh: +{account.watchers.added || 0} / −{account.watchers.removed || 0}
+          {account.watchers.truncated ? ' · API list limit reached; removals deferred' : ''}
+          {account.watchersLastSyncedAt ? ` · ${when(account.watchersLastSyncedAt)}` : ''}
+        </small>}
+      </div>)}
       <button type="button" className="auth-secondary-btn" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? 'Refreshing…' : 'Refresh activity'}</button>
       <label>Show <select value={filter} onChange={(event) => setFilter(event.target.value)}>
         <option value="all">All activity</option>
@@ -93,6 +143,7 @@ export function ActivityView({ creatorId }: { creatorId: string }) {
         <option value="reply">Replies</option>
         <option value="favourite">Favourites</option>
         <option value="watch">Watches</option>
+        <option value="unwatch">Unwatches</option>
         <option value="mention">Mentions</option>
       </select></label>
     </Card>

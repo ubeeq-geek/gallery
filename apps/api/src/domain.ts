@@ -584,7 +584,7 @@ export type AssetVisibility = 'private' | 'unlisted' | 'public';
 export type UbeeqCollectionType = 'collection' | 'gallery' | 'series';
 export type MetadataSyncPolicy = 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
 export type SpaceHostingMode = 'linked' | 'hosted';
-export type SpaceContentSyncStatus = 'not_requested' | 'queued' | 'syncing' | 'hosted' | 'failed';
+export type SpaceContentSyncStatus = 'not_requested' | 'queued' | 'syncing' | 'hosted' | 'not_available' | 'failed';
 export type ExternalPublicationSyncStatus = 'pending_publish' | 'draft' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
 export type ExternalPublicationTargetStatus = 'draft' | 'published';
 export type ExternalCollectionSyncMode = 'continuous' | 'initial_only' | 'manual' | 'ignored';
@@ -635,6 +635,40 @@ export interface ExternalAccount {
   includeSourceFilesOnSync?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ExternalAccountProfileStats {
+  watchers?: number;
+  friends?: number;
+  deviations?: number;
+  favourites?: number;
+  comments?: number;
+  profilePageviews?: number;
+  profileComments?: number;
+}
+
+export interface ExternalAccountProfile {
+  externalAccountId: string;
+  capturedAt: string;
+  profileUrl?: string;
+  avatarUrl?: string;
+  userIsArtist?: boolean;
+  artistLevel?: string;
+  artistSpecialty?: string;
+  realName?: string;
+  tagline?: string;
+  country?: string;
+  website?: string;
+  bio?: string;
+  coverPhotoUrl?: string;
+  joinedAt?: string;
+  stats: ExternalAccountProfileStats;
+  profileFingerprint: string;
+  rawPayload?: Record<string, unknown>;
+}
+
+export interface ExternalAccountProfileSnapshot extends ExternalAccountProfile {
+  externalAccountProfileSnapshotId: string;
 }
 
 export interface ExternalPlatformCredential {
@@ -712,6 +746,8 @@ export interface SpacePublication {
   published: boolean;
   hostingMode: SpaceHostingMode;
   contentSyncStatus?: SpaceContentSyncStatus;
+  sourceCopyQuality?: 'original' | 'display_copy';
+  originalDownloadStatus?: 'available' | 'not_downloadable' | 'missing';
   hostedObjectKey?: string;
   hostedThumbnailObjectKey?: string;
   hostedContentType?: string;
@@ -835,7 +871,23 @@ export interface ExternalFavourite {
   rawPayload?: Record<string, unknown>;
 }
 
-export type ExternalActivityType = 'comment' | 'reply' | 'favourite' | 'watch' | 'mention' | 'activity';
+export interface ExternalWatcher {
+  externalAccountId: string;
+  externalUserId: string;
+  externalUsername: string;
+  externalUserAvatarUrl?: string;
+  lastVisitAtRemote?: string;
+  watchSettings?: Record<string, boolean>;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  active: boolean;
+  removalDetectedAt?: string;
+  stateVersion: number;
+  lastActivityRemoteId?: string;
+  rawPayload?: Record<string, unknown>;
+}
+
+export type ExternalActivityType = 'comment' | 'reply' | 'favourite' | 'watch' | 'unwatch' | 'mention' | 'activity';
 
 export interface ExternalActivity {
   externalActivityId: string;
@@ -867,7 +919,7 @@ export interface ExternalActivity {
   updatedAt: string;
 }
 
-export type ExternalSyncResourceType = 'feedback.comments' | 'feedback.replies' | 'feedback.activity' | 'comments' | 'favourites' | 'engagement' | 'catalogue';
+export type ExternalSyncResourceType = 'feedback.comments' | 'feedback.replies' | 'feedback.activity' | 'messages.feed' | 'messages.mentions' | 'watchers' | 'comments' | 'favourites' | 'engagement' | 'catalogue';
 
 export interface ExternalSyncCheckpoint {
   externalAccountId: string;
@@ -880,6 +932,7 @@ export interface ExternalSyncCheckpoint {
   lastSuccessfulSyncAt?: string;
   nextEligibleAt?: string;
   lastError?: string;
+  summary?: Record<string, unknown>;
   updatedAt: string;
 }
 

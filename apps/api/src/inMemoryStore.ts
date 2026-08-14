@@ -32,6 +32,8 @@ import type {
   PlatformRole,
   UserCapabilities,
   ExternalAccount,
+  ExternalAccountProfile,
+  ExternalAccountProfileSnapshot,
   ExternalAccountCreatorAssignment,
   ExternalPlatformCredential,
   Asset,
@@ -45,6 +47,7 @@ import type {
   ExternalEngagementCurrent,
   ExternalComment,
   ExternalFavourite,
+  ExternalWatcher,
   ExternalActivity,
   ExternalSyncCheckpoint,
   ExternalSyncJob,
@@ -102,6 +105,8 @@ export class InMemoryStore implements DataStore {
   challengePrizes: ChallengePrize[] = [];
   prizeAwards: PrizeAward[] = [];
   externalAccounts: ExternalAccount[] = [];
+  externalAccountProfiles: ExternalAccountProfile[] = [];
+  externalAccountProfileSnapshots: ExternalAccountProfileSnapshot[] = [];
   externalAccountCreatorAssignments: ExternalAccountCreatorAssignment[] = [];
   externalPlatformCredentials: ExternalPlatformCredential[] = [];
   assets: Asset[] = [];
@@ -115,6 +120,7 @@ export class InMemoryStore implements DataStore {
   externalEngagementCurrent: ExternalEngagementCurrent[] = [];
   externalComments: ExternalComment[] = [];
   externalFavourites: ExternalFavourite[] = [];
+  externalWatchers: ExternalWatcher[] = [];
   externalActivities: ExternalActivity[] = [];
   externalSyncCheckpoints: ExternalSyncCheckpoint[] = [];
   externalSyncJobs: ExternalSyncJob[] = [];
@@ -806,6 +812,28 @@ export class InMemoryStore implements DataStore {
     await this.createExternalAccount(account);
   }
 
+  async getExternalAccountProfile(externalAccountId: string): Promise<ExternalAccountProfile | null> {
+    return this.externalAccountProfiles.find((profile) => profile.externalAccountId === externalAccountId) || null;
+  }
+
+  async upsertExternalAccountProfile(profile: ExternalAccountProfile): Promise<void> {
+    this.externalAccountProfiles = this.externalAccountProfiles.filter((item) => item.externalAccountId !== profile.externalAccountId);
+    this.externalAccountProfiles.push(profile);
+  }
+
+  async listExternalAccountProfileSnapshots(externalAccountId: string, limit = 100): Promise<ExternalAccountProfileSnapshot[]> {
+    return this.externalAccountProfileSnapshots
+      .filter((profile) => profile.externalAccountId === externalAccountId)
+      .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
+      .slice(0, limit);
+  }
+
+  async createExternalAccountProfileSnapshot(snapshot: ExternalAccountProfileSnapshot): Promise<void> {
+    this.externalAccountProfileSnapshots = this.externalAccountProfileSnapshots
+      .filter((item) => item.externalAccountProfileSnapshotId !== snapshot.externalAccountProfileSnapshotId);
+    this.externalAccountProfileSnapshots.push(snapshot);
+  }
+
   async getExternalPlatformCredential(externalPlatformCredentialId: string): Promise<ExternalPlatformCredential | null> {
     return this.externalPlatformCredentials.find((item) => item.externalPlatformCredentialId === externalPlatformCredentialId) || null;
   }
@@ -998,6 +1026,20 @@ export class InMemoryStore implements DataStore {
       item.externalPublicationId === favourite.externalPublicationId && item.externalUserId === favourite.externalUserId
     ));
     this.externalFavourites.push(favourite);
+  }
+
+  async listExternalWatchers(externalAccountId: string, limit = 50050): Promise<ExternalWatcher[]> {
+    return this.externalWatchers
+      .filter((item) => item.externalAccountId === externalAccountId)
+      .sort((a, b) => a.externalUsername.localeCompare(b.externalUsername))
+      .slice(0, limit);
+  }
+
+  async upsertExternalWatcher(watcher: ExternalWatcher): Promise<void> {
+    this.externalWatchers = this.externalWatchers.filter((item) => !(
+      item.externalAccountId === watcher.externalAccountId && item.externalUserId === watcher.externalUserId
+    ));
+    this.externalWatchers.push(watcher);
   }
 
   async getExternalActivityByRemoteId(externalAccountId: string, remoteActivityId: string): Promise<ExternalActivity | null> {

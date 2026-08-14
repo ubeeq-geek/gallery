@@ -37,6 +37,41 @@ export interface ExternalRemoteAccount {
   externalUsername: string;
 }
 
+export interface ExternalRemoteProfile {
+  profileUrl?: string;
+  avatarUrl?: string;
+  userIsArtist?: boolean;
+  artistLevel?: string;
+  artistSpecialty?: string;
+  realName?: string;
+  tagline?: string;
+  country?: string;
+  website?: string;
+  bio?: string;
+  coverPhotoUrl?: string;
+  joinedAt?: string;
+  stats: {
+    watchers?: number;
+    friends?: number;
+    deviations?: number;
+    favourites?: number;
+    comments?: number;
+    profilePageviews?: number;
+    profileComments?: number;
+  };
+  rawPayload: Record<string, unknown>;
+}
+
+export interface ExternalRemoteDownload {
+  status: 'available' | 'not_downloadable' | 'missing';
+  sourceUrl?: string;
+  filename?: string;
+  byteSize?: number;
+  width?: number;
+  height?: number;
+  rawPayload: Record<string, unknown>;
+}
+
 export interface ExternalRemoteCollection {
   externalCollectionId: string;
   name: string;
@@ -151,6 +186,7 @@ export interface ExternalRemoteActivity {
   type: ExternalActivityType;
   occurredAt?: string;
   stackId?: string;
+  stackCount?: number;
   isNew?: boolean;
   actorId?: string;
   actorName?: string;
@@ -159,6 +195,15 @@ export interface ExternalRemoteActivity {
   externalCommentId?: string;
   parentExternalCommentId?: string;
   body?: string;
+  rawPayload: Record<string, unknown>;
+}
+
+export interface ExternalRemoteWatcher {
+  externalUserId: string;
+  username: string;
+  avatarUrl?: string;
+  lastVisitAt?: string;
+  watchSettings?: Record<string, boolean>;
   rawPayload: Record<string, unknown>;
 }
 
@@ -180,12 +225,17 @@ export interface ExternalPlatformProvider {
   exchangeAuthorizationCode(code: string, pkce?: ExternalOAuthPkce): Promise<ExternalAuthTokens>;
   refreshAuthentication(refreshToken: string): Promise<ExternalAuthTokens>;
   getAccount(accessToken: string): Promise<ExternalRemoteAccount>;
+  getProfile(accessToken: string, username: string): Promise<ExternalRemoteProfile>;
   listContent(accessToken: string, options: { username: string; cursor?: string; limit?: number }): Promise<ExternalContentPage>;
   getContent(accessToken: string, externalContentId: string): Promise<ExternalRemoteContent>;
+  getOriginalDownload(accessToken: string, externalContentId: string): Promise<ExternalRemoteDownload>;
   getEngagement(accessToken: string, externalContentIds: string[]): Promise<ExternalRemoteEngagement[]>;
   listCollections(accessToken: string, username: string): Promise<ExternalRemoteCollection[]>;
   listComments(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteComment[]; nextCursor?: string }>;
   listFeedback(accessToken: string, type: 'comments' | 'replies' | 'activity', cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }>;
+  listMessages(accessToken: string, source: 'feed' | 'mentions', cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }>;
+  listMessageStack(accessToken: string, source: 'feedback' | 'mentions', stackId: string, cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }>;
+  listWatchers(accessToken: string, username: string, cursor?: string): Promise<{ items: ExternalRemoteWatcher[]; nextCursor?: string; truncated?: boolean }>;
   listFavourites(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteFavourite[]; nextCursor?: string }>;
   postComment(accessToken: string, externalContentId: string, body: string, parentExternalCommentId?: string): Promise<ExternalRemoteComment>;
   updateContent(accessToken: string, externalContentId: string, update: ExternalContentUpdate, options?: ExternalContentUpdateOptions): Promise<void>;
@@ -360,6 +410,54 @@ const feedbackActivityType = (
   return 'activity';
 };
 
+const normalizeRemoteActivity = (
+  value: unknown,
+  requestedType: 'comments' | 'replies' | 'activity',
+  forceType?: ExternalActivityType
+): ExternalRemoteActivity | null => {
+  const item = asRecord(value);
+  const sourceMessageId = asString(item.messageid) || asString(item.id);
+  if (!sourceMessageId) return null;
+  const subject = asRecord(item.subject);
+  const deviation = Object.keys(asRecord(item.deviation)).length ? asRecord(item.deviation) : asRecord(subject.deviation);
+  const status = Object.keys(asRecord(item.status)).length ? asRecord(item.status) : asRecord(subject.status);
+  const sharedDeviation = (Array.isArray(status.items) ? status.items : [])
+    .map(asRecord)
+    .map((statusItem) => asRecord(statusItem.deviation))
+    .find((statusItem) => Object.keys(statusItem).length > 0);
+  const commentValue = Object.keys(asRecord(item.comment)).length ? item.comment : subject.comment;
+  const comment = normalizeRemoteComment(commentValue);
+  const originator = Object.keys(asRecord(item.originator)).length
+    ? asRecord(item.originator)
+    : asRecord(comment?.rawPayload?.user);
+  const providerType = asString(item.type) || requestedType;
+  const externalContentId = asString(deviation.deviationid)
+    || asString(deviation.id)
+    || asString(sharedDeviation?.deviationid)
+    || asString(sharedDeviation?.id);
+  const remoteActivityId = comment ? `comment:${comment.externalCommentId}` : `message:${sourceMessageId}`;
+  const body = comment?.body || asString(item.html) || descriptionFrom(status) || descriptionFrom(item);
+  return {
+    remoteActivityId,
+    sourceMessageId,
+    type: forceType || feedbackActivityType(requestedType, providerType, comment || undefined),
+    occurredAt: asIsoDate(item.ts) || comment?.createdAt || asIsoDate(status.ts),
+    stackId: asString(item.stackid),
+    stackCount: asNumber(item.stack_count),
+    isNew: asBoolean(item.is_new),
+    actorId: asString(originator.userid) || comment?.authorId,
+    actorName: asString(originator.username) || comment?.authorName,
+    actorAvatarUrl: asString(originator.usericon) || comment?.authorAvatarUrl,
+    ...(externalContentId ? { externalContentId } : {}),
+    ...(comment ? {
+      externalCommentId: comment.externalCommentId,
+      parentExternalCommentId: comment.parentExternalCommentId
+    } : {}),
+    ...(body ? { body } : {}),
+    rawPayload: item
+  };
+};
+
 export interface DeviantArtPublicAiLabels {
   isAiGenerated?: boolean;
   noAi?: boolean;
@@ -504,6 +602,41 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     return { externalUserId, externalUsername };
   }
 
+  async getProfile(accessToken: string, username: string): Promise<ExternalRemoteProfile> {
+    const payload = await this.request(`/user/profile/${encodeURIComponent(username)}`, accessToken, {
+      with_session: 'true',
+      expand: 'user.details,user.stats'
+    });
+    const user = asRecord(payload.user);
+    const details = asRecord(user.details);
+    const userStats = asRecord(user.stats);
+    const profileStats = asRecord(payload.stats);
+    return {
+      profileUrl: asString(payload.profile_url),
+      avatarUrl: asString(user.usericon),
+      userIsArtist: asBoolean(payload.user_is_artist),
+      artistLevel: asString(payload.artist_level),
+      artistSpecialty: asString(payload.artist_specialty) || asString(payload.artist_speciality),
+      realName: asString(payload.real_name),
+      tagline: asString(payload.tagline),
+      country: asString(payload.country),
+      website: asString(payload.website),
+      bio: asString(payload.bio),
+      coverPhotoUrl: asString(payload.cover_photo),
+      joinedAt: asIsoDate(details.joindate),
+      stats: {
+        watchers: asNumber(userStats.watchers),
+        friends: asNumber(userStats.friends),
+        deviations: asNumber(profileStats.user_deviations),
+        favourites: asNumber(profileStats.user_favourites),
+        comments: asNumber(profileStats.user_comments),
+        profilePageviews: asNumber(profileStats.profile_pageviews),
+        profileComments: asNumber(profileStats.profile_comments)
+      },
+      rawPayload: payload
+    };
+  }
+
   async listContent(accessToken: string, options: { username: string; cursor?: string; limit?: number }): Promise<ExternalContentPage> {
     const cursor = options.cursor ? Number(options.cursor) : 0;
     const payload = await this.request('/gallery/all', accessToken, {
@@ -597,6 +730,32 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     return content;
   }
 
+  async getOriginalDownload(accessToken: string, externalContentId: string): Promise<ExternalRemoteDownload> {
+    const path = `/deviation/download/${encodeURIComponent(externalContentId)}`;
+    const response = await fetch(`${DeviantArtProvider.apiBaseUrl}${path}`, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }
+    });
+    const payload = asRecord(await response.json().catch(() => ({})));
+    if (!response.ok) {
+      const providerErrorCode = asNumber(payload.error_code);
+      if (providerErrorCode === 2) return { status: 'not_downloadable', rawPayload: payload };
+      if (providerErrorCode === 1 || providerErrorCode === 3) return { status: 'missing', rawPayload: payload };
+      const error = this.errorFromResponse(response.status, payload, response.headers.get('retry-after'));
+      throw new ExternalProviderError(`DeviantArt ${path}: ${error.message}`, error.code, error.retryAfterSeconds);
+    }
+    const sourceUrl = asString(payload.src);
+    if (!sourceUrl) throw new ExternalProviderError('DeviantArt original download response did not include a source URL', 'invalid_response');
+    return {
+      status: 'available',
+      sourceUrl,
+      filename: asString(payload.filename),
+      byteSize: asNumber(payload.filesize),
+      width: asNumber(payload.width),
+      height: asNumber(payload.height),
+      rawPayload: payload
+    };
+  }
+
   async getEngagement(accessToken: string, externalContentIds: string[]): Promise<ExternalRemoteEngagement[]> {
     const ids = externalContentIds.filter(Boolean).slice(0, DEVIANTART_METADATA_BATCH_SIZE);
     if (!ids.length) return [];
@@ -674,41 +833,80 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
       limit: '50',
       with_session: 'true'
     });
-    const items = rawItems(payload).map((value): ExternalRemoteActivity | null => {
-      const item = asRecord(value);
-      const sourceMessageId = asString(item.messageid) || asString(item.id);
-      if (!sourceMessageId) return null;
-      const subject = asRecord(item.subject);
-      const deviation = Object.keys(asRecord(item.deviation)).length ? asRecord(item.deviation) : asRecord(subject.deviation);
-      const commentValue = Object.keys(asRecord(item.comment)).length ? item.comment : subject.comment;
-      const comment = normalizeRemoteComment(commentValue);
-      const originator = Object.keys(asRecord(item.originator)).length
-        ? asRecord(item.originator)
-        : asRecord(comment?.rawPayload?.user);
-      const providerType = asString(item.type) || type;
-      const externalContentId = asString(deviation.deviationid) || asString(deviation.id);
-      const remoteActivityId = comment ? `comment:${comment.externalCommentId}` : `message:${sourceMessageId}`;
-      return {
-        remoteActivityId,
-        sourceMessageId,
-        type: feedbackActivityType(type, providerType, comment || undefined),
-        occurredAt: asIsoDate(item.ts) || comment?.createdAt,
-        stackId: asString(item.stackid),
-        isNew: asBoolean(item.is_new),
-        actorId: asString(originator.userid) || comment?.authorId,
-        actorName: asString(originator.username) || comment?.authorName,
-        actorAvatarUrl: asString(originator.usericon) || comment?.authorAvatarUrl,
-        ...(externalContentId ? { externalContentId } : {}),
-        ...(comment ? {
-          externalCommentId: comment.externalCommentId,
-          parentExternalCommentId: comment.parentExternalCommentId,
-          body: comment.body
-        } : {}),
-        rawPayload: item
-      };
-    }).filter((item): item is ExternalRemoteActivity => Boolean(item));
+    const items = rawItems(payload)
+      .map((value) => normalizeRemoteActivity(value, type))
+      .filter((item): item is ExternalRemoteActivity => Boolean(item));
     const nextOffset = asNumber(payload.next_offset);
     return { items, nextCursor: Boolean(payload.has_more) && nextOffset !== undefined ? String(nextOffset) : undefined };
+  }
+
+  async listMessages(accessToken: string, source: 'feed' | 'mentions', cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }> {
+    const payload = await this.request(`/messages/${source}`, accessToken, source === 'feed' ? {
+      stack: 'false',
+      ...(cursor ? { cursor } : {}),
+      with_session: 'true'
+    } : {
+      stack: 'true',
+      offset: cursor || '0',
+      limit: '50',
+      with_session: 'true'
+    });
+    const items = rawItems(payload)
+      .map((value) => normalizeRemoteActivity(value, 'activity', source === 'mentions' ? 'mention' : undefined))
+      .filter((item): item is ExternalRemoteActivity => Boolean(item));
+    if (source === 'feed') {
+      const nextCursor = asString(payload.cursor);
+      return { items, nextCursor: Boolean(payload.has_more) && nextCursor && nextCursor !== cursor ? nextCursor : undefined };
+    }
+    const nextOffset = asNumber(payload.next_offset);
+    return { items, nextCursor: Boolean(payload.has_more) && nextOffset !== undefined ? String(nextOffset) : undefined };
+  }
+
+  async listMessageStack(accessToken: string, source: 'feedback' | 'mentions', stackId: string, cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }> {
+    const payload = await this.request(`/messages/${source}/${encodeURIComponent(stackId)}`, accessToken, {
+      offset: cursor || '0',
+      limit: '50',
+      with_session: 'true'
+    });
+    const items = rawItems(payload)
+      .map((value) => normalizeRemoteActivity(value, 'activity', source === 'mentions' ? 'mention' : undefined))
+      .filter((item): item is ExternalRemoteActivity => Boolean(item));
+    const nextOffset = asNumber(payload.next_offset);
+    return { items, nextCursor: Boolean(payload.has_more) && nextOffset !== undefined ? String(nextOffset) : undefined };
+  }
+
+  async listWatchers(accessToken: string, username: string, cursor?: string): Promise<{ items: ExternalRemoteWatcher[]; nextCursor?: string; truncated?: boolean }> {
+    const offset = Number(cursor || '0');
+    const payload = await this.request(`/user/watchers/${encodeURIComponent(username)}`, accessToken, {
+      offset: Number.isFinite(offset) ? String(offset) : '0',
+      limit: '50'
+    });
+    const items = rawItems(payload).map((value): ExternalRemoteWatcher | null => {
+      const item = asRecord(value);
+      const user = asRecord(item.user);
+      const externalUserId = asString(user.userid);
+      const watcherUsername = asString(user.username);
+      if (!externalUserId || !watcherUsername) return null;
+      const watch = asRecord(item.watch);
+      const watchSettings = Object.fromEntries(Object.entries(watch)
+        .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'));
+      return {
+        externalUserId,
+        username: watcherUsername,
+        avatarUrl: asString(user.usericon),
+        lastVisitAt: asIsoDate(item.lastvisit),
+        watchSettings: Object.keys(watchSettings).length ? watchSettings : undefined,
+        rawPayload: item
+      };
+    }).filter((item): item is ExternalRemoteWatcher => Boolean(item));
+    const nextOffset = asNumber(payload.next_offset);
+    const hasMore = Boolean(payload.has_more);
+    const canContinue = hasMore && nextOffset !== undefined && nextOffset > offset && nextOffset <= 50000;
+    return {
+      items,
+      nextCursor: canContinue ? String(nextOffset) : undefined,
+      truncated: hasMore && !canContinue
+    };
   }
 
   async listFavourites(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteFavourite[]; nextCursor?: string }> {

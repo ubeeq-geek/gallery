@@ -921,6 +921,11 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts${query}`);
     return handleJson(response);
   },
+
+  async studioGetDeviantArtProfileHistory(externalAccountId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/profile`);
+    return handleJson(response);
+  },
   async studioRemoveDeviantArtAccount(externalAccountId: string) {
     const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}`, {
       method: 'DELETE',

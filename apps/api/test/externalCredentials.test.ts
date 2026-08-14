@@ -95,6 +95,60 @@ describe('external credentials', () => {
     fetchSpy.mockRestore();
   });
 
+  it('normalizes profile statistics and distinguishes unavailable original downloads', async () => {
+    const provider = new DeviantArtProvider({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://fanadmin.top:4000/integrations/deviantart/callback'
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          user: {
+            userid: 'owner-1',
+            username: 'owner',
+            usericon: 'https://a.deviantart.net/avatar.png',
+            details: { joindate: 1500000000 },
+            stats: { watchers: 12, friends: 3 }
+          },
+          profile_url: 'https://www.deviantart.com/owner',
+          user_is_artist: true,
+          artist_level: 'Professional',
+          artist_specialty: 'Photography',
+          tagline: 'Profile tagline',
+          stats: { user_deviations: 10, user_favourites: 20, user_comments: 30, profile_pageviews: 40, profile_comments: 50 }
+        }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ src: 'https://images-wixmp.com/original.png', filename: 'original.png', width: 1000, height: 800, filesize: 12345 }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: 'invalid_request', error_description: 'Deviation not downloadable', error_code: 2 }),
+        headers: { get: () => null }
+      } as unknown as Response);
+
+    const profile = await provider.getProfile('access-token', 'owner');
+    const available = await provider.getOriginalDownload('access-token', 'deviation-1');
+    const unavailable = await provider.getOriginalDownload('access-token', 'deviation-2');
+
+    expect(profile).toMatchObject({
+      profileUrl: 'https://www.deviantart.com/owner',
+      userIsArtist: true,
+      artistSpecialty: 'Photography',
+      stats: { watchers: 12, friends: 3, deviations: 10, profilePageviews: 40, profileComments: 50 }
+    });
+    expect(available).toMatchObject({ status: 'available', filename: 'original.png', byteSize: 12345 });
+    expect(unavailable).toMatchObject({ status: 'not_downloadable' });
+    expect(new URL(String(fetchSpy.mock.calls[0][0])).searchParams.get('expand')).toBe('user.details,user.stats');
+    fetchSpy.mockRestore();
+  });
+
   it('limits DeviantArt metadata requests to the provider maximum', async () => {
     const provider = new DeviantArtProvider({
       clientId: 'client-id',

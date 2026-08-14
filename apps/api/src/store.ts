@@ -28,6 +28,8 @@ import type {
   PrizeAward,
   PlatformRole,
   ExternalAccount,
+  ExternalAccountProfile,
+  ExternalAccountProfileSnapshot,
   ExternalAccountCreatorAssignment,
   ExternalPlatformCredential,
   Asset,
@@ -41,6 +43,7 @@ import type {
   ExternalEngagementCurrent,
   ExternalComment,
   ExternalFavourite,
+  ExternalWatcher,
   ExternalActivity,
   ExternalSyncCheckpoint,
   ExternalSyncJob,
@@ -219,6 +222,10 @@ export interface DataStore {
   getExternalAccount(externalAccountId: string): Promise<ExternalAccount | null>;
   createExternalAccount(account: ExternalAccount): Promise<void>;
   updateExternalAccount(account: ExternalAccount): Promise<void>;
+  getExternalAccountProfile(externalAccountId: string): Promise<ExternalAccountProfile | null>;
+  upsertExternalAccountProfile(profile: ExternalAccountProfile): Promise<void>;
+  listExternalAccountProfileSnapshots(externalAccountId: string, limit?: number): Promise<ExternalAccountProfileSnapshot[]>;
+  createExternalAccountProfileSnapshot(snapshot: ExternalAccountProfileSnapshot): Promise<void>;
   getExternalPlatformCredential(externalPlatformCredentialId: string): Promise<ExternalPlatformCredential | null>;
   listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId: string): Promise<ExternalPlatformCredential[]>;
   listExternalPlatformCredentialsByUser(userId: string): Promise<ExternalPlatformCredential[]>;
@@ -255,6 +262,8 @@ export interface DataStore {
   updateExternalComment(comment: ExternalComment): Promise<void>;
   listExternalFavourites(externalPublicationId: string, limit?: number): Promise<ExternalFavourite[]>;
   upsertExternalFavourite(favourite: ExternalFavourite): Promise<void>;
+  listExternalWatchers(externalAccountId: string, limit?: number): Promise<ExternalWatcher[]>;
+  upsertExternalWatcher(watcher: ExternalWatcher): Promise<void>;
   getExternalActivityByRemoteId(externalAccountId: string, remoteActivityId: string): Promise<ExternalActivity | null>;
   listExternalActivitiesByAccount(externalAccountId: string, limit?: number): Promise<ExternalActivity[]>;
   listExternalActivitiesByPublication(externalPublicationId: string, limit?: number): Promise<ExternalActivity[]>;
