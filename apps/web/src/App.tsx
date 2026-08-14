@@ -3,10 +3,14 @@ import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } fr
 import { api } from './api';
 import { StudioWorkspace } from './StudioWorkspace';
 import { ForCreatorsPage } from './pages/ForCreatorsPage';
+import { SpaceRulesPage } from './pages/SpaceRulesPage';
+import { SelfHostingPage } from './pages/SelfHostingPage';
 import DiscoveryQuickReadOverlay, { PostMetaHeader, RichPostRenderer, type DiscoveryOverlayItem, type OverlayPost } from './components/DiscoveryQuickReadOverlay';
 import {
   changePassword,
+  beginSocialSignIn,
   clearStoredAuthSession,
+  completeSocialSignIn,
   confirmForgotPassword,
   confirmRegistration,
   forgotPassword,
@@ -15,6 +19,7 @@ import {
   setInitialPassword,
   signIn,
   signOut,
+  isSocialSignInConfigured,
   verifyEmailOtpSignIn,
   type CurrentUser
 } from './cognitoAuth';
@@ -68,7 +73,7 @@ const rememberOtpTrust = (email: string) => {
 type RoleNotificationCounts = { studio: number; admin: number };
 type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
 const ROLE_DISPLAY_LABELS: Partial<Record<PlatformRole, string>> = {
-  contributor: 'Beeker'
+  contributor: 'Ubeeqer'
 };
 const roleDisplayLabel = (role: PlatformRole): string => ROLE_DISPLAY_LABELS[role] || role[0].toUpperCase() + role.slice(1);
 const ROLE_NOTIFICATION_STORAGE_KEY = 'ubeeq.roleNotifications';
@@ -857,18 +862,22 @@ function HeaderAuth({
   const isAdmin = normalizedGroups.includes('admin') || normalizedGroups.includes('admins');
   const primaryManagedArtist = (managedArtists || []).find((artist) => Boolean(artist.slug)) || managedArtists?.[0];
   const canAccessStudio = Boolean(primaryManagedArtist);
-  const showCreatorNav = Boolean(user) && (canAccessStudio || isAdmin);
+  const showCreatorNav = Boolean(user);
   const studioCount = sanitizeNotificationCount(roleNotificationCounts?.studio);
   const adminCount = sanitizeNotificationCount(roleNotificationCounts?.admin);
+  // Every signed-in Ubeeqer has a personal profile; a Space simply upgrades
+  // this link to their public creator profile.
   const artistProfileHref = primaryManagedArtist?.slug ? `/creators/${primaryManagedArtist.slug}` : '/settings';
   const studioHref = '/studio';
   const adminHref = studioHref;
   const isExternalAdminHref = false;
-  const compactNavLabel = canAccessStudio ? 'Creator' : 'Studio';
-  const compactNavHref = studioHref;
+  const compactNavLabel = canAccessStudio ? 'Creator' : 'Profile';
+  const compactNavHref = canAccessStudio ? studioHref : artistProfileHref;
   const isExternalCompactNavHref = false;
   const compactNavCount = studioCount;
-  const isArtistNavActive = location.pathname.startsWith('/creators/');
+  const isArtistNavActive = canAccessStudio
+    ? location.pathname.startsWith('/creators/')
+    : location.pathname.startsWith('/settings');
   const isStudioNavActive = location.pathname.startsWith('/studio');
   const isAdminNavActive = false;
   const showMobileDiscoveryButton = discoveryDock?.viewport === 'mobile';
@@ -967,14 +976,12 @@ function HeaderAuth({
                           Creator
                         </span>
                       )}
-                      {canAccessStudio && (
-                        <Link
-                          to={artistProfileHref}
-                          className={`inline-flex items-center rounded-full px-3 py-1.5 text-sm font-semibold no-underline transition-colors ${isArtistNavActive ? 'bg-emerald-100 text-emerald-900' : 'text-emerald-900 hover:bg-emerald-100'}`}
-                        >
-                          <span>Profile</span>
-                        </Link>
-                      )}
+                      <Link
+                        to={artistProfileHref}
+                        className={`inline-flex items-center rounded-full px-3 py-1.5 text-sm font-semibold no-underline transition-colors ${isArtistNavActive ? 'bg-emerald-100 text-emerald-900' : 'text-emerald-900 hover:bg-emerald-100'}`}
+                      >
+                        <span>Profile</span>
+                      </Link>
                       {canAccessStudio && (
                         <Link
                           to={studioHref}
@@ -1057,18 +1064,27 @@ function HeaderAuth({
                     </nav>
                   </>
                 )}
+                {!canAccessStudio && !isAdmin && (
+                  <Link
+                    to="/studio"
+                    className="auth-nav-btn auth-nav-btn-primary hidden sm:inline-flex"
+                  >
+                    Create a Space
+                  </Link>
+                )}
                 <details className="user-menu">
                   <summary className="user-menu-trigger" aria-label="Open account menu">
                     <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
                   </summary>
                   <div className="user-menu-items">
                     <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
-                    {canAccessStudio && <Link to={artistProfileHref} onClick={closeUserMenus}>Creator</Link>}
+                    <Link to={artistProfileHref} onClick={closeUserMenus}>{canAccessStudio ? 'Creator profile' : 'Profile'}</Link>
                     {canAccessStudio && (
                       <Link to={studioHref} onClick={closeUserMenus}>
                         Studio{studioCount > 0 ? ` (${formatNotificationBadge(studioCount)})` : ''}
                       </Link>
                     )}
+                    {!canAccessStudio && <Link to="/studio" onClick={closeUserMenus}>Create a Space</Link>}
                     {false && isAdmin && (isExternalAdminHref ? (
                       <a href={adminHref} onClick={closeUserMenus}>
                         Admin{adminCount > 0 ? ` (${formatNotificationBadge(adminCount)})` : ''}
@@ -1220,13 +1236,43 @@ function LegacyArtistAreaWorkspaceRedirect() {
   return <Navigate to="/studio/workspace" replace />;
 }
 
+function AuthCallbackPage({ setUser }: { setUser: (u: CurrentUser) => void }) {
+  const navigate = useNavigate();
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    void completeSocialSignIn()
+      .then((nextUser) => {
+        if (!active) return;
+        setUser(nextUser);
+        navigate('/studio', { replace: true });
+      })
+      .catch((cause: unknown) => {
+        if (!active) return;
+        setError(cause instanceof Error ? cause.message : 'Social sign-in could not be completed.');
+      });
+    return () => { active = false; };
+  }, [navigate, setUser]);
+
+  return (
+    <main className="auth-single-page">
+      <section className="auth-card panel">
+        <p className="auth-eyebrow">Ubeeq account</p>
+        <h1>{error ? 'Sign-in needs another try' : 'Finishing sign-in'}</h1>
+        <p className="small">{error || 'Please wait while Ubeeq securely completes your sign-in.'}</p>
+        {error && <Link className="auth-primary-btn" to="/auth/signin">Back to sign in</Link>}
+      </section>
+    </main>
+  );
+}
+
 function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUser) => void }) {
   const navigate = useNavigate();
   const { mode = 'signin' } = useParams();
   const authMode = mode as AuthMode;
 
   const [email, setEmail] = useState('');
-  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -1240,13 +1286,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   const [keepSignedIn, setKeepSignedIn] = useState(() => localStorage.getItem(AUTH_PERSISTENCE_KEY) !== 'session');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
-  const [usernameReason, setUsernameReason] = useState<string>('');
-  const socialEnabled = Boolean(
-    import.meta.env.VITE_COGNITO_DOMAIN &&
-    import.meta.env.VITE_COGNITO_CLIENT_ID &&
-    import.meta.env.VITE_COGNITO_REDIRECT_URI
-  );
+  const socialEnabled = isSocialSignInConfigured();
 
   useEffect(() => {
     if (authMode === 'initial') {
@@ -1272,32 +1312,6 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
       window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
     }
   }, [authMode]);
-
-  useEffect(() => {
-    if (authMode !== 'register') return;
-    const raw = username.trim();
-    if (!raw) {
-      setUsernameReason('');
-      setUsernameSuggestions([]);
-      return;
-    }
-    const timer = window.setTimeout(async () => {
-      try {
-        const result = await api.checkUsername(raw) as { available: boolean; reasons?: string[]; suggestions?: string[] };
-        if (result.available) {
-          setUsernameReason('');
-          setUsernameSuggestions([]);
-          return;
-        }
-        setUsernameReason(result.reasons?.[0] || 'Username unavailable');
-        setUsernameSuggestions(result.suggestions || []);
-      } catch {
-        setUsernameReason('');
-        setUsernameSuggestions([]);
-      }
-    }, 260);
-    return () => window.clearTimeout(timer);
-  }, [authMode, username]);
 
   const withFeedback = async (fn: () => Promise<void>) => {
     try {
@@ -1372,13 +1386,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
     if (password !== confirmPassword) {
       throw new Error('Passwords do not match');
     }
-    const check = await api.checkUsername(username) as { available: boolean; reasons?: string[]; suggestions?: string[] };
-    if (!check.available) {
-      setUsernameReason(check.reasons?.[0] || 'Username unavailable');
-      setUsernameSuggestions(check.suggestions || []);
-      throw new Error(check.reasons?.[0] || 'Username unavailable');
-    }
-    await api.registerAccount(email, password, username);
+    await api.registerAccount(email, password);
     sessionStorage.setItem('auth.confirm.username', email);
     navigate('/auth/confirm');
     setMessage('Registration started. Check your email for the code.');
@@ -1415,14 +1423,9 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
     navigate('/');
   });
 
-  const startSocialSignIn = (provider: 'Google' | 'SignInWithApple') => {
-    const domain = import.meta.env.VITE_COGNITO_DOMAIN;
-    const clientId = import.meta.env.VITE_COGNITO_CLIENT_ID;
-    const redirectUri = import.meta.env.VITE_COGNITO_REDIRECT_URI;
-    if (!domain || !clientId || !redirectUri) return;
-    const url = `https://${domain}/oauth2/authorize?identity_provider=${encodeURIComponent(provider)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent('openid email profile')}`;
-    window.location.href = url;
-  };
+  const startSocialSignIn = (provider: 'Google' | 'SignInWithApple') => withFeedback(async () => {
+    await beginSocialSignIn(provider);
+  });
 
   const isPrimaryAuth = authMode === 'signin' || authMode === 'register';
 
@@ -1431,7 +1434,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
       <div className="layout auth-layout">
         <div className="panel auth-card">
           <div className="auth-card-header">
-            <h2>{authMode === 'signin' ? 'Welcome back' : 'Create account'}</h2>
+            <h2>{authMode === 'signin' ? 'Welcome back' : 'Join Ubeeq'}</h2>
             <span className="badge">Secure sign-in</span>
           </div>
           <p className="small">
@@ -1441,7 +1444,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
                 : signinMethod === 'email_otp'
                 ? 'Sign in with a one-time code sent to your email.'
                 : 'Sign in to continue to your account.')
-              : 'Create your account to continue.'}
+              : 'Join as a Ubeeqer to follow work, save collections, and create a Space whenever you are ready.'}
           </p>
           {authMode === 'signin' && otpContext !== 'mfa' && (
             <div className="auth-method-switch">
@@ -1468,31 +1471,6 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
-          {authMode === 'register' && (
-            <>
-              <input
-                name="preferred_username"
-                autoComplete="new-password"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                placeholder="Profile URL"
-                data-lpignore="true"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-              {usernameReason && <p className="error">{usernameReason}</p>}
-              {usernameSuggestions.length > 0 && (
-                <div className="username-suggestions">
-                  {usernameSuggestions.map((candidate) => (
-                    <button key={candidate} className="username-suggestion-pill" onClick={() => setUsername(candidate)}>
-                      {candidate}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
           {(authMode === 'register' || (authMode === 'signin' && signinMethod === 'password')) && (
             <>
               <div className="auth-inline-label">
@@ -1543,19 +1521,21 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
                       : <button className="auth-primary-btn w-full" onClick={doStartOtpSignIn}>Send code</button>
                   )
               )
-              : <button className="auth-primary-btn w-full" onClick={doRegister}>Create account</button>}
+              : <button className="auth-primary-btn w-full" onClick={doRegister}>Create Ubeeq account</button>}
             <button className="auth-secondary-btn w-full" onClick={() => navigate('/')}>Cancel</button>
           </div>
 
           <div className="auth-divider"><span>or</span></div>
           <div className="auth-social-grid">
-            <button className="auth-secondary-btn" disabled={!socialEnabled} onClick={() => startSocialSignIn('Google')}>Continue with Google</button>
-            <button className="auth-secondary-btn" disabled={!socialEnabled} onClick={() => startSocialSignIn('SignInWithApple')}>Continue with Apple</button>
+            <button className="auth-secondary-btn" disabled={!socialEnabled} onClick={() => void startSocialSignIn('Google')}>Continue with Google</button>
+            <button className="auth-secondary-btn" disabled={!socialEnabled} onClick={() => void startSocialSignIn('SignInWithApple')}>Continue with Apple</button>
           </div>
 
           <div className="auth-confirm-banner">
             Need to confirm your account? <Link to="/auth/confirm">Confirm registration</Link>
           </div>
+
+          {authMode === 'register' && <p className="auth-legal-copy">By creating an account, you agree to the <Link to="/space-rules">Ubeeq Space Rules</Link>. A creator Space is optional and can be created later.</p>}
 
           <div className="small">
             {authMode === 'signin'
@@ -1568,13 +1548,13 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
         </div>
 
         <div className="auth-showcase panel">
-          <span className="auth-chip">Trusted access for collectors and creators</span>
-          <h1>{`${authMode === 'signin' ? 'Sign in' : 'Create your account'} to follow artists, favourite work, and unlock early access.`}</h1>
-          <p>A cleaner entrance experience for a curated gallery platform.</p>
+          <span className="auth-chip">One account. Your pace.</span>
+          <h1>{authMode === 'signin' ? 'Return to the work and people you follow.' : 'Start as a Ubeeqer. Become a creator when it serves your work.'}</h1>
+          <p>Ubeeq membership is for participating in the community. A Ubeeq Space is a separate, free creator setup when you are ready to publish or manage a catalogue.</p>
           <div className="auth-feature-grid">
-            <article><strong>Follow creators</strong><p>Unlock follower-access releases and stay current with new drops.</p></article>
-            <article><strong>Favourite pieces</strong><p>Build your own collection trail and surface relevant work faster.</p></article>
-            <article><strong>Early access</strong><p>See scheduled releases before wide release when artists enable it.</p></article>
+            <article><strong>Follow creators</strong><p>Keep up with work from people and Spaces you care about.</p></article>
+            <article><strong>Save what matters</strong><p>Build private collections and return to work you want to revisit.</p></article>
+            <article><strong>Create later</strong><p>Open a free Space when you want a public home or creator tools.</p></article>
           </div>
           <div className="auth-showcase-actions">
             {authMode === 'signin'
@@ -1588,9 +1568,11 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   }
 
   return (
-    <div className="layout">
-      <div className="panel max-w-3xl">
-        <h1>Account</h1>
+    <main className="auth-single-page">
+      <section className="panel auth-card auth-flow-card">
+        <p className="auth-eyebrow">Ubeeq account</p>
+        <h1>{authMode === 'confirm' ? 'Check your email' : authMode === 'forgot' ? 'Reset your password' : 'Choose a new password'}</h1>
+        <p className="small">{authMode === 'confirm' ? 'Enter the code from your Ubeeq verification email to activate your account.' : authMode === 'forgot' ? 'We will send a code so you can set a new password.' : 'Set a password to complete your account setup.'}</p>
 
         {(authMode === 'confirm' || authMode === 'forgot' || authMode === 'initial') && (
           <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -1615,8 +1597,9 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
 
         {message && <p className="success">{message}</p>}
         {error && <p className="error">{error}</p>}
-      </div>
-    </div>
+        <Link className="auth-secondary-btn auth-flow-back" to="/auth/signin">Back to sign in</Link>
+      </section>
+    </main>
   );
 }
 
@@ -7506,7 +7489,7 @@ function StudioDashboardPage({
   const [newFileMimeType, setNewFileMimeType] = useState('image/jpeg');
   const [selectedGalleryId, setSelectedGalleryId] = useState('');
   const totalUsers = studioMetrics?.totalUsers || 0;
-  const beekerCount = studioMetrics?.contributors || 0;
+  const ubeeqerCount = studioMetrics?.contributors || 0;
   const creatorCount = studioMetrics?.creators || Math.max(0, managedArtists.length);
   const reviewCount = studioMetrics?.adminReviewItems || adminCount;
   const quickLinks = [
@@ -7521,7 +7504,7 @@ function StudioDashboardPage({
     { label: 'Moderation', section: 'moderation' }
   ];
   const queueItems = [
-    { title: 'Review approved challenge entries', detail: '12 items · promotes User to Beeker', tone: 'success' },
+    { title: 'Review approved challenge entries', detail: '12 items · recognizes an active Ubeeqer', tone: 'success' },
     { title: 'Confirm bulk media deletion', detail: '2-step admin action · 41 assets', tone: 'warning' },
     { title: 'Resolve flagged user collection', detail: 'Mature-tag mismatch', tone: 'danger' },
     { title: 'Publish scheduled creator posts', detail: '6 items due today', tone: 'info' }
@@ -7596,9 +7579,8 @@ function StudioDashboardPage({
           <span>STUDIO</span>
         </div>
         <div className="studio-contributor-label">
-          <strong>Contributor label</strong>
-          <p>System name: Contributor.</p>
-          <p>Visual name: {roleDisplayLabel('contributor')}.</p>
+          <strong>Ubeeqer account</strong>
+          <p>Participation label: {roleDisplayLabel('contributor')}.</p>
         </div>
         <nav className="studio-sidebar-nav">
           <Link className="studio-nav-item studio-nav-item-active no-underline" to="/studio">
@@ -7643,7 +7625,7 @@ function StudioDashboardPage({
 
         <section className="studio-stat-grid">
           <article className="panel"><p>Total users</p><h3>{totalUsers.toLocaleString()}</h3><span>live from `/studio/metrics`</span></article>
-          <article className="panel"><p>Beekers</p><h3>{beekerCount.toLocaleString()}</h3><span>contributor role count</span></article>
+          <article className="panel"><p>Ubeeqers</p><h3>{ubeeqerCount.toLocaleString()}</h3><span>contributor role count</span></article>
           <article className="panel"><p>Creators</p><h3>{creatorCount.toLocaleString()}</h3><span>live creator accounts</span></article>
           <article className="panel"><p>Admin review items</p><h3>{reviewCount.toLocaleString()}</h3><span>entries + moderation queue</span></article>
         </section>
@@ -7654,11 +7636,11 @@ function StudioDashboardPage({
               <h3>Studio overview</h3>
               <button type="button" className="auth-secondary-btn">+ New item</button>
             </div>
-            <p className="small">A single contribution surface for users, Beekers, Creators, and Admins. No separate admin area.</p>
+            <p className="small">A single contribution surface for users, Ubeeqers, Creators, and Admins. No separate admin area.</p>
             <div className="studio-overview-cards">
               <div className="studio-overview-card success">
-                <h4>Beeker onboarding</h4>
-                <p>Approved challenge entries automatically unlock the Beeker role and contributor tools.</p>
+                <h4>Ubeeqer participation</h4>
+                <p>Challenge participation can recognize active Ubeeqers and unlock contributor tools.</p>
                 <span>12 awaiting review</span>
               </div>
               <div className="studio-overview-card info">
@@ -7888,10 +7870,13 @@ export default function App() {
         <Route path="/posts/:slug" element={<PostPage />} />
         <Route path="/collections" element={<CollectionsPage />} />
         <Route path="/for-creators" element={<ForCreatorsPage />} />
+        <Route path="/space-rules" element={<SpaceRulesPage />} />
+        <Route path="/self-hosting" element={<SelfHostingPage />} />
         <Route path="/collections/:collectionId" element={<CollectionDetailPage />} />
+        <Route path="/auth/callback" element={<AuthCallbackPage setUser={setUser} />} />
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
         <Route path="/settings" element={<SettingsPage user={user} onProfileChanged={setMyProfile} />} />
-        <Route path="/studio" element={<StudioDashboardPage user={user} managedArtists={managedArtists} roleNotificationCounts={roleNotificationCounts} />} />
+        <Route path="/studio" element={user ? <StudioWorkspace /> : <Navigate to="/auth/signin" replace />} />
         <Route path="/studio/workspace" element={user ? <StudioWorkspace /> : <Navigate to="/auth/signin" replace />} />
         <Route path="/admin" element={<Navigate to="/studio" replace />} />
         <Route path="/artist-area" element={<LegacyArtistAreaRedirect />} />

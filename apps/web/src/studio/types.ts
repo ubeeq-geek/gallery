@@ -1,3 +1,5 @@
+import type { PostBlock } from '../domainTypes';
+
 export type StudioMetrics = {
   totalUsers: number;
   creators: number;
@@ -15,6 +17,8 @@ export type StudioCreator = {
   name: string;
   slug: string;
   status?: 'active' | 'inactive';
+  spaceTier?: 'free' | 'approved';
+  approvedCreatorAt?: string;
   createdAt?: string;
   branding?: {
     profileImage?: {
@@ -64,7 +68,13 @@ export type StudioPost = {
   summary?: string;
   updatedAt?: string;
   primaryMediaId?: string;
-  media?: Array<{ mediaId: string }>;
+  blocks: PostBlock[];
+  media?: Array<{
+    mediaId: string;
+    caption?: string;
+    sortOrder?: number;
+    discoverable?: boolean;
+  }>;
 };
 
 export type StudioGrouping = {
@@ -102,4 +112,227 @@ export type StudioUser = {
   role: string;
   isBeeker?: boolean;
   managedCreatorCount?: number;
+};
+
+export type StudioDeviantArtAccount = {
+  externalAccountId: string;
+  externalPlatformCredentialId: string;
+  creatorIdentityId?: string;
+  primaryCreatorIdentityId?: string;
+  creatorAssignments?: string[];
+  platform: 'deviantart';
+  externalUserId: string;
+  externalUsername: string;
+  tokenExpiresAt?: string;
+  connectionStatus: 'connected' | 'authentication_required' | 'rate_limited' | 'temporarily_unavailable' | 'disabled';
+  lastSuccessfulSyncAt?: string;
+  lastSyncAttemptAt?: string;
+  includeSourceFilesOnSync?: boolean;
+};
+
+export type StudioExternalSyncJob = {
+  externalSyncJobId: string;
+  externalAccountId: string;
+  type: string;
+  status: string;
+  progress?: { discovered: number; synchronized: number; remaining: number };
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type StudioExternalComment = {
+  externalCommentId: string;
+  externalCommentExternalId: string;
+  externalPublicationId: string;
+  externalAuthorId?: string;
+  externalAuthorName?: string;
+  externalAuthorAvatarUrl?: string;
+  body: string;
+  createdAtRemote?: string;
+  parentExternalCommentExternalId?: string;
+  replyCount?: number;
+  likeCount?: number;
+  isLiked?: boolean;
+  isFeatured?: boolean;
+  hiddenReason?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  remoteDeletedAt?: string;
+  lastSyncedAt: string;
+};
+
+export type StudioExternalEngagement = {
+  externalPublicationId: string;
+  capturedAt: string;
+  views?: number;
+  favourites?: number;
+  comments?: number;
+  downloads?: number;
+  viewsToday?: number;
+  downloadsToday?: number;
+};
+
+export type StudioExternalFavourite = {
+  externalPublicationId: string;
+  externalUserId: string;
+  externalUsername: string;
+  externalUserAvatarUrl?: string;
+  favouritedAtRemote?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  active: boolean;
+};
+
+export type StudioExternalActivity = {
+  externalActivityId: string;
+  externalAccountId: string;
+  externalPublicationId?: string;
+  assetId?: string;
+  platform: string;
+  type: 'comment' | 'reply' | 'favourite' | 'watch' | 'unwatch' | 'mention' | 'activity';
+  direction: 'inbound' | 'outbound';
+  remoteActivityId: string;
+  remoteMessageId?: string;
+  remoteStackId?: string;
+  externalActorName?: string;
+  externalActorAvatarUrl?: string;
+  body?: string;
+  occurredAt?: string;
+  firstSeenAt: string;
+  readAt?: string;
+  remoteDeletedAt?: string;
+  account?: {
+    externalAccountId: string;
+    platform: string;
+    externalUserId: string;
+    externalUsername: string;
+  };
+  work?: {
+    assetId: string;
+    title: string;
+    assetType: string;
+    thumbnailUrl?: string;
+    externalUrl?: string;
+  };
+};
+
+export type StudioWorkActivityDestination = {
+  publication: StudioExternalPublication;
+  account?: StudioDeviantArtAccount;
+  engagement: StudioExternalEngagement | null;
+  comments: StudioExternalComment[];
+  favourites: StudioExternalFavourite[];
+  activities: StudioExternalActivity[];
+  capabilities?: {
+    reply: boolean;
+    remoteCommentModeration: boolean;
+    remoteCommentModerationReason?: string;
+  };
+};
+
+export type StudioExternalPublication = {
+  externalPublicationId: string;
+  externalAccountId: string;
+  platform?: string;
+  externalUsername: string;
+  externalContentId: string;
+  targetStatus?: 'draft' | 'published';
+  canUpdatePublishedDescription?: boolean;
+  publishedDescriptionUpdateMode?: 'stash';
+  externalUrl?: string;
+  previewUrl?: string;
+  externalTitle?: string;
+  externalDescription?: string;
+  externalTags: string[];
+  displayOptions?: {
+    allowComments?: boolean;
+    isMature?: boolean;
+    matureLevel?: 'strict' | 'moderate';
+    matureClassification?: string[];
+    isAiGenerated?: boolean;
+    noAi?: boolean;
+  };
+  externalCollectionIds: string[];
+  publishedAt?: string;
+  remoteUpdatedAt?: string;
+  lastSyncedAt?: string;
+  metadataSyncStatus?: 'in_sync' | 'remote_changed' | 'local_update_pending' | 'conflict';
+  remoteChangeDetectedAt?: string;
+  lastOutboundSyncAt?: string;
+  remoteStateReason?: string;
+  syncStatus: 'pending_publish' | 'draft' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
+};
+
+export type StudioExternalAsset = {
+  assetId: string;
+  creatorIdentityId: string;
+  assetType: 'image' | 'literature' | 'video' | 'animation' | 'other';
+  canonicalTitle?: string;
+  canonicalDescription?: string;
+  visibility: 'private' | 'unlisted' | 'public';
+  titleSyncPolicy: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
+  descriptionSyncPolicy: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
+  updatedAt: string;
+  /** A preview from the Ubeeq Space backup, when one is available. */
+  thumbnailUrl?: string;
+  spacePublication?: StudioSpacePublication | null;
+  engagement?: {
+    views: number;
+    favourites: number;
+    comments: number;
+    downloads: number;
+    capturedAt?: string;
+    destinations: number;
+  };
+  publications: StudioExternalPublication[];
+};
+
+export type StudioSpacePublication = {
+  assetId: string;
+  published: boolean;
+  hostingMode: 'linked' | 'hosted';
+  contentSyncStatus?: 'not_requested' | 'queued' | 'syncing' | 'hosted' | 'not_available' | 'failed';
+  sourceCopyQuality?: 'original' | 'display_copy';
+  originalDownloadStatus?: 'available' | 'not_downloadable' | 'missing';
+  hostedByteSize?: number;
+  lastContentSyncAt?: string;
+  contentSyncError?: string;
+  publishedAt?: string;
+  visibility: 'private' | 'unlisted' | 'public';
+};
+
+export type StudioUbeeqCollection = {
+  ubeeqCollectionId: string;
+  creatorIdentityId: string;
+  name: string;
+  parentUbeeqCollectionId?: string;
+  visibility: 'private' | 'unlisted' | 'public';
+  collectionType?: 'collection' | 'gallery' | 'series';
+};
+
+export type StudioExternalCollection = {
+  externalCollectionId: string;
+  externalAccountId: string;
+  externalCollectionExternalId: string;
+  externalUsername: string;
+  name: string;
+  description?: string;
+  parentExternalCollectionExternalId?: string;
+  position?: number;
+  remoteSize?: number;
+  syncStatus?: 'active' | 'missing';
+  lastSeenAt?: string;
+  lastSyncedAt?: string;
+};
+
+export type StudioExternalCollectionMapping = {
+  externalCollectionMappingId: string;
+  externalAccountId: string;
+  externalCollectionId: string;
+  ubeeqCollectionId: string;
+  syncMode: 'continuous' | 'initial_only' | 'manual' | 'ignored';
+  lastMembershipSyncAt?: string;
+  lastMembershipCount?: number;
+  lastMembershipError?: string;
 };

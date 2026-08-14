@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { Duration, RemovalPolicy, Stack, StackProps, CfnOutput } from 'aws-cdk-lib';
+import { Duration, RemovalPolicy, Stack, StackProps, CfnOutput, SecretValue } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
@@ -20,6 +20,24 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 export class UbeeqStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
+
+    const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
+    const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+    const appleServiceId = process.env.APPLE_SERVICE_ID?.trim();
+    const appleTeamId = process.env.APPLE_TEAM_ID?.trim();
+    const appleKeyId = process.env.APPLE_KEY_ID?.trim();
+    const applePrivateKey = process.env.APPLE_PRIVATE_KEY?.replace(/\\n/g, '\n').trim();
+    const socialGoogleEnabled = Boolean(googleClientId && googleClientSecret);
+    const socialAppleEnabled = Boolean(appleServiceId && appleTeamId && appleKeyId && applePrivateKey);
+    const cognitoDomainPrefix = process.env.COGNITO_DOMAIN_PREFIX?.trim();
+    const sesFromAddress = process.env.SES_FROM_ADDRESS?.trim();
+    const webAppUrl = process.env.WEB_APP_URL?.trim().replace(/\/$/, '');
+    const cognitoCallbackUrls = [
+      'http://localhost:5173/auth/callback',
+      'http://localhost:5174/auth/callback',
+      ...(webAppUrl ? [`${webAppUrl}/auth/callback`] : [])
+    ];
+    const cognitoLogoutUrls = ['http://localhost:5173', 'http://localhost:5174', ...(webAppUrl ? [webAppUrl] : [])];
 
     const siteSettingsTable = new dynamodb.Table(this, 'SiteSettingsTable', {
       partitionKey: { name: 'settingId', type: dynamodb.AttributeType.STRING },
@@ -86,6 +104,17 @@ export class UbeeqStack extends Stack {
       deadLetterQueue: {
         maxReceiveCount: 5,
         queue: videoPosterIngestDlq
+      }
+    });
+    const externalSyncDlq = new sqs.Queue(this, 'ExternalSyncDlq', {
+      retentionPeriod: Duration.days(14)
+    });
+    const externalSyncQueue = new sqs.Queue(this, 'ExternalSyncQueue', {
+      visibilityTimeout: Duration.minutes(15),
+      receiveMessageWaitTime: Duration.seconds(20),
+      deadLetterQueue: {
+        maxReceiveCount: 5,
+        queue: externalSyncDlq
       }
     });
     mediaBucket.addEventNotification(
@@ -159,13 +188,58 @@ export class UbeeqStack extends Stack {
     const userPool = new cognito.UserPool(this, 'UbeeqUserPool', {
       selfSignUpEnabled: true,
       signInAliases: { email: true },
-      standardAttributes: { email: { required: true, mutable: false } }
+      standardAttributes: { email: { required: true, mutable: false } },
+      email: sesFromAddress
+        ? cognito.UserPoolEmail.withSES({
+            fromEmail: sesFromAddress,
+            fromName: 'Ubeeq',
+            replyTo: sesFromAddress
+          })
+        : undefined,
+      userVerification: {
+        emailStyle: cognito.VerificationEmailStyle.CODE,
+        emailSubject: 'Your Ubeeq verification code',
+        emailBody: '<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#10221a"><h1 style="margin:0 0 12px;font-size:28px">Welcome to Ubeeq</h1><p style="font-size:16px;line-height:1.5">Use this code to verify your email and finish setting up your Ubeeq account.</p><p style="margin:28px 0;padding:16px;background:#edf7ef;border-radius:8px;font-size:28px;font-weight:700;letter-spacing:4px;text-align:center">{####}</p><p style="font-size:14px;line-height:1.5;color:#52615a">If you did not create an account, you can ignore this email.</p><p style="font-size:14px;color:#52615a">Ubeeq</p></div>'
+      }
     });
     const userPoolCfn = userPool.node.defaultChild as cognito.CfnUserPool;
     userPoolCfn.addPropertyOverride('Policies.SignInPolicy.AllowedFirstAuthFactors', [
       'PASSWORD',
       'EMAIL_OTP'
     ]);
+
+    const googleProvider = socialGoogleEnabled
+      ? new cognito.UserPoolIdentityProviderGoogle(this, 'GoogleIdentityProvider', {
+          userPool,
+          clientId: googleClientId!,
+          clientSecretValue: SecretValue.unsafePlainText(googleClientSecret!),
+          scopes: ['openid', 'email', 'profile'],
+          attributeMapping: {
+            email: cognito.ProviderAttribute.GOOGLE_EMAIL,
+            fullname: cognito.ProviderAttribute.GOOGLE_NAME
+          }
+        })
+      : undefined;
+    const appleProvider = socialAppleEnabled
+      ? new cognito.UserPoolIdentityProviderApple(this, 'AppleIdentityProvider', {
+          userPool,
+          clientId: appleServiceId!,
+          teamId: appleTeamId!,
+          keyId: appleKeyId!,
+          privateKeyValue: SecretValue.unsafePlainText(applePrivateKey!),
+          scopes: ['name', 'email'],
+          attributeMapping: {
+            email: cognito.ProviderAttribute.APPLE_EMAIL,
+            fullname: cognito.ProviderAttribute.APPLE_NAME
+          }
+        })
+      : undefined;
+    const userPoolDomain = cognitoDomainPrefix
+      ? userPool.addDomain('UbeeqCognitoDomain', {
+          cognitoDomain: { domainPrefix: cognitoDomainPrefix },
+          managedLoginVersion: cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN
+        })
+      : undefined;
 
     const userPoolClient = new cognito.UserPoolClient(this, 'UbeeqUserPoolClient', {
       userPool,
@@ -176,9 +250,14 @@ export class UbeeqStack extends Stack {
       oAuth: {
         flows: { authorizationCodeGrant: true },
         scopes: [cognito.OAuthScope.EMAIL, cognito.OAuthScope.OPENID, cognito.OAuthScope.PROFILE],
-        callbackUrls: ['http://localhost:5173/callback', 'http://localhost:5174/callback'],
-        logoutUrls: ['http://localhost:5173', 'http://localhost:5174']
+        callbackUrls: cognitoCallbackUrls,
+        logoutUrls: cognitoLogoutUrls
       },
+      supportedIdentityProviders: [
+        cognito.UserPoolClientIdentityProvider.COGNITO,
+        ...(googleProvider ? [cognito.UserPoolClientIdentityProvider.GOOGLE] : []),
+        ...(appleProvider ? [cognito.UserPoolClientIdentityProvider.APPLE] : [])
+      ],
       readAttributes: new cognito.ClientAttributes()
         .withStandardAttributes({ email: true, preferredUsername: true }),
       writeAttributes: new cognito.ClientAttributes()
@@ -191,6 +270,8 @@ export class UbeeqStack extends Stack {
       'ALLOW_USER_PASSWORD_AUTH',
       'ALLOW_REFRESH_TOKEN_AUTH'
     ]);
+    if (googleProvider) userPoolClient.node.addDependency(googleProvider);
+    if (appleProvider) userPoolClient.node.addDependency(appleProvider);
 
     const adminsGroup = new cognito.CfnUserPoolGroup(this, 'AdminsGroup', {
       groupName: 'Admins',
@@ -230,6 +311,13 @@ export class UbeeqStack extends Stack {
         COGNITO_USER_POOL_ID: userPool.userPoolId,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
         COGNITO_TOKEN_USE: 'id',
+        EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
+        EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
+        EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
+        DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true',
+        EXTERNAL_OAUTH_REDIRECT_URI: process.env.EXTERNAL_OAUTH_REDIRECT_URI || '',
+        EXTERNAL_TOKEN_ENCRYPTION_KEY: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '',
+        APP_ORIGIN: process.env.APP_ORIGIN || '',
         TRENDING_FEED_MAX_ITEMS: '600',
         TRENDING_CANDIDATE_LIMIT: '1500',
         MEDIA_CDN_DOMAIN: mediaDistribution.distributionDomainName,
@@ -258,6 +346,46 @@ export class UbeeqStack extends Stack {
         MEDIA_BUCKET: mediaBucket.bucketName,
         TRENDING_FEED_MAX_ITEMS: '600',
         TRENDING_CANDIDATE_LIMIT: '1500'
+      }
+    });
+    const externalSyncFn = new lambdaNodejs.NodejsFunction(this, 'ExternalSyncFunction', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      entry: path.join(__dirname, '../../apps/api/src/externalSyncHandler.ts'),
+      handler: 'handler',
+      timeout: Duration.minutes(15),
+      memorySize: 1024,
+      depsLockFilePath: path.join(__dirname, '../../package-lock.json'),
+      bundling: {
+        target: 'node22',
+        externalModules: ['@aws-sdk/*']
+      },
+      environment: {
+        CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        USE_CONTENT_CORE_TABLE: 'true',
+        EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
+        EXTERNAL_TOKEN_ENCRYPTION_KEY: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '',
+        EXTERNAL_SYNC_BASE_DELAY_SECONDS: '60',
+        EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
+        EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
+        DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true'
+      }
+    });
+    const externalSyncSchedulerFn = new lambdaNodejs.NodejsFunction(this, 'ExternalSyncSchedulerFunction', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      entry: path.join(__dirname, '../../apps/api/src/externalSyncScheduler.ts'),
+      handler: 'handler',
+      timeout: Duration.minutes(2),
+      depsLockFilePath: path.join(__dirname, '../../package-lock.json'),
+      bundling: {
+        target: 'node22',
+        externalModules: ['@aws-sdk/*']
+      },
+      environment: {
+        CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        USE_CONTENT_CORE_TABLE: 'true',
+        EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
+        EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
+        EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120'
       }
     });
     const ffmpegLayerArn = process.env.FFMPEG_LAYER_ARN;
@@ -301,17 +429,33 @@ export class UbeeqStack extends Stack {
     contentStatsTable.grantReadWriteData(apiFn);
     trendingFeedTable.grantReadWriteData(apiFn);
     contentCoreTable.grantReadWriteData(apiFn);
+    contentCoreTable.grantReadWriteData(externalSyncFn);
+    contentCoreTable.grantReadWriteData(externalSyncSchedulerFn);
+    const externalPublicationTransactionPolicy = new iam.PolicyStatement({
+      actions: ['dynamodb:TransactWriteItems'],
+      resources: [contentCoreTable.tableArn]
+    });
+    apiFn.addToRolePolicy(externalPublicationTransactionPolicy);
+    externalSyncFn.addToRolePolicy(externalPublicationTransactionPolicy);
     mediaBucket.grantReadWrite(apiFn);
+    mediaBucket.grantReadWrite(externalSyncFn);
     contentStatsTable.grantReadWriteData(trendingRankerFn);
     trendingFeedTable.grantReadWriteData(trendingRankerFn);
     contentCoreTable.grantReadData(trendingRankerFn);
     contentCoreTable.grantReadWriteData(videoPosterIngestFn);
     mediaBucket.grantReadWrite(videoPosterIngestFn);
     videoPosterIngestQueue.grantConsumeMessages(videoPosterIngestFn);
+    externalSyncQueue.grantSendMessages(apiFn);
+    externalSyncQueue.grantConsumeMessages(externalSyncFn);
+    externalSyncQueue.grantSendMessages(externalSyncSchedulerFn);
 
     new events.Rule(this, 'TrendingRankerSchedule', {
       schedule: events.Schedule.rate(Duration.minutes(5)),
       targets: [new targets.LambdaFunction(trendingRankerFn)]
+    });
+    new events.Rule(this, 'ExternalSyncRetrySchedule', {
+      schedule: events.Schedule.rate(Duration.minutes(1)),
+      targets: [new targets.LambdaFunction(externalSyncSchedulerFn)]
     });
 
     const api = new apigw.LambdaRestApi(this, 'UbeeqApi', {
@@ -353,6 +497,8 @@ export class UbeeqStack extends Stack {
     new CfnOutput(this, 'VideoPosterIngestQueueUrl', { value: videoPosterIngestQueue.queueUrl });
     new CfnOutput(this, 'VideoPosterIngestQueueArn', { value: videoPosterIngestQueue.queueArn });
     new CfnOutput(this, 'VideoPosterIngestDlqUrl', { value: videoPosterIngestDlq.queueUrl });
+    new CfnOutput(this, 'ExternalSyncQueueUrl', { value: externalSyncQueue.queueUrl });
+    new CfnOutput(this, 'ExternalSyncDlqUrl', { value: externalSyncDlq.queueUrl });
     new CfnOutput(this, 'MediaCdnDomainName', { value: mediaDistribution.distributionDomainName });
     if (premiumMediaDistribution) {
       new CfnOutput(this, 'PremiumMediaCdnDomainName', { value: premiumMediaDistribution.distributionDomainName });
@@ -365,6 +511,7 @@ export class UbeeqStack extends Stack {
     new CfnOutput(this, 'SiteSettingsTableName', { value: siteSettingsTable.tableName });
     new CfnOutput(this, 'UserPoolId', { value: userPool.userPoolId });
     new CfnOutput(this, 'UserPoolClientId', { value: userPoolClient.userPoolClientId });
+    if (userPoolDomain) new CfnOutput(this, 'UserPoolDomain', { value: userPoolDomain.domainName });
     new CfnOutput(this, 'AdminsGroupName', { value: adminsGroup.groupName || 'Admins' });
     new CfnOutput(this, 'CreatorsGroupName', { value: creatorsGroup.ref });
     new CfnOutput(this, 'UsersGroupName', { value: usersGroup.groupName || 'Users' });

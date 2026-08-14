@@ -1,22 +1,32 @@
 export type StudioSection =
   | 'dashboard'
+  | 'activity'
+  | 'publishing'
+  | 'settings'
   | 'files-media'
   | 'posts'
   | 'groupings'
   | 'collections'
+  | 'works'
   | 'creators'
+  | 'integrations'
   | 'challenges'
   | 'entries'
   | 'users'
   | 'moderation';
 
 export const studioSectionDefs: Array<{ key: StudioSection; label: string; description: string }> = [
-  { key: 'dashboard', label: 'Dashboard', description: 'Overview and action queues for Studio.' },
+  { key: 'dashboard', label: 'Home', description: 'Your creator catalogue and publishing activity.' },
+  { key: 'activity', label: 'Activity', description: 'Comments, favourites, and other activity from connected platforms.' },
+  { key: 'works', label: 'Works', description: 'Find, organize, and prepare work from your local catalogue.' },
+  { key: 'collections', label: 'Collections', description: 'Organize work into Ubeeq collections, galleries, and series.' },
+  { key: 'publishing', label: 'Publishing', description: 'Prepare work for external publishing and review its status.' },
+  { key: 'integrations', label: 'Integrations', description: 'Connect and manage creator platforms such as DeviantArt.' },
+  { key: 'settings', label: 'Settings', description: 'Manage creator defaults, access, and Studio preferences.' },
+  { key: 'creators', label: 'Manage creators', description: 'Create and maintain the creator identities in this account.' },
   { key: 'files-media', label: 'Files & Media', description: 'File-level and media-level resources.' },
   { key: 'posts', label: 'Posts', description: 'Canonical post CRUD with canonical media references.' },
   { key: 'groupings', label: 'Groupings', description: 'Creator-owned public/private content groupings.' },
-  { key: 'collections', label: 'Collections', description: 'User collections with privacy controls and moderation.' },
-  { key: 'creators', label: 'Creators', description: 'Creator accounts and multi-creator ownership management.' },
   { key: 'challenges', label: 'Challenges', description: 'Challenge lifecycle, prizes, and winners managed inside Studio.' },
   { key: 'entries', label: 'Entries', description: 'Entry approvals and contributor promotions into the configured contributor display flow.' },
   { key: 'users', label: 'Users', description: 'Role ladder, promotions, demotions, and user capability controls.' },
@@ -31,4 +41,23 @@ export const readStudioSection = (search: string): StudioSection => {
   return found?.key || 'dashboard';
 };
 
-export const studioNavSections = studioSectionDefs.filter((section) => section.key !== 'dashboard');
+export const studioPrimaryNavSections: StudioSection[] = [
+  'dashboard',
+  'activity',
+  'works',
+  'collections',
+  'publishing',
+  'integrations',
+  'settings'
+];
+
+export const studioManagementNavSections: StudioSection[] = [
+  'creators',
+  'files-media',
+  'posts',
+  'groupings',
+  'challenges',
+  'entries',
+  'users',
+  'moderation'
+];

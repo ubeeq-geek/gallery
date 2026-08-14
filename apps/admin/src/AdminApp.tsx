@@ -13,7 +13,7 @@ import {
 type View = 'creators' | 'galleries' | 'media' | 'posts' | 'settings' | 'moderation' | 'users';
 type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
 const ROLE_DISPLAY_LABELS: Partial<Record<PlatformRole, string>> = {
-  contributor: 'Beeker'
+  contributor: 'Ubeeqer'
 };
 const roleDisplayLabel = (role: PlatformRole): string => ROLE_DISPLAY_LABELS[role] || role[0].toUpperCase() + role.slice(1);
 type ContentRating = 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';

@@ -1,9 +1,24 @@
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import fs from 'fs';
+import path from 'path';
 
 export default defineConfig({
-  plugins: [react()],
   server: {
-    port: 5173
-  }
+    host: 'fanadmin.top',
+    port: 5174,
+    strictPort: true,
+
+    https: {
+      key: fs.readFileSync(
+        path.resolve(__dirname, '../../certs/fanadmin.top-key.pem')
+      ),
+      cert: fs.readFileSync(
+        path.resolve(__dirname, '../../certs/fanadmin.top.pem')
+      ),
+    },
+
+    allowedHosts: [
+      'fanadmin.top',
+    ],
+  },
 });

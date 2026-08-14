@@ -31,7 +31,17 @@ import type {
   SiteSettings,
   SourceFile,
   UserCapabilities,
-  UserProfile
+  UserProfile,
+  Asset,
+  ExternalPublication,
+  SpacePublication,
+  ExternalAccount,
+  ExternalPlatformCredential,
+  ExternalCollectionMapping,
+  ExternalEngagementCurrent,
+  ExternalSyncJob,
+  UbeeqCollection,
+  UbeeqCollectionAsset
 } from './domain';
 import {
   generateCreatorCoverRenditions,
@@ -68,10 +78,18 @@ import {
   type ViewerDisclosurePolicy
 } from './disclosures';
 import { capabilitiesForRole, normalizePlatformRoleValue } from './roleHelpers';
+import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
+import { createExternalPlatformProvider, ExternalProviderError } from './externalPlatformProvider';
+import { storeUbeeqWorkImage } from './externalContentStorage';
+import { externalOAuthPkce, issueExternalOAuthState, resolveExternalOAuthReturnUrl, verifyExternalOAuthState } from './externalOAuth';
+import { createExternalSyncQueue } from './externalSyncQueue';
+import type { ExternalSyncQueue } from './externalSyncQueue';
+import { dismissExternalActivity, replyToExternalComment } from './externalSyncWorker';
 
 interface CreateAppOptions {
   config: AppConfig;
   store: DataStore;
+  externalSyncQueue?: ExternalSyncQueue;
 }
 
 let hasHandledInvocation = false;
@@ -496,10 +514,11 @@ const parsePassthroughCursor = (token?: string): string | undefined => {
 const encodePassthroughCursor = (value: string): string =>
   encodeCursorToken({ v: 1, type: 'passthrough', value });
 
-export const createApp = ({ config, store }: CreateAppOptions) => {
+export const createApp = ({ config, store, externalSyncQueue: injectedExternalSyncQueue }: CreateAppOptions) => {
   const app = express();
   const s3Client = new S3Client({ region: config.awsRegion });
   const cognitoClient = new CognitoIdentityProviderClient({ region: config.awsRegion });
+  const externalSyncQueue = injectedExternalSyncQueue || createExternalSyncQueue(config);
   const mediaCdnDomain = (config.mediaCdnDomain || '')
     .trim()
     .replace(/^https?:\/\//i, '')
@@ -651,6 +670,75 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     console.error(`[api-error] scope=${scope} message=${message}${stack ? `\n${stack}` : ''}`);
   };
 
+  const toExternalAccountResponse = (account: ExternalAccount) => ({
+    externalAccountId: account.externalAccountId,
+    userId: account.userId,
+    creatorIdentityId: account.creatorIdentityId,
+    primaryCreatorIdentityId: account.primaryCreatorIdentityId || account.creatorIdentityId,
+    externalPlatformCredentialId: account.externalPlatformCredentialId,
+    platform: account.platform,
+    externalUserId: account.externalUserId,
+    externalUsername: account.externalUsername,
+    tokenExpiresAt: account.tokenExpiresAt,
+    connectionStatus: account.connectionStatus,
+    lastSuccessfulSyncAt: account.lastSuccessfulSyncAt,
+    lastSyncAttemptAt: account.lastSyncAttemptAt,
+    includeSourceFilesOnSync: account.includeSourceFilesOnSync === true,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt
+  });
+
+  const toExternalPlatformCredentialResponse = (credential: ExternalPlatformCredential) => ({
+    externalPlatformCredentialId: credential.externalPlatformCredentialId,
+    creatorIdentityId: credential.creatorIdentityId,
+    platform: credential.platform,
+    applicationLabel: credential.applicationLabel,
+    clientId: credential.clientId,
+    redirectUri: credential.redirectUri,
+    createdAt: credential.createdAt,
+    updatedAt: credential.updatedAt
+  });
+
+  const providerForCredential = (credential: ExternalPlatformCredential) => createExternalPlatformProvider(credential.platform, {
+    clientId: credential.clientId,
+    clientSecret: decryptExternalCredential(credential.clientSecretEncrypted, config.externalTokenEncryptionKey),
+    redirectUri: credential.redirectUri
+  });
+
+  const enqueueExternalSyncJob = async (
+    externalAccountId: string,
+    type: ExternalSyncJob['type'],
+    payload?: Record<string, unknown>
+  ): Promise<ExternalSyncJob> => {
+    const now = new Date().toISOString();
+    const job: ExternalSyncJob = {
+      externalSyncJobId: randomUUID(),
+      externalAccountId,
+      type,
+      status: 'queued',
+      payload,
+      progress: { discovered: 0, synchronized: 0, remaining: 0 },
+      attemptCount: 0,
+      createdAt: now,
+      updatedAt: now
+    };
+    await store.createExternalSyncJob(job);
+    try {
+      await externalSyncQueue.enqueue(job.externalSyncJobId);
+    } catch (error) {
+      await store.updateExternalSyncJob({
+        ...job,
+        status: 'retry_scheduled',
+        nextAttemptAt: new Date(Date.now() + config.externalSyncBaseDelaySeconds * 1000).toISOString(),
+        errorCode: 'QUEUE_UNAVAILABLE',
+        errorMessage: 'The synchronization queue is unavailable',
+        updatedAt: new Date().toISOString()
+      });
+      throw error;
+    }
+    return job;
+  };
+
   const allowedHeaders = [
     'authorization',
     'content-type',
@@ -677,8 +765,11 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   ];
 
   const encodeS3LikePath = (key: string): string => key.split('/').map((part) => encodeURIComponent(part)).join('/');
-  const publicMediaUrl = async (key?: string): Promise<string | undefined> => {
+  const publicMediaUrl = async (key?: string, localOrigin?: string): Promise<string | undefined> => {
     if (!key) return undefined;
+    if (config.localMediaDirectory) {
+      return `${(localOrigin || 'http://localhost:4000').replace(/\/$/, '')}/media/local/${encodeS3LikePath(key)}`;
+    }
     if (mediaCdnDomain) {
       return `https://${mediaCdnDomain}/${encodeS3LikePath(key)}`;
     }
@@ -1886,6 +1977,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
   }));
   app.use(express.json());
   app.use(createOptionalAuthMiddleware(config));
+  if (config.localMediaDirectory) app.use('/media/local', express.static(config.localMediaDirectory));
 
   const resolvePlatformRole = async (userId: string): Promise<PlatformRole> => {
     if (store.getUserIdentity) {
@@ -1944,7 +2036,8 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       return res.status(503).json({ message: 'Registration is not configured.' });
     }
 
-    const { normalized, reasons } = validateUsername(usernameInput);
+    const generatedUsername = `ubeeqer-${randomUUID().replace(/-/g, '').slice(0, 10)}`;
+    const { normalized, reasons } = validateUsername(usernameInput.trim() || generatedUsername);
     if (reasons.length > 0) {
       return res.status(400).json({ message: reasons[0], reasons, suggestions: await buildUsernameSuggestions(store, usernameInput) });
     }
@@ -4125,8 +4218,1392 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
     return res.json(await listVisibleCreators(req));
   });
 
+  app.get('/studio/integrations/deviantart/configuration', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const credentials = creatorIdentityId
+      ? await store.listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId)
+      : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId);
+    const credential = credentials.find((item) => item.platform === 'deviantart');
+    return res.json({
+      platform: 'deviantart',
+      configured: Boolean(credential && config.externalTokenEncryptionKey && config.externalOAuthRedirectUri),
+      callbackUrl: config.externalOAuthRedirectUri,
+      credential: credential ? toExternalPlatformCredentialResponse(credential) : null,
+      credentials: credentials.filter((item) => item.platform === 'deviantart').map(toExternalPlatformCredentialResponse),
+      requiredConfiguration: [
+        ...(config.externalTokenEncryptionKey ? [] : ['EXTERNAL_TOKEN_ENCRYPTION_KEY']),
+        ...(config.externalOAuthRedirectUri ? [] : ['EXTERNAL_OAUTH_REDIRECT_URI']),
+        ...(credential ? [] : ['your DeviantArt client ID and client secret'])
+      ]
+    });
+  });
+
+  app.put('/studio/integrations/deviantart/credentials', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    if (!config.externalTokenEncryptionKey || !config.externalOAuthRedirectUri) {
+      return res.status(503).json({ message: 'The server callback URL or encrypted credential storage is not configured.' });
+    }
+    const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.trim().slice(0, 512) : '';
+    const clientSecret = typeof req.body?.clientSecret === 'string' ? req.body.clientSecret.trim() : '';
+    const applicationLabel = typeof req.body?.applicationLabel === 'string' ? req.body.applicationLabel.trim().slice(0, 120) : '';
+    const credentials = (creatorIdentityId
+      ? await store.listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId)
+      : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId));
+    const requestedCredentialId = typeof req.body?.externalPlatformCredentialId === 'string' ? req.body.externalPlatformCredentialId.trim() : '';
+    const createNew = req.body?.createNew === true;
+    const existing = createNew
+      ? undefined
+      : requestedCredentialId
+      ? credentials.find((item) => item.platform === 'deviantart' && item.externalPlatformCredentialId === requestedCredentialId)
+      : credentials.find((item) => item.platform === 'deviantart');
+    if (requestedCredentialId && !existing) return res.status(404).json({ message: 'DeviantArt application not found.' });
+    if (!clientId) return res.status(400).json({ message: 'A DeviantArt client ID is required.' });
+    if (!clientSecret && !existing) return res.status(400).json({ message: 'A DeviantArt client secret is required.' });
+    const now = new Date().toISOString();
+    const credential: ExternalPlatformCredential = {
+      externalPlatformCredentialId: existing?.externalPlatformCredentialId || randomUUID(),
+      userId: existing?.userId || req.authUser!.userId,
+      creatorIdentityId: creatorIdentityId || undefined,
+      platform: 'deviantart',
+      applicationLabel: applicationLabel || existing?.applicationLabel,
+      clientId,
+      clientSecretEncrypted: clientSecret
+        ? encryptExternalCredential(clientSecret, config.externalTokenEncryptionKey)
+        : existing!.clientSecretEncrypted,
+      redirectUri: config.externalOAuthRedirectUri,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    if (existing) await store.updateExternalPlatformCredential(credential);
+    else await store.createExternalPlatformCredential(credential);
+    return res.json(toExternalPlatformCredentialResponse(credential));
+  });
+
+  app.delete('/studio/integrations/deviantart/credentials/:externalPlatformCredentialId', requireAuth, async (req, res) => {
+    const credential = await store.getExternalPlatformCredential(req.params.externalPlatformCredentialId);
+    if (!credential || credential.platform !== 'deviantart') {
+      return res.status(404).json({ message: 'DeviantArt application not found.' });
+    }
+    if (credential.userId !== req.authUser!.userId) {
+      return res.status(403).json({ message: 'You do not control this DeviantArt application.' });
+    }
+    const connectedAccounts = (await store.listExternalAccountsByUser(req.authUser!.userId))
+      .filter((account) => account.externalPlatformCredentialId === credential.externalPlatformCredentialId)
+      .filter((account) => account.connectionStatus !== 'disabled');
+    if (connectedAccounts.length) {
+      return res.status(409).json({
+        message: `Remove ${connectedAccounts.length === 1 ? 'the connected DeviantArt account' : 'all connected DeviantArt accounts'} before deleting this application.`,
+        connectedAccountCount: connectedAccounts.length
+      });
+    }
+    await store.deleteExternalPlatformCredential(credential.externalPlatformCredentialId);
+    auditLog(req, 'deviantart.application.deleted', {
+      externalPlatformCredentialId: credential.externalPlatformCredentialId
+    });
+    return res.status(204).end();
+  });
+
+  app.post('/studio/integrations/deviantart/connect', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const requestedCredentialId = typeof req.body?.externalPlatformCredentialId === 'string' ? req.body.externalPlatformCredentialId.trim() : '';
+    const credentials = (creatorIdentityId
+      ? await store.listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId)
+      : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId));
+    const credential = requestedCredentialId
+      ? credentials.find((item) => item.platform === 'deviantart' && item.externalPlatformCredentialId === requestedCredentialId)
+      : credentials.find((item) => item.platform === 'deviantart');
+    const provider = credential ? providerForCredential(credential) : null;
+    if (!credential || !provider?.isConfigured()) {
+      return res.status(409).json({ message: 'Add your DeviantArt application credentials before connecting an account.' });
+    }
+    const requestedReturnPath = typeof req.body?.returnPath === 'string' ? req.body.returnPath : '';
+    const returnPath = requestedReturnPath.startsWith('/studio/')
+      ? requestedReturnPath
+      : '/studio/workspace?section=integrations';
+    const syncContentOnInitialImport = req.body?.syncContentOnInitialImport === true;
+    const issuedState = issueExternalOAuthState(config, {
+      userId: req.authUser!.userId,
+      ...(creatorIdentityId ? { creatorIdentityId } : {}),
+      externalPlatformCredentialId: credential.externalPlatformCredentialId,
+      platform: 'deviantart',
+      returnPath,
+      syncContentOnInitialImport
+    });
+    return res.json({ authorizationUrl: provider.createAuthorizationUrl(issuedState.state, externalOAuthPkce(config, issuedState.nonce)) });
+  });
+
+  app.get('/studio/integrations/deviantart/connect', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const credential = (creatorIdentityId
+      ? await store.listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId)
+      : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId))
+      .find((item) => item.platform === 'deviantart');
+    const provider = credential ? providerForCredential(credential) : null;
+    if (!credential || !provider?.isConfigured()) {
+      return res.status(409).json({ message: 'Add your DeviantArt application credentials before connecting an account.' });
+    }
+    const requestedReturnPath = typeof req.query.returnPath === 'string' ? req.query.returnPath : '';
+    const returnPath = requestedReturnPath.startsWith('/studio/')
+      ? requestedReturnPath
+      : '/studio/workspace?section=integrations';
+    const issuedState = issueExternalOAuthState(config, {
+      userId: req.authUser!.userId,
+      ...(creatorIdentityId ? { creatorIdentityId } : {}),
+      externalPlatformCredentialId: credential.externalPlatformCredentialId,
+      platform: 'deviantart',
+      returnPath
+    });
+    return res.redirect(302, provider.createAuthorizationUrl(issuedState.state, externalOAuthPkce(config, issuedState.nonce)));
+  });
+
+  app.get('/integrations/deviantart/callback', async (req, res) => {
+    const stateValue = typeof req.query.state === 'string' ? req.query.state : '';
+    let state: ReturnType<typeof verifyExternalOAuthState>;
+    try {
+      state = verifyExternalOAuthState(config, stateValue);
+    } catch {
+      return res.status(400).json({ message: 'The DeviantArt connection request is invalid or has expired.' });
+    }
+    const redirect = (params: Record<string, string>) => {
+      try {
+        return res.redirect(302, resolveExternalOAuthReturnUrl(config, state.returnPath, params));
+      } catch {
+        return res.status(400).json({ message: 'The DeviantArt connection return URL is invalid.' });
+      }
+    };
+    if (typeof req.query.error === 'string') {
+      const reason = req.query.error.trim().slice(0, 120);
+      const detail = typeof req.query.error_description === 'string'
+        ? req.query.error_description.trim().slice(0, 300)
+        : '';
+      // DeviantArt uses this callback for both a user cancellation and OAuth
+      // configuration failures. Preserve the provider code for the Studio UI.
+      return redirect({ deviantart: reason === 'access_denied' ? 'cancelled' : 'failed', reason, ...(detail ? { detail } : {}) });
+    }
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!code) return redirect({ deviantart: 'failed', reason: 'missing_authorization_code' });
+    if (state.creatorIdentityId && !(await store.hasCreatorAccess(state.userId, state.creatorIdentityId))) {
+      return redirect({ deviantart: 'failed', reason: 'creator_access_changed' });
+    }
+    try {
+      const credential = await store.getExternalPlatformCredential(state.externalPlatformCredentialId);
+      if (!credential || credential.userId !== state.userId || credential.platform !== 'deviantart') {
+        return redirect({ deviantart: 'failed', reason: 'creator_application_unavailable' });
+      }
+      const provider = providerForCredential(credential);
+      if (!provider.isConfigured()) return redirect({ deviantart: 'failed', reason: 'oauth_not_configured' });
+      const tokens = await provider.exchangeAuthorizationCode(code, externalOAuthPkce(config, state.nonce));
+      const remoteAccount = await provider.getAccount(tokens.accessToken);
+      const now = new Date().toISOString();
+      const existing = (await store.listExternalAccountsByUser(state.userId)).find((account) => (
+        account.platform === 'deviantart' && account.externalUserId === remoteAccount.externalUserId
+      ));
+      const candidateCreators = !state.creatorIdentityId && !existing?.primaryCreatorIdentityId && !existing?.creatorIdentityId
+        ? await store.listCreatorsByUserId(state.userId)
+        : [];
+      const soleCreator = candidateCreators.length === 1 ? candidateCreators[0] : undefined;
+      const destinationCreatorIdentityId = state.creatorIdentityId
+        || existing?.primaryCreatorIdentityId
+        || existing?.creatorIdentityId
+        || soleCreator?.creatorId;
+      const account: ExternalAccount = {
+        externalAccountId: existing?.externalAccountId || randomUUID(),
+        userId: state.userId,
+        creatorIdentityId: destinationCreatorIdentityId,
+        primaryCreatorIdentityId: destinationCreatorIdentityId,
+        externalPlatformCredentialId: credential.externalPlatformCredentialId,
+        platform: 'deviantart',
+        externalUserId: remoteAccount.externalUserId,
+        externalUsername: remoteAccount.externalUsername,
+        accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
+        refreshTokenEncrypted: tokens.refreshToken
+          ? encryptExternalCredential(tokens.refreshToken, config.externalTokenEncryptionKey)
+          : existing?.refreshTokenEncrypted,
+        tokenExpiresAt: tokens.expiresAt,
+        connectionStatus: 'connected',
+        lastSyncAttemptAt: existing?.lastSyncAttemptAt,
+        lastSuccessfulSyncAt: existing?.lastSuccessfulSyncAt,
+        initialContentSyncRequested: state.syncContentOnInitialImport === true || existing?.initialContentSyncRequested === true,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now
+      };
+      if (existing) await store.updateExternalAccount(account);
+      else await store.createExternalAccount(account);
+      if (destinationCreatorIdentityId) {
+        await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, [{
+          externalAccountId: account.externalAccountId,
+          creatorIdentityId: destinationCreatorIdentityId,
+          userId: account.userId,
+          createdAt: now,
+          updatedAt: now
+        }]);
+      }
+      return redirect({
+        deviantart: soleCreator ? 'connected_destination_defaulted' : 'connected_assignment_required',
+        account: account.externalAccountId,
+        application: credential.externalPlatformCredentialId
+      });
+    } catch (error) {
+      const reason = error instanceof ExternalProviderError ? error.code : 'connection_failed';
+      logServerError('deviantart.callback', error);
+      return redirect({
+        deviantart: 'failed',
+        reason,
+        ...(error instanceof ExternalProviderError && error.operation ? { stage: error.operation } : {})
+      });
+    }
+  });
+
+  app.get('/studio/integrations/deviantart/accounts', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const accounts = creatorIdentityId
+      ? await store.listExternalAccountsByCreatorIdentity(creatorIdentityId)
+      : await store.listExternalAccountsByUser(req.authUser!.userId);
+    const responses = await Promise.all(accounts
+      .filter((account) => account.connectionStatus !== 'disabled')
+      .map(async (account) => {
+      const storedAssignments = (await store.listExternalAccountCreatorAssignments(account.externalAccountId))
+        .map((assignment) => assignment.creatorIdentityId);
+      return {
+        ...toExternalAccountResponse(account),
+        creatorAssignments: storedAssignments.length
+          ? storedAssignments
+          : [account.primaryCreatorIdentityId || account.creatorIdentityId].filter((item): item is string => Boolean(item))
+      };
+      }));
+    return res.json(responses);
+  });
+
+  app.get('/studio/integrations/deviantart/accounts/:externalAccountId/profile', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const [current, snapshots] = await Promise.all([
+      store.getExternalAccountProfile(account.externalAccountId),
+      store.listExternalAccountProfileSnapshots(account.externalAccountId, 100)
+    ]);
+    const withoutProviderPayload = <T extends { rawPayload?: Record<string, unknown>; profileFingerprint: string }>(profile: T) => {
+      const { rawPayload: _rawPayload, profileFingerprint: _profileFingerprint, ...response } = profile;
+      return response;
+    };
+    return res.json({
+      current: current ? withoutProviderPayload(current) : null,
+      snapshots: snapshots.map(withoutProviderPayload)
+    });
+  });
+
+  app.delete('/studio/integrations/deviantart/accounts/:externalAccountId', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const now = new Date().toISOString();
+    await store.updateExternalAccount({
+      ...account,
+      accessTokenEncrypted: '',
+      refreshTokenEncrypted: undefined,
+      tokenExpiresAt: undefined,
+      connectionStatus: 'disabled',
+      updatedAt: now
+    });
+    const jobs = await store.listExternalSyncJobs(account.externalAccountId, 100);
+    await Promise.all(jobs
+      .filter((job) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status))
+      .map((job) => store.updateExternalSyncJob({
+        ...job,
+        status: 'cancelled',
+        errorCode: 'ACCOUNT_REMOVED',
+        errorMessage: 'Synchronization stopped because the DeviantArt account was removed',
+        updatedAt: now
+      })));
+    auditLog(req, 'deviantart.account.removed', { externalAccountId: account.externalAccountId });
+    return res.status(204).end();
+  });
+
+  app.put('/studio/integrations/deviantart/accounts/:externalAccountId/creators', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const requestedCreatorIdentityIds: unknown[] = Array.isArray(req.body?.creatorIdentityIds)
+      ? req.body.creatorIdentityIds
+      : [];
+    const creatorIdentityIds: string[] = [...new Set(requestedCreatorIdentityIds
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean))];
+    if (creatorIdentityIds.length > 1) {
+      return res.status(400).json({ message: 'Choose one destination creator for this DeviantArt account. Advanced split synchronization is not available yet.' });
+    }
+    for (const creatorIdentityId of creatorIdentityIds) {
+      if (!(await store.hasCreatorAccess(req.authUser!.userId, creatorIdentityId))) {
+        return res.status(403).json({ message: 'You can only assign integrations to creators you manage.' });
+      }
+    }
+    const requestedPrimary = typeof req.body?.primaryCreatorIdentityId === 'string'
+      ? req.body.primaryCreatorIdentityId.trim()
+      : '';
+    const primaryCreatorIdentityId = creatorIdentityIds.includes(requestedPrimary)
+      ? requestedPrimary
+      : creatorIdentityIds[0];
+    const now = new Date().toISOString();
+    await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, creatorIdentityIds.map((creatorIdentityId) => ({
+      externalAccountId: account.externalAccountId,
+      creatorIdentityId,
+      userId: account.userId,
+      createdAt: now,
+      updatedAt: now
+    })));
+    const updatedAccount: ExternalAccount = {
+      ...account,
+      creatorIdentityId: primaryCreatorIdentityId || undefined,
+      primaryCreatorIdentityId: primaryCreatorIdentityId || undefined,
+      updatedAt: now
+    };
+    await store.updateExternalAccount(updatedAccount);
+    if (!primaryCreatorIdentityId) {
+      const pendingJobs = await store.listExternalSyncJobs(account.externalAccountId, 100);
+      await Promise.all(pendingJobs
+        .filter((job) => job.status === 'queued' || job.status === 'retry_scheduled' || job.status === 'rate_limited')
+        .map((job) => store.updateExternalSyncJob({
+          ...job,
+          status: 'cancelled',
+          errorCode: 'CREATOR_DISCONNECTED',
+          errorMessage: 'Synchronization stopped because the destination creator was disconnected',
+          updatedAt: now
+        })));
+    }
+    auditLog(req, 'deviantart.creators.assigned', {
+      externalAccountId: account.externalAccountId,
+      creatorIdentityIds,
+      primaryCreatorIdentityId
+    });
+    return res.json({
+      ...toExternalAccountResponse(updatedAccount),
+      creatorAssignments: creatorIdentityIds
+    });
+  });
+
+  app.post('/studio/integrations/deviantart/accounts/:externalAccountId/sync', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    if (!account.primaryCreatorIdentityId && !account.creatorIdentityId) {
+      return res.status(409).json({ message: 'Assign this DeviantArt account to at least one creator before synchronizing.' });
+    }
+    try {
+      const includeSourceFilesOnSync = req.body?.syncContent === true;
+      await store.updateExternalAccount({ ...account, includeSourceFilesOnSync, updatedAt: new Date().toISOString() });
+      const job = await enqueueExternalSyncJob(account.externalAccountId, 'full_reconciliation', {
+        syncContent: includeSourceFilesOnSync
+      });
+      auditLog(req, 'deviantart.sync.requested', { externalAccountId: account.externalAccountId, jobId: job.externalSyncJobId, includeSourceFilesOnSync });
+      return res.status(202).json(job);
+    } catch (error) {
+      logServerError('deviantart.sync.enqueue', error);
+      return res.status(503).json({ message: 'The synchronization queue is unavailable. The account remains connected.' });
+    }
+  });
+
+  app.get('/studio/integrations/deviantart/accounts/:externalAccountId/jobs', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    return res.json(await store.listExternalSyncJobs(account.externalAccountId, 50));
+  });
+
+  app.get('/studio/integrations/deviantart/jobs/:externalSyncJobId/logs', requireAuth, async (req, res) => {
+    const job = await store.getExternalSyncJob(req.params.externalSyncJobId);
+    if (!job) return res.status(404).json({ message: 'Synchronization job not found' });
+    const account = await store.getExternalAccount(job.externalAccountId);
+    if (!account) return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    return res.json(await store.listExternalSyncLogs(job.externalSyncJobId, 100));
+  });
+
+  app.get('/studio/integrations/deviantart/catalogue', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const [ownedAssets, accounts] = await Promise.all([
+      store.listAssetsByCreatorIdentity(creatorIdentityId),
+      store.listExternalAccountsByCreatorIdentity(creatorIdentityId)
+    ]);
+    const accountById = new Map(accounts.map((account) => [account.externalAccountId, account]));
+    const publications = (await Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId)))).flat();
+    const publicationAssetIds = [...new Set(publications.map((publication) => publication.assetId))];
+    const publicationAssets = await Promise.all(publicationAssetIds.map((assetId) => store.getAsset(assetId)));
+    const assets = [...new Map([...ownedAssets, ...publicationAssets.filter((asset): asset is Asset => Boolean(asset))]
+      .map((asset) => [asset.assetId, asset])).values()];
+    const [spacePublicationPairs, engagementPairs] = await Promise.all([
+      Promise.all(assets.map(async (asset) => [asset.assetId, await store.getSpacePublication(asset.assetId)] as const)),
+      Promise.all(publications.map(async (publication) => [
+        publication.externalPublicationId,
+        await store.getExternalEngagementCurrent(publication.externalPublicationId)
+      ] as const))
+    ]);
+    const spacePublicationByAssetId = new Map(spacePublicationPairs);
+    const engagementByPublicationId = new Map(engagementPairs);
+    const publicationByAssetId = new Map<string, typeof publications>();
+    publications.forEach((publication) => {
+      const current = publicationByAssetId.get(publication.assetId) || [];
+      current.push(publication);
+      publicationByAssetId.set(publication.assetId, current);
+    });
+    const query = typeof req.query.query === 'string' ? req.query.query.trim().toLowerCase() : '';
+    const deviantArtPreviewUrl = (publication: ExternalPublication): string | undefined => {
+      const metadata = publication.rawMetadataJson;
+      if (!metadata || typeof metadata !== 'object') return undefined;
+      const record = metadata as Record<string, unknown>;
+      const thumbnail = Array.isArray(record.thumbs)
+        ? record.thumbs.find((item) => item && typeof item === 'object' && typeof (item as Record<string, unknown>).src === 'string')
+        : undefined;
+      if (thumbnail && typeof (thumbnail as Record<string, unknown>).src === 'string') return (thumbnail as Record<string, unknown>).src as string;
+      for (const key of ['preview', 'content']) {
+        const value = record[key];
+        if (value && typeof value === 'object' && typeof (value as Record<string, unknown>).src === 'string') {
+          return (value as Record<string, unknown>).src as string;
+        }
+      }
+      return undefined;
+    };
+    const metadataBoolean = (metadata: Record<string, unknown>, ...keys: string[]): boolean | undefined => {
+      const nested = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
+        ? metadata.submission as Record<string, unknown>
+        : {};
+      for (const key of keys) {
+        const value = metadata[key] ?? nested[key];
+        if (typeof value === 'boolean') return value;
+        if (value === 'true' || value === 1 || value === '1') return true;
+        if (value === 'false' || value === 0 || value === '0') return false;
+      }
+      return undefined;
+    };
+    const metadataText = (metadata: Record<string, unknown>, ...keys: string[]): string | undefined => {
+      const nested = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
+        ? metadata.submission as Record<string, unknown>
+        : {};
+      for (const key of keys) {
+        const value = metadata[key] ?? nested[key];
+        if (typeof value === 'string' && value.trim()) return value;
+      }
+      return undefined;
+    };
+    const metadataStrings = (metadata: Record<string, unknown>, ...keys: string[]): string[] | undefined => {
+      const nested = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
+        ? metadata.submission as Record<string, unknown>
+        : {};
+      for (const key of keys) {
+        const value = metadata[key] ?? nested[key];
+        if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+      }
+      return undefined;
+    };
+    const rows = await Promise.all(assets
+      .map(async (asset) => {
+        const linkedPublications = publicationByAssetId.get(asset.assetId) || [];
+        const linkedEngagement = linkedPublications
+          .map((publication) => engagementByPublicationId.get(publication.externalPublicationId))
+          .filter((engagement): engagement is ExternalEngagementCurrent => Boolean(engagement));
+        const spacePublication = spacePublicationByAssetId.get(asset.assetId);
+        const thumbnailUrl = spacePublication?.contentSyncStatus === 'hosted'
+          && spacePublication.hostedObjectKey
+          ? await publicMediaUrl(
+            spacePublication.hostedThumbnailObjectKey || spacePublication.hostedObjectKey,
+            `${req.protocol}://${req.get('host')}`
+          )
+          : undefined;
+        return {
+          ...asset,
+          thumbnailUrl,
+          spacePublication,
+          engagement: linkedEngagement.length ? {
+            views: linkedEngagement.reduce((total, engagement) => total + (engagement.views || 0), 0),
+            favourites: linkedEngagement.reduce((total, engagement) => total + (engagement.favourites || 0), 0),
+            comments: linkedEngagement.reduce((total, engagement) => total + (engagement.comments || 0), 0),
+            downloads: linkedEngagement.reduce((total, engagement) => total + (engagement.downloads || 0), 0),
+            capturedAt: linkedEngagement.map((engagement) => engagement.capturedAt).sort().at(-1),
+            destinations: linkedEngagement.length
+          } : undefined,
+          publications: linkedPublications.map((publication) => ({
+            externalPublicationId: publication.externalPublicationId,
+            externalAccountId: publication.externalAccountId,
+            platform: publication.platform,
+            externalUsername: accountById.get(publication.externalAccountId)?.externalUsername || '',
+            externalContentId: publication.externalContentId,
+            targetStatus: publication.targetStatus || (publication.syncStatus === 'draft' ? 'draft' : 'published'),
+            canUpdatePublishedDescription: publication.platform !== 'deviantart' || Boolean(
+              config.deviantArtPublishedDescriptionUpdate && publication.externalDraftId
+            ),
+            publishedDescriptionUpdateMode: publication.platform === 'deviantart'
+              && config.deviantArtPublishedDescriptionUpdate
+              && publication.externalDraftId
+              ? 'stash'
+              : undefined,
+            externalUrl: publication.externalUrl,
+            previewUrl: deviantArtPreviewUrl(publication),
+            externalTitle: publication.externalTitle,
+            externalDescription: publication.externalDescription || metadataText(publication.rawMetadataJson, 'description', 'description_html', 'artist_comments', 'html', 'excerpt'),
+            externalTags: publication.externalTags || [],
+            displayOptions: {
+              allowComments: metadataBoolean(publication.rawMetadataJson, 'allows_comments', 'allow_comments', 'allowComments'),
+              isMature: metadataBoolean(publication.rawMetadataJson, 'is_mature', 'isMature'),
+              matureLevel: (() => {
+                const level = metadataText(publication.rawMetadataJson, 'mature_level', 'matureLevel');
+                return level === 'strict' || level === 'moderate' ? level : undefined;
+              })(),
+              matureClassification: metadataStrings(publication.rawMetadataJson, 'mature_classification', 'matureClassification'),
+              isAiGenerated: metadataBoolean(publication.rawMetadataJson, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai'),
+              noAi: metadataBoolean(publication.rawMetadataJson, 'noai', 'noAI', 'noAi', 'no_ai')
+            },
+            externalCollectionIds: publication.externalCollectionIds || [],
+            publishedAt: publication.publishedAt,
+            remoteUpdatedAt: publication.remoteUpdatedAt,
+            metadataSyncStatus: publication.metadataSyncStatus,
+            remoteChangeDetectedAt: publication.remoteChangeDetectedAt,
+            lastOutboundSyncAt: publication.lastOutboundSyncAt,
+            remoteStateReason: publication.remoteStateReason,
+            syncStatus: publication.syncStatus
+          }))
+        };
+      })
+    );
+    const filteredRows = rows
+      .filter((asset) => !query || [
+        asset.canonicalTitle,
+        asset.canonicalDescription || '',
+        ...asset.publications.flatMap((publication) => [publication.externalTitle || '', publication.externalUsername, ...publication.externalTags])
+      ].some((value) => value.toLowerCase().includes(query)))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return res.json({ items: filteredRows, total: filteredRows.length });
+  });
+
+  app.patch('/studio/integrations/assets/:assetId', requireAuth, async (req, res) => {
+    const asset = await store.getAsset(req.params.assetId);
+    if (!asset) return res.status(404).json({ message: 'Asset not found' });
+    if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const titlePolicy = req.body?.titleSyncPolicy === 'mirrored' || req.body?.titleSyncPolicy === 'independent' || req.body?.titleSyncPolicy === 'initially_mirrored' || req.body?.titleSyncPolicy === 'manual'
+      ? req.body.titleSyncPolicy
+      : (req.body?.canonicalTitle !== undefined ? 'independent' : asset.titleSyncPolicy);
+    const descriptionPolicy = req.body?.descriptionSyncPolicy === 'mirrored' || req.body?.descriptionSyncPolicy === 'independent' || req.body?.descriptionSyncPolicy === 'initially_mirrored' || req.body?.descriptionSyncPolicy === 'manual'
+      ? req.body.descriptionSyncPolicy
+      : (req.body?.canonicalDescription !== undefined ? 'independent' : asset.descriptionSyncPolicy);
+    const integrationMetadata = req.body?.integrationMetadata && typeof req.body.integrationMetadata === 'object' && !Array.isArray(req.body.integrationMetadata)
+      ? req.body.integrationMetadata as Record<string, unknown>
+      : null;
+    const integrationPublicationId = typeof integrationMetadata?.externalPublicationId === 'string'
+      ? integrationMetadata.externalPublicationId.trim()
+      : '';
+    const integrationTitle = typeof integrationMetadata?.title === 'string' ? integrationMetadata.title.trim().slice(0, 300) : undefined;
+    const integrationDescription = typeof integrationMetadata?.description === 'string' ? sanitizeOptional(integrationMetadata.description, 20_000) : undefined;
+    const integrationTags = Array.isArray(integrationMetadata?.tags)
+      ? [...new Set(integrationMetadata.tags
+        .filter((tag): tag is string => typeof tag === 'string')
+        .map((tag) => tag.trim().replace(/\s+/g, '_').slice(0, 64))
+        .filter(Boolean))].slice(0, 30)
+      : undefined;
+    const integrationCollectionExternalIds = Array.isArray(integrationMetadata?.collectionExternalIds)
+      ? [...new Set(integrationMetadata.collectionExternalIds
+        .filter((collectionId): collectionId is string => typeof collectionId === 'string')
+        .map((collectionId) => collectionId.trim())
+        .filter(Boolean))]
+      : undefined;
+    const allowComments = typeof integrationMetadata?.allowComments === 'boolean' ? integrationMetadata.allowComments : undefined;
+    const isMature = typeof integrationMetadata?.isMature === 'boolean' ? integrationMetadata.isMature : undefined;
+    const matureLevel = integrationMetadata?.matureLevel === 'strict' || integrationMetadata?.matureLevel === 'moderate'
+      ? integrationMetadata.matureLevel
+      : undefined;
+    const matureClassification = Array.isArray(integrationMetadata?.matureClassification)
+      ? [...new Set(integrationMetadata.matureClassification.filter((classification): classification is 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology' => (
+        classification === 'nudity' || classification === 'sexual' || classification === 'gore' || classification === 'language' || classification === 'ideology'
+      )))]
+      : undefined;
+    const isAiGenerated = typeof integrationMetadata?.isAiGenerated === 'boolean' ? integrationMetadata.isAiGenerated : undefined;
+    const noAi = typeof integrationMetadata?.noAi === 'boolean'
+      ? integrationMetadata.noAi
+      : (typeof integrationMetadata?.allowAiTraining === 'boolean' ? !integrationMetadata.allowAiTraining : undefined);
+    const updated: Asset = {
+      ...asset,
+      canonicalTitle: req.body?.canonicalTitle !== undefined ? String(req.body.canonicalTitle).trim().slice(0, 300) : asset.canonicalTitle,
+      canonicalDescription: req.body?.canonicalDescription !== undefined ? sanitizeOptional(req.body.canonicalDescription, 20_000) : asset.canonicalDescription,
+      visibility: req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' ? req.body.visibility : (req.body?.visibility === 'private' ? 'private' : asset.visibility),
+      titleSyncPolicy: titlePolicy,
+      descriptionSyncPolicy: descriptionPolicy,
+      updatedAt: new Date().toISOString()
+    };
+    await store.updateAsset(updated);
+    const publications = (await Promise.all(
+      (await store.listExternalAccountsByCreatorIdentity(asset.creatorIdentityId))
+        .map((account) => store.listExternalPublications(account.externalAccountId))
+    )).flat().filter((publication) => publication.assetId === asset.assetId && (publication.syncStatus === 'active' || publication.syncStatus === 'pending_publish' || publication.syncStatus === 'draft'));
+    const destinationPublications = integrationPublicationId
+      ? publications.filter((publication) => publication.externalPublicationId === integrationPublicationId)
+      : publications;
+    if (integrationPublicationId && !destinationPublications.length) {
+      return res.status(404).json({ message: 'The selected integration destination is no longer available.' });
+    }
+    const externalMetadataChanged = integrationTitle !== undefined
+      || integrationDescription !== undefined
+      || integrationTags !== undefined
+      || integrationCollectionExternalIds !== undefined
+      || allowComments !== undefined
+      || isMature !== undefined
+      || matureLevel !== undefined
+      || matureClassification !== undefined
+      || isAiGenerated !== undefined
+      || noAi !== undefined;
+    if (!externalMetadataChanged || !destinationPublications.length) return res.json(updated);
+    const remoteUpdateWarnings: string[] = [];
+    const now = new Date().toISOString();
+    // Draft destinations have no remote state yet, so their settings can be
+    // persisted immediately. Active publications are updated only after the
+    // worker reads the deviation back and verifies that DeviantArt applied it.
+    await Promise.all(destinationPublications.filter((publication) => publication.syncStatus !== 'active').map(async (publication) => {
+      const rawMetadataJson = { ...publication.rawMetadataJson };
+      if (allowComments !== undefined) rawMetadataJson.allow_comments = allowComments;
+      if (isMature !== undefined) rawMetadataJson.is_mature = isMature;
+      if (matureLevel !== undefined) rawMetadataJson.mature_level = matureLevel;
+      if (matureClassification !== undefined) rawMetadataJson.mature_classification = matureClassification;
+      if (isAiGenerated !== undefined) rawMetadataJson.is_ai_generated = isAiGenerated;
+      if (noAi !== undefined) rawMetadataJson.noai = noAi;
+      await store.updateExternalPublication({
+        ...publication,
+        externalTitle: integrationTitle ?? publication.externalTitle,
+        externalDescription: integrationDescription ?? publication.externalDescription,
+        externalTags: integrationTags ?? publication.externalTags,
+        externalCollectionIds: integrationCollectionExternalIds ?? publication.externalCollectionIds,
+        rawMetadataJson,
+        updatedAt: now
+      });
+    }));
+    const remoteUpdateJobs = await Promise.all(destinationPublications.filter((publication) => publication.syncStatus === 'active').map(async (publication) => {
+      const payload: Record<string, unknown> = {
+        externalPublicationId: publication.externalPublicationId,
+        ...(integrationTitle !== undefined ? { title: integrationTitle } : {}),
+        ...(integrationTags !== undefined ? { tags: integrationTags } : {}),
+        ...(integrationCollectionExternalIds !== undefined ? { collectionExternalIds: integrationCollectionExternalIds } : {}),
+        ...(allowComments !== undefined ? { allowComments } : {}),
+        ...(isMature !== undefined ? { isMature } : {}),
+        ...(matureLevel !== undefined ? { matureLevel } : {}),
+        ...(matureClassification !== undefined ? { matureClassification } : {}),
+        ...(isAiGenerated !== undefined ? { isAiGenerated } : {}),
+        ...(noAi !== undefined ? { noAi } : {})
+      };
+      if (
+        integrationDescription !== undefined
+        && publication.platform === 'deviantart'
+        && !(config.deviantArtPublishedDescriptionUpdate && publication.externalDraftId)
+      ) {
+        remoteUpdateWarnings.push('DeviantArt does not permit description changes for already-published deviations through its API. The Ubeeq description was saved, but the DeviantArt description remains unchanged.');
+      } else if (integrationDescription !== undefined) {
+        payload.description = integrationDescription;
+      }
+      if (!Object.keys(payload).some((key) => key !== 'externalPublicationId')) return null;
+      await store.updateExternalPublication({
+        ...publication,
+        metadataSyncStatus: 'local_update_pending',
+        updatedAt: now
+      });
+      try {
+        return await enqueueExternalSyncJob(publication.externalAccountId, 'remote_update', payload);
+      } catch (queueError) {
+        logServerError('integration.metadata-update.enqueue', queueError);
+        const queuedJobs = await store.listExternalSyncJobs(publication.externalAccountId, 20);
+        return queuedJobs.find((job) => (
+          job.type === 'remote_update'
+          && job.payload?.externalPublicationId === publication.externalPublicationId
+          && job.createdAt >= now
+        )) || null;
+      }
+    }));
+    return res.json({
+      ...updated,
+      remoteUpdateJobs: remoteUpdateJobs.filter(Boolean),
+      remoteUpdateWarnings: [...new Set(remoteUpdateWarnings)]
+    });
+  });
+
+  app.post('/studio/works', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const originalFilename = sanitizeOptional(req.body?.originalFilename, 255) || 'Untitled image';
+    const suppliedTitle = sanitizeOptional(req.body?.title, 300);
+    const canonicalTitle = suppliedTitle || originalFilename.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim() || 'Untitled image';
+    const now = new Date().toISOString();
+    const asset: Asset = {
+      assetId: randomUUID(),
+      userId: req.authUser!.userId,
+      creatorIdentityId,
+      assetType: 'image',
+      canonicalTitle,
+      canonicalDescription: sanitizeOptional(req.body?.description, 20_000),
+      visibility: 'private',
+      titleSyncPolicy: 'independent',
+      descriptionSyncPolicy: 'independent',
+      createdAt: now,
+      updatedAt: now
+    };
+    await store.createAsset(asset);
+    return res.status(201).json({ asset });
+  });
+
+  app.put('/studio/works/:assetId/image', requireAuth, express.raw({ type: 'image/*', limit: config.externalContentMaxBytes }), async (req, res) => {
+    const asset = await store.getAsset(req.params.assetId);
+    if (!asset) return res.status(404).json({ message: 'Work not found' });
+    if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    if (!Buffer.isBuffer(req.body) || !req.body.byteLength) return res.status(400).json({ message: 'Upload one image file with this request.' });
+    const contentType = typeof req.headers['content-type'] === 'string' ? req.headers['content-type'].split(';', 1)[0] : '';
+    if (!contentType.startsWith('image/')) return res.status(400).json({ message: 'Only image uploads are supported for works right now.' });
+    try {
+      const stored = await storeUbeeqWorkImage(config, {
+        userId: asset.userId,
+        creatorIdentityId: asset.creatorIdentityId,
+        assetId: asset.assetId,
+        contentType,
+        body: req.body
+      });
+      const now = new Date().toISOString();
+      const spacePublication: SpacePublication = {
+        assetId: asset.assetId,
+        published: true,
+        hostingMode: 'hosted',
+        contentSyncStatus: 'hosted',
+        hostedObjectKey: stored.objectKey,
+        hostedThumbnailObjectKey: stored.thumbnailObjectKey,
+        hostedContentType: stored.contentType,
+        hostedByteSize: stored.byteSize,
+        hostedChecksumSha256: stored.checksumSha256,
+        lastContentSyncAt: now,
+        visibility: 'private',
+        publishedAt: now,
+        updatedAt: now
+      };
+      await store.upsertSpacePublication(spacePublication);
+      return res.status(201).json({ asset, spacePublication });
+    } catch (error) {
+      logServerError('studio.work.image-upload', error);
+      return res.status(400).json({ message: error instanceof Error ? error.message : 'Unable to store this work image.' });
+    }
+  });
+
+  app.post('/studio/works/:assetId/destinations/deviantart', requireAuth, async (req, res) => {
+    const asset = await store.getAsset(req.params.assetId);
+    if (!asset) return res.status(404).json({ message: 'Work not found' });
+    if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const externalAccountId = typeof req.body?.externalAccountId === 'string' ? req.body.externalAccountId.trim() : '';
+    const targetStatus = req.body?.targetStatus === 'draft' ? 'draft' : 'published';
+    const account = externalAccountId ? await store.getExternalAccount(externalAccountId) : null;
+    if (!account || account.platform !== 'deviantart' || account.userId !== req.authUser!.userId || account.connectionStatus !== 'connected') {
+      return res.status(400).json({ message: 'Choose a connected DeviantArt account.' });
+    }
+    const assignedCreatorIds = (await store.listExternalAccountCreatorAssignments(account.externalAccountId)).map((assignment) => assignment.creatorIdentityId);
+    if (!assignedCreatorIds.includes(asset.creatorIdentityId) && account.primaryCreatorIdentityId !== asset.creatorIdentityId && account.creatorIdentityId !== asset.creatorIdentityId) {
+      return res.status(403).json({ message: 'This DeviantArt account is not connected to the work’s creator.' });
+    }
+    const existing = (await store.listExternalPublications(account.externalAccountId)).find((publication) => publication.assetId === asset.assetId && publication.syncStatus !== 'deleted');
+    if (existing) {
+      if (existing.syncStatus === 'active' && targetStatus === 'draft') {
+        return res.status(409).json({ message: 'This work is already published on DeviantArt. Unpublishing it to Sta.sh is not available through the connected API.' });
+      }
+      const updatedExisting: ExternalPublication = existing.targetStatus === targetStatus ? existing : {
+        ...existing,
+        targetStatus,
+        updatedAt: new Date().toISOString()
+      };
+      if (updatedExisting !== existing) await store.updateExternalPublication(updatedExisting);
+      return res.status(200).json({ publication: updatedExisting });
+    }
+    const now = new Date().toISOString();
+    const publication: ExternalPublication = {
+      externalPublicationId: randomUUID(),
+      assetId: asset.assetId,
+      externalAccountId: account.externalAccountId,
+      platform: 'deviantart',
+      externalContentId: `pending:${asset.assetId}`,
+      externalTitle: asset.canonicalTitle,
+      externalDescription: asset.canonicalDescription,
+      externalTags: [],
+      targetStatus,
+      syncStatus: 'pending_publish',
+      rawMetadataJson: {},
+      createdAt: now,
+      updatedAt: now
+    };
+    await store.createExternalPublication(publication);
+    // A destination starts with shared Ubeeq values. A creator can opt out of that
+    // relationship on the metadata review page before the first sync.
+    await store.updateAsset({
+      ...asset,
+      titleSyncPolicy: 'mirrored',
+      descriptionSyncPolicy: 'mirrored',
+      updatedAt: now
+    });
+    return res.status(201).json({ publication });
+  });
+
+  app.delete('/studio/works/:assetId/destinations/deviantart/:externalAccountId', requireAuth, async (req, res) => {
+    const asset = await store.getAsset(req.params.assetId);
+    if (!asset) return res.status(404).json({ message: 'Work not found' });
+    if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const publication = (await store.listExternalPublications(req.params.externalAccountId))
+      .find((item) => item.assetId === asset.assetId && item.platform === 'deviantart' && item.syncStatus !== 'deleted');
+    if (!publication) return res.status(404).json({ message: 'DeviantArt destination not found.' });
+    await store.updateExternalPublication({ ...publication, syncStatus: 'deleted', updatedAt: new Date().toISOString() });
+    return res.status(204).end();
+  });
+
+  app.post('/studio/works/:assetId/destinations/deviantart/:externalAccountId/sync', requireAuth, async (req, res) => {
+    const asset = await store.getAsset(req.params.assetId);
+    if (!asset) return res.status(404).json({ message: 'Work not found' });
+    if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const publication = (await store.listExternalPublications(req.params.externalAccountId))
+      .find((item) => item.assetId === asset.assetId && item.platform === 'deviantart' && (item.syncStatus === 'pending_publish' || item.syncStatus === 'draft'));
+    if (!publication) return res.status(409).json({ message: 'This DeviantArt destination is already published or has been removed.' });
+    try {
+      const job = await enqueueExternalSyncJob(publication.externalAccountId, 'publish', {
+        assetId: asset.assetId,
+        externalPublicationId: publication.externalPublicationId,
+        targetStatus: publication.targetStatus || 'published'
+      });
+      return res.status(202).json(job);
+    } catch (error) {
+      logServerError('studio.work.destination.publish.enqueue', error);
+      return res.status(503).json({ message: 'The publishing queue is unavailable. Please try again.' });
+    }
+  });
+
+  app.put('/studio/integrations/assets/:assetId/space-publication', requireAuth, async (req, res) => {
+    const asset = await store.getAsset(req.params.assetId);
+    if (!asset) return res.status(404).json({ message: 'Asset not found' });
+    if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const current = await store.getSpacePublication(asset.assetId);
+    const published = Boolean(req.body?.published);
+    const contentSyncRequested = published && req.body?.hostingMode === 'hosted';
+    const visibility = req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' ? req.body.visibility : 'private';
+    const candidatePublications = (await Promise.all(
+      (await store.listExternalAccountsByCreatorIdentity(asset.creatorIdentityId))
+        .map((account) => store.listExternalPublications(account.externalAccountId))
+    )).flat().filter((publication) => publication.assetId === asset.assetId);
+    const sourcePublication = candidatePublications[0];
+    if (contentSyncRequested && !sourcePublication) {
+      return res.status(409).json({ message: 'This work has no connected source available for a Ubeeq Space backup.' });
+    }
+    const now = new Date().toISOString();
+    const publication = {
+      assetId: asset.assetId,
+      published,
+      // The work remains linked while the background transfer is in progress.
+      hostingMode: contentSyncRequested ? (current?.hostingMode === 'hosted' ? 'hosted' : 'linked') : 'linked',
+      publishedAt: published ? (current?.publishedAt || now) : undefined,
+      ubeeqTitleOverride: sanitizeOptional(req.body?.ubeeqTitleOverride, 300),
+      ubeeqDescriptionOverride: sanitizeOptional(req.body?.ubeeqDescriptionOverride, 20_000),
+      visibility,
+      contentSyncStatus: contentSyncRequested ? 'queued' : (published ? current?.contentSyncStatus || 'not_requested' : 'not_requested'),
+      contentSyncError: contentSyncRequested ? undefined : current?.contentSyncError,
+      updatedAt: now
+    } satisfies SpacePublication;
+    await store.upsertSpacePublication(publication);
+    if (!contentSyncRequested) return res.json(publication);
+    try {
+      const job = await enqueueExternalSyncJob(sourcePublication!.externalAccountId, 'content_sync', {
+        assetId: asset.assetId,
+        externalPublicationId: sourcePublication!.externalPublicationId
+      });
+      return res.status(202).json({ ...publication, contentSyncJob: job });
+    } catch (error) {
+      logServerError('space.content-sync.enqueue', error);
+      return res.status(503).json({ message: 'The Ubeeq Space backup queue is unavailable. Please try again.' });
+    }
+  });
+
+  app.get('/studio/integrations/deviantart/collections', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const accounts = await store.listExternalAccountsByCreatorIdentity(creatorIdentityId);
+    const [ubeeqCollections, externalCollections, mappings] = await Promise.all([
+      store.listUbeeqCollectionsByCreatorIdentity(creatorIdentityId),
+      Promise.all(accounts.map((account) => store.listExternalCollections(account.externalAccountId))),
+      Promise.all(accounts.map((account) => store.listExternalCollectionMappings(account.externalAccountId)))
+    ]);
+    const collectionAssetLists = await Promise.all(ubeeqCollections.map(async (collection) => [
+      collection.ubeeqCollectionId,
+      await store.listUbeeqCollectionAssets(collection.ubeeqCollectionId)
+    ] as const));
+    const collectionAssetIdsByCollection = Object.fromEntries(collectionAssetLists.map(([collectionId, items]) => [
+      collectionId,
+      items.map((item) => item.assetId)
+    ]));
+    const collectionMembershipSummaryByCollection = Object.fromEntries(collectionAssetLists.map(([collectionId, items]) => [
+      collectionId,
+      {
+        total: items.length,
+        manual: items.filter((item) => item.manuallyAssigned ?? !(item.externalCollectionMappingIds || []).length).length,
+        synchronized: items.filter((item) => (item.externalCollectionMappingIds || []).length > 0).length
+      }
+    ]));
+    return res.json({
+      ubeeqCollections,
+      externalCollections: externalCollections.flat().map((collection) => ({
+        ...collection,
+        externalUsername: accounts.find((account) => account.externalAccountId === collection.externalAccountId)?.externalUsername || ''
+      })),
+      mappings: mappings.flat(),
+      collectionAssetIdsByCollection,
+      collectionMembershipSummaryByCollection
+    });
+  });
+
+  app.post('/studio/integrations/collections', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorIdentityId === 'string' ? req.body.creatorIdentityId.trim() : '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 200) : '';
+    if (!name) return res.status(400).json({ message: 'Collection name is required' });
+    const now = new Date().toISOString();
+    const collection: UbeeqCollection = {
+      ubeeqCollectionId: randomUUID(),
+      userId: req.authUser!.userId,
+      creatorIdentityId,
+      name,
+      parentUbeeqCollectionId: typeof req.body?.parentUbeeqCollectionId === 'string' ? req.body.parentUbeeqCollectionId : undefined,
+      position: Math.max(0, Math.floor(Number(req.body?.position || 0))),
+      visibility: req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' ? req.body.visibility : 'private',
+      collectionType: req.body?.collectionType === 'gallery' || req.body?.collectionType === 'series' ? req.body.collectionType : 'collection',
+      ruleDefinition: req.body?.ruleDefinition && typeof req.body.ruleDefinition === 'object' && !Array.isArray(req.body.ruleDefinition)
+        ? req.body.ruleDefinition as Record<string, unknown>
+        : undefined,
+      createdAt: now,
+      updatedAt: now
+    };
+    await store.createUbeeqCollection(collection);
+    return res.status(201).json(collection);
+  });
+
+  app.patch('/studio/integrations/collections/:ubeeqCollectionId', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorIdentityId === 'string' ? req.body.creatorIdentityId.trim() : '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const collection = (await store.listUbeeqCollectionsByCreatorIdentity(creatorIdentityId))
+      .find((item) => item.ubeeqCollectionId === req.params.ubeeqCollectionId);
+    if (!collection) return res.status(404).json({ message: 'Ubeeq collection not found' });
+    const visibility = req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' || req.body?.visibility === 'private'
+      ? req.body.visibility
+      : collection.visibility;
+    const collectionType = req.body?.collectionType === 'gallery' || req.body?.collectionType === 'series' || req.body?.collectionType === 'collection'
+      ? req.body.collectionType
+      : collection.collectionType;
+    const updated: UbeeqCollection = {
+      ...collection,
+      visibility,
+      collectionType,
+      updatedAt: new Date().toISOString()
+    };
+    await store.updateUbeeqCollection(updated);
+    return res.json(updated);
+  });
+
+  app.put('/studio/integrations/collections/:ubeeqCollectionId/assets', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorIdentityId === 'string' ? req.body.creatorIdentityId.trim() : '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const collection = (await store.listUbeeqCollectionsByCreatorIdentity(creatorIdentityId))
+      .find((item) => item.ubeeqCollectionId === req.params.ubeeqCollectionId);
+    if (!collection) return res.status(404).json({ message: 'Ubeeq collection not found' });
+    const rawAssetIds: unknown[] = Array.isArray(req.body?.assetIds) ? req.body.assetIds as unknown[] : [];
+    const assetIds: string[] = [...new Set(rawAssetIds
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean))];
+    const assets = await Promise.all(assetIds.map((assetId) => store.getAsset(assetId)));
+    if (assets.some((asset) => !asset || asset.creatorIdentityId !== creatorIdentityId)) {
+      return res.status(400).json({ message: 'Choose works owned by this creator.' });
+    }
+    const now = new Date().toISOString();
+    const existingAssets = await store.listUbeeqCollectionAssets(collection.ubeeqCollectionId);
+    const existingByAssetId = new Map(existingAssets.map((item) => [item.assetId, item]));
+    const manuallyAssignedAssetIds = new Set(assetIds);
+    const nextAssets = new Map<string, UbeeqCollectionAsset>();
+    for (const existing of existingAssets) {
+      const externalCollectionMappingIds = existing.externalCollectionMappingIds || [];
+      if (externalCollectionMappingIds.length || manuallyAssignedAssetIds.has(existing.assetId)) {
+        nextAssets.set(existing.assetId, {
+          ...existing,
+          manuallyAssigned: manuallyAssignedAssetIds.has(existing.assetId),
+          externalCollectionMappingIds,
+          updatedAt: now
+        });
+      }
+    }
+    for (const assetId of assetIds) {
+      const existing = existingByAssetId.get(assetId);
+      nextAssets.set(assetId, {
+        ubeeqCollectionId: collection.ubeeqCollectionId,
+        assetId,
+        userId: req.authUser!.userId,
+        creatorIdentityId,
+        manuallyAssigned: true,
+        externalCollectionMappingIds: existing?.externalCollectionMappingIds || [],
+        createdAt: existing?.createdAt || now,
+        updatedAt: now
+      });
+    }
+    await store.replaceUbeeqCollectionAssets(collection.ubeeqCollectionId, [...nextAssets.values()]);
+    return res.json({ ubeeqCollectionId: collection.ubeeqCollectionId, assetIds });
+  });
+
+  app.put('/studio/integrations/deviantart/collection-mappings/:externalCollectionId', requireAuth, async (req, res) => {
+    const externalAccountId = typeof req.body?.externalAccountId === 'string' ? req.body.externalAccountId.trim() : '';
+    const ubeeqCollectionId = typeof req.body?.ubeeqCollectionId === 'string' ? req.body.ubeeqCollectionId.trim() : '';
+    const account = await store.getExternalAccount(externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const assignmentCreatorIds = (await store.listExternalAccountCreatorAssignments(account.externalAccountId))
+      .map((assignment) => assignment.creatorIdentityId);
+    const creatorIdentityIds = assignmentCreatorIds.length
+      ? assignmentCreatorIds
+      : [account.primaryCreatorIdentityId || account.creatorIdentityId].filter((item): item is string => Boolean(item));
+    const [externalCollections, collectionGroups, mappings] = await Promise.all([
+      store.listExternalCollections(externalAccountId),
+      Promise.all(creatorIdentityIds.map((creatorIdentityId) => store.listUbeeqCollectionsByCreatorIdentity(creatorIdentityId))),
+      store.listExternalCollectionMappings(externalAccountId)
+    ]);
+    const ubeeqCollections = collectionGroups.flat();
+    const externalCollection = externalCollections.find((item) => item.externalCollectionId === req.params.externalCollectionId);
+    const ubeeqCollection = ubeeqCollections.find((item) => item.ubeeqCollectionId === ubeeqCollectionId);
+    if (!externalCollection || !ubeeqCollection) return res.status(400).json({ message: 'Choose a collection owned by an assigned creator.' });
+    const now = new Date().toISOString();
+    const existing = mappings.find((item) => item.externalCollectionId === externalCollection.externalCollectionId);
+    const syncMode = req.body?.syncMode === 'continuous' || req.body?.syncMode === 'initial_only' || req.body?.syncMode === 'manual' || req.body?.syncMode === 'ignored'
+      ? req.body.syncMode
+      : 'manual';
+    const mappingTargetChanged = Boolean(existing && existing.ubeeqCollectionId !== ubeeqCollectionId);
+    const mappingModeChanged = Boolean(existing && existing.syncMode !== syncMode);
+    const mapping: ExternalCollectionMapping = {
+      ...existing,
+      externalCollectionMappingId: existing?.externalCollectionMappingId || randomUUID(),
+      externalAccountId,
+      externalCollectionId: externalCollection.externalCollectionId,
+      ubeeqCollectionId,
+      syncMode,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    if (mappingTargetChanged || mappingModeChanged) {
+      mapping.lastMembershipSyncAt = undefined;
+      mapping.lastMembershipFingerprint = undefined;
+      mapping.lastMembershipCount = undefined;
+      mapping.lastMembershipError = undefined;
+    }
+    if (existing && (existing.ubeeqCollectionId !== ubeeqCollectionId || syncMode === 'manual' || syncMode === 'ignored')) {
+      const previousAssets = await store.listUbeeqCollectionAssets(existing.ubeeqCollectionId);
+      const nextPreviousAssets = previousAssets.map((item) => ({
+        ...item,
+        manuallyAssigned: syncMode === 'manual' && (item.externalCollectionMappingIds || []).includes(existing.externalCollectionMappingId)
+          ? true
+          : item.manuallyAssigned,
+        externalCollectionMappingIds: (item.externalCollectionMappingIds || []).filter((mappingId) => mappingId !== existing.externalCollectionMappingId),
+        updatedAt: now
+      })).filter((item) => item.manuallyAssigned || (item.externalCollectionMappingIds || []).length);
+      await store.replaceUbeeqCollectionAssets(existing.ubeeqCollectionId, nextPreviousAssets);
+    }
+    if (existing) await store.updateExternalCollectionMapping(mapping);
+    else await store.createExternalCollectionMapping(mapping);
+    let syncJob: ExternalSyncJob | undefined;
+    if (syncMode === 'continuous' || (syncMode === 'initial_only' && !mapping.lastMembershipSyncAt)) {
+      try {
+        syncJob = await enqueueExternalSyncJob(account.externalAccountId, 'full_reconciliation', { reason: 'gallery_mapping_updated' });
+      } catch (error) {
+        logServerError('deviantart.gallery-mapping.enqueue', error);
+      }
+    }
+    return res.json({ ...mapping, syncJobId: syncJob?.externalSyncJobId });
+  });
+
+  app.get('/studio/integrations/activity/works/:assetId', requireAuth, async (req, res) => {
+    const asset = await store.getAsset(req.params.assetId);
+    if (!asset) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const accounts = (await store.listExternalAccountsByUser(req.authUser!.userId))
+      .filter((account) => account.connectionStatus !== 'disabled');
+    const accountById = new Map(accounts.map((account) => [account.externalAccountId, account]));
+    const publications = (await Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId))))
+      .flat()
+      .filter((publication) => publication.assetId === asset.assetId);
+    const destinations = await Promise.all(publications.map(async (publication) => {
+      const [engagement, comments, favourites, activities] = await Promise.all([
+        store.getExternalEngagementCurrent(publication.externalPublicationId),
+        store.listExternalComments(publication.externalPublicationId, 500),
+        store.listExternalFavourites(publication.externalPublicationId, 500),
+        store.listExternalActivitiesByPublication(publication.externalPublicationId, 500)
+      ]);
+      const account = accountById.get(publication.externalAccountId);
+      const { rawMetadataJson: _rawMetadataJson, ...publicationResponse } = publication;
+      return {
+        publication: { ...publicationResponse, externalUsername: account?.externalUsername || '' },
+        account: account ? toExternalAccountResponse(account) : undefined,
+        engagement,
+        comments: comments.map(({ rawPayload: _rawPayload, ...comment }) => comment),
+        favourites: favourites.map(({ rawPayload: _rawPayload, ...favourite }) => favourite),
+        activities: activities.map(({ rawPayload: _rawPayload, ...activity }) => activity),
+        capabilities: {
+          reply: publication.syncStatus === 'active',
+          remoteCommentModeration: false,
+          remoteCommentModerationReason: 'DeviantArt’s public API supports posting replies but does not expose comment hide or delete operations.'
+        }
+      };
+    }));
+    return res.json({ asset, destinations });
+  });
+
+  app.post('/studio/integrations/activity/works/:assetId/sync', requireAuth, async (req, res) => {
+    const asset = await store.getAsset(req.params.assetId);
+    if (!asset) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const accounts = (await store.listExternalAccountsByUser(req.authUser!.userId))
+      .filter((account) => account.connectionStatus !== 'disabled');
+    const publications = (await Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId))))
+      .flat()
+      .filter((publication) => publication.assetId === asset.assetId && publication.syncStatus === 'active');
+    const jobs: ExternalSyncJob[] = [];
+    for (const publication of publications) {
+      jobs.push(await enqueueExternalSyncJob(publication.externalAccountId, 'engagement_sync', {
+        externalContentId: publication.externalContentId
+      }));
+    }
+    for (const externalAccountId of [...new Set(publications.map((publication) => publication.externalAccountId))]) {
+      jobs.push(await enqueueExternalSyncJob(externalAccountId, 'activity_sync'));
+    }
+    return res.status(202).json({ jobs });
+  });
+
+  app.get('/studio/integrations/activity', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const accounts = await store.listExternalAccountsByCreatorIdentity(creatorIdentityId);
+    const requestedAccountId = typeof req.query.accountId === 'string' ? req.query.accountId.trim() : '';
+    const requestedType = typeof req.query.type === 'string' ? req.query.type.trim() : '';
+    const requestedStatus = req.query.status === 'read' || req.query.status === 'unread' || req.query.status === 'dismissed'
+      ? req.query.status
+      : 'all';
+    const limit = Math.max(1, Math.min(100, Math.floor(Number(req.query.limit || 50)) || 50));
+    const offset = Math.max(0, Math.floor(Number(req.query.cursor || 0)) || 0);
+    const accountById = new Map(accounts.map((account) => [account.externalAccountId, account]));
+    const [activityLists, publicationLists, watcherCheckpoints, profiles] = await Promise.all([
+      Promise.all(accounts.map((account) => store.listExternalActivitiesByAccount(account.externalAccountId, 1000))),
+      Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId))),
+      Promise.all(accounts.map((account) => store.getExternalSyncCheckpoint(account.externalAccountId, 'watchers', account.externalAccountId))),
+      Promise.all(accounts.map((account) => store.getExternalAccountProfile(account.externalAccountId)))
+    ]);
+    const publications = publicationLists.flat();
+    const publicationById = new Map(publications.map((publication) => [publication.externalPublicationId, publication]));
+    const allItems = activityLists
+      .flat()
+      .filter((activity) => !activity.creatorIdentityId || activity.creatorIdentityId === creatorIdentityId)
+      .filter((activity) => !requestedAccountId || activity.externalAccountId === requestedAccountId)
+      .filter((activity) => !requestedType || requestedType === 'all' || activity.type === requestedType)
+      .filter((activity) => (
+        requestedStatus === 'all'
+        || (requestedStatus === 'read' && Boolean(activity.readAt) && !activity.remoteDeletedAt)
+        || (requestedStatus === 'unread' && !activity.readAt && !activity.remoteDeletedAt)
+        || (requestedStatus === 'dismissed' && Boolean(activity.remoteDeletedAt))
+      ))
+      .sort((left, right) => (right.occurredAt || right.firstSeenAt).localeCompare(left.occurredAt || left.firstSeenAt));
+    const items = allItems.slice(offset, offset + limit);
+    const assetIds = [...new Set(items.map((activity) => {
+      const publication = activity.externalPublicationId
+        ? publicationById.get(activity.externalPublicationId)
+        : undefined;
+      return activity.assetId || publication?.assetId;
+    }).filter((assetId): assetId is string => Boolean(assetId)))];
+    const [assetPairs, spacePublicationPairs] = await Promise.all([
+      Promise.all(assetIds.map(async (assetId) => [assetId, await store.getAsset(assetId)] as const)),
+      Promise.all(assetIds.map(async (assetId) => [assetId, await store.getSpacePublication(assetId)] as const))
+    ]);
+    const assetById = new Map(assetPairs);
+    const spacePublicationByAssetId = new Map(spacePublicationPairs);
+    const localOrigin = `${req.protocol}://${req.get('host')}`;
+    const hostedThumbnailPairs = await Promise.all(assetIds.map(async (assetId) => {
+      const spacePublication = spacePublicationByAssetId.get(assetId);
+      const objectKey = spacePublication?.contentSyncStatus === 'hosted'
+        ? spacePublication.hostedThumbnailObjectKey || spacePublication.hostedObjectKey
+        : undefined;
+      return [assetId, await publicMediaUrl(objectKey, localOrigin)] as const;
+    }));
+    const hostedThumbnailByAssetId = new Map(hostedThumbnailPairs);
+    const remotePreviewUrl = (publication?: ExternalPublication): string | undefined => {
+      if (!publication?.rawMetadataJson || typeof publication.rawMetadataJson !== 'object') return undefined;
+      const metadata = publication.rawMetadataJson as Record<string, unknown>;
+      const thumbnails = Array.isArray(metadata.thumbs)
+        ? metadata.thumbs
+          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+          .filter((item) => typeof item.src === 'string')
+          .sort((left, right) => {
+            const leftArea = Number(left.width || 0) * Number(left.height || 0);
+            const rightArea = Number(right.width || 0) * Number(right.height || 0);
+            return rightArea - leftArea;
+          })
+        : [];
+      if (thumbnails.length) return thumbnails[0].src as string;
+      for (const key of ['preview', 'content']) {
+        const value = metadata[key];
+        if (value && typeof value === 'object' && !Array.isArray(value) && typeof (value as Record<string, unknown>).src === 'string') {
+          return (value as Record<string, unknown>).src as string;
+        }
+      }
+      return undefined;
+    };
+    return res.json({
+      accounts: accounts.map((account, index) => {
+        const profile = profiles[index];
+        const { rawPayload: _rawPayload, profileFingerprint: _profileFingerprint, ...profileResponse } = profile || {};
+        return {
+          externalAccountId: account.externalAccountId,
+          platform: account.platform,
+          externalUsername: account.externalUsername,
+          watchers: watcherCheckpoints[index]?.summary,
+          watchersLastSyncedAt: watcherCheckpoints[index]?.lastSuccessfulSyncAt,
+          profile: profile ? profileResponse : undefined
+        };
+      }),
+      items: items.map(({ rawPayload: _rawPayload, ...activity }) => {
+        const account = accountById.get(activity.externalAccountId);
+        const publication = (activity.externalPublicationId
+          ? publicationById.get(activity.externalPublicationId)
+          : undefined) || publications.find((candidate) => (
+          candidate.externalAccountId === activity.externalAccountId
+            && candidate.assetId === activity.assetId
+        ));
+        const assetId = activity.assetId || publication?.assetId;
+        const asset = assetId ? assetById.get(assetId) : undefined;
+        return {
+          ...activity,
+          account: account ? {
+            externalAccountId: account.externalAccountId,
+            platform: account.platform,
+            externalUserId: account.externalUserId,
+            externalUsername: account.externalUsername
+          } : undefined,
+          work: asset && assetId ? {
+            assetId,
+            title: asset.canonicalTitle || publication?.externalTitle || 'Untitled work',
+            assetType: asset.assetType,
+            thumbnailUrl: asset.assetType === 'image'
+              ? hostedThumbnailByAssetId.get(assetId) || remotePreviewUrl(publication)
+              : undefined,
+            externalUrl: publication?.externalUrl
+          } : undefined
+        };
+      }),
+      total: allItems.length,
+      nextCursor: offset + limit < allItems.length ? String(offset + limit) : undefined
+    });
+  });
+
+  app.post('/studio/integrations/activity/sync', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const accounts = (await store.listExternalAccountsByCreatorIdentity(creatorIdentityId))
+      .filter((account) => account.connectionStatus === 'connected');
+    const jobs = await Promise.all(accounts.map((account) => enqueueExternalSyncJob(account.externalAccountId, 'activity_sync')));
+    return res.status(202).json({ jobs });
+  });
+
+  app.patch('/studio/integrations/activity/accounts/:externalAccountId/:remoteActivityId', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account) return res.status(404).json({ message: 'Connected account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this connected account.' });
+    const activity = await store.getExternalActivityByRemoteId(account.externalAccountId, req.params.remoteActivityId);
+    if (!activity) return res.status(404).json({ message: 'Activity not found' });
+    const now = new Date().toISOString();
+    const updated = { ...activity, readAt: req.body?.read === false ? undefined : now, updatedAt: now };
+    await store.upsertExternalActivity(updated);
+    const { rawPayload: _rawPayload, ...response } = updated;
+    return res.json(response);
+  });
+
+  app.patch('/studio/integrations/activity/bulk', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const activityIds = new Set((Array.isArray(req.body?.activityIds) ? req.body.activityIds : [])
+      .filter((activityId: unknown): activityId is string => typeof activityId === 'string' && Boolean(activityId.trim())));
+    if (!activityIds.size) return res.status(400).json({ message: 'Choose at least one activity item.' });
+    const accounts = await store.listExternalAccountsByCreatorIdentity(creatorIdentityId);
+    const now = new Date().toISOString();
+    const read = req.body?.read !== false;
+    let updated = 0;
+    for (const account of accounts) {
+      const activities = await store.listExternalActivitiesByAccount(account.externalAccountId, 1000);
+      for (const activity of activities) {
+        if (!activityIds.has(activity.externalActivityId)) continue;
+        await store.upsertExternalActivity({ ...activity, readAt: read ? now : undefined, updatedAt: now });
+        updated += 1;
+      }
+    }
+    return res.json({ updated, read });
+  });
+
+  app.post('/studio/integrations/activity/accounts/:externalAccountId/:remoteActivityId/dismiss', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const activity = await store.getExternalActivityByRemoteId(account.externalAccountId, req.params.remoteActivityId);
+    if (!activity) return res.status(404).json({ message: 'Activity not found' });
+    try {
+      const updated = await dismissExternalActivity(store, config, account, activity, req.body?.stack === true);
+      const { rawPayload: _rawPayload, ...response } = updated;
+      return res.json(response);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to dismiss this DeviantArt notification.';
+      if (error instanceof ExternalProviderError && error.code === 'unsupported') return res.status(409).json({ message });
+      if (error instanceof ExternalProviderError && error.code === 'authentication_required') return res.status(409).json({ message: 'Reconnect DeviantArt before dismissing notifications.' });
+      if (error instanceof ExternalProviderError && error.code === 'rate_limited') return res.status(429).json({ message });
+      return res.status(502).json({ message });
+    }
+  });
+
+  app.get('/studio/integrations/deviantart/accounts/:externalAccountId/publications/:externalContentId/comments', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication) return res.status(404).json({ message: 'Publication not found' });
+    return res.json(await store.listExternalComments(publication.externalPublicationId, 100));
+  });
+
+  app.post('/studio/integrations/deviantart/accounts/:externalAccountId/publications/:externalContentId/comments/sync', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication || publication.syncStatus !== 'active') return res.status(404).json({ message: 'Published DeviantArt work not found' });
+    const job = await enqueueExternalSyncJob(account.externalAccountId, 'comment_sync', { externalContentId: publication.externalContentId });
+    return res.status(202).json(job);
+  });
+
+  app.post('/studio/integrations/deviantart/accounts/:externalAccountId/publications/:externalContentId/comments/:externalCommentId/reply', requireAuth, async (req, res) => {
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+    if (!body) return res.status(400).json({ message: 'A reply cannot be empty.' });
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication || publication.syncStatus !== 'active') return res.status(404).json({ message: 'Published DeviantArt work not found' });
+    const parent = (await store.listExternalComments(publication.externalPublicationId, 500))
+      .find((comment) => comment.externalCommentExternalId === req.params.externalCommentId);
+    if (!parent) return res.status(404).json({ message: 'The DeviantArt comment has not been synchronized yet.' });
+    try {
+      const comment = await replyToExternalComment(store, config, account, publication, body, parent.externalCommentExternalId);
+      return res.status(201).json(comment);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to post the DeviantArt reply.';
+      if (error instanceof ExternalProviderError && error.code === 'authentication_required') return res.status(409).json({ message: 'DeviantArt needs to be reconnected before you can reply.' });
+      if (error instanceof ExternalProviderError && error.code === 'rate_limited') return res.status(429).json({ message });
+      return res.status(502).json({ message });
+    }
+  });
+
   app.post('/studio/creators', requireAuth, async (req, res) => {
     const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ message: 'A Space name is required.' });
     const slug = slugify(String(req.body?.slug || name || randomUUID().slice(0, 8)));
     const creators = await store.listCreators();
     const conflict = creators.find((item) => creatorMatchesSlug(item, slug));
@@ -4138,6 +5615,7 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       creatorId: randomUUID(),
       name,
       slug,
+      spaceTier: 'free',
       slugHistory: uniqueSlugs([slug]),
       defaultProfileTab: req.body?.defaultProfileTab === 'groupings' ? 'groupings' : 'feed',
       featuredItemIds: parseStringArray(req.body?.featuredItemIds),
@@ -4160,6 +5638,21 @@ export const createApp = ({ config, store }: CreateAppOptions) => {
       createdAt: new Date().toISOString()
     });
     return res.status(201).json(creator);
+  });
+
+  app.put('/studio/creators/:creatorId/approved-tier', requireAdmin, async (req, res) => {
+    const creators = await store.listCreators();
+    const existing = creators.find((creator) => creator.creatorId === req.params.creatorId);
+    if (!existing) return res.status(404).json({ message: 'Creator not found' });
+    const approved = Boolean(req.body?.approved);
+    const updated: Creator = {
+      ...existing,
+      spaceTier: approved ? 'approved' : 'free',
+      approvedCreatorAt: approved ? (existing.approvedCreatorAt || new Date().toISOString()) : undefined
+    };
+    await store.updateCreator(updated);
+    auditLog(req, 'creator.approved_tier.updated', { creatorId: updated.creatorId, approved });
+    return res.json(updated);
   });
 
   app.get('/studio/files', requireAuth, async (req, res) => {

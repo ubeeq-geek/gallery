@@ -18,6 +18,8 @@ const ACCESS_TOKEN_KEY = 'accessToken';
 const REFRESH_TOKEN_KEY = 'refreshToken';
 const USERNAME_KEY = 'username';
 const AUTH_PERSISTENCE_KEY = 'authPersistence';
+const OAUTH_PKCE_VERIFIER_KEY = 'ubeeq.oauth.pkce.verifier';
+const OAUTH_STATE_KEY = 'ubeeq.oauth.state';
 
 const client = new CognitoIdentityProviderClient({ region: COGNITO_REGION });
 
@@ -74,6 +76,82 @@ const persistTokens = (username: string, authResult: { IdToken?: string; AccessT
   storage.setItem(ACCESS_TOKEN_KEY, authResult.AccessToken);
   if (authResult.RefreshToken) storage.setItem(REFRESH_TOKEN_KEY, authResult.RefreshToken);
   storage.setItem(USERNAME_KEY, username);
+};
+
+const base64Url = (bytes: Uint8Array): string => {
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+
+const getCognitoDomain = (): string => (import.meta.env.VITE_COGNITO_DOMAIN || '')
+  .trim()
+  .replace(/^https:\/\//, '')
+  .replace(/\/$/, '');
+
+const getCognitoRedirectUri = (): string => (import.meta.env.VITE_COGNITO_REDIRECT_URI || '').trim();
+
+export const isSocialSignInConfigured = (): boolean => Boolean(getCognitoDomain() && COGNITO_CLIENT_ID && getCognitoRedirectUri());
+
+export const beginSocialSignIn = async (provider: 'Google' | 'SignInWithApple'): Promise<void> => {
+  const domain = getCognitoDomain();
+  const redirectUri = getCognitoRedirectUri();
+  if (!domain || !COGNITO_CLIENT_ID || !redirectUri) {
+    throw new Error('Social sign-in is not configured yet.');
+  }
+  const verifierBytes = crypto.getRandomValues(new Uint8Array(32));
+  const stateBytes = crypto.getRandomValues(new Uint8Array(24));
+  const verifier = base64Url(verifierBytes);
+  const state = base64Url(stateBytes);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  sessionStorage.setItem(OAUTH_PKCE_VERIFIER_KEY, verifier);
+  sessionStorage.setItem(OAUTH_STATE_KEY, state);
+  const url = new URL(`https://${domain}/oauth2/authorize`);
+  url.searchParams.set('identity_provider', provider);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', COGNITO_CLIENT_ID);
+  url.searchParams.set('scope', 'openid email profile');
+  url.searchParams.set('code_challenge_method', 'S256');
+  url.searchParams.set('code_challenge', base64Url(new Uint8Array(digest)));
+  url.searchParams.set('state', state);
+  window.location.assign(url.toString());
+};
+
+export const completeSocialSignIn = async (): Promise<CurrentUser> => {
+  const domain = getCognitoDomain();
+  const redirectUri = getCognitoRedirectUri();
+  const params = new URLSearchParams(window.location.search);
+  const error = params.get('error');
+  if (error) throw new Error(params.get('error_description') || 'Social sign-in was cancelled.');
+  const code = params.get('code');
+  const state = params.get('state');
+  const expectedState = sessionStorage.getItem(OAUTH_STATE_KEY);
+  const verifier = sessionStorage.getItem(OAUTH_PKCE_VERIFIER_KEY);
+  if (!domain || !COGNITO_CLIENT_ID || !redirectUri || !code || !state || !expectedState || state !== expectedState || !verifier) {
+    throw new Error('Social sign-in could not be verified. Please start again.');
+  }
+  const response = await fetch(`https://${domain}/oauth2/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: COGNITO_CLIENT_ID,
+      code,
+      redirect_uri: redirectUri,
+      code_verifier: verifier
+    })
+  });
+  const payload = await response.json() as { id_token?: string; access_token?: string; refresh_token?: string; error_description?: string };
+  sessionStorage.removeItem(OAUTH_PKCE_VERIFIER_KEY);
+  sessionStorage.removeItem(OAUTH_STATE_KEY);
+  if (!response.ok || !payload.id_token || !payload.access_token) {
+    throw new Error(payload.error_description || 'Social sign-in could not be completed.');
+  }
+  const tokenPayload = parseJwtPayload(payload.id_token);
+  const username = String(tokenPayload['cognito:username'] || tokenPayload.email || tokenPayload.sub || 'user');
+  persistTokens(username, { IdToken: payload.id_token, AccessToken: payload.access_token, RefreshToken: payload.refresh_token });
+  return getCurrentUser();
 };
 
 export type CurrentUser = {

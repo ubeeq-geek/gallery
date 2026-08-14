@@ -22,7 +22,14 @@ const buildConfig = (): AppConfig => ({
   rememberGroupingAccessTtlSeconds: 60 * 60 * 24 * 30,
   signedUrlTtlSeconds: 300,
   trendingFeedMaxItems: 600,
-  trendingCandidateLimit: 1500
+  trendingCandidateLimit: 1500,
+  externalSyncBaseDelaySeconds: 60,
+  externalAccountScanIntervalSeconds: 21600,
+  externalActivityScanIntervalSeconds: 120,
+  deviantArtPublishedDescriptionUpdate: false,
+  externalContentMaxBytes: 50 * 1024 * 1024,
+  externalTokenEncryptionKey: 'test-external-encryption-key',
+  externalOAuthRedirectUri: 'http://localhost:4000/integrations/deviantart/callback'
 });
 
 describe('API contract', () => {
@@ -91,5 +98,350 @@ describe('API contract', () => {
       if (res.status === 429) break;
     }
     expect(lastStatus).toBe(429);
+  });
+
+  it('lets every signed-in Ubeeqer create a free Space without creator approval', async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ config: buildConfig(), store });
+    const response = await request(app)
+      .post('/studio/creators')
+      .set('x-user-id', 'u-ubeeqer')
+      .send({ name: 'Open Studio', slug: 'open-studio' });
+
+    expect(response.status).toBe(201);
+    expect(response.body.spaceTier).toBe('free');
+    const creators = await store.listCreatorsByUserId('u-ubeeqer');
+    expect(creators).toHaveLength(1);
+    expect(creators[0].slug).toBe('open-studio');
+  });
+
+  it('deletes a DeviantArt application only after its connected accounts are removed', async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ config: buildConfig(), store });
+    const saved = await request(app)
+      .put('/studio/integrations/deviantart/credentials')
+      .set('x-user-id', 'u-da-delete')
+      .send({ applicationLabel: 'Disposable DA app', clientId: 'delete-client', clientSecret: 'delete-secret' });
+    expect(saved.status).toBe(200);
+
+    const now = new Date().toISOString();
+    await store.createExternalAccount({
+      externalAccountId: 'account-da-delete',
+      userId: 'u-da-delete',
+      externalPlatformCredentialId: saved.body.externalPlatformCredentialId,
+      platform: 'deviantart',
+      externalUserId: 'remote-da-delete',
+      externalUsername: 'da-delete-user',
+      accessTokenEncrypted: 'encrypted-access-token',
+      connectionStatus: 'connected',
+      createdAt: now,
+      updatedAt: now
+    });
+
+    const blocked = await request(app)
+      .delete(`/studio/integrations/deviantart/credentials/${saved.body.externalPlatformCredentialId}`)
+      .set('x-user-id', 'u-da-delete');
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.connectedAccountCount).toBe(1);
+
+    const removed = await request(app)
+      .delete('/studio/integrations/deviantart/accounts/account-da-delete')
+      .set('x-user-id', 'u-da-delete');
+    expect(removed.status).toBe(204);
+
+    const deleted = await request(app)
+      .delete(`/studio/integrations/deviantart/credentials/${saved.body.externalPlatformCredentialId}`)
+      .set('x-user-id', 'u-da-delete');
+    expect(deleted.status).toBe(204);
+    expect(await store.getExternalPlatformCredential(saved.body.externalPlatformCredentialId)).toBeNull();
+  });
+
+  it('returns only the connected creator catalogue and never token fields', async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ config: buildConfig(), store });
+    const now = new Date().toISOString();
+    await store.createCreator({ creatorId: 'creator-da', name: 'DA Creator', slug: 'da-creator', status: 'active', sortOrder: 0, createdAt: now });
+    await store.addCreatorMember({ creatorId: 'creator-da', userId: 'u-da', role: 'owner', createdAt: now });
+    const credentialResponse = await request(app)
+      .put('/studio/integrations/deviantart/credentials')
+      .set('x-user-id', 'u-da')
+      .send({ creatorId: 'creator-da', clientId: 'creator-da-client', clientSecret: 'creator-da-secret' });
+    expect(credentialResponse.status).toBe(200);
+    expect(credentialResponse.body.clientId).toBe('creator-da-client');
+    expect(credentialResponse.body.clientSecretEncrypted).toBeUndefined();
+    const storedCredential = (await store.listExternalPlatformCredentialsByCreatorIdentity('creator-da'))[0];
+    expect(storedCredential.clientSecretEncrypted).not.toContain('creator-da-secret');
+    await store.createExternalAccount({
+      externalAccountId: 'account-da',
+      userId: 'u-da',
+      creatorIdentityId: 'creator-da',
+      externalPlatformCredentialId: credentialResponse.body.externalPlatformCredentialId,
+      platform: 'deviantart',
+      externalUserId: 'remote-da',
+      externalUsername: 'da-user',
+      accessTokenEncrypted: 'encrypted-access-token',
+      refreshTokenEncrypted: 'encrypted-refresh-token',
+      connectionStatus: 'connected',
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createAsset({
+      assetId: 'asset-da',
+      userId: 'u-da',
+      creatorIdentityId: 'creator-da',
+      assetType: 'image',
+      canonicalTitle: 'Imported work',
+      visibility: 'private',
+      titleSyncPolicy: 'initially_mirrored',
+      descriptionSyncPolicy: 'initially_mirrored',
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createExternalPublication({
+      externalPublicationId: 'publication-da',
+      assetId: 'asset-da',
+      externalAccountId: 'account-da',
+      platform: 'deviantart',
+      externalContentId: 'deviation-uuid',
+      externalUrl: 'https://www.deviantart.com/da-user/art/imported-work-123',
+      externalTitle: 'Imported work',
+      externalDescription: '<p>Original DeviantArt description</p>',
+      externalTags: ['portrait'],
+      syncStatus: 'active',
+      rawMetadataJson: {
+        thumbs: [
+          { src: 'https://images.example.test/imported-work-small.jpg', width: 150, height: 100 },
+          { src: 'https://images.example.test/imported-work-large.jpg', width: 600, height: 400 }
+        ],
+        submission: {
+          allows_comments: false,
+          is_mature: true,
+          mature_level: 'moderate',
+          mature_classification: ['ideology'],
+          is_ai_generated: true,
+          noai: true
+        }
+      },
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.upsertExternalEngagementCurrent({
+      externalPublicationId: 'publication-da',
+      capturedAt: now,
+      views: 6492,
+      favourites: 35,
+      comments: 0,
+      downloads: 0
+    });
+    await store.upsertExternalActivity({
+      externalActivityId: 'activity-da',
+      externalAccountId: 'account-da',
+      creatorIdentityId: 'creator-da',
+      assetId: 'asset-da',
+      externalPublicationId: 'publication-da',
+      platform: 'deviantart',
+      type: 'favourite',
+      direction: 'inbound',
+      remoteActivityId: 'remote-activity-da',
+      remoteMessageId: 'message-da',
+      externalActorName: 'art-fan',
+      occurredAt: now,
+      firstSeenAt: now,
+      lastSeenAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+
+    const accountResponse = await request(app)
+      .get('/studio/integrations/deviantart/accounts?creatorId=creator-da')
+      .set('x-user-id', 'u-da');
+    expect(accountResponse.status).toBe(200);
+    expect(accountResponse.body[0].externalUsername).toBe('da-user');
+    expect(accountResponse.body[0].accessTokenEncrypted).toBeUndefined();
+    expect(accountResponse.body[0].refreshTokenEncrypted).toBeUndefined();
+
+    const catalogueResponse = await request(app)
+      .get('/studio/integrations/deviantart/catalogue?creatorId=creator-da&query=portrait')
+      .set('x-user-id', 'u-da');
+    expect(catalogueResponse.status).toBe(200);
+    expect(catalogueResponse.body.total).toBe(1);
+    expect(catalogueResponse.body.items[0].publications[0].externalContentId).toBe('deviation-uuid');
+    expect(catalogueResponse.body.items[0].publications[0].canUpdatePublishedDescription).toBe(false);
+    expect(catalogueResponse.body.items[0].publications[0].publishedDescriptionUpdateMode).toBeUndefined();
+    expect(catalogueResponse.body.items[0].engagement).toMatchObject({
+      views: 6492,
+      favourites: 35,
+      comments: 0,
+      downloads: 0,
+      destinations: 1
+    });
+    expect(catalogueResponse.body.items[0].publications[0].displayOptions).toMatchObject({
+      allowComments: false,
+      isMature: true,
+      matureLevel: 'moderate',
+      matureClassification: ['ideology'],
+      isAiGenerated: true,
+      noAi: true
+    });
+
+    const activityResponse = await request(app)
+      .get('/studio/integrations/activity?creatorId=creator-da')
+      .set('x-user-id', 'u-da');
+    expect(activityResponse.status).toBe(200);
+    expect(activityResponse.body.items[0]).toMatchObject({
+      externalActivityId: 'activity-da',
+      account: {
+        externalAccountId: 'account-da',
+        platform: 'deviantart',
+        externalUserId: 'remote-da',
+        externalUsername: 'da-user'
+      },
+      work: {
+        assetId: 'asset-da',
+        title: 'Imported work',
+        assetType: 'image',
+        thumbnailUrl: 'https://images.example.test/imported-work-large.jpg',
+        externalUrl: 'https://www.deviantart.com/da-user/art/imported-work-123'
+      }
+    });
+    expect(activityResponse.body.total).toBe(1);
+    expect(activityResponse.body.nextCursor).toBeUndefined();
+
+    const bulkReadResponse = await request(app)
+      .patch('/studio/integrations/activity/bulk')
+      .set('x-user-id', 'u-da')
+      .send({ creatorId: 'creator-da', activityIds: ['activity-da'], read: true });
+    expect(bulkReadResponse.status).toBe(200);
+    expect(bulkReadResponse.body).toEqual({ updated: 1, read: true });
+    const readActivityResponse = await request(app)
+      .get('/studio/integrations/activity?creatorId=creator-da&status=read&limit=1')
+      .set('x-user-id', 'u-da');
+    expect(readActivityResponse.body.items).toHaveLength(1);
+    expect(readActivityResponse.body.items[0].readAt).toEqual(expect.any(String));
+
+    const workActivityResponse = await request(app)
+      .get('/studio/integrations/activity/works/asset-da')
+      .set('x-user-id', 'u-da');
+    expect(workActivityResponse.status).toBe(200);
+    expect(workActivityResponse.body.destinations[0].capabilities).toMatchObject({
+      reply: true,
+      remoteCommentModeration: false
+    });
+
+    const metadataResponse = await request(app)
+      .patch('/studio/integrations/assets/asset-da')
+      .set('x-user-id', 'u-da')
+      .send({
+        canonicalDescription: '<p>Independent Ubeeq description</p>',
+        descriptionSyncPolicy: 'independent',
+        integrationMetadata: {
+          externalPublicationId: 'publication-da',
+          description: '<p>Unsupported published DeviantArt description</p>'
+        }
+      });
+    expect(metadataResponse.status).toBe(200);
+    expect(metadataResponse.body.canonicalDescription).toBe('<p>Independent Ubeeq description</p>');
+    expect(metadataResponse.body.remoteUpdateJobs).toEqual([]);
+    expect(metadataResponse.body.remoteUpdateWarnings).toEqual([
+      'DeviantArt does not permit description changes for already-published deviations through its API. The Ubeeq description was saved, but the DeviantArt description remains unchanged.'
+    ]);
+    expect((await store.getExternalPublication('account-da', 'deviation-uuid'))?.externalDescription).toBe('<p>Original DeviantArt description</p>');
+
+    const spaceResponse = await request(app)
+      .put('/studio/integrations/assets/asset-da/space-publication')
+      .set('x-user-id', 'u-da')
+      .send({ published: true, hostingMode: 'linked', visibility: 'private' });
+    expect(spaceResponse.status).toBe(200);
+    expect(spaceResponse.body.published).toBe(true);
+    expect(spaceResponse.body.hostingMode).toBe('linked');
+
+    const selectedCatalogueResponse = await request(app)
+      .get('/studio/integrations/deviantart/catalogue?creatorId=creator-da')
+      .set('x-user-id', 'u-da');
+    expect(selectedCatalogueResponse.body.items[0].spacePublication.published).toBe(true);
+
+    await store.createAsset({
+      assetId: 'asset-da-draft',
+      userId: 'u-da',
+      creatorIdentityId: 'creator-da',
+      assetType: 'image',
+      canonicalTitle: 'New Ubeeq work',
+      visibility: 'private',
+      titleSyncPolicy: 'independent',
+      descriptionSyncPolicy: 'independent',
+      createdAt: now,
+      updatedAt: now
+    });
+    const draftDestination = await request(app)
+      .post('/studio/works/asset-da-draft/destinations/deviantart')
+      .set('x-user-id', 'u-da')
+      .send({ externalAccountId: 'account-da', targetStatus: 'draft' });
+    expect(draftDestination.status).toBe(201);
+    expect(draftDestination.body.publication).toMatchObject({
+      assetId: 'asset-da-draft',
+      targetStatus: 'draft',
+      syncStatus: 'pending_publish'
+    });
+
+    const publishInstead = await request(app)
+      .post('/studio/works/asset-da-draft/destinations/deviantart')
+      .set('x-user-id', 'u-da')
+      .send({ externalAccountId: 'account-da', targetStatus: 'published' });
+    expect(publishInstead.status).toBe(200);
+    expect(publishInstead.body.publication.targetStatus).toBe('published');
+  });
+
+  it('keeps a DeviantArt integration account-owned and uses one sync destination creator', async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ config: buildConfig(), store });
+    const now = new Date().toISOString();
+    for (const creator of [
+      { creatorId: 'creator-a', name: 'Creator A', slug: 'creator-a' },
+      { creatorId: 'creator-b', name: 'Creator B', slug: 'creator-b' }
+    ]) {
+      await store.createCreator({ ...creator, status: 'active', sortOrder: 0, createdAt: now });
+      await store.addCreatorMember({ creatorId: creator.creatorId, userId: 'u-da-owner', role: 'owner', createdAt: now });
+    }
+    const credential = await request(app)
+      .put('/studio/integrations/deviantart/credentials')
+      .set('x-user-id', 'u-da-owner')
+      .send({ clientId: 'account-owned-client', clientSecret: 'account-owned-secret' });
+    expect(credential.status).toBe(200);
+    await store.createExternalAccount({
+      externalAccountId: 'shared-da-account',
+      userId: 'u-da-owner',
+      externalPlatformCredentialId: credential.body.externalPlatformCredentialId,
+      platform: 'deviantart',
+      externalUserId: 'remote-shared',
+      externalUsername: 'shared-da',
+      accessTokenEncrypted: 'encrypted-access-token',
+      connectionStatus: 'connected',
+      createdAt: now,
+      updatedAt: now
+    });
+
+    const assignment = await request(app)
+      .put('/studio/integrations/deviantart/accounts/shared-da-account/creators')
+      .set('x-user-id', 'u-da-owner')
+      .send({ creatorIdentityIds: ['creator-b'], primaryCreatorIdentityId: 'creator-b' });
+    expect(assignment.status).toBe(200);
+    expect(assignment.body.creatorAssignments).toEqual(['creator-b']);
+    expect(assignment.body.primaryCreatorIdentityId).toBe('creator-b');
+
+    const [allAccounts, creatorAAccounts, creatorBAccounts] = await Promise.all([
+      request(app).get('/studio/integrations/deviantart/accounts').set('x-user-id', 'u-da-owner'),
+      request(app).get('/studio/integrations/deviantart/accounts?creatorId=creator-a').set('x-user-id', 'u-da-owner'),
+      request(app).get('/studio/integrations/deviantart/accounts?creatorId=creator-b').set('x-user-id', 'u-da-owner')
+    ]);
+    expect(allAccounts.status).toBe(200);
+    expect(allAccounts.body).toHaveLength(1);
+    expect(creatorAAccounts.body).toEqual([]);
+    expect(creatorBAccounts.body[0].externalAccountId).toBe('shared-da-account');
+
+    const unsupportedSplit = await request(app)
+      .put('/studio/integrations/deviantart/accounts/shared-da-account/creators')
+      .set('x-user-id', 'u-da-owner')
+      .send({ creatorIdentityIds: ['creator-a', 'creator-b'], primaryCreatorIdentityId: 'creator-b' });
+    expect(unsupportedSplit.status).toBe(400);
   });
 });

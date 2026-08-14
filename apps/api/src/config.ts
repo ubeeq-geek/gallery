@@ -25,6 +25,17 @@ export interface AppConfig {
   cognitoUserPoolId?: string;
   cognitoClientId?: string;
   cognitoTokenUse?: 'id' | 'access';
+  externalOAuthRedirectUri?: string;
+  externalTokenEncryptionKey?: string;
+  externalSyncQueueUrl?: string;
+  externalSyncBaseDelaySeconds: number;
+  externalAccountScanIntervalSeconds: number;
+  externalActivityScanIntervalSeconds: number;
+  deviantArtPublishedDescriptionUpdate: boolean;
+  externalContentMaxBytes: number;
+  localMediaDirectory?: string;
+  appOrigin?: string;
+  localAuthUserId?: string;
 }
 
 export const loadConfig = (): AppConfig => ({
@@ -53,5 +64,20 @@ export const loadConfig = (): AppConfig => ({
   trendingCandidateLimit: Number(process.env.TRENDING_CANDIDATE_LIMIT || 1500),
   cognitoUserPoolId: process.env.COGNITO_USER_POOL_ID,
   cognitoClientId: process.env.COGNITO_CLIENT_ID,
-  cognitoTokenUse: (process.env.COGNITO_TOKEN_USE as 'id' | 'access') || 'id'
+  cognitoTokenUse: (process.env.COGNITO_TOKEN_USE as 'id' | 'access') || 'id',
+  externalOAuthRedirectUri: process.env.EXTERNAL_OAUTH_REDIRECT_URI,
+  externalTokenEncryptionKey: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY,
+  externalSyncQueueUrl: process.env.EXTERNAL_SYNC_QUEUE_URL,
+  externalSyncBaseDelaySeconds: Number(process.env.EXTERNAL_SYNC_BASE_DELAY_SECONDS || 60),
+  externalAccountScanIntervalSeconds: Number(process.env.EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS || 21600),
+  externalActivityScanIntervalSeconds: Number(process.env.EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS || 120),
+  deviantArtPublishedDescriptionUpdate: (
+    process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE
+    || process.env.DEVIANTART_EXPERIMENTAL_PUBLISHED_DESCRIPTION_UPDATE
+    || 'true'
+  ) === 'true',
+  externalContentMaxBytes: Number(process.env.EXTERNAL_CONTENT_MAX_BYTES || 50 * 1024 * 1024),
+  localMediaDirectory: process.env.LOCAL_MEDIA_DIRECTORY || (process.env.LOCAL_AUTH_USER_ID ? '/tmp/ubeeq-media' : undefined),
+  appOrigin: process.env.APP_ORIGIN,
+  localAuthUserId: process.env.LOCAL_AUTH_USER_ID
 });

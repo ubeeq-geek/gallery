@@ -68,6 +68,13 @@ export const createOptionalAuthMiddleware = (config: AppConfig) => {
     }
 
     if (!verifier) {
+      if (config.localAuthUserId) {
+        req.authUser = {
+          userId: config.localAuthUserId,
+          displayName: 'Local Developer',
+          groups: [CREATOR_GROUP, CREATOR]
+        };
+      }
       return next();
     }
 
