@@ -63,13 +63,24 @@ import type {
 } from './domain';
 import { ContentCoreRepository } from './contentCoreRepository';
 import { ExternalPlatformRepository } from './externalPlatformRepository';
+import { CanonicalContentRepository } from './canonicalContentRepository';
 import { normalizeContentRating } from './contentRating';
 import { normalizeAiDisclosure, normalizeHeavyTopics } from './disclosures';
+import type {
+  CanonicalAsset,
+  CollectionWork,
+  CreatorCollection,
+  Publication,
+  Work,
+  WorkAsset,
+  WorkDiscoveryParticipation
+} from './canonicalDomain';
 
 export class DynamoStore implements DataStore {
   private readonly client: DynamoDBDocumentClient;
   private readonly coreRepo?: ContentCoreRepository;
   private readonly externalPlatformRepo?: ExternalPlatformRepository;
+  private readonly canonicalContentRepo?: CanonicalContentRepository;
   private readonly localUsernameReservations = new Map<string, { username: string; email: string }>();
   private readonly localUserProfiles = new Map<string, UserProfile>();
   private readonly localCreatorMembers = new Map<string, CreatorMember>();
@@ -86,6 +97,7 @@ export class DynamoStore implements DataStore {
     if (config.useContentCoreTable) {
       this.coreRepo = new ContentCoreRepository(this.client, config.contentCoreTable);
       this.externalPlatformRepo = new ExternalPlatformRepository(this.client, config.contentCoreTable);
+      this.canonicalContentRepo = new CanonicalContentRepository(this.client, config.contentCoreTable);
     }
   }
 
@@ -95,6 +107,35 @@ export class DynamoStore implements DataStore {
     }
     return this.externalPlatformRepo;
   }
+
+  private canonicalContent(): CanonicalContentRepository {
+    if (!this.canonicalContentRepo) {
+      throw new Error('Canonical content requires USE_CONTENT_CORE_TABLE=true');
+    }
+    return this.canonicalContentRepo;
+  }
+
+  async listWorksByCreator(tenantId: string, creatorId: string): Promise<Work[]> { return this.canonicalContent().listWorksByCreator(tenantId, creatorId); }
+  async getWork(tenantId: string, workId: string): Promise<Work | null> { return this.canonicalContent().getWork(tenantId, workId); }
+  async createWork(work: Work): Promise<void> { await this.canonicalContent().createWork(work); }
+  async updateWork(work: Work): Promise<void> { await this.canonicalContent().updateWork(work); }
+  async listCanonicalAssetsByWork(tenantId: string, workId: string): Promise<Array<CanonicalAsset & { attachment: WorkAsset }>> { return this.canonicalContent().listCanonicalAssetsByWork(tenantId, workId); }
+  async getCanonicalAsset(tenantId: string, assetId: string): Promise<CanonicalAsset | null> { return this.canonicalContent().getCanonicalAsset(tenantId, assetId); }
+  async createCanonicalAsset(asset: CanonicalAsset): Promise<void> { await this.canonicalContent().createCanonicalAsset(asset); }
+  async updateCanonicalAsset(asset: CanonicalAsset): Promise<void> { await this.canonicalContent().updateCanonicalAsset(asset); }
+  async attachAssetToWork(tenantId: string, attachment: WorkAsset): Promise<void> { await this.canonicalContent().attachAssetToWork(tenantId, attachment); }
+  async detachAssetFromWork(tenantId: string, workId: string, assetId: string): Promise<void> { await this.canonicalContent().detachAssetFromWork(tenantId, workId, assetId); }
+  async listPublicationsByWork(tenantId: string, workId: string): Promise<Publication[]> { return this.canonicalContent().listPublicationsByWork(tenantId, workId); }
+  async getPublication(tenantId: string, publicationId: string): Promise<Publication | null> { return this.canonicalContent().getPublication(tenantId, publicationId); }
+  async upsertPublication(publication: Publication): Promise<void> { await this.canonicalContent().upsertPublication(publication); }
+  async listCreatorCollections(tenantId: string, creatorId: string): Promise<CreatorCollection[]> { return this.canonicalContent().listCreatorCollections(tenantId, creatorId); }
+  async getCreatorCollection(tenantId: string, collectionId: string): Promise<CreatorCollection | null> { return this.canonicalContent().getCreatorCollection(tenantId, collectionId); }
+  async createCreatorCollection(collection: CreatorCollection): Promise<void> { await this.canonicalContent().createCreatorCollection(collection); }
+  async updateCreatorCollection(collection: CreatorCollection): Promise<void> { await this.canonicalContent().updateCreatorCollection(collection); }
+  async listCollectionWorks(tenantId: string, collectionId: string): Promise<CollectionWork[]> { return this.canonicalContent().listCollectionWorks(tenantId, collectionId); }
+  async replaceCollectionWorks(tenantId: string, collectionId: string, works: CollectionWork[]): Promise<void> { await this.canonicalContent().replaceCollectionWorks(tenantId, collectionId, works); }
+  async getWorkDiscoveryParticipation(tenantId: string, workId: string): Promise<WorkDiscoveryParticipation | null> { return this.canonicalContent().getWorkDiscoveryParticipation(tenantId, workId); }
+  async upsertWorkDiscoveryParticipation(participation: WorkDiscoveryParticipation): Promise<void> { await this.canonicalContent().upsertWorkDiscoveryParticipation(participation); }
 
   private async batchWriteAll(requestItems: Record<string, Array<Record<string, unknown>>>): Promise<void> {
     let pending = requestItems;

@@ -30,6 +30,7 @@ describe('external content storage', () => {
       mediaBucket: 'test'
     } as AppConfig;
     const input = {
+      tenantId: 'test',
       userId: 'user-1',
       creatorIdentityId: 'creator-1',
       assetId: 'asset-1',

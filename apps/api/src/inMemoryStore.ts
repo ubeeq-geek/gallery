@@ -55,6 +55,15 @@ import type {
 } from './domain';
 import type { DataStore, TrendingFeedQueryOptions } from './store';
 import { capabilitiesForRole } from './roleHelpers';
+import type {
+  CanonicalAsset,
+  CollectionWork,
+  CreatorCollection,
+  Publication,
+  Work,
+  WorkAsset,
+  WorkDiscoveryParticipation
+} from './canonicalDomain';
 
 export class InMemoryStore implements DataStore {
   private getOrCreateIdentity(userId: string): UserIdentity {
@@ -127,6 +136,13 @@ export class InMemoryStore implements DataStore {
   externalSyncLogs: ExternalSyncLog[] = [];
   idempotency: IdempotencyRecord[] = [];
   auditEvents: AuditEvent[] = [];
+  works: Work[] = [];
+  canonicalAssets: CanonicalAsset[] = [];
+  workAssets: Array<WorkAsset & { tenantId: string }> = [];
+  publications: Publication[] = [];
+  creatorCollections: CreatorCollection[] = [];
+  collectionWorks: Array<CollectionWork & { tenantId: string }> = [];
+  workDiscovery: WorkDiscoveryParticipation[] = [];
   imageFavoriteCounts = new Map<string, number>();
   trendingFeed = new Map<TrendingPeriod, TrendingFeedItem[]>([
     ['hourly', []],
@@ -135,6 +151,110 @@ export class InMemoryStore implements DataStore {
 
   async getSiteSettings(): Promise<SiteSettings> { return this.siteSettings; }
   async updateSiteSettings(settings: SiteSettings): Promise<void> { this.siteSettings = settings; }
+
+  async listWorksByCreator(tenantId: string, creatorId: string): Promise<Work[]> {
+    return this.works
+      .filter((work) => work.tenantId === tenantId && work.creatorId === creatorId && work.status !== 'deleted')
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async getWork(tenantId: string, workId: string): Promise<Work | null> {
+    return this.works.find((work) => work.tenantId === tenantId && work.workId === workId) || null;
+  }
+
+  async createWork(work: Work): Promise<void> {
+    this.works = this.works.filter((item) => !(item.tenantId === work.tenantId && item.workId === work.workId));
+    this.works.push(work);
+  }
+
+  async updateWork(work: Work): Promise<void> { await this.createWork(work); }
+
+  async listCanonicalAssetsByWork(tenantId: string, workId: string): Promise<Array<CanonicalAsset & { attachment: WorkAsset }>> {
+    return this.workAssets
+      .filter((attachment) => attachment.tenantId === tenantId && attachment.workId === workId)
+      .sort((a, b) => a.position - b.position)
+      .map((attachment) => {
+        const asset = this.canonicalAssets.find((candidate) => candidate.tenantId === tenantId && candidate.assetId === attachment.assetId);
+        const { tenantId: _attachmentTenantId, ...publicAttachment } = attachment;
+        return asset ? { ...asset, attachment: publicAttachment } : null;
+      })
+      .filter((asset): asset is CanonicalAsset & { attachment: WorkAsset } => Boolean(asset));
+  }
+
+  async getCanonicalAsset(tenantId: string, assetId: string): Promise<CanonicalAsset | null> {
+    return this.canonicalAssets.find((asset) => asset.tenantId === tenantId && asset.assetId === assetId) || null;
+  }
+
+  async createCanonicalAsset(asset: CanonicalAsset): Promise<void> {
+    this.canonicalAssets = this.canonicalAssets.filter((item) => !(item.tenantId === asset.tenantId && item.assetId === asset.assetId));
+    this.canonicalAssets.push(asset);
+  }
+
+  async updateCanonicalAsset(asset: CanonicalAsset): Promise<void> { await this.createCanonicalAsset(asset); }
+
+  async attachAssetToWork(tenantId: string, attachment: WorkAsset): Promise<void> {
+    this.workAssets = this.workAssets.filter((item) => !(item.tenantId === tenantId && item.workId === attachment.workId && item.assetId === attachment.assetId));
+    this.workAssets.push({ ...attachment, tenantId });
+  }
+
+  async detachAssetFromWork(tenantId: string, workId: string, assetId: string): Promise<void> {
+    this.workAssets = this.workAssets.filter((item) => !(item.tenantId === tenantId && item.workId === workId && item.assetId === assetId));
+  }
+
+  async listPublicationsByWork(tenantId: string, workId: string): Promise<Publication[]> {
+    return this.publications
+      .filter((publication) => publication.tenantId === tenantId && publication.workId === workId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async getPublication(tenantId: string, publicationId: string): Promise<Publication | null> {
+    return this.publications.find((publication) => publication.tenantId === tenantId && publication.publicationId === publicationId) || null;
+  }
+
+  async upsertPublication(publication: Publication): Promise<void> {
+    this.publications = this.publications.filter((item) => !(item.tenantId === publication.tenantId && item.publicationId === publication.publicationId));
+    this.publications.push(publication);
+  }
+
+  async listCreatorCollections(tenantId: string, creatorId: string): Promise<CreatorCollection[]> {
+    return this.creatorCollections
+      .filter((collection) => collection.tenantId === tenantId && collection.creatorId === creatorId && collection.status !== 'deleted')
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }
+
+  async getCreatorCollection(tenantId: string, collectionId: string): Promise<CreatorCollection | null> {
+    return this.creatorCollections.find((collection) => collection.tenantId === tenantId && collection.collectionId === collectionId) || null;
+  }
+
+  async createCreatorCollection(collection: CreatorCollection): Promise<void> {
+    this.creatorCollections = this.creatorCollections.filter((item) => !(item.tenantId === collection.tenantId && item.collectionId === collection.collectionId));
+    this.creatorCollections.push(collection);
+  }
+
+  async updateCreatorCollection(collection: CreatorCollection): Promise<void> { await this.createCreatorCollection(collection); }
+
+  async listCollectionWorks(tenantId: string, collectionId: string): Promise<CollectionWork[]> {
+    const collection = await this.getCreatorCollection(tenantId, collectionId);
+    if (!collection) return [];
+    return this.collectionWorks.filter((item) => item.tenantId === tenantId && item.collectionId === collectionId).sort((a, b) => a.position - b.position);
+  }
+
+  async replaceCollectionWorks(tenantId: string, collectionId: string, works: CollectionWork[]): Promise<void> {
+    if (!(await this.getCreatorCollection(tenantId, collectionId))) throw new Error('Collection not found');
+    this.collectionWorks = [
+      ...this.collectionWorks.filter((item) => !(item.tenantId === tenantId && item.collectionId === collectionId)),
+      ...works.map((item) => ({ ...item, tenantId }))
+    ];
+  }
+
+  async getWorkDiscoveryParticipation(tenantId: string, workId: string): Promise<WorkDiscoveryParticipation | null> {
+    return this.workDiscovery.find((item) => item.tenantId === tenantId && item.workId === workId) || null;
+  }
+
+  async upsertWorkDiscoveryParticipation(participation: WorkDiscoveryParticipation): Promise<void> {
+    this.workDiscovery = this.workDiscovery.filter((item) => !(item.tenantId === participation.tenantId && item.workId === participation.workId));
+    this.workDiscovery.push(participation);
+  }
 
   async listCreators(): Promise<Creator[]> { return this.creators; }
   async listAllGroupings(): Promise<Grouping[]> { return this.groupings; }

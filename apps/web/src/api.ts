@@ -1,4 +1,5 @@
 import { getValidIdToken } from './cognitoAuth';
+import type { StudioExternalAsset, StudioExternalPublication, StudioSpacePublication, StudioUbeeqCollection } from './studio/types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 let myProfileInFlight: Promise<unknown> | null = null;
@@ -58,6 +59,92 @@ const normalizeFavoriteTargetType = (targetType: FavoriteTargetType): 'grouping'
   targetType === 'gallery' ? 'grouping' : targetType
 );
 
+type CanonicalPublication = {
+  publicationId: string;
+  integrationAccountId?: string;
+  destination: string;
+  status: 'draft' | 'queued' | 'publishing' | 'live' | 'updating' | 'failed' | 'missing' | 'removed';
+  visibility: 'private' | 'unlisted' | 'public';
+  remoteId?: string;
+  remoteUrl?: string;
+  remoteUpdatedAt?: string;
+  metadataOverrides?: { title?: string; description?: string; tags?: string[]; fields?: Record<string, unknown> };
+  providerData?: Record<string, unknown>;
+  sync: { status: 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'conflict' | 'error'; lastSuccessfulAt?: string };
+  publishedAt?: string;
+};
+
+type CanonicalWorkResponse = {
+  workId: string;
+  creatorId: string;
+  kind: string;
+  title: string;
+  slug: string;
+  description?: string;
+  updatedAt: string;
+  assets: Array<{ url?: string; thumbnailUrl?: string }>;
+  publications: CanonicalPublication[];
+  engagement?: StudioExternalAsset['engagement'];
+  discovery?: { state?: StudioExternalAsset['discoveryState'] };
+};
+
+const externalStatusFor = (publication: CanonicalPublication): StudioExternalPublication['syncStatus'] => {
+  if (publication.status === 'live') return 'active';
+  if (publication.status === 'draft') return 'draft';
+  if (publication.status === 'missing') return 'missing';
+  if (publication.status === 'removed') return 'deleted';
+  if (publication.status === 'failed' || publication.sync.status === 'error' || publication.sync.status === 'conflict') return 'error';
+  return 'pending_publish';
+};
+
+const canonicalWorkToStudioAsset = (work: CanonicalWorkResponse): StudioExternalAsset => {
+  const space = work.publications.find((publication) => publication.destination === 'eversally');
+  const external = work.publications.filter((publication) => publication.destination !== 'eversally');
+  const spacePublication: StudioSpacePublication | null = space ? {
+    assetId: work.workId,
+    published: space.status === 'live',
+    hostingMode: work.assets.some((asset) => asset.url) ? 'hosted' : 'linked',
+    contentSyncStatus: work.assets.some((asset) => asset.url) ? 'hosted' : 'not_requested',
+    publishedAt: space.publishedAt,
+    visibility: space.visibility
+  } : null;
+  return {
+    assetId: work.workId,
+    creatorIdentityId: work.creatorId,
+    assetType: work.kind === 'literature' ? 'literature' : work.kind === 'video' ? 'video' : work.kind === 'animation' ? 'animation' : work.kind === 'image' ? 'image' : 'other',
+    canonicalTitle: work.title,
+    canonicalDescription: work.description,
+    canonicalSlug: work.slug,
+    discoveryState: work.discovery?.state || 'none',
+    visibility: space?.visibility || 'private',
+    titleSyncPolicy: 'independent',
+    descriptionSyncPolicy: 'independent',
+    updatedAt: work.updatedAt,
+    thumbnailUrl: work.assets.find((asset) => asset.thumbnailUrl)?.thumbnailUrl || work.assets.find((asset) => asset.url)?.url,
+    spacePublication,
+    engagement: work.engagement,
+    publications: external.map((publication) => ({
+      externalPublicationId: publication.publicationId,
+      externalAccountId: publication.integrationAccountId || '',
+      platform: publication.destination,
+      externalUsername: String(publication.providerData?.externalUsername || 'connected account'),
+      externalContentId: publication.remoteId || `pending:${work.workId}`,
+      targetStatus: publication.providerData?.targetStatus === 'draft' ? 'draft' : 'published',
+      externalUrl: publication.remoteUrl,
+      previewUrl: typeof publication.providerData?.previewUrl === 'string' ? publication.providerData.previewUrl : work.assets.find((asset) => asset.thumbnailUrl)?.thumbnailUrl,
+      externalTitle: publication.metadataOverrides?.title || work.title,
+      externalDescription: publication.metadataOverrides?.description || work.description,
+      externalTags: publication.metadataOverrides?.tags || [],
+      externalCollectionIds: Array.isArray(publication.providerData?.externalCollectionIds) ? publication.providerData.externalCollectionIds.filter((value): value is string => typeof value === 'string') : [],
+      publishedAt: publication.publishedAt,
+      remoteUpdatedAt: publication.remoteUpdatedAt,
+      lastSyncedAt: publication.sync.lastSuccessfulAt,
+      metadataSyncStatus: publication.sync.status === 'conflict' ? 'conflict' : publication.sync.status === 'remote_newer' ? 'remote_changed' : publication.sync.status === 'local_newer' ? 'local_update_pending' : 'in_sync',
+      syncStatus: externalStatusFor(publication)
+    }))
+  };
+};
+
 export const api = {
   async checkUsername(username: string) {
     const response = await fetch(`${API_BASE}/auth/username/check?username=${encodeURIComponent(username)}`);
@@ -81,6 +168,22 @@ export const api = {
   },
   async getCreators() {
     const response = await fetch(withDevCacheBypass(`${API_BASE}/creators`));
+    return handleJson(response);
+  },
+  async getCreatorWorks(slug: string) {
+    const response = await fetch(`${API_BASE}/creators/${encodeURIComponent(slug)}/works`);
+    return handleJson(response);
+  },
+  async getCreatorWork(slug: string, workSlug: string) {
+    const response = await fetch(`${API_BASE}/creators/${encodeURIComponent(slug)}/works/${encodeURIComponent(workSlug)}`, { headers: await authHeaders() });
+    return handleJson(response);
+  },
+  async getCreatorCollections(slug: string) {
+    const response = await fetch(`${API_BASE}/creators/${encodeURIComponent(slug)}/collections`);
+    return handleJson(response);
+  },
+  async getCreatorCollection(slug: string, collectionSlug: string) {
+    const response = await fetch(`${API_BASE}/creators/${encodeURIComponent(slug)}/collections/${encodeURIComponent(collectionSlug)}`, { headers: await authHeaders() });
     return handleJson(response);
   },
   async getLatestGroupings(limit = 12) {
@@ -620,6 +723,18 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/creators`);
     return handleJson(response);
   },
+  async studioDownloadCreatorExport(creatorId: string) {
+    const response = await fetch(`${API_BASE}/studio/creators/${encodeURIComponent(creatorId)}/export`, {
+      headers: await authHeaders()
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.message || 'Unable to export this Creator.');
+    }
+    const disposition = response.headers.get('content-disposition') || '';
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] || 'ubeeq-creator-export.json';
+    return { blob: await response.blob(), filename };
+  },
   async studioMetrics() {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/metrics`);
     return handleJson(response);
@@ -1017,11 +1132,12 @@ export const api = {
     });
     return handleJson(response);
   },
-  async studioListDeviantArtCatalogue(creatorId: string, query = '') {
+  async studioListWorks(creatorId: string, query = '') {
     const params = new URLSearchParams({ creatorId });
     if (query.trim()) params.set('query', query.trim());
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/catalogue?${params.toString()}`);
-    return handleJson(response);
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/works?${params.toString()}`);
+    const result = await handleJson(response) as { items?: CanonicalWorkResponse[]; total?: number };
+    return { ...result, items: (result.items || []).map(canonicalWorkToStudioAsset) };
   },
   async studioCreateWork(payload: { creatorId: string; originalFilename: string; title?: string; description?: string }) {
     const response = await fetch(`${API_BASE}/studio/works`, {
@@ -1029,7 +1145,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
-    return handleJson(response) as Promise<{ asset: { assetId: string } }>;
+    return handleJson(response) as Promise<{ work: { workId: string } }>;
   },
   async studioUploadWorkImage(assetId: string, file: File) {
     const params = new URLSearchParams({ originalFilename: file.name });
@@ -1083,28 +1199,72 @@ export const api = {
       noAi?: boolean;
     };
   }) {
-    const response = await fetch(`${API_BASE}/studio/integrations/assets/${encodeURIComponent(assetId)}`, {
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        title: payload.canonicalTitle,
+        description: payload.canonicalDescription
+      })
     });
-    return handleJson(response);
+    const work = await handleJson(response) as CanonicalWorkResponse;
+    if (payload.integrationMetadata) {
+      const legacyResponse = await fetch(`${API_BASE}/studio/integrations/assets/${encodeURIComponent(assetId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+        body: JSON.stringify(payload)
+      });
+      if (legacyResponse.status !== 404) await handleJson(legacyResponse);
+    }
+    return canonicalWorkToStudioAsset(work);
   },
   async studioUpdateSpacePublication(assetId: string, payload: {
     published: boolean;
     hostingMode?: 'linked' | 'hosted';
     visibility?: 'private' | 'unlisted' | 'public';
   }) {
-    const response = await fetch(`${API_BASE}/studio/integrations/assets/${encodeURIComponent(assetId)}/space-publication`, {
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}/publications/eversally`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
-    return handleJson(response);
+    const publication = await handleJson(response) as CanonicalPublication;
+    return {
+      assetId,
+      published: publication.status === 'live',
+      hostingMode: payload.hostingMode || 'hosted',
+      contentSyncStatus: 'hosted',
+      publishedAt: publication.publishedAt,
+      visibility: publication.visibility
+    } satisfies StudioSpacePublication;
+  },
+  async studioUpdateWorkDiscovery(workId: string, state: 'none' | 'eligible' | 'opted_in') {
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/discovery`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ state })
+    });
+    return handleJson(response) as Promise<{ state: 'none' | 'eligible' | 'opted_in' | 'removed' }>;
   },
   async studioListDeviantArtCollections(creatorId: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/collections?creatorId=${encodeURIComponent(creatorId)}`);
-    return handleJson(response);
+    const [canonicalResponse, integrationResponse] = await Promise.all([
+      fetchAuthGetWithRetry(`${API_BASE}/studio/collections?creatorId=${encodeURIComponent(creatorId)}`),
+      fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/collections?creatorId=${encodeURIComponent(creatorId)}`)
+    ]);
+    const canonical = await handleJson(canonicalResponse) as { items?: Array<{ collectionId: string; creatorId: string; title: string; visibility: StudioUbeeqCollection['visibility']; type: 'collection' | 'gallery' | 'series' | 'playlist'; workIds?: string[] }> };
+    const integration = await handleJson(integrationResponse) as Record<string, unknown> & { externalCollections?: unknown[]; mappings?: unknown[] };
+    const ubeeqCollections: StudioUbeeqCollection[] = (canonical.items || []).map((collection) => ({
+      ubeeqCollectionId: collection.collectionId,
+      creatorIdentityId: collection.creatorId,
+      name: collection.title,
+      visibility: collection.visibility,
+      collectionType: collection.type === 'playlist' ? 'collection' : collection.type
+    }));
+    return {
+      ...integration,
+      ubeeqCollections,
+      collectionAssetIdsByCollection: Object.fromEntries((canonical.items || []).map((collection) => [collection.collectionId, collection.workIds || []]))
+    };
   },
   async studioCreateIntegrationCollection(payload: {
     creatorIdentityId: string;
@@ -1113,30 +1273,35 @@ export const api = {
     visibility?: 'private' | 'unlisted' | 'public';
     collectionType?: 'collection' | 'gallery' | 'series';
   }) {
-    const response = await fetch(`${API_BASE}/studio/integrations/collections`, {
+    const response = await fetch(`${API_BASE}/studio/collections`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ creatorId: payload.creatorIdentityId, title: payload.name, visibility: payload.visibility, type: payload.collectionType })
     });
-    return handleJson(response);
+    const collection = await handleJson(response) as { collectionId: string; creatorId: string; title: string; visibility: StudioUbeeqCollection['visibility']; type: 'collection' | 'gallery' | 'series' | 'playlist' };
+    return { ubeeqCollectionId: collection.collectionId, creatorIdentityId: collection.creatorId, name: collection.title, visibility: collection.visibility, collectionType: collection.type === 'playlist' ? 'collection' : collection.type } satisfies StudioUbeeqCollection;
   },
   async studioUpdateIntegrationCollection(collectionId: string, payload: {
     creatorIdentityId: string;
     visibility?: 'private' | 'unlisted' | 'public';
     collectionType?: 'collection' | 'gallery' | 'series';
   }) {
-    const response = await fetch(`${API_BASE}/studio/integrations/collections/${encodeURIComponent(collectionId)}`, {
+    const response = await fetch(`${API_BASE}/studio/collections/${encodeURIComponent(collectionId)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        visibility: payload.visibility,
+        type: payload.collectionType,
+        ...(payload.visibility ? { status: payload.visibility === 'private' ? 'draft' : 'published' } : {})
+      })
     });
     return handleJson(response);
   },
   async studioReplaceIntegrationCollectionAssets(collectionId: string, payload: { creatorIdentityId: string; assetIds: string[] }) {
-    const response = await fetch(`${API_BASE}/studio/integrations/collections/${encodeURIComponent(collectionId)}/assets`, {
+    const response = await fetch(`${API_BASE}/studio/collections/${encodeURIComponent(collectionId)}/works`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ workIds: payload.assetIds })
     });
     return handleJson(response);
   },

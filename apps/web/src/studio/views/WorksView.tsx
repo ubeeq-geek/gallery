@@ -27,6 +27,7 @@ type CollectionResponse = {
 type WorkLifecycle = 'draft' | 'ready' | 'published';
 
 const lifecycleFor = (asset: StudioExternalAsset): WorkLifecycle => {
+  if (asset.spacePublication?.published) return 'published';
   const destinations = asset.publications.filter((publication) => publication.syncStatus !== 'deleted');
   if (destinations.some((publication) => publication.syncStatus === 'active')) return 'published';
   return destinations.length ? 'ready' : 'draft';
@@ -137,7 +138,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     setError('');
     try {
       const [catalogue, nextCollections, nextAccounts] = await Promise.all([
-        api.studioListDeviantArtCatalogue(nextCreatorId),
+        api.studioListWorks(nextCreatorId),
         api.studioListDeviantArtCollections(nextCreatorId),
         api.studioListDeviantArtAccounts(nextCreatorId)
       ]);
@@ -574,6 +575,12 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                   >
                     {deviantArtDestinations.some((publication) => publication.syncStatus === 'pending_publish') ? 'Review & sync' : 'Edit metadata'}
                   </Link>
+                  {asset.spacePublication?.published && asset.spacePublication.visibility !== 'private' && asset.canonicalSlug && activeCreator?.slug && <Link
+                    className="auth-secondary-btn no-underline"
+                    to={`/creators/${encodeURIComponent(activeCreator.slug)}/works/${encodeURIComponent(asset.canonicalSlug)}`}
+                  >
+                    Open public work
+                  </Link>}
                 </div>
                 {isCollectionPickerOpen && <div className="studio-work-collection-picker">
                   <label>

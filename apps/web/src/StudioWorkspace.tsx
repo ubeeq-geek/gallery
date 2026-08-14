@@ -27,6 +27,41 @@ import type {
   StudioUser
 } from './studio/types';
 
+function CreatorExportAction({ creatorId }: { creatorId: string }) {
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+
+  const download = async () => {
+    setExporting(true);
+    setExportError('');
+    try {
+      const { blob, filename } = await api.studioDownloadCreatorExport(creatorId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      setExportError(downloadError instanceof Error ? downloadError.message : 'Unable to export this Creator.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <div className="studio-export-action">
+      <button type="button" className="studio-task-link" onClick={() => void download()} disabled={exporting}>
+        <strong>{exporting ? 'Preparing export…' : `Export ${brand.creatorName} data`}</strong>
+        <span>Download a portable Ubeeq JSON manifest containing canonical Works, Assets, Collections, Publications, and external account references.</span>
+      </button>
+      {exportError && <p className="error">{exportError}</p>}
+    </div>
+  );
+}
+
 export function StudioWorkspace() {
   const location = useLocation();
   const section = useMemo(() => readStudioSection(location.search), [location.search]);
@@ -132,16 +167,22 @@ export function StudioWorkspace() {
         return <ActivityView creatorId={activeCreatorId} />;
       case 'settings':
         return (
-          <Card title={`${brand.creatorName} and Studio settings`} eyebrow="Preferences">
-            <div className="studio-task-grid">
-              <Link className="studio-task-link no-underline" to={`/studio/workspace?section=creators&creatorId=${encodeURIComponent(activeCreatorId)}`}>
-                <strong>Manage {brand.creatorPlural}</strong><span>Update {brand.creatorName.toLowerCase()} identities, branding, and ownership.</span>
-              </Link>
-              <Link className="studio-task-link no-underline" to="/settings">
-                <strong>Account settings</strong><span>Manage account-wide preferences and sign-in settings.</span>
-              </Link>
-            </div>
-          </Card>
+          <>
+            <Card title={`${brand.creatorName} and Studio settings`} eyebrow="Preferences">
+              <div className="studio-task-grid">
+                <Link className="studio-task-link no-underline" to={`/studio/workspace?section=creators&creatorId=${encodeURIComponent(activeCreatorId)}`}>
+                  <strong>Manage {brand.creatorPlural}</strong><span>Update {brand.creatorName.toLowerCase()} identities, branding, and ownership.</span>
+                </Link>
+                <Link className="studio-task-link no-underline" to="/settings">
+                  <strong>Account settings</strong><span>Manage account-wide preferences and sign-in settings.</span>
+                </Link>
+              </div>
+            </Card>
+            <Card title="Portable data export" eyebrow="Creator ownership">
+              <p>Download the current canonical data for this {brand.creatorName.toLowerCase()}. The manifest contains no OAuth tokens or application secrets.</p>
+              <CreatorExportAction creatorId={activeCreatorId} />
+            </Card>
+          </>
         );
       case 'creators':
         return (

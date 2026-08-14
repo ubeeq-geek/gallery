@@ -4,6 +4,7 @@ import { InMemoryStore } from '../src/inMemoryStore';
 import type { AppConfig } from '../src/config';
 
 const buildConfig = (): AppConfig => ({
+  tenantId: 'test',
   awsRegion: 'ca-central-1',
   creators: 'creators',
   groupingsTable: 'groupings',
@@ -33,6 +34,103 @@ const buildConfig = (): AppConfig => ({
 });
 
 describe('API contract', () => {
+  it('publishes one canonical Work through Space, discovery, and Collection contracts', async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ config: buildConfig(), store });
+    const now = new Date().toISOString();
+    await store.createCreator({ creatorId: 'canonical-creator', name: 'Canonical Creator', slug: 'canonical-creator', status: 'active', sortOrder: 0, createdAt: now });
+    await store.addCreatorMember({ creatorId: 'canonical-creator', userId: 'canonical-owner', role: 'owner', createdAt: now });
+
+    const created = await request(app)
+      .post('/studio/works')
+      .set('x-user-id', 'canonical-owner')
+      .send({ creatorId: 'canonical-creator', title: 'First Work', description: 'Canonical description', tags: ['one', 'two'] });
+    expect(created.status).toBe(201);
+    const workId = created.body.work.workId as string;
+    await store.createCanonicalAsset({
+      assetId: 'canonical-asset',
+      tenantId: 'test',
+      creatorId: 'canonical-creator',
+      kind: 'image',
+      status: 'ready',
+      mimeType: 'image/jpeg',
+      storage: { mode: 'external', externalUrl: 'https://example.test/work.jpg' },
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.attachAssetToWork('test', { workId, assetId: 'canonical-asset', role: 'primary', position: 0 });
+
+    const published = await request(app)
+      .put(`/studio/works/${workId}/publications/eversally`)
+      .set('x-user-id', 'canonical-owner')
+      .send({ published: true, visibility: 'public' });
+    expect(published.status).toBe(200);
+    expect(published.body).toMatchObject({ destination: 'eversally', status: 'live', visibility: 'public' });
+
+    const discovery = await request(app)
+      .put(`/studio/works/${workId}/discovery`)
+      .set('x-user-id', 'canonical-owner')
+      .send({ state: 'opted_in' });
+    expect(discovery.status).toBe(200);
+    expect(discovery.body.state).toBe('opted_in');
+
+    const collection = await request(app)
+      .post('/studio/collections')
+      .set('x-user-id', 'canonical-owner')
+      .send({ creatorId: 'canonical-creator', title: 'Launch Collection', status: 'published', visibility: 'public' });
+    expect(collection.status).toBe(201);
+    const membership = await request(app)
+      .put(`/studio/collections/${collection.body.collectionId}/works`)
+      .set('x-user-id', 'canonical-owner')
+      .send({ workIds: [workId] });
+    expect(membership.status).toBe(200);
+
+    const publicWorks = await request(app).get('/creators/canonical-creator/works');
+    expect(publicWorks.status).toBe(200);
+    expect(publicWorks.body.items).toEqual([expect.objectContaining({ workId, title: 'First Work', discovery: 'opted_in' })]);
+    const publicCollection = await request(app).get('/creators/canonical-creator/collections/launch-collection');
+    expect(publicCollection.status).toBe(200);
+    expect(publicCollection.body.works).toEqual([expect.objectContaining({ workId })]);
+
+    await store.createExternalAccount({
+      externalAccountId: 'canonical-da-account',
+      userId: 'canonical-owner',
+      creatorIdentityId: 'canonical-creator',
+      externalPlatformCredentialId: 'canonical-da-credential',
+      platform: 'deviantart',
+      externalUserId: 'remote-creator',
+      externalUsername: 'canonical-remote',
+      accessTokenEncrypted: 'secret-token-must-not-export',
+      refreshTokenEncrypted: 'secret-refresh-must-not-export',
+      connectionStatus: 'connected',
+      createdAt: now,
+      updatedAt: now
+    });
+    const exported = await request(app)
+      .get('/studio/creators/canonical-creator/export')
+      .set('x-user-id', 'canonical-owner');
+    expect(exported.status).toBe(200);
+    expect(exported.headers['content-disposition']).toContain('canonical-creator-ubeeq-export-');
+    expect(exported.body).toMatchObject({
+      schemaVersion: 1,
+      source: { tenantId: 'test' },
+      creator: { creatorId: 'canonical-creator' },
+      works: [{
+        work: { workId, title: 'First Work' },
+        assets: [{ assetId: 'canonical-asset', attachment: { role: 'primary' } }],
+        publications: [{ destination: 'eversally' }],
+        discovery: { state: 'opted_in' }
+      }],
+      collections: [{
+        collection: { collectionId: collection.body.collectionId },
+        works: [{ workId }]
+      }],
+      integrationAccounts: [{ externalAccountId: 'canonical-da-account', externalUsername: 'canonical-remote' }]
+    });
+    expect(JSON.stringify(exported.body)).not.toContain('secret-token-must-not-export');
+    expect(JSON.stringify(exported.body)).not.toContain('secret-refresh-must-not-export');
+  });
+
   it('returns canonical Eversally identity and domains in hosted mode', async () => {
     const store = new InMemoryStore();
     const app = createApp({ config: { ...buildConfig(), productBrand: 'eversally' }, store });

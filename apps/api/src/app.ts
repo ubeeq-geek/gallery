@@ -33,7 +33,7 @@ import type {
   SourceFile,
   UserCapabilities,
   UserProfile,
-  Asset,
+  Asset as ExternalAsset,
   ExternalPublication,
   SpacePublication,
   ExternalAccount,
@@ -44,6 +44,7 @@ import type {
   UbeeqCollection,
   UbeeqCollectionAsset
 } from './domain';
+import type { CanonicalAsset, CreatorCollection as CanonicalCollection, Publication, Work } from './canonicalDomain';
 import {
   generateCreatorCoverRenditions,
   generateCreatorProfileRenditions,
@@ -756,6 +757,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     'content-range',
     'content-length',
     'content-type',
+    'content-disposition',
     'etag',
     'server-timing',
     'x-request-id',
@@ -1962,9 +1964,15 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return next();
   });
 
+  const allowedOrigins = new Set([
+    ...(config.appOrigin ? [config.appOrigin.replace(/\/$/, '')] : []),
+    ...(config.localAuthUserId ? ['http://localhost:5173', 'https://fanadmin.top:5174', 'https://fanadmin.top:5175'] : [])
+  ]);
   app.use((req, res, next) => {
     if (req.method !== 'OPTIONS') return next();
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin.replace(/\/$/, '') : '';
+    if (origin && !allowedOrigins.has(origin)) return res.status(403).json({ message: 'Origin is not allowed.' });
+    if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', allowedHeaders.join(','));
     res.setHeader('Access-Control-Expose-Headers', exposedHeaders.join(','));
@@ -1972,7 +1980,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return res.status(204).send();
   });
   app.use(cors({
-    origin: '*',
+    origin: (origin, callback) => callback(null, !origin || allowedOrigins.has(origin.replace(/\/$/, ''))),
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders,
     exposedHeaders
@@ -2123,6 +2131,115 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       res.setHeader('x-api-fallback', 'creators-empty');
       res.json([]);
     }
+  });
+
+  const publicCanonicalWork = async (work: Work, requestOrigin: string) => {
+    const [assets, publications, discovery] = await Promise.all([
+      store.listCanonicalAssetsByWork(work.tenantId, work.workId),
+      store.listPublicationsByWork(work.tenantId, work.workId),
+      store.getWorkDiscoveryParticipation(work.tenantId, work.workId)
+    ]);
+    const space = publications.find((publication) => publication.destination === 'eversally');
+    const primary = assets.find((asset) => asset.assetId === work.primaryAssetId) || assets.find((asset) => asset.attachment.role === 'primary') || assets[0];
+    return {
+      workId: work.workId,
+      creatorId: work.creatorId,
+      kind: work.kind,
+      title: space?.metadataOverrides?.title || work.title,
+      slug: work.slug,
+      description: space?.metadataOverrides?.description || work.description,
+      tags: work.tags,
+      body: work.body,
+      contentRating: work.contentRating,
+      aiDisclosure: work.aiDisclosure,
+      heavyTopics: work.heavyTopics,
+      publishedAt: space?.publishedAt || work.publishedAt,
+      updatedAt: work.updatedAt,
+      visibility: space?.visibility,
+      discovery: discovery?.state || 'none',
+      primaryAsset: primary ? {
+        assetId: primary.assetId,
+        kind: primary.kind,
+        mimeType: primary.mimeType,
+        width: primary.width,
+        height: primary.height,
+        durationSeconds: primary.durationSeconds,
+        altText: primary.attachment.altText,
+        url: primary.storage.objectKey ? await publicMediaUrl(primary.storage.objectKey, requestOrigin) : primary.storage.externalUrl,
+        thumbnailUrl: primary.storage.thumbnailObjectKey ? await publicMediaUrl(primary.storage.thumbnailObjectKey, requestOrigin) : undefined
+      } : undefined,
+      assets: await Promise.all(assets.map(async (asset) => ({
+        assetId: asset.assetId,
+        kind: asset.kind,
+        mimeType: asset.mimeType,
+        role: asset.attachment.role,
+        position: asset.attachment.position,
+        caption: asset.attachment.caption,
+        altText: asset.attachment.altText,
+        url: asset.storage.objectKey ? await publicMediaUrl(asset.storage.objectKey, requestOrigin) : asset.storage.externalUrl,
+        thumbnailUrl: asset.storage.thumbnailObjectKey ? await publicMediaUrl(asset.storage.thumbnailObjectKey, requestOrigin) : undefined
+      }))),
+      destinations: publications
+        .filter((publication) => publication.status === 'live' && publication.remoteUrl)
+        .map((publication) => ({ destination: publication.destination, url: publication.remoteUrl }))
+    };
+  };
+
+  app.get('/creators/:slug/works', async (req, res) => {
+    const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
+    const creator = await resolveCreatorFromSlug(requestedSlug);
+    if (!creator || creator.status !== 'active') return res.status(404).json({ message: 'Creator not found' });
+    if (creator.slug !== requestedSlug) return res.redirect(302, `/creators/${creator.slug}/works`);
+    const works = await store.listWorksByCreator(config.tenantId, creator.creatorId);
+    const visible = (await Promise.all(works.map(async (work) => ({
+      work,
+      space: (await store.listPublicationsByWork(config.tenantId, work.workId)).find((publication) => publication.destination === 'eversally')
+    })))).filter(({ work, space }) => work.status === 'published' && space?.status === 'live' && space.visibility === 'public');
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return res.json({ creator: { creatorId: creator.creatorId, name: creator.name, slug: creator.slug }, items: await Promise.all(visible.map(({ work }) => publicCanonicalWork(work, origin))) });
+  });
+
+  app.get('/creators/:slug/works/:workSlug', async (req, res) => {
+    const creator = await resolveCreatorFromSlug(String(req.params.slug || '').trim().toLowerCase());
+    if (!creator || creator.status !== 'active') return res.status(404).json({ message: 'Creator not found' });
+    const workSlug = String(req.params.workSlug || '').trim().toLowerCase();
+    const work = (await store.listWorksByCreator(config.tenantId, creator.creatorId)).find((item) => item.slug === workSlug || item.slugHistory.includes(workSlug));
+    if (!work || work.status === 'deleted') return res.status(404).json({ message: 'Work not found' });
+    const canManage = req.authUser?.userId ? await store.hasCreatorAccess(req.authUser.userId, creator.creatorId) : false;
+    const space = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((publication) => publication.destination === 'eversally');
+    if (!canManage && (!space || space.status !== 'live' || space.visibility === 'private')) return res.status(404).json({ message: 'Work not found' });
+    if (work.slug !== workSlug) return res.redirect(302, `/creators/${creator.slug}/works/${work.slug}`);
+    return res.json({ creator: { creatorId: creator.creatorId, name: creator.name, slug: creator.slug }, work: await publicCanonicalWork(work, `${req.protocol}://${req.get('host')}`) });
+  });
+
+  app.get('/creators/:slug/collections', async (req, res) => {
+    const creator = await resolveCreatorFromSlug(String(req.params.slug || '').trim().toLowerCase());
+    if (!creator || creator.status !== 'active') return res.status(404).json({ message: 'Creator not found' });
+    const collections = (await store.listCreatorCollections(config.tenantId, creator.creatorId))
+      .filter((collection) => collection.status === 'published' && collection.visibility === 'public');
+    return res.json({ creator: { creatorId: creator.creatorId, name: creator.name, slug: creator.slug }, items: await Promise.all(collections.map(async (collection) => ({
+      ...collection,
+      workCount: (await store.listCollectionWorks(config.tenantId, collection.collectionId)).length
+    }))) });
+  });
+
+  app.get('/creators/:slug/collections/:collectionSlug', async (req, res) => {
+    const creator = await resolveCreatorFromSlug(String(req.params.slug || '').trim().toLowerCase());
+    if (!creator || creator.status !== 'active') return res.status(404).json({ message: 'Creator not found' });
+    const collectionSlug = String(req.params.collectionSlug || '').trim().toLowerCase();
+    const collection = (await store.listCreatorCollections(config.tenantId, creator.creatorId)).find((item) => item.slug === collectionSlug || item.slugHistory.includes(collectionSlug));
+    if (!collection || collection.status === 'deleted') return res.status(404).json({ message: 'Collection not found' });
+    const canManage = req.authUser?.userId ? await store.hasCreatorAccess(req.authUser.userId, creator.creatorId) : false;
+    if (!canManage && (collection.status !== 'published' || collection.visibility === 'private')) return res.status(404).json({ message: 'Collection not found' });
+    const memberships = await store.listCollectionWorks(config.tenantId, collection.collectionId);
+    const works = (await Promise.all(memberships.map((membership) => store.getWork(config.tenantId, membership.workId))))
+      .filter((work): work is Work => Boolean(work));
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const visibleWorks = canManage ? works : (await Promise.all(works.map(async (work) => ({
+      work,
+      space: (await store.listPublicationsByWork(config.tenantId, work.workId)).find((publication) => publication.destination === 'eversally')
+    })))).filter(({ space }) => space?.status === 'live' && space.visibility === 'public').map(({ work }) => work);
+    return res.json({ creator: { creatorId: creator.creatorId, name: creator.name, slug: creator.slug }, collection, works: await Promise.all(visibleWorks.map((work) => publicCanonicalWork(work, origin))) });
   });
 
   app.get('/creators/:slug/feed', async (req, res) => {
@@ -3901,7 +4018,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
     const now = new Date().toISOString();
     const visibility: 'public' | 'private' = req.body?.visibility === 'private' ? 'private' : 'public';
-    const collection = {
+    const collection: Collection = {
       collectionId: randomUUID(),
       ownerUserId: req.authUser!.userId,
       ownerProfileType: ownerProfile.ownerProfileType,
@@ -4644,7 +4761,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const publications = (await Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId)))).flat();
     const publicationAssetIds = [...new Set(publications.map((publication) => publication.assetId))];
     const publicationAssets = await Promise.all(publicationAssetIds.map((assetId) => store.getAsset(assetId)));
-    const assets = [...new Map([...ownedAssets, ...publicationAssets.filter((asset): asset is Asset => Boolean(asset))]
+    const assets = [...new Map([...ownedAssets, ...publicationAssets.filter((asset): asset is ExternalAsset => Boolean(asset))]
       .map((asset) => [asset.assetId, asset])).values()];
     const [spacePublicationPairs, engagementPairs] = await Promise.all([
       Promise.all(assets.map(async (asset) => [asset.assetId, await store.getSpacePublication(asset.assetId)] as const)),
@@ -4833,7 +4950,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const noAi = typeof integrationMetadata?.noAi === 'boolean'
       ? integrationMetadata.noAi
       : (typeof integrationMetadata?.allowAiTraining === 'boolean' ? !integrationMetadata.allowAiTraining : undefined);
-    const updated: Asset = {
+    const updated: ExternalAsset = {
       ...asset,
       canonicalTitle: req.body?.canonicalTitle !== undefined ? String(req.body.canonicalTitle).trim().slice(0, 300) : asset.canonicalTitle,
       canonicalDescription: req.body?.canonicalDescription !== undefined ? sanitizeOptional(req.body.canonicalDescription, 20_000) : asset.canonicalDescription,
@@ -4934,63 +5051,184 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     });
   });
 
+  const canonicalWorkView = async (work: Work, requestOrigin?: string) => {
+    const [assets, publications, collections, discovery] = await Promise.all([
+      store.listCanonicalAssetsByWork(work.tenantId, work.workId),
+      store.listPublicationsByWork(work.tenantId, work.workId),
+      store.listCreatorCollections(work.tenantId, work.creatorId),
+      store.getWorkDiscoveryParticipation(work.tenantId, work.workId)
+    ]);
+    const memberCollectionIds = new Set<string>();
+    await Promise.all(collections.map(async (collection) => {
+      const memberships = await store.listCollectionWorks(work.tenantId, collection.collectionId);
+      if (memberships.some((membership) => membership.workId === work.workId)) memberCollectionIds.add(collection.collectionId);
+    }));
+    const externalPublicationIds = publications.filter((publication) => publication.destination !== 'eversally').map((publication) => publication.publicationId);
+    const engagementRows = await Promise.all(externalPublicationIds.map((publicationId) => store.getExternalEngagementCurrent(publicationId)));
+    const engagement = engagementRows.reduce((total, row) => ({
+      views: total.views + Number(row?.views || 0),
+      favourites: total.favourites + Number(row?.favourites || 0),
+      comments: total.comments + Number(row?.comments || 0),
+      downloads: total.downloads + Number(row?.downloads || 0),
+      capturedAt: !total.capturedAt || (row?.capturedAt && row.capturedAt > total.capturedAt) ? row?.capturedAt : total.capturedAt,
+      destinations: total.destinations + (row ? 1 : 0)
+    }), { views: 0, favourites: 0, comments: 0, downloads: 0, capturedAt: undefined as string | undefined, destinations: 0 });
+    return {
+      ...work,
+      assets: await Promise.all(assets.map(async (asset) => ({
+        ...asset,
+        url: asset.storage.objectKey ? await publicMediaUrl(asset.storage.objectKey, requestOrigin) : asset.storage.externalUrl,
+        thumbnailUrl: asset.storage.thumbnailObjectKey ? await publicMediaUrl(asset.storage.thumbnailObjectKey, requestOrigin) : undefined
+      }))),
+      publications,
+      engagement,
+      collections: collections.filter((collection) => memberCollectionIds.has(collection.collectionId)),
+      discovery: discovery || {
+        workId: work.workId,
+        tenantId: work.tenantId,
+        creatorId: work.creatorId,
+        state: 'none',
+        updatedAt: work.updatedAt
+      }
+    };
+  };
+
+  app.get('/studio/works', requireAuth, async (req, res) => {
+    const creatorId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    const query = typeof req.query.query === 'string' ? req.query.query.trim().toLowerCase() : '';
+    const works = (await store.listWorksByCreator(config.tenantId, creatorId)).filter((work) => (
+      !query || [work.title, work.description || '', ...work.tags].some((value) => value.toLowerCase().includes(query))
+    ));
+    return res.json({
+      items: await Promise.all(works.map((work) => canonicalWorkView(work, `${req.protocol}://${req.get('host')}`))),
+      total: works.length
+    });
+  });
+
+  app.get('/studio/works/:workId', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    return res.json(await canonicalWorkView(work, `${req.protocol}://${req.get('host')}`));
+  });
+
   app.post('/studio/works', requireAuth, async (req, res) => {
-    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
-    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
-    const originalFilename = sanitizeOptional(req.body?.originalFilename, 255) || 'Untitled image';
+    const creatorId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    const originalFilename = sanitizeOptional(req.body?.originalFilename, 255) || 'Untitled work';
     const suppliedTitle = sanitizeOptional(req.body?.title, 300);
-    const canonicalTitle = suppliedTitle || originalFilename.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim() || 'Untitled image';
+    const title = suppliedTitle || originalFilename.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim() || 'Untitled work';
+    const requestedSlug = slugify(String(req.body?.slug || title));
+    if ((await store.listWorksByCreator(config.tenantId, creatorId)).some((item) => item.slugHistory.includes(requestedSlug))) {
+      return res.status(409).json({ message: 'Work slug is already in use for this Creator.' });
+    }
     const now = new Date().toISOString();
-    const asset: Asset = {
-      assetId: randomUUID(),
-      userId: req.authUser!.userId,
-      creatorIdentityId,
-      assetType: 'image',
-      canonicalTitle,
-      canonicalDescription: sanitizeOptional(req.body?.description, 20_000),
-      visibility: 'private',
-      titleSyncPolicy: 'independent',
-      descriptionSyncPolicy: 'independent',
+    const work: Work = {
+      workId: randomUUID(),
+      tenantId: config.tenantId,
+      creatorId,
+      kind: req.body?.kind === 'video' || req.body?.kind === 'audio' || req.body?.kind === 'literature' || req.body?.kind === 'article' || req.body?.kind === 'animation' || req.body?.kind === 'gallery' || req.body?.kind === 'mixed'
+        ? req.body.kind
+        : 'image',
+      title,
+      slug: requestedSlug,
+      slugHistory: [],
+      description: sanitizeOptional(req.body?.description, 20_000),
+      tags: parseStringArray(req.body?.tags).slice(0, 100),
+      contentRating: normalizeContentRating(req.body?.contentRating || 'general'),
+      aiDisclosure: parseOptionalAiDisclosure(req.body?.aiDisclosure) || 'none',
+      heavyTopics: parseOptionalHeavyTopics(req.body?.heavyTopics) || [],
+      status: 'draft',
+      revision: 1,
       createdAt: now,
       updatedAt: now
     };
-    await store.createAsset(asset);
-    return res.status(201).json({ asset });
+    work.slugHistory = [work.slug];
+    await store.createWork(work);
+    await store.upsertWorkDiscoveryParticipation({
+      workId: work.workId,
+      tenantId: work.tenantId,
+      creatorId: work.creatorId,
+      state: 'none',
+      updatedAt: now
+    });
+    return res.status(201).json({ work: await canonicalWorkView(work, `${req.protocol}://${req.get('host')}`) });
   });
 
-  app.put('/studio/works/:assetId/image', requireAuth, express.raw({ type: 'image/*', limit: config.externalContentMaxBytes }), async (req, res) => {
-    const asset = await store.getAsset(req.params.assetId);
-    if (!asset) return res.status(404).json({ message: 'Work not found' });
-    if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+  app.patch('/studio/works/:workId', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const nextSlug = req.body?.slug !== undefined ? slugify(String(req.body.slug)) : work.slug;
+    if (nextSlug !== work.slug && (await store.listWorksByCreator(config.tenantId, work.creatorId)).some((item) => item.workId !== work.workId && item.slugHistory.includes(nextSlug))) {
+      return res.status(409).json({ message: 'Work slug is already in use for this Creator.' });
+    }
+    const status = req.body?.status === 'published' || req.body?.status === 'archived' || req.body?.status === 'deleted' || req.body?.status === 'draft'
+      ? req.body.status
+      : work.status;
+    const now = new Date().toISOString();
+    const updated: Work = {
+      ...work,
+      title: req.body?.title !== undefined ? String(req.body.title).trim().slice(0, 300) || work.title : work.title,
+      slug: nextSlug,
+      slugHistory: uniqueSlugs([...(work.slugHistory || [work.slug]), nextSlug]),
+      description: req.body?.description !== undefined ? sanitizeOptional(req.body.description, 20_000) : work.description,
+      tags: req.body?.tags !== undefined ? parseStringArray(req.body.tags).slice(0, 100) : work.tags,
+      contentRating: req.body?.contentRating !== undefined ? normalizeContentRating(req.body.contentRating) : work.contentRating,
+      aiDisclosure: req.body?.aiDisclosure !== undefined ? (parseOptionalAiDisclosure(req.body.aiDisclosure) || 'none') : work.aiDisclosure,
+      heavyTopics: req.body?.heavyTopics !== undefined ? (parseOptionalHeavyTopics(req.body.heavyTopics) || []) : work.heavyTopics,
+      status,
+      revision: work.revision + 1,
+      updatedAt: now,
+      publishedAt: status === 'published' ? (work.publishedAt || now) : work.publishedAt,
+      archivedAt: status === 'archived' ? now : undefined,
+      deletedAt: status === 'deleted' ? now : undefined
+    };
+    await store.updateWork(updated);
+    return res.json(await canonicalWorkView(updated, `${req.protocol}://${req.get('host')}`));
+  });
+
+  app.put('/studio/works/:workId/image', requireAuth, express.raw({ type: 'image/*', limit: config.externalContentMaxBytes }), async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
     if (!Buffer.isBuffer(req.body) || !req.body.byteLength) return res.status(400).json({ message: 'Upload one image file with this request.' });
     const contentType = typeof req.headers['content-type'] === 'string' ? req.headers['content-type'].split(';', 1)[0] : '';
-    if (!contentType.startsWith('image/')) return res.status(400).json({ message: 'Only image uploads are supported for works right now.' });
+    if (!contentType.startsWith('image/')) return res.status(400).json({ message: 'Only image uploads are supported for this endpoint.' });
     try {
+      const assetId = randomUUID();
       const stored = await storeUbeeqWorkImage(config, {
-        userId: asset.userId,
-        creatorIdentityId: asset.creatorIdentityId,
-        assetId: asset.assetId,
+        tenantId: config.tenantId,
+        creatorId: work.creatorId,
+        assetId,
         contentType,
         body: req.body
       });
       const now = new Date().toISOString();
-      const spacePublication: SpacePublication = {
-        assetId: asset.assetId,
-        published: true,
-        hostingMode: 'hosted',
-        contentSyncStatus: 'hosted',
-        hostedObjectKey: stored.objectKey,
-        hostedThumbnailObjectKey: stored.thumbnailObjectKey,
-        hostedContentType: stored.contentType,
-        hostedByteSize: stored.byteSize,
-        hostedChecksumSha256: stored.checksumSha256,
-        lastContentSyncAt: now,
-        visibility: 'private',
-        publishedAt: now,
+      const asset: CanonicalAsset = {
+        assetId,
+        tenantId: config.tenantId,
+        creatorId: work.creatorId,
+        kind: 'image',
+        status: 'ready',
+        mimeType: stored.contentType,
+        originalFilename: sanitizeOptional(req.query.originalFilename, 255),
+        sizeBytes: stored.byteSize,
+        checksumSha256: stored.checksumSha256,
+        storage: {
+          mode: 'hosted',
+          objectKey: stored.objectKey,
+          thumbnailObjectKey: stored.thumbnailObjectKey
+        },
+        createdAt: now,
         updatedAt: now
       };
-      await store.upsertSpacePublication(spacePublication);
-      return res.status(201).json({ asset, spacePublication });
+      await store.createCanonicalAsset(asset);
+      await store.attachAssetToWork(config.tenantId, { workId: work.workId, assetId, role: work.primaryAssetId ? 'content' : 'primary', position: (await store.listCanonicalAssetsByWork(config.tenantId, work.workId)).length });
+      const updated = work.primaryAssetId ? work : { ...work, primaryAssetId: assetId, revision: work.revision + 1, updatedAt: now };
+      if (updated !== work) await store.updateWork(updated);
+      return res.status(201).json(await canonicalWorkView(updated, `${req.protocol}://${req.get('host')}`));
     } catch (error) {
       logServerError('studio.work.image-upload', error);
       return res.status(400).json({ message: error instanceof Error ? error.message : 'Unable to store this work image.' });
@@ -4998,9 +5236,50 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   });
 
   app.post('/studio/works/:assetId/destinations/deviantart', requireAuth, async (req, res) => {
-    const asset = await store.getAsset(req.params.assetId);
-    if (!asset) return res.status(404).json({ message: 'Work not found' });
-    if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    let work = await store.getWork(config.tenantId, req.params.assetId);
+    let asset = await store.getAsset(req.params.assetId);
+    if (!work && asset) {
+      const now = new Date().toISOString();
+      work = {
+        workId: asset.assetId,
+        tenantId: config.tenantId,
+        creatorId: asset.creatorIdentityId,
+        kind: asset.assetType === 'other' ? 'mixed' : asset.assetType,
+        title: asset.canonicalTitle,
+        slug: slugify(asset.canonicalTitle || asset.assetId),
+        slugHistory: [slugify(asset.canonicalTitle || asset.assetId)],
+        description: asset.canonicalDescription,
+        tags: [],
+        contentRating: 'general',
+        aiDisclosure: 'none',
+        heavyTopics: [],
+        status: 'draft',
+        revision: 1,
+        createdAt: asset.createdAt || now,
+        updatedAt: asset.updatedAt || now
+      };
+      await store.createWork(work);
+      await store.upsertWorkDiscoveryParticipation({ workId: work.workId, tenantId: work.tenantId, creatorId: work.creatorId, state: 'none', updatedAt: now });
+    }
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    if (!asset) {
+      const now = new Date().toISOString();
+      asset = {
+        assetId: work.workId,
+        userId: req.authUser!.userId,
+        creatorIdentityId: work.creatorId,
+        assetType: work.kind === 'video' ? 'video' : work.kind === 'literature' || work.kind === 'article' ? 'literature' : work.kind === 'animation' ? 'animation' : work.kind === 'image' ? 'image' : 'other',
+        canonicalTitle: work.title,
+        canonicalDescription: work.description,
+        visibility: 'private',
+        titleSyncPolicy: 'mirrored',
+        descriptionSyncPolicy: 'mirrored',
+        createdAt: now,
+        updatedAt: now
+      };
+      await store.createAsset(asset);
+    }
     const externalAccountId = typeof req.body?.externalAccountId === 'string' ? req.body.externalAccountId.trim() : '';
     const targetStatus = req.body?.targetStatus === 'draft' ? 'draft' : 'published';
     const account = externalAccountId ? await store.getExternalAccount(externalAccountId) : null;
@@ -5022,6 +5301,24 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         updatedAt: new Date().toISOString()
       };
       if (updatedExisting !== existing) await store.updateExternalPublication(updatedExisting);
+      await store.upsertPublication({
+        publicationId: updatedExisting.externalPublicationId,
+        tenantId: config.tenantId,
+        creatorId: work.creatorId,
+        workId: work.workId,
+        destination: 'deviantart',
+        integrationAccountId: account.externalAccountId,
+        status: updatedExisting.syncStatus === 'active' ? 'live' : updatedExisting.syncStatus === 'draft' ? 'draft' : 'queued',
+        visibility: 'public',
+        remoteId: updatedExisting.externalContentId,
+        remoteUrl: updatedExisting.externalUrl,
+        metadataOverrides: { title: updatedExisting.externalTitle, description: updatedExisting.externalDescription, tags: updatedExisting.externalTags },
+        sync: { status: updatedExisting.metadataSyncStatus === 'conflict' ? 'conflict' : 'local_newer', localRevision: work.revision, lastSuccessfulAt: updatedExisting.lastSyncedAt },
+        providerData: { targetStatus, externalUsername: account.externalUsername, externalCollectionIds: updatedExisting.externalCollectionIds || [] },
+        createdAt: updatedExisting.createdAt,
+        updatedAt: updatedExisting.updatedAt,
+        publishedAt: updatedExisting.publishedAt
+      });
       return res.status(200).json({ publication: updatedExisting });
     }
     const now = new Date().toISOString();
@@ -5041,6 +5338,22 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       updatedAt: now
     };
     await store.createExternalPublication(publication);
+    await store.upsertPublication({
+      publicationId: publication.externalPublicationId,
+      tenantId: config.tenantId,
+      creatorId: work.creatorId,
+      workId: work.workId,
+      destination: 'deviantart',
+      integrationAccountId: account.externalAccountId,
+      status: targetStatus === 'draft' ? 'draft' : 'queued',
+      visibility: 'public',
+      remoteId: publication.externalContentId,
+      metadataOverrides: { title: publication.externalTitle, description: publication.externalDescription, tags: [] },
+      sync: { status: 'local_newer', localRevision: work.revision },
+      providerData: { targetStatus, externalUsername: account.externalUsername, externalCollectionIds: [] },
+      createdAt: now,
+      updatedAt: now
+    });
     // A destination starts with shared Ubeeq values. A creator can opt out of that
     // relationship on the metadata review page before the first sync.
     await store.updateAsset({
@@ -5053,24 +5366,33 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   });
 
   app.delete('/studio/works/:assetId/destinations/deviantart/:externalAccountId', requireAuth, async (req, res) => {
-    const asset = await store.getAsset(req.params.assetId);
-    if (!asset) return res.status(404).json({ message: 'Work not found' });
-    if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const work = await store.getWork(config.tenantId, req.params.assetId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const asset = await store.getAsset(work.workId);
+    if (!asset) return res.status(404).json({ message: 'Work destination compatibility record not found' });
     const publication = (await store.listExternalPublications(req.params.externalAccountId))
       .find((item) => item.assetId === asset.assetId && item.platform === 'deviantart' && item.syncStatus !== 'deleted');
     if (!publication) return res.status(404).json({ message: 'DeviantArt destination not found.' });
-    await store.updateExternalPublication({ ...publication, syncStatus: 'deleted', updatedAt: new Date().toISOString() });
+    const now = new Date().toISOString();
+    await store.updateExternalPublication({ ...publication, syncStatus: 'deleted', updatedAt: now });
+    const canonical = await store.getPublication(config.tenantId, publication.externalPublicationId);
+    if (canonical) await store.upsertPublication({ ...canonical, status: 'removed', removedAt: now, updatedAt: now });
     return res.status(204).end();
   });
 
   app.post('/studio/works/:assetId/destinations/deviantart/:externalAccountId/sync', requireAuth, async (req, res) => {
-    const asset = await store.getAsset(req.params.assetId);
-    if (!asset) return res.status(404).json({ message: 'Work not found' });
-    if (asset.userId !== req.authUser!.userId && !(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const work = await store.getWork(config.tenantId, req.params.assetId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const asset = await store.getAsset(work.workId);
+    if (!asset) return res.status(404).json({ message: 'Work destination compatibility record not found' });
     const publication = (await store.listExternalPublications(req.params.externalAccountId))
       .find((item) => item.assetId === asset.assetId && item.platform === 'deviantart' && (item.syncStatus === 'pending_publish' || item.syncStatus === 'draft'));
     if (!publication) return res.status(409).json({ message: 'This DeviantArt destination is already published or has been removed.' });
     try {
+      const canonical = await store.getPublication(config.tenantId, publication.externalPublicationId);
+      if (canonical) await store.upsertPublication({ ...canonical, status: 'queued', sync: { ...canonical.sync, status: 'local_newer', lastAttemptAt: new Date().toISOString() }, updatedAt: new Date().toISOString() });
       const job = await enqueueExternalSyncJob(publication.externalAccountId, 'publish', {
         assetId: asset.assetId,
         externalPublicationId: publication.externalPublicationId,
@@ -5125,6 +5447,223 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       logServerError('space.content-sync.enqueue', error);
       return res.status(503).json({ message: `The ${brand.workspaceFullName} backup queue is unavailable. Please try again.` });
     }
+  });
+
+  app.put('/studio/works/:workId/publications/eversally', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const assets = await store.listCanonicalAssetsByWork(config.tenantId, work.workId);
+    if (!assets.length) return res.status(409).json({ message: 'Attach at least one Asset before publishing this Work.' });
+    const existing = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'eversally');
+    const shouldPublish = req.body?.published !== false;
+    const visibility = req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' ? req.body.visibility : 'private';
+    const now = new Date().toISOString();
+    const publication: Publication = {
+      publicationId: existing?.publicationId || randomUUID(),
+      tenantId: config.tenantId,
+      creatorId: work.creatorId,
+      workId: work.workId,
+      destination: 'eversally',
+      status: shouldPublish ? 'live' : 'draft',
+      visibility,
+      metadataOverrides: {
+        title: sanitizeOptional(req.body?.title, 300),
+        description: sanitizeOptional(req.body?.description, 20_000)
+      },
+      sync: {
+        status: 'not_applicable',
+        localRevision: work.revision,
+        lastSuccessfulAt: shouldPublish ? now : existing?.sync.lastSuccessfulAt
+      },
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      publishedAt: shouldPublish ? (existing?.publishedAt || now) : existing?.publishedAt,
+      removedAt: shouldPublish ? undefined : existing?.removedAt
+    };
+    await store.upsertPublication(publication);
+    const currentDiscovery = await store.getWorkDiscoveryParticipation(config.tenantId, work.workId);
+    if ((!shouldPublish || visibility !== 'public') && currentDiscovery?.state === 'opted_in') {
+      await store.upsertWorkDiscoveryParticipation({
+        ...currentDiscovery,
+        state: 'none',
+        withdrawnAt: now,
+        updatedAt: now
+      });
+    }
+    if (shouldPublish && work.status === 'draft') {
+      await store.updateWork({ ...work, status: 'published', publishedAt: work.publishedAt || now, revision: work.revision + 1, updatedAt: now });
+    }
+    return res.json(publication);
+  });
+
+  app.put('/studio/works/:workId/discovery', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const state = req.body?.state === 'eligible' || req.body?.state === 'opted_in' || req.body?.state === 'removed'
+      ? req.body.state
+      : 'none';
+    if (state === 'opted_in') {
+      const space = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'eversally');
+      if (!space || space.status !== 'live' || space.visibility !== 'public') {
+        return res.status(409).json({ message: 'Only a public Work that is live in its Space can opt into discovery.' });
+      }
+    }
+    const now = new Date().toISOString();
+    const participation = {
+      workId: work.workId,
+      tenantId: config.tenantId,
+      creatorId: work.creatorId,
+      state,
+      optedInAt: state === 'opted_in' ? now : undefined,
+      withdrawnAt: state === 'none' ? now : undefined,
+      removedAt: state === 'removed' ? now : undefined,
+      removalReason: state === 'removed' ? sanitizeOptional(req.body?.reason, 1000) : undefined,
+      updatedAt: now
+    };
+    await store.upsertWorkDiscoveryParticipation(participation);
+    return res.json(participation);
+  });
+
+  app.get('/studio/collections', requireAuth, async (req, res) => {
+    const creatorId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    const collections = await store.listCreatorCollections(config.tenantId, creatorId);
+    return res.json({
+      items: await Promise.all(collections.map(async (collection) => ({
+        ...collection,
+        workIds: (await store.listCollectionWorks(config.tenantId, collection.collectionId)).map((item) => item.workId)
+      })))
+    });
+  });
+
+  app.post('/studio/collections', requireAuth, async (req, res) => {
+    const creatorId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    const title = sanitizeOptional(req.body?.title, 200);
+    if (!title) return res.status(400).json({ message: 'Collection title is required.' });
+    const existing = await store.listCreatorCollections(config.tenantId, creatorId);
+    const requestedSlug = slugify(String(req.body?.slug || title));
+    if (existing.some((collection) => collection.slugHistory.includes(requestedSlug))) {
+      return res.status(409).json({ message: 'Collection slug is already in use.' });
+    }
+    const now = new Date().toISOString();
+    const collection: CanonicalCollection = {
+      collectionId: randomUUID(),
+      tenantId: config.tenantId,
+      creatorId,
+      type: req.body?.type === 'gallery' || req.body?.type === 'series' || req.body?.type === 'playlist' ? req.body.type : 'collection',
+      title,
+      slug: requestedSlug,
+      slugHistory: [requestedSlug],
+      description: sanitizeOptional(req.body?.description, 20_000),
+      coverAssetId: sanitizeOptional(req.body?.coverAssetId, 200),
+      status: req.body?.status === 'published' ? 'published' : 'draft',
+      visibility: req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' ? req.body.visibility : 'private',
+      createdAt: now,
+      updatedAt: now
+    };
+    await store.createCreatorCollection(collection);
+    return res.status(201).json({ ...collection, workIds: [] });
+  });
+
+  app.patch('/studio/collections/:collectionId', requireAuth, async (req, res) => {
+    const collection = await store.getCreatorCollection(config.tenantId, req.params.collectionId);
+    if (!collection) return res.status(404).json({ message: 'Collection not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, collection.creatorId))) return;
+    const nextSlug = req.body?.slug !== undefined ? slugify(String(req.body.slug)) : collection.slug;
+    const status = req.body?.status === 'published' || req.body?.status === 'archived' || req.body?.status === 'deleted' || req.body?.status === 'draft'
+      ? req.body.status
+      : collection.status;
+    const now = new Date().toISOString();
+    const updated = {
+      ...collection,
+      type: req.body?.type === 'gallery' || req.body?.type === 'series' || req.body?.type === 'playlist' || req.body?.type === 'collection' ? req.body.type : collection.type,
+      title: req.body?.title !== undefined ? String(req.body.title).trim().slice(0, 200) || collection.title : collection.title,
+      slug: nextSlug,
+      slugHistory: uniqueSlugs([...(collection.slugHistory || [collection.slug]), nextSlug]),
+      description: req.body?.description !== undefined ? sanitizeOptional(req.body.description, 20_000) : collection.description,
+      coverAssetId: req.body?.coverAssetId !== undefined ? sanitizeOptional(req.body.coverAssetId, 200) : collection.coverAssetId,
+      status,
+      visibility: req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' || req.body?.visibility === 'private' ? req.body.visibility : collection.visibility,
+      updatedAt: now,
+      archivedAt: status === 'archived' ? now : undefined,
+      deletedAt: status === 'deleted' ? now : undefined
+    };
+    await store.updateCreatorCollection(updated);
+    return res.json({ ...updated, workIds: (await store.listCollectionWorks(config.tenantId, updated.collectionId)).map((item) => item.workId) });
+  });
+
+  app.delete('/studio/collections/:collectionId', requireAuth, async (req, res) => {
+    const collection = await store.getCreatorCollection(config.tenantId, req.params.collectionId);
+    if (!collection) return res.status(404).json({ message: 'Collection not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, collection.creatorId))) return;
+    const now = new Date().toISOString();
+    await store.updateCreatorCollection({ ...collection, status: 'deleted', deletedAt: now, updatedAt: now });
+    return res.status(204).end();
+  });
+
+  app.put('/studio/collections/:collectionId/works', requireAuth, async (req, res) => {
+    const collection = await store.getCreatorCollection(config.tenantId, req.params.collectionId);
+    if (!collection) return res.status(404).json({ message: 'Collection not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, collection.creatorId))) return;
+    const workIds = parseStringArray(req.body?.workIds);
+    const works = await Promise.all(workIds.map((workId) => store.getWork(config.tenantId, workId)));
+    if (works.some((work) => !work || work.creatorId !== collection.creatorId)) {
+      return res.status(400).json({ message: 'Choose Works owned by this Creator.' });
+    }
+    const now = new Date().toISOString();
+    await store.replaceCollectionWorks(config.tenantId, collection.collectionId, workIds.map((workId, position) => ({
+      collectionId: collection.collectionId,
+      workId,
+      position,
+      addedAt: now
+    })));
+    return res.json({ ...collection, workIds });
+  });
+
+  app.get('/studio/creators/:creatorId/export', requireAuth, async (req, res) => {
+    const creatorId = req.params.creatorId.trim();
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    const creator = (await store.listCreators()).find((item) => item.creatorId === creatorId);
+    if (!creator) return res.status(404).json({ message: 'Creator not found.' });
+
+    const works = await store.listWorksByCreator(config.tenantId, creatorId);
+    const collections = await store.listCreatorCollections(config.tenantId, creatorId);
+    const integrationAccounts = await store.listExternalAccountsByCreatorIdentity(creatorId);
+    const [workRecords, collectionRecords] = await Promise.all([
+      Promise.all(works.map(async (work) => {
+        const [assets, publications, discovery] = await Promise.all([
+          store.listCanonicalAssetsByWork(config.tenantId, work.workId),
+          store.listPublicationsByWork(config.tenantId, work.workId),
+          store.getWorkDiscoveryParticipation(config.tenantId, work.workId)
+        ]);
+        return { work, assets, publications, discovery };
+      })),
+      Promise.all(collections.map(async (collection) => ({
+        collection,
+        works: await store.listCollectionWorks(config.tenantId, collection.collectionId)
+      })))
+    ]);
+    const generatedAt = new Date().toISOString();
+    const manifest = {
+      schema: 'https://ubeeq.site/schemas/creator-export/v1',
+      schemaVersion: 1,
+      generatedAt,
+      source: {
+        product: brand.productName,
+        tenantId: config.tenantId
+      },
+      creator,
+      works: workRecords,
+      collections: collectionRecords,
+      integrationAccounts: integrationAccounts.map(toExternalAccountResponse)
+    };
+    const filename = `${slugify(creator.slug || creator.name)}-ubeeq-export-${generatedAt.slice(0, 10)}.json`;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(JSON.stringify(manifest, null, 2));
   });
 
   app.get('/studio/integrations/deviantart/collections', requireAuth, async (req, res) => {

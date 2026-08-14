@@ -1,5 +1,7 @@
 export interface AppConfig {
+  deploymentStage?: string;
   productBrand?: 'eversally' | 'ubeeq';
+  tenantId: string;
   awsRegion: string;
   creators: string;
   groupingsTable: string;
@@ -39,8 +41,12 @@ export interface AppConfig {
   localAuthUserId?: string;
 }
 
-export const loadConfig = (): AppConfig => ({
+export const loadConfig = (): AppConfig => {
+  const deploymentStage = (process.env.DEPLOYMENT_STAGE || 'development').trim().toLowerCase();
+  const config: AppConfig = {
+  deploymentStage,
   productBrand: process.env.PRODUCT_BRAND === 'eversally' ? 'eversally' : 'ubeeq',
+  tenantId: process.env.TENANT_ID || 'default',
   awsRegion: process.env.AWS_REGION || 'ca-central-1',
   creators: process.env.CREATORS || 'creators',
   groupingsTable: process.env.GROUPINGS_TABLE || 'groupings',
@@ -82,4 +88,21 @@ export const loadConfig = (): AppConfig => ({
   localMediaDirectory: process.env.LOCAL_MEDIA_DIRECTORY || (process.env.LOCAL_AUTH_USER_ID ? '/tmp/ubeeq-media' : undefined),
   appOrigin: process.env.APP_ORIGIN,
   localAuthUserId: process.env.LOCAL_AUTH_USER_ID
-});
+  };
+  if (deploymentStage === 'production' || deploymentStage === 'prod') {
+    const missing = [
+      !config.cognitoUserPoolId ? 'COGNITO_USER_POOL_ID' : '',
+      !config.cognitoClientId ? 'COGNITO_CLIENT_ID' : '',
+      !process.env.CONTENT_CORE_TABLE ? 'CONTENT_CORE_TABLE' : '',
+      !config.useContentCoreTable ? 'USE_CONTENT_CORE_TABLE=true' : '',
+      !process.env.MEDIA_BUCKET ? 'MEDIA_BUCKET' : '',
+      !config.appOrigin ? 'APP_ORIGIN' : '',
+      !config.externalTokenEncryptionKey ? 'EXTERNAL_TOKEN_ENCRYPTION_KEY' : '',
+      !config.unlockJwtSecret || config.unlockJwtSecret === 'dev-secret' ? 'UNLOCK_JWT_SECRET' : ''
+    ].filter(Boolean);
+    if (missing.length) throw new Error(`Production API configuration is incomplete: ${missing.join(', ')}`);
+    if (config.localAuthUserId) throw new Error('LOCAL_AUTH_USER_ID must not be set in production.');
+    if (!config.appOrigin!.startsWith('https://')) throw new Error('APP_ORIGIN must use HTTPS in production.');
+  }
+  return config;
+};

@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import { Duration, RemovalPolicy, Stack, StackProps, CfnOutput, SecretValue } from 'aws-cdk-lib';
+import { Duration, RemovalPolicy, Stack, StackProps, CfnOutput, SecretValue, Tags } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
@@ -16,48 +16,79 @@ import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
+import * as backup from 'aws-cdk-lib/aws-backup';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 
 export class UbeeqStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
+    const deploymentStage = (process.env.DEPLOYMENT_STAGE || 'development').trim().toLowerCase();
+    const isProduction = deploymentStage === 'production' || deploymentStage === 'prod';
+    const dataRemovalPolicy = isProduction ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
+    const appSecretsName = process.env.APP_SECRETS_NAME?.trim();
+    if (isProduction && !appSecretsName) {
+      throw new Error('APP_SECRETS_NAME is required when DEPLOYMENT_STAGE=production.');
+    }
+    const appSecrets = isProduction
+      ? secretsmanager.Secret.fromSecretNameV2(this, 'ApplicationSecrets', appSecretsName!)
+      : undefined;
     const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
     const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
     const appleServiceId = process.env.APPLE_SERVICE_ID?.trim();
     const appleTeamId = process.env.APPLE_TEAM_ID?.trim();
     const appleKeyId = process.env.APPLE_KEY_ID?.trim();
     const applePrivateKey = process.env.APPLE_PRIVATE_KEY?.replace(/\\n/g, '\n').trim();
-    const socialGoogleEnabled = Boolean(googleClientId && googleClientSecret);
-    const socialAppleEnabled = Boolean(appleServiceId && appleTeamId && appleKeyId && applePrivateKey);
+    const socialGoogleEnabled = Boolean(googleClientId && (isProduction || googleClientSecret));
+    const socialAppleEnabled = Boolean(appleServiceId && appleTeamId && appleKeyId && (isProduction || applePrivateKey));
     const cognitoDomainPrefix = process.env.COGNITO_DOMAIN_PREFIX?.trim();
     const sesFromAddress = process.env.SES_FROM_ADDRESS?.trim();
     const webAppUrl = process.env.WEB_APP_URL?.trim().replace(/\/$/, '');
+    if (isProduction && !webAppUrl) {
+      throw new Error('WEB_APP_URL is required when DEPLOYMENT_STAGE=production so CORS can be restricted.');
+    }
+    const developmentOrigins = ['http://localhost:5173', 'https://fanadmin.top:5174', 'https://fanadmin.top:5175'];
+    const mediaCorsOrigins = isProduction ? [webAppUrl!] : [...new Set([...(webAppUrl ? [webAppUrl] : []), ...developmentOrigins])];
     const productBrand = process.env.PRODUCT_BRAND === 'eversally' ? 'eversally' : 'ubeeq';
     const productName = productBrand === 'eversally' ? 'Eversally' : 'Ubeeq';
-    const cognitoCallbackUrls = [
-      'http://localhost:5173/auth/callback',
-      'http://localhost:5174/auth/callback',
-      ...(webAppUrl ? [`${webAppUrl}/auth/callback`] : [])
-    ];
-    const cognitoLogoutUrls = ['http://localhost:5173', 'http://localhost:5174', ...(webAppUrl ? [webAppUrl] : [])];
+    const cognitoCallbackUrls = isProduction
+      ? [`${webAppUrl}/auth/callback`]
+      : ['http://localhost:5173/auth/callback', 'http://localhost:5174/auth/callback', ...(webAppUrl ? [`${webAppUrl}/auth/callback`] : [])];
+    const cognitoLogoutUrls = isProduction
+      ? [webAppUrl!]
+      : ['http://localhost:5173', 'http://localhost:5174', ...(webAppUrl ? [webAppUrl] : [])];
+
+    Tags.of(this).add('DeploymentStage', isProduction ? 'production' : deploymentStage);
+    Tags.of(this).add('ProductBrand', productBrand);
 
     const siteSettingsTable = new dynamodb.Table(this, 'SiteSettingsTable', {
       partitionKey: { name: 'settingId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
+      pointInTimeRecoverySpecification: isProduction ? { pointInTimeRecoveryEnabled: true } : undefined,
+      deletionProtection: isProduction,
+      removalPolicy: dataRemovalPolicy
     });
 
     const contentStatsTable = new dynamodb.Table(this, 'ContentStatsTable', {
       partitionKey: { name: 'imageId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
+      pointInTimeRecoverySpecification: isProduction ? { pointInTimeRecoveryEnabled: true } : undefined,
+      deletionProtection: isProduction,
+      removalPolicy: dataRemovalPolicy
     });
 
     const trendingFeedTable = new dynamodb.Table(this, 'TrendingFeedTable', {
       partitionKey: { name: 'period', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'rankKey', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
+      pointInTimeRecoverySpecification: isProduction ? { pointInTimeRecoveryEnabled: true } : undefined,
+      deletionProtection: isProduction,
+      removalPolicy: dataRemovalPolicy
     });
     trendingFeedTable.addGlobalSecondaryIndex({
       indexName: 'PeriodSurfaceRank',
@@ -69,7 +100,9 @@ export class UbeeqStack extends Stack {
       partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: RemovalPolicy.DESTROY
+      pointInTimeRecoverySpecification: isProduction ? { pointInTimeRecoveryEnabled: true } : undefined,
+      deletionProtection: isProduction,
+      removalPolicy: dataRemovalPolicy
     });
     contentCoreTable.addGlobalSecondaryIndex({
       indexName: 'GSI1',
@@ -85,11 +118,19 @@ export class UbeeqStack extends Stack {
     const mediaBucket = new s3.Bucket(this, 'MediaBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
-      removalPolicy: RemovalPolicy.DESTROY,
-      autoDeleteObjects: true,
+      enforceSSL: true,
+      versioned: isProduction,
+      removalPolicy: dataRemovalPolicy,
+      autoDeleteObjects: !isProduction,
+      lifecycleRules: isProduction ? [{
+        id: 'RetainRecoverableVersions',
+        enabled: true,
+        abortIncompleteMultipartUploadAfter: Duration.days(7),
+        noncurrentVersionExpiration: Duration.days(Number(process.env.MEDIA_NONCURRENT_VERSION_RETENTION_DAYS || 90))
+      }] : undefined,
       cors: [
         {
-          allowedOrigins: ['*'],
+          allowedOrigins: mediaCorsOrigins,
           allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD, s3.HttpMethods.PUT],
           allowedHeaders: ['*'],
           exposedHeaders: ['Accept-Ranges', 'Content-Range', 'Content-Length', 'Content-Type', 'ETag'],
@@ -97,8 +138,43 @@ export class UbeeqStack extends Stack {
         }
       ]
     });
+    let productionBackupPlan: backup.BackupPlan | undefined;
+    let productionBackupVault: backup.BackupVault | undefined;
+    if (isProduction) {
+      productionBackupVault = new backup.BackupVault(this, 'ProductionBackupVault', {
+        removalPolicy: RemovalPolicy.RETAIN,
+        lockConfiguration: {
+          minRetention: Duration.days(35),
+          maxRetention: Duration.days(366)
+        }
+      });
+      productionBackupPlan = new backup.BackupPlan(this, 'ProductionBackupPlan', {
+        backupVault: productionBackupVault,
+        backupPlanRules: [
+          new backup.BackupPlanRule({
+            ruleName: 'Daily35DayRetention',
+            scheduleExpression: events.Schedule.cron({ minute: '0', hour: '5' }),
+            deleteAfter: Duration.days(35)
+          }),
+          new backup.BackupPlanRule({
+            ruleName: 'Monthly1YearRetention',
+            scheduleExpression: events.Schedule.cron({ minute: '0', hour: '6', day: '1' }),
+            deleteAfter: Duration.days(365)
+          })
+        ]
+      });
+      productionBackupPlan.addSelection('ProductionData', {
+        resources: [
+          backup.BackupResource.fromDynamoDbTable(siteSettingsTable),
+          backup.BackupResource.fromDynamoDbTable(contentStatsTable),
+          backup.BackupResource.fromDynamoDbTable(trendingFeedTable),
+          backup.BackupResource.fromDynamoDbTable(contentCoreTable),
+          backup.BackupResource.fromArn(mediaBucket.bucketArn)
+        ]
+      });
+    }
     const videoPosterIngestDlq = new sqs.Queue(this, 'VideoPosterIngestDlq', {
-      retentionPeriod: Duration.days(14)
+      retentionPeriod: Duration.days(isProduction ? 14 : 1)
     });
     const videoPosterIngestQueue = new sqs.Queue(this, 'VideoPosterIngestQueue', {
       visibilityTimeout: Duration.minutes(5),
@@ -109,7 +185,7 @@ export class UbeeqStack extends Stack {
       }
     });
     const externalSyncDlq = new sqs.Queue(this, 'ExternalSyncDlq', {
-      retentionPeriod: Duration.days(14)
+      retentionPeriod: Duration.days(isProduction ? 14 : 1)
     });
     const externalSyncQueue = new sqs.Queue(this, 'ExternalSyncQueue', {
       visibilityTimeout: Duration.minutes(15),
@@ -131,7 +207,7 @@ export class UbeeqStack extends Stack {
         accessControlAllowCredentials: false,
         accessControlAllowHeaders: ['*'],
         accessControlAllowMethods: ['GET', 'HEAD', 'OPTIONS'],
-        accessControlAllowOrigins: ['*'],
+        accessControlAllowOrigins: isProduction ? [webAppUrl!] : ['*'],
         accessControlExposeHeaders: ['Accept-Ranges', 'Content-Range', 'Content-Length', 'Content-Type', 'ETag'],
         accessControlMaxAge: Duration.days(1),
         originOverride: true
@@ -144,11 +220,13 @@ export class UbeeqStack extends Stack {
         ? fs.readFileSync(publicKeyFile, 'utf8')
         : (process.env.CLOUDFRONT_PUBLIC_KEY || '')
     ).replace(/\\n/g, '\n').trim();
-    const cloudFrontPrivateKey = (
-      privateKeyFile && fs.existsSync(privateKeyFile)
-        ? fs.readFileSync(privateKeyFile, 'utf8')
-        : (process.env.CLOUDFRONT_PRIVATE_KEY || '')
-    ).replace(/\\n/g, '\n').trim();
+    const cloudFrontPrivateKey = isProduction && cloudFrontPublicKeyPem
+      ? appSecrets!.secretValueFromJson('cloudFrontPrivateKey').unsafeUnwrap()
+      : (
+          privateKeyFile && fs.existsSync(privateKeyFile)
+            ? fs.readFileSync(privateKeyFile, 'utf8')
+            : (process.env.CLOUDFRONT_PRIVATE_KEY || '')
+        ).replace(/\\n/g, '\n').trim();
     const premiumPublicKey = cloudFrontPublicKeyPem
       ? new cloudfront.PublicKey(this, 'PremiumMediaPublicKey', {
           encodedKey: cloudFrontPublicKeyPem,
@@ -188,6 +266,8 @@ export class UbeeqStack extends Stack {
       : undefined;
 
     const userPool = new cognito.UserPool(this, 'UbeeqUserPool', {
+      removalPolicy: dataRemovalPolicy,
+      deletionProtection: isProduction,
       selfSignUpEnabled: true,
       signInAliases: { email: true },
       standardAttributes: { email: { required: true, mutable: false } },
@@ -214,7 +294,9 @@ export class UbeeqStack extends Stack {
       ? new cognito.UserPoolIdentityProviderGoogle(this, 'GoogleIdentityProvider', {
           userPool,
           clientId: googleClientId!,
-          clientSecretValue: SecretValue.unsafePlainText(googleClientSecret!),
+          clientSecretValue: isProduction
+            ? appSecrets!.secretValueFromJson('googleClientSecret')
+            : SecretValue.unsafePlainText(googleClientSecret!),
           scopes: ['openid', 'email', 'profile'],
           attributeMapping: {
             email: cognito.ProviderAttribute.GOOGLE_EMAIL,
@@ -228,7 +310,9 @@ export class UbeeqStack extends Stack {
           clientId: appleServiceId!,
           teamId: appleTeamId!,
           keyId: appleKeyId!,
-          privateKeyValue: SecretValue.unsafePlainText(applePrivateKey!),
+          privateKeyValue: isProduction
+            ? appSecrets!.secretValueFromJson('applePrivateKey')
+            : SecretValue.unsafePlainText(applePrivateKey!),
           scopes: ['name', 'email'],
           attributeMapping: {
             email: cognito.ProviderAttribute.APPLE_EMAIL,
@@ -293,6 +377,29 @@ export class UbeeqStack extends Stack {
       description: 'General authenticated users'
     });
 
+    const externalTokenEncryptionKey = isProduction
+      ? appSecrets!.secretValueFromJson('externalTokenEncryptionKey').unsafeUnwrap()
+      : (process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '');
+    const unlockJwtSecret = isProduction
+      ? appSecrets!.secretValueFromJson('unlockJwtSecret').unsafeUnwrap()
+      : (process.env.UNLOCK_JWT_SECRET || 'dev-secret');
+    const productionFunctionLogGroups = new Map<string, logs.LogGroup>();
+    const productionFunctionOptions = (logGroupId: string) => {
+      if (!isProduction) return {};
+      const logGroup = new logs.LogGroup(this, logGroupId, {
+        retention: logs.RetentionDays.THREE_MONTHS,
+        removalPolicy: RemovalPolicy.RETAIN
+      });
+      productionFunctionLogGroups.set(logGroupId, logGroup);
+      return {
+        loggingFormat: lambda.LoggingFormat.JSON,
+        applicationLogLevelV2: lambda.ApplicationLogLevel.INFO,
+        systemLogLevelV2: lambda.SystemLogLevel.INFO,
+        logGroup,
+        tracing: lambda.Tracing.ACTIVE
+      };
+    };
+
     const apiFn = new lambdaNodejs.NodejsFunction(this, 'UbeeqApiFunction', {
       runtime: lambda.Runtime.NODEJS_22_X,
       entry: path.join(__dirname, '../../apps/api/src/handler.ts'),
@@ -303,7 +410,9 @@ export class UbeeqStack extends Stack {
         target: 'node22',
         externalModules: ['@aws-sdk/*']
       },
+      ...productionFunctionOptions('ApiFunctionLogs'),
       environment: {
+        DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
         SITE_SETTINGS_TABLE: siteSettingsTable.tableName,
         CONTENT_STATS_TABLE: contentStatsTable.tableName,
         TRENDING_FEED_TABLE: trendingFeedTable.tableName,
@@ -318,9 +427,11 @@ export class UbeeqStack extends Stack {
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
         DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true',
         PRODUCT_BRAND: productBrand,
+        TENANT_ID: process.env.TENANT_ID || productBrand,
         EXTERNAL_OAUTH_REDIRECT_URI: process.env.EXTERNAL_OAUTH_REDIRECT_URI || '',
-        EXTERNAL_TOKEN_ENCRYPTION_KEY: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '',
-        APP_ORIGIN: process.env.APP_ORIGIN || '',
+        EXTERNAL_TOKEN_ENCRYPTION_KEY: externalTokenEncryptionKey,
+        UNLOCK_JWT_SECRET: unlockJwtSecret,
+        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || ''),
         TRENDING_FEED_MAX_ITEMS: '600',
         TRENDING_CANDIDATE_LIMIT: '1500',
         MEDIA_CDN_DOMAIN: mediaDistribution.distributionDomainName,
@@ -340,7 +451,9 @@ export class UbeeqStack extends Stack {
         target: 'node22',
         externalModules: ['@aws-sdk/*']
       },
+      ...productionFunctionOptions('TrendingRankerFunctionLogs'),
       environment: {
+        DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
         SITE_SETTINGS_TABLE: siteSettingsTable.tableName,
         CONTENT_STATS_TABLE: contentStatsTable.tableName,
         TRENDING_FEED_TABLE: trendingFeedTable.tableName,
@@ -362,16 +475,20 @@ export class UbeeqStack extends Stack {
         target: 'node22',
         externalModules: ['@aws-sdk/*']
       },
+      ...productionFunctionOptions('ExternalSyncFunctionLogs'),
       environment: {
+        DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
         CONTENT_CORE_TABLE: contentCoreTable.tableName,
         USE_CONTENT_CORE_TABLE: 'true',
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
-        EXTERNAL_TOKEN_ENCRYPTION_KEY: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '',
+        EXTERNAL_TOKEN_ENCRYPTION_KEY: externalTokenEncryptionKey,
+        UNLOCK_JWT_SECRET: unlockJwtSecret,
         EXTERNAL_SYNC_BASE_DELAY_SECONDS: '60',
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
         DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true',
-        PRODUCT_BRAND: productBrand
+        PRODUCT_BRAND: productBrand,
+        TENANT_ID: process.env.TENANT_ID || productBrand
       }
     });
     const externalSyncSchedulerFn = new lambdaNodejs.NodejsFunction(this, 'ExternalSyncSchedulerFunction', {
@@ -384,12 +501,15 @@ export class UbeeqStack extends Stack {
         target: 'node22',
         externalModules: ['@aws-sdk/*']
       },
+      ...productionFunctionOptions('ExternalSyncSchedulerFunctionLogs'),
       environment: {
+        DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
         CONTENT_CORE_TABLE: contentCoreTable.tableName,
         USE_CONTENT_CORE_TABLE: 'true',
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
-        EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120'
+        EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
+        TENANT_ID: process.env.TENANT_ID || productBrand
       }
     });
     const ffmpegLayerArn = process.env.FFMPEG_LAYER_ARN;
@@ -404,10 +524,12 @@ export class UbeeqStack extends Stack {
         target: 'node22',
         externalModules: ['@aws-sdk/*']
       },
+      ...productionFunctionOptions('VideoPosterIngestFunctionLogs'),
       layers: ffmpegLayerArn
         ? [lambda.LayerVersion.fromLayerVersionArn(this, 'VideoPosterFfmpegLayer', ffmpegLayerArn)]
         : undefined,
       environment: {
+        DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
         CONTENT_CORE_TABLE: contentCoreTable.tableName,
         MEDIA_BUCKET: mediaBucket.bucketName,
         VIDEO_POSTER_OUTPUT_PREFIX: 'posters',
@@ -462,11 +584,35 @@ export class UbeeqStack extends Stack {
       targets: [new targets.LambdaFunction(externalSyncSchedulerFn)]
     });
 
+    const apiAccessLogGroup = isProduction
+      ? new logs.LogGroup(this, 'ApiAccessLogs', {
+          retention: logs.RetentionDays.THREE_MONTHS,
+          removalPolicy: RemovalPolicy.RETAIN
+        })
+      : undefined;
     const api = new apigw.LambdaRestApi(this, 'UbeeqApi', {
       handler: apiFn,
       proxy: true,
+      deployOptions: isProduction ? {
+        accessLogDestination: new apigw.LogGroupLogDestination(apiAccessLogGroup!),
+        accessLogFormat: apigw.AccessLogFormat.jsonWithStandardFields({
+          caller: false,
+          httpMethod: true,
+          ip: true,
+          protocol: true,
+          requestTime: true,
+          resourcePath: true,
+          responseLength: true,
+          status: true,
+          user: false
+        }),
+        dataTraceEnabled: false,
+        loggingLevel: apigw.MethodLoggingLevel.ERROR,
+        metricsEnabled: true,
+        tracingEnabled: true
+      } : undefined,
       defaultCorsPreflightOptions: {
-        allowOrigins: apigw.Cors.ALL_ORIGINS,
+        allowOrigins: isProduction ? [webAppUrl!] : apigw.Cors.ALL_ORIGINS,
         allowMethods: apigw.Cors.ALL_METHODS,
         allowHeaders: [
           'Authorization',
@@ -483,6 +629,7 @@ export class UbeeqStack extends Stack {
           'Content-Range',
           'Content-Length',
           'Content-Type',
+          'Content-Disposition',
           'ETag',
           'Server-Timing',
           'X-Request-Id',
@@ -496,6 +643,118 @@ export class UbeeqStack extends Stack {
       }
     });
 
+    let operationsTopic: sns.Topic | undefined;
+    if (isProduction) {
+      operationsTopic = new sns.Topic(this, 'OperationsAlarmTopic', {
+        displayName: `${productName} production operations alarms`
+      });
+      operationsTopic.applyRemovalPolicy(RemovalPolicy.RETAIN);
+      const alarmEmail = process.env.ALARM_NOTIFICATION_EMAIL?.trim();
+      if (alarmEmail) operationsTopic.addSubscription(new subscriptions.EmailSubscription(alarmEmail));
+      const alarmAction = new cloudwatchActions.SnsAction(operationsTopic);
+      const alarmDefaults = {
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING
+      };
+      const alarm = (id: string, props: cloudwatch.AlarmProps) => {
+        const created = new cloudwatch.Alarm(this, id, props);
+        created.addAlarmAction(alarmAction);
+        return created;
+      };
+
+      alarm('ExternalSyncQueueDepthAlarm', {
+        ...alarmDefaults,
+        alarmDescription: 'External synchronization is accumulating more work than workers are draining.',
+        metric: externalSyncQueue.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5), statistic: 'Maximum' }),
+        threshold: 100,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+      });
+      alarm('ExternalSyncQueueAgeAlarm', {
+        ...alarmDefaults,
+        alarmDescription: 'The oldest external synchronization job has waited at least 15 minutes.',
+        metric: externalSyncQueue.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(5), statistic: 'Maximum' }),
+        threshold: 900,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+      });
+      alarm('ExternalSyncDeadLetterAlarm', {
+        ...alarmDefaults,
+        alarmDescription: 'At least one external synchronization job exhausted its retries.',
+        metric: externalSyncDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(1), statistic: 'Maximum' }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+      });
+      const externalSyncFailureFilter = new logs.MetricFilter(this, 'ExternalSyncJobFailureMetric', {
+        logGroup: productionFunctionLogGroups.get('ExternalSyncFunctionLogs')!,
+        filterPattern: logs.FilterPattern.literal('"job failed"'),
+        metricNamespace: `${productName}/ExternalSync`,
+        metricName: 'JobFailures',
+        metricValue: '1',
+        defaultValue: 0
+      });
+      alarm('ExternalSyncJobFailuresAlarm', {
+        ...alarmDefaults,
+        alarmDescription: 'An external synchronization job failed and will be retried or sent to the dead-letter queue.',
+        metric: externalSyncFailureFilter.metric({ period: Duration.minutes(5), statistic: 'Sum' }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+      });
+      alarm('VideoPosterQueueDepthAlarm', {
+        ...alarmDefaults,
+        alarmDescription: 'Video poster generation is accumulating more work than workers are draining.',
+        metric: videoPosterIngestQueue.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(5), statistic: 'Maximum' }),
+        threshold: 100,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+      });
+      alarm('VideoPosterDeadLetterAlarm', {
+        ...alarmDefaults,
+        alarmDescription: 'At least one video poster job exhausted its retries.',
+        metric: videoPosterIngestDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(1), statistic: 'Maximum' }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+      });
+
+      [
+        ['ApiLambdaErrorsAlarm', apiFn],
+        ['TrendingRankerLambdaErrorsAlarm', trendingRankerFn],
+        ['ExternalSyncLambdaErrorsAlarm', externalSyncFn],
+        ['ExternalSyncSchedulerLambdaErrorsAlarm', externalSyncSchedulerFn],
+        ['VideoPosterLambdaErrorsAlarm', videoPosterIngestFn]
+      ].forEach(([alarmId, fn]) => {
+        alarm(alarmId as string, {
+          ...alarmDefaults,
+          alarmDescription: `${(fn as lambda.IFunction).functionName} reported an invocation error.`,
+          metric: (fn as lambda.IFunction).metricErrors({ period: Duration.minutes(5), statistic: 'Sum' }),
+          threshold: 1,
+          comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+        });
+      });
+
+      const apiRequests = api.metricCount({ period: Duration.minutes(5), statistic: 'Sum' });
+      const apiServerErrors = api.metricServerError({ period: Duration.minutes(5), statistic: 'Sum' });
+      const apiErrorRate = new cloudwatch.MathExpression({
+        expression: 'IF(requests>=20,100*errors/requests,0)',
+        usingMetrics: { requests: apiRequests, errors: apiServerErrors },
+        period: Duration.minutes(5),
+        label: 'API 5xx error rate (%)'
+      });
+      alarm('ApiServerErrorRateAlarm', {
+        ...alarmDefaults,
+        alarmDescription: 'At least 5% of API requests returned 5xx responses over five minutes (minimum 20 requests).',
+        metric: apiErrorRate,
+        threshold: 5,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+      });
+
+      new cloudwatch.Dashboard(this, 'ProductionOperationsDashboard', {
+        dashboardName: `${this.stackName}-${productBrand}-operations`,
+        widgets: [
+          [new cloudwatch.GraphWidget({ title: 'API requests and 5xx responses', left: [apiRequests, apiServerErrors] })],
+          [new cloudwatch.GraphWidget({ title: 'External sync queue', left: [externalSyncQueue.metricApproximateNumberOfMessagesVisible(), externalSyncDlq.metricApproximateNumberOfMessagesVisible()], right: [externalSyncQueue.metricApproximateAgeOfOldestMessage()] })],
+          [new cloudwatch.GraphWidget({ title: 'Lambda errors', left: [apiFn.metricErrors(), externalSyncFn.metricErrors(), externalSyncSchedulerFn.metricErrors(), trendingRankerFn.metricErrors(), videoPosterIngestFn.metricErrors()] })]
+        ]
+      });
+    }
+
     new CfnOutput(this, 'ApiUrl', { value: api.url });
     new CfnOutput(this, 'MediaBucketName', { value: mediaBucket.bucketName });
     new CfnOutput(this, 'VideoPosterIngestQueueUrl', { value: videoPosterIngestQueue.queueUrl });
@@ -503,6 +762,12 @@ export class UbeeqStack extends Stack {
     new CfnOutput(this, 'VideoPosterIngestDlqUrl', { value: videoPosterIngestDlq.queueUrl });
     new CfnOutput(this, 'ExternalSyncQueueUrl', { value: externalSyncQueue.queueUrl });
     new CfnOutput(this, 'ExternalSyncDlqUrl', { value: externalSyncDlq.queueUrl });
+    new CfnOutput(this, 'DeploymentStage', { value: isProduction ? 'production' : deploymentStage });
+    if (productionBackupPlan && productionBackupVault) {
+      new CfnOutput(this, 'BackupPlanId', { value: productionBackupPlan.backupPlanId });
+      new CfnOutput(this, 'BackupVaultName', { value: productionBackupVault.backupVaultName });
+    }
+    if (operationsTopic) new CfnOutput(this, 'OperationsAlarmTopicArn', { value: operationsTopic.topicArn });
     new CfnOutput(this, 'MediaCdnDomainName', { value: mediaDistribution.distributionDomainName });
     if (premiumMediaDistribution) {
       new CfnOutput(this, 'PremiumMediaCdnDomainName', { value: premiumMediaDistribution.distributionDomainName });

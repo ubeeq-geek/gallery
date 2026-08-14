@@ -6,6 +6,7 @@ import { brandForConfig } from './brand';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 import { createExternalPlatformProvider, DEVIANTART_METADATA_BATCH_SIZE, ExternalProviderError, type ExternalContentPublish, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteActivity, type ExternalRemoteComment, type ExternalRemoteContent, type ExternalRemoteEngagement } from './externalPlatformProvider';
 import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalActivity, ExternalCollection, ExternalCollectionMapping, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, SpacePublication, UbeeqCollection, UbeeqCollectionAsset } from './domain';
+import type { CanonicalAsset, Publication, Work } from './canonicalDomain';
 import type { DataStore } from './store';
 
 const retryDelaySeconds = (attempt: number, configuredBase: number): number => {
@@ -284,6 +285,7 @@ const refreshAccessTokenIfNeeded = async (
 
 const upsertContent = async (
   store: DataStore,
+  config: AppConfig,
   account: ExternalAccount,
   remote: ExternalRemoteContent,
   now: string,
@@ -383,6 +385,148 @@ const upsertContent = async (
   };
   if (currentPublication) await store.updateExternalPublication(publication);
   else await store.createExternalPublication(publication);
+
+  const workKind: Work['kind'] = remote.assetType === 'literature'
+    ? 'literature'
+    : remote.assetType === 'video'
+      ? 'video'
+      : remote.assetType === 'animation'
+        ? 'animation'
+        : 'image';
+  const currentWork = await store.getWork(config.tenantId, asset.assetId);
+  const importedSlugBase = remote.title.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || `work-${asset.assetId.slice(0, 8)}`;
+  const importedSlug = (await store.listWorksByCreator(config.tenantId, primaryCreatorIdentityId))
+    .some((item) => item.workId !== asset.assetId && item.slugHistory.includes(importedSlugBase))
+    ? `${importedSlugBase}-${asset.assetId.slice(0, 8)}`
+    : importedSlugBase;
+  const canonicalWork: Work = currentWork ? {
+    ...currentWork,
+    kind: workKind,
+    title: asset.titleSyncPolicy === 'mirrored' || asset.titleSyncPolicy === 'initially_mirrored' ? remote.title : currentWork.title,
+    description: asset.descriptionSyncPolicy === 'mirrored' || asset.descriptionSyncPolicy === 'initially_mirrored' ? remote.description : currentWork.description,
+    tags: remote.tags,
+    revision: currentWork.revision + (remoteMetadataChanged ? 1 : 0),
+    updatedAt: now
+  } : {
+    workId: asset.assetId,
+    tenantId: config.tenantId,
+    creatorId: primaryCreatorIdentityId,
+    kind: workKind,
+    title: remote.title,
+    slug: importedSlug,
+    slugHistory: [],
+    description: remote.description,
+    tags: remote.tags,
+    contentRating: metadataBoolean(remote.rawMetadata, 'is_mature', 'isMature') ? 'mature' : 'general',
+    aiDisclosure: metadataBoolean(remote.rawMetadata, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai') ? 'ai-generated' : 'none',
+    heavyTopics: [],
+    status: publication.syncStatus === 'active' ? 'published' : 'draft',
+    primaryAssetId: `${asset.assetId}:remote`,
+    revision: 1,
+    createdAt: now,
+    updatedAt: now,
+    publishedAt: remote.publishedAt
+  };
+  if (!canonicalWork.slugHistory.length) canonicalWork.slugHistory = [canonicalWork.slug];
+  if (currentWork) await store.updateWork(canonicalWork);
+  else {
+    await store.createWork(canonicalWork);
+    await store.upsertWorkDiscoveryParticipation({
+      workId: canonicalWork.workId,
+      tenantId: canonicalWork.tenantId,
+      creatorId: canonicalWork.creatorId,
+      state: 'none',
+      updatedAt: now
+    });
+  }
+  const remoteAssetId = `${asset.assetId}:remote`;
+  const currentCanonicalAsset = await store.getCanonicalAsset(config.tenantId, remoteAssetId);
+  const canonicalAsset: CanonicalAsset = {
+    assetId: remoteAssetId,
+    tenantId: config.tenantId,
+    creatorId: primaryCreatorIdentityId,
+    kind: workKind === 'video' || workKind === 'animation' ? 'video' : workKind === 'literature' ? 'document' : 'image',
+    status: 'ready',
+    mimeType: remote.content?.contentType || currentCanonicalAsset?.mimeType || 'application/octet-stream',
+    originalFilename: remote.content?.filename || currentCanonicalAsset?.originalFilename,
+    sizeBytes: remote.content?.byteSize || currentCanonicalAsset?.sizeBytes,
+    width: remote.content?.width || currentCanonicalAsset?.width,
+    height: remote.content?.height || currentCanonicalAsset?.height,
+    storage: {
+      mode: 'external',
+      externalUrl: remote.content?.sourceUrl || remote.externalUrl
+    },
+    metadata: { sourcePlatform: account.platform, sourceAccount: account.externalUsername },
+    createdAt: currentCanonicalAsset?.createdAt || now,
+    updatedAt: now
+  };
+  if (currentCanonicalAsset) await store.updateCanonicalAsset(canonicalAsset);
+  else {
+    await store.createCanonicalAsset(canonicalAsset);
+    await store.attachAssetToWork(config.tenantId, { workId: canonicalWork.workId, assetId: canonicalAsset.assetId, role: 'primary', position: 0 });
+  }
+  const canonicalPublication: Publication = {
+    publicationId: publication.externalPublicationId,
+    tenantId: config.tenantId,
+    creatorId: primaryCreatorIdentityId,
+    workId: canonicalWork.workId,
+    destination: account.platform,
+    integrationAccountId: account.externalAccountId,
+    status: publication.syncStatus === 'active'
+      ? 'live'
+      : publication.syncStatus === 'draft'
+        ? 'draft'
+        : publication.syncStatus === 'missing' || publication.syncStatus === 'restricted'
+          ? 'missing'
+          : publication.syncStatus === 'deleted'
+            ? 'removed'
+            : publication.syncStatus === 'pending_publish'
+              ? 'queued'
+              : 'failed',
+    visibility: 'public',
+    remoteId: publication.externalContentId,
+    remoteUrl: publication.externalUrl,
+    remoteCreatedAt: publication.remoteCreatedAt,
+    remoteUpdatedAt: publication.remoteUpdatedAt,
+    metadataOverrides: {
+      title: publication.externalTitle,
+      description: publication.externalDescription,
+      tags: publication.externalTags,
+      fields: {
+        targetStatus: publication.targetStatus,
+        externalCollectionIds: publication.externalCollectionIds,
+        ...publication.rawMetadataJson
+      }
+    },
+    sync: {
+      status: publication.metadataSyncStatus === 'remote_changed'
+        ? 'remote_newer'
+        : publication.metadataSyncStatus === 'local_update_pending'
+          ? 'local_newer'
+          : publication.metadataSyncStatus === 'conflict'
+            ? 'conflict'
+            : publication.syncStatus === 'error'
+              ? 'error'
+              : 'in_sync',
+      lastSuccessfulAt: publication.lastSyncedAt,
+      localRevision: canonicalWork.revision,
+      remoteMetadataFingerprint: publication.remoteMetadataFingerprint,
+      remoteContentFingerprint: publication.remoteContentFingerprint,
+      errorMessage: publication.remoteStateReason
+    },
+    providerData: {
+      ...publication.rawMetadataJson,
+      externalUsername: account.externalUsername,
+      externalDraftId: publication.externalDraftId,
+      targetStatus: publication.targetStatus,
+      externalCollectionIds: publication.externalCollectionIds
+    },
+    createdAt: publication.createdAt,
+    updatedAt: publication.updatedAt,
+    publishedAt: publication.publishedAt,
+    removedAt: publication.syncStatus === 'deleted' ? now : undefined
+  };
+  await store.upsertPublication(canonicalPublication);
 
   if (remote.metrics && Object.values(remote.metrics).some((value) => value !== undefined)) {
     await storeEngagement(store, publication, remote.metrics, now);
@@ -617,6 +761,7 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
     return;
   }
   const stored = await storeExternalContent(config, {
+    tenantId: config.tenantId,
     userId: asset.userId,
     creatorIdentityId: asset.creatorIdentityId,
     assetId: asset.assetId,
@@ -653,6 +798,51 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
     contentSyncError: undefined,
     updatedAt: new Date().toISOString()
   });
+  const canonicalWork = await store.getWork(config.tenantId, asset.assetId);
+  const canonicalAssetId = `${asset.assetId}:remote`;
+  const currentCanonicalAsset = await store.getCanonicalAsset(config.tenantId, canonicalAssetId);
+  if (canonicalWork && currentCanonicalAsset) {
+    await store.updateCanonicalAsset({
+      ...currentCanonicalAsset,
+      status: 'ready',
+      mimeType: stored.contentType,
+      sizeBytes: stored.byteSize,
+      checksumSha256: stored.checksumSha256,
+      storage: {
+        mode: 'hosted',
+        objectKey: stored.objectKey,
+        thumbnailObjectKey: stored.thumbnailObjectKey
+      },
+      metadata: {
+        ...(currentCanonicalAsset.metadata || {}),
+        sourcePlatform: account.platform,
+        sourceAccount: account.externalUsername,
+        sourceCopyQuality: source.quality,
+        remoteUrl: remote.externalUrl || ''
+      },
+      updatedAt: new Date().toISOString()
+    });
+    const currentSpace = (await store.listPublicationsByWork(config.tenantId, canonicalWork.workId)).find((item) => item.destination === 'eversally');
+    await store.upsertPublication({
+      publicationId: currentSpace?.publicationId || `${canonicalWork.workId}:eversally`,
+      tenantId: config.tenantId,
+      creatorId: canonicalWork.creatorId,
+      workId: canonicalWork.workId,
+      destination: 'eversally',
+      status: 'live',
+      visibility: currentSpace?.visibility || 'private',
+      metadataOverrides: currentSpace?.metadataOverrides,
+      sync: {
+        status: 'not_applicable',
+        localRevision: canonicalWork.revision,
+        lastSuccessfulAt: new Date().toISOString()
+      },
+      providerData: { hostingMode: 'hosted', sourceCopyQuality: source.quality },
+      createdAt: currentSpace?.createdAt || now,
+      updatedAt: new Date().toISOString(),
+      publishedAt: currentSpace?.publishedAt || now
+    });
+  }
   await updateJob(store, job, { status: 'successful', progress: { discovered: 1, synchronized: 1, remaining: 0 }, errorCode: undefined, errorMessage: undefined });
   const brand = brandForConfig(config);
   await addLog(store, job.externalSyncJobId, 'info', stored.unchanged
@@ -734,7 +924,7 @@ const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: Ext
       ...(update.noAi !== undefined ? { noai: update.noAi } : {})
     }
   };
-  await upsertContent(store, session.account, verifiedRemote, new Date().toISOString(), 'outbound_verification');
+  await upsertContent(store, config, session.account, verifiedRemote, new Date().toISOString(), 'outbound_verification');
   const followUpJob = await enqueueAccountScanIfIdle(store, config, session.account, job.externalSyncJobId, queue);
   await updateJob(store, job, {
     status: 'successful',
@@ -1172,7 +1362,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
           });
         }
       }
-      const imported = await upsertContent(store, account, resolvedItem, now);
+      const imported = await upsertContent(store, config, account, resolvedItem, now);
       if (shouldSyncContent) {
         await queueSpaceContentSync(store, config, account, imported.asset, imported.publication, queue);
       }

@@ -270,6 +270,8 @@ export type StudioExternalAsset = {
   assetType: 'image' | 'literature' | 'video' | 'animation' | 'other';
   canonicalTitle?: string;
   canonicalDescription?: string;
+  canonicalSlug?: string;
+  discoveryState?: 'none' | 'eligible' | 'opted_in' | 'removed';
   visibility: 'private' | 'unlisted' | 'public';
   titleSyncPolicy: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
   descriptionSyncPolicy: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';

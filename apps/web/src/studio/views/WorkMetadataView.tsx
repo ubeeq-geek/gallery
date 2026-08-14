@@ -38,6 +38,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const [newDestinationAccountId, setNewDestinationAccountId] = useState('');
   const [newDestinationTargetStatus, setNewDestinationTargetStatus] = useState<'draft' | 'published'>('published');
   const [destinationBusy, setDestinationBusy] = useState(false);
+  const [spaceBusy, setSpaceBusy] = useState(false);
   const [destinationMessage, setDestinationMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -80,7 +81,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     setLoading(true);
     setError('');
     void Promise.all([
-      api.studioListDeviantArtCatalogue(creatorId),
+      api.studioListWorks(creatorId),
       api.studioListDeviantArtAccounts(creatorId),
       api.studioListDeviantArtCollections(creatorId)
     ]).then(([result, accountResult, collectionResult]) => {
@@ -162,7 +163,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
           return;
         }
 
-        const refreshed = await api.studioListDeviantArtCatalogue(creatorId) as { items?: StudioExternalAsset[] };
+        const refreshed = await api.studioListWorks(creatorId) as { items?: StudioExternalAsset[] };
         if (!active) return;
         const verifiedAsset = (refreshed.items || []).find((item) => item.assetId === workId);
         if (verifiedAsset) setAsset(verifiedAsset);
@@ -320,6 +321,42 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     if (nextLinked && integration) {
       setIntegrationTitle(title);
       setIntegrationDescriptionBlocks(clonePostBlocks(descriptionBlocks));
+    }
+  };
+
+  const updateSpacePublication = async (published: boolean, visibility: 'private' | 'unlisted' | 'public') => {
+    if (!asset) return;
+    setSpaceBusy(true);
+    setError('');
+    try {
+      const spacePublication = await api.studioUpdateSpacePublication(asset.assetId, { published, hostingMode: 'hosted', visibility });
+      const withdrewDiscovery = !published || visibility !== 'public';
+      setAsset((current) => current ? {
+        ...current,
+        visibility,
+        spacePublication,
+        ...(withdrewDiscovery && current.discoveryState === 'opted_in' ? { discoveryState: 'none' } : {})
+      } : current);
+      setSuccess(published ? `This work is now ${visibility} in ${brand.workspaceFullName}.` : `This work is no longer published in ${brand.workspaceFullName}.`);
+    } catch (spaceError) {
+      setError(spaceError instanceof Error ? spaceError.message : `Unable to update the ${brand.workspaceFullName} publication.`);
+    } finally {
+      setSpaceBusy(false);
+    }
+  };
+
+  const updateDiscovery = async (state: 'none' | 'eligible' | 'opted_in') => {
+    if (!asset) return;
+    setSpaceBusy(true);
+    setError('');
+    try {
+      const result = await api.studioUpdateWorkDiscovery(asset.assetId, state);
+      setAsset((current) => current ? { ...current, discoveryState: result.state } : current);
+      setSuccess(state === 'opted_in' ? 'This work is opted into discovery.' : state === 'eligible' ? 'This work is eligible for discovery but is not opted in.' : 'This work is not participating in discovery.');
+    } catch (discoveryError) {
+      setError(discoveryError instanceof Error ? discoveryError.message : 'Unable to update discovery participation.');
+    } finally {
+      setSpaceBusy(false);
     }
   };
 
@@ -536,6 +573,48 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
                 </div>
               </article>)}
             </div> : <p className="small">No destinations yet. {accounts.length ? 'Choose the DeviantArt account above to prepare this work for synchronization.' : `You can continue editing the ${brand.productName} metadata while you manage the creator’s connected platforms.`}</p>}
+          </section>
+
+          <section className="studio-work-space-controls">
+            <div>
+              <p className="studio-work-metadata-field-heading">{brand.workspaceFullName}</p>
+              <p>Space publication and network discovery are separate choices.</p>
+            </div>
+            <label className="studio-work-metadata-option">
+              <input
+                type="checkbox"
+                checked={asset.spacePublication?.published || false}
+                disabled={spaceBusy}
+                onChange={(event) => void updateSpacePublication(event.target.checked, asset.spacePublication?.visibility || 'private')}
+              />
+              <span>Publish this work to {brand.workspaceFullName}</span>
+            </label>
+            <label>
+              <span>Space visibility</span>
+              <select
+                value={asset.spacePublication?.visibility || 'private'}
+                disabled={spaceBusy || !asset.spacePublication?.published}
+                onChange={(event) => void updateSpacePublication(true, event.target.value as 'private' | 'unlisted' | 'public')}
+              >
+                <option value="private">Private — creator and managers only</option>
+                <option value="unlisted">Unlisted — direct URL only</option>
+                <option value="public">Space-visible — listed publicly</option>
+              </select>
+            </label>
+            <label>
+              <span>Discovery participation</span>
+              <select
+                value={asset.discoveryState || 'none'}
+                disabled={spaceBusy || asset.discoveryState === 'removed'}
+                onChange={(event) => void updateDiscovery(event.target.value as 'none' | 'eligible' | 'opted_in')}
+              >
+                <option value="none">Not participating</option>
+                <option value="eligible">Eligible, not opted in</option>
+                <option value="opted_in" disabled={!asset.spacePublication?.published || asset.spacePublication.visibility !== 'public'}>Opted into discovery</option>
+                {asset.discoveryState === 'removed' && <option value="removed">Removed by moderation</option>}
+              </select>
+              <small>Publishing publicly to your Space never opts this work into discovery automatically.</small>
+            </label>
           </section>
 
           {canLink && <label className="studio-work-metadata-link">

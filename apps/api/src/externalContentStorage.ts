@@ -71,12 +71,12 @@ const createThumbnail = async (body: Buffer): Promise<Buffer | undefined> => {
 
 export const storeUbeeqWorkImage = async (
   config: AppConfig,
-  input: { userId: string; creatorIdentityId: string; assetId: string; contentType: string; body: Buffer }
+  input: { tenantId: string; creatorId: string; assetId: string; contentType: string; body: Buffer }
 ): Promise<HostedUbeeqWorkImage> => {
   if (!input.contentType.startsWith('image/')) throw new Error('Only image uploads are supported for works right now.');
   if (input.body.byteLength > config.externalContentMaxBytes) throw new Error('This image exceeds the configured upload limit.');
-  const objectKey = `ubeeq-works/${input.userId}/${input.creatorIdentityId}/${input.assetId}/source${extensionForContentType(input.contentType)}`;
-  const thumbnailObjectKey = `ubeeq-works/${input.userId}/${input.creatorIdentityId}/${input.assetId}/thumbnail.jpg`;
+  const objectKey = `works/${input.tenantId}/${input.creatorId}/${input.assetId}/source${extensionForContentType(input.contentType)}`;
+  const thumbnailObjectKey = `works/${input.tenantId}/${input.creatorId}/${input.assetId}/thumbnail.jpg`;
   const checksumSha256 = createHash('sha256').update(input.body).digest('hex');
   await writeStoredObject(config, objectKey, input.body, input.contentType, { sha256: checksumSha256, source: 'ubeeq-upload' });
   const thumbnail = await createThumbnail(input.body);
@@ -100,6 +100,7 @@ export const readStoredUbeeqWorkImage = async (config: AppConfig, objectKey: str
 export const storeExternalContent = async (
   config: AppConfig,
   input: {
+    tenantId: string;
     userId: string;
     creatorIdentityId: string;
     assetId: string;
@@ -152,7 +153,7 @@ export const storeExternalContent = async (
     };
   }
 
-  const versionPrefix = `external-content/${input.userId}/${input.creatorIdentityId}/${input.assetId}/${input.externalContentId}/versions/${checksumSha256}`;
+  const versionPrefix = `external-content/${input.tenantId}/${input.userId}/${input.creatorIdentityId}/${input.assetId}/${input.externalContentId}/versions/${checksumSha256}`;
   const objectKey = `${versionPrefix}/source${extensionForContentType(contentType)}`;
   const thumbnailObjectKey = `${versionPrefix}/thumbnail.jpg`;
   await writeStoredObject(config, objectKey, body, contentType, { sha256: checksumSha256, source: 'deviantart' });

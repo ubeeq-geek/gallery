@@ -49,6 +49,7 @@ import type {
   ExternalSyncJob,
   ExternalSyncLog
 } from './domain';
+import type { CanonicalStore } from './canonicalStore';
 
 export interface TrendingFeedQueryOptions {
   source?: 'media' | 'post' | 'combined';
@@ -60,7 +61,7 @@ export interface TrendingFeedQueryOptions {
   };
 }
 
-export interface DataStore {
+export interface DataStore extends CanonicalStore {
   getSiteSettings(): Promise<SiteSettings>;
   updateSiteSettings(settings: SiteSettings): Promise<void>;
 

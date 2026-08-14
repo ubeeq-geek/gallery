@@ -37,7 +37,7 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
           creatorId,
           originalFilename: file.name
         });
-        await api.studioUploadWorkImage(created.asset.assetId, file);
+        await api.studioUploadWorkImage(created.work.workId, file);
         completed += 1;
       } catch (uploadError) {
         failures.push(`${file.name}: ${uploadError instanceof Error ? uploadError.message : 'Upload failed'}`);

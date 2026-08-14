@@ -56,6 +56,7 @@ The API reads environment variables from the shell that starts it; it does **not
 | Variable | Local default | Purpose |
 | --- | --- | --- |
 | `PRODUCT_BRAND` | `eversally` in `dev:eversally`; `ubeeq` in `dev:ubeeq` | Selects API messages, verification emails, and other server-rendered product terminology. |
+| `TENANT_ID` | `eversally` in `dev:eversally`; `ubeeq` in `dev:ubeeq` | Namespaces canonical Creator content so both editions can safely use the same storage contract. Set this explicitly for every deployment. |
 | `HOST` / `PORT` | `127.0.0.1` / `4000` for Eversally; `4001` for Ubeeq | API listener. |
 | `DEV_HTTPS` | `true` | Enables the `certs/fanadmin.top*.pem` development certificate. |
 | `LOCAL_AUTH_USER_ID` | `local-user` | Enables the local authenticated creator identity. Never set in deployment. |
@@ -76,6 +77,8 @@ npm run dev:api
 
 Each local API has its own in-memory database. Restarting or hot-reloading it clears that edition's local creator workspaces, DeviantArt credentials, connected accounts, and imports; files in the edition-specific media directory are not automatically deleted.
 
+Canonical uploads are stored below `works/<tenant>/<creator>/<asset>/` in the configured media directory or S3 bucket. Work lifecycle, Space visibility, discovery participation, and destination synchronization are intentionally separate records. The accepted contract is documented in [ADR 0001](docs/adr/0001-canonical-content-publication-model.md).
+
 ## Build and Test
 
 ```bash
@@ -89,6 +92,23 @@ npm --workspace @gallery/web run build:oss
 ```
 
 ## Key API Endpoints
+
+Canonical Studio and Space routes:
+
+- `GET/POST /studio/works`
+- `GET/PATCH /studio/works/:workId`
+- `PUT /studio/works/:workId/image`
+- `PUT /studio/works/:workId/publications/eversally`
+- `PUT /studio/works/:workId/discovery`
+- `GET/POST /studio/collections`
+- `PATCH/DELETE /studio/collections/:collectionId`
+- `PUT /studio/collections/:collectionId/works`
+- `GET /creators/:slug/works`
+- `GET /creators/:slug/works/:workSlug`
+- `GET /creators/:slug/collections`
+- `GET /creators/:slug/collections/:collectionSlug`
+
+Legacy discovery routes remain while the public discovery presentation is moved onto this canonical contract:
 
 - `GET /creators`
 - `GET /creators/:slug/groupings`
@@ -127,6 +147,8 @@ npm --workspace @gallery/api run ensure:core-indexes -- --content-core-table <Co
 ```
 4. Configure web env var `VITE_API_BASE_URL` to the deployed API URL. Build with `VITE_PRODUCT_BRAND=eversally` for `eversally.com` or `VITE_PRODUCT_BRAND=ubeeq` for `ubeeq.site`.
 5. Follow the Cognito setup below before enabling social sign-in in a deployed environment.
+
+Set `DEPLOYMENT_STAGE=production` to enable the production survivability profile. Production requires `WEB_APP_URL` and `APP_SECRETS_NAME`; it enables retained/deletion-protected data stores, DynamoDB point-in-time recovery, S3 versioning, scheduled AWS Backup recovery points, restricted CORS, structured logs, tracing, alarms, and an operations dashboard. Development stacks remain disposable. See [Production survivability](docs/production-survivability.md) for the secret schema, retention contract, deployment requirements, and restore drill.
 
 ## Account Email and Social Sign-In
 

@@ -6,6 +6,7 @@ import { StudioWorkspace } from './StudioWorkspace';
 import { ForCreatorsPage } from './pages/ForCreatorsPage';
 import { SpaceRulesPage } from './pages/SpaceRulesPage';
 import { SelfHostingPage } from './pages/SelfHostingPage';
+import { CreatorCollectionPage, CreatorCollectionsPage, CreatorWorkPage, CreatorWorksPage } from './pages/CanonicalSpacePages';
 import DiscoveryQuickReadOverlay, { PostMetaHeader, RichPostRenderer, type DiscoveryOverlayItem, type OverlayPost } from './components/DiscoveryQuickReadOverlay';
 import {
   changePassword,
@@ -7184,6 +7185,8 @@ function CreatorProfilePage({
         </div>
         <div className="discovery-hero-actions">
           <button className="auth-primary-btn">Follow creator</button>
+          <Link className="auth-secondary-btn no-underline" to={`/creators/${encodeURIComponent(profile.slug)}/works`}>Works</Link>
+          <Link className="auth-secondary-btn no-underline" to={`/creators/${encodeURIComponent(profile.slug)}/collections`}>Collections</Link>
           <Link className="auth-secondary-btn no-underline" to="/">Back to discovery</Link>
         </div>
       </section>
@@ -7873,6 +7876,10 @@ export default function App() {
         <Route path="/image" element={<HomePage viewerProfile={myProfile} mediaRoute="image" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/trending" element={<TrendingPage viewerProfile={myProfile} />} />
         <Route path="/creators/:slug" element={<CreatorProfilePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/creators/:slug/works" element={<CreatorWorksPage />} />
+        <Route path="/creators/:slug/works/:workSlug" element={<CreatorWorkPage />} />
+        <Route path="/creators/:slug/collections" element={<CreatorCollectionsPage />} />
+        <Route path="/creators/:slug/collections/:collectionSlug" element={<CreatorCollectionPage />} />
         <Route path="/gallery/:slug" element={<GalleryPage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/posts/:slug" element={<PostPage />} />
         <Route path="/collections" element={<CollectionsPage />} />
