@@ -8,6 +8,10 @@ import type {
   ExternalCollectionMapping,
   ExternalComment,
   ExternalEngagementSnapshot,
+  ExternalEngagementCurrent,
+  ExternalFavourite,
+  ExternalActivity,
+  ExternalSyncCheckpoint,
   ExternalPublication,
   SpacePublication,
   ExternalSyncJob,
@@ -51,15 +55,23 @@ export class ExternalPlatformRepository {
   }
 
   private async listByPartition<T>(PK: string, prefix: string, entityType: string, limit?: number): Promise<T[]> {
-    const response = await this.client.send(new QueryCommand({
-      TableName: this.tableName,
-      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
-      ExpressionAttributeValues: { ':pk': PK, ':prefix': prefix },
-      Limit: limit
-    }));
-    return (response.Items || [])
-      .filter((item) => item.entityType === entityType)
-      .map((item) => stripEntityFields<T>(item));
+    const items: T[] = [];
+    let exclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const remaining = limit === undefined ? undefined : Math.max(1, limit - items.length);
+      const response = await this.client.send(new QueryCommand({
+        TableName: this.tableName,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+        ExpressionAttributeValues: { ':pk': PK, ':prefix': prefix },
+        Limit: remaining === undefined ? undefined : Math.min(remaining, 1000),
+        ExclusiveStartKey: exclusiveStartKey
+      }));
+      items.push(...(response.Items || [])
+        .filter((item) => item.entityType === entityType)
+        .map((item) => stripEntityFields<T>(item)));
+      exclusiveStartKey = response.LastEvaluatedKey;
+    } while (exclusiveStartKey && (limit === undefined || items.length < limit));
+    return limit === undefined ? items : items.slice(0, limit);
   }
 
   private async listByIndex<T>(
@@ -71,17 +83,25 @@ export class ExternalPlatformRepository {
     entityType: string,
     limit?: number
   ): Promise<T[]> {
-    const response = await this.client.send(new QueryCommand({
-      TableName: this.tableName,
-      IndexName: indexName,
-      KeyConditionExpression: `#pk = :pk AND begins_with(#sk, :prefix)`,
-      ExpressionAttributeNames: { '#pk': keyName, '#sk': sortKeyName },
-      ExpressionAttributeValues: { ':pk': key, ':prefix': prefix },
-      Limit: limit
-    }));
-    return (response.Items || [])
-      .filter((item) => item.entityType === entityType)
-      .map((item) => stripEntityFields<T>(item));
+    const items: T[] = [];
+    let exclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const remaining = limit === undefined ? undefined : Math.max(1, limit - items.length);
+      const response = await this.client.send(new QueryCommand({
+        TableName: this.tableName,
+        IndexName: indexName,
+        KeyConditionExpression: `#pk = :pk AND begins_with(#sk, :prefix)`,
+        ExpressionAttributeNames: { '#pk': keyName, '#sk': sortKeyName },
+        ExpressionAttributeValues: { ':pk': key, ':prefix': prefix },
+        Limit: remaining === undefined ? undefined : Math.min(remaining, 1000),
+        ExclusiveStartKey: exclusiveStartKey
+      }));
+      items.push(...(response.Items || [])
+        .filter((item) => item.entityType === entityType)
+        .map((item) => stripEntityFields<T>(item)));
+      exclusiveStartKey = response.LastEvaluatedKey;
+    } while (exclusiveStartKey && (limit === undefined || items.length < limit));
+    return limit === undefined ? items : items.slice(0, limit);
   }
 
   async listExternalAccountsByCreatorIdentity(creatorIdentityId: string): Promise<ExternalAccount[]> {
@@ -458,6 +478,19 @@ export class ExternalPlatformRepository {
     });
   }
 
+  async getExternalEngagementCurrent(externalPublicationId: string): Promise<ExternalEngagementCurrent | null> {
+    return this.get(`EXTERNAL_PUBLICATION#${externalPublicationId}`, 'ENGAGEMENT#CURRENT');
+  }
+
+  async upsertExternalEngagementCurrent(engagement: ExternalEngagementCurrent): Promise<void> {
+    await this.put({
+      PK: `EXTERNAL_PUBLICATION#${engagement.externalPublicationId}`,
+      SK: 'ENGAGEMENT#CURRENT',
+      entityType: 'EXTERNAL_ENGAGEMENT_CURRENT',
+      ...engagement
+    });
+  }
+
   async listExternalComments(externalPublicationId: string, limit = 100): Promise<ExternalComment[]> {
     const items = await this.listByPartition<ExternalComment>(
       `EXTERNAL_PUBLICATION#${externalPublicationId}`,
@@ -481,6 +514,81 @@ export class ExternalPlatformRepository {
 
   async updateExternalComment(comment: ExternalComment): Promise<void> {
     await this.createExternalComment(comment);
+  }
+
+  async listExternalFavourites(externalPublicationId: string, limit = 100): Promise<ExternalFavourite[]> {
+    const items = await this.listByPartition<ExternalFavourite>(
+      `EXTERNAL_PUBLICATION#${externalPublicationId}`,
+      'FAVOURITE#',
+      'EXTERNAL_FAVOURITE',
+      limit
+    );
+    return items.sort((a, b) => String(b.favouritedAtRemote || b.lastSeenAt).localeCompare(String(a.favouritedAtRemote || a.lastSeenAt)));
+  }
+
+  async upsertExternalFavourite(favourite: ExternalFavourite): Promise<void> {
+    await this.put({
+      PK: `EXTERNAL_PUBLICATION#${favourite.externalPublicationId}`,
+      SK: `FAVOURITE#${favourite.externalUserId}`,
+      entityType: 'EXTERNAL_FAVOURITE',
+      ...favourite
+    });
+  }
+
+  async getExternalActivityByRemoteId(externalAccountId: string, remoteActivityId: string): Promise<ExternalActivity | null> {
+    return this.get(`EXTERNAL_ACCOUNT#${externalAccountId}`, `ACTIVITY#${remoteActivityId}`);
+  }
+
+  async listExternalActivitiesByAccount(externalAccountId: string, limit = 100): Promise<ExternalActivity[]> {
+    const items = await this.listByIndex<ExternalActivity>(
+      'GSI2',
+      'GSI2PK',
+      'GSI2SK',
+      `EXTERNAL_ACCOUNT_ACTIVITY#${externalAccountId}`,
+      'ACTIVITY#',
+      'EXTERNAL_ACTIVITY'
+    );
+    return items.sort((a, b) => String(b.occurredAt || b.firstSeenAt).localeCompare(String(a.occurredAt || a.firstSeenAt))).slice(0, limit);
+  }
+
+  async listExternalActivitiesByPublication(externalPublicationId: string, limit = 100): Promise<ExternalActivity[]> {
+    const items = await this.listByIndex<ExternalActivity>(
+      'GSI1',
+      'GSI1PK',
+      'GSI1SK',
+      `EXTERNAL_PUBLICATION_ACTIVITY#${externalPublicationId}`,
+      'ACTIVITY#',
+      'EXTERNAL_ACTIVITY'
+    );
+    return items.sort((a, b) => String(b.occurredAt || b.firstSeenAt).localeCompare(String(a.occurredAt || a.firstSeenAt))).slice(0, limit);
+  }
+
+  async upsertExternalActivity(activity: ExternalActivity): Promise<void> {
+    await this.put({
+      PK: `EXTERNAL_ACCOUNT#${activity.externalAccountId}`,
+      SK: `ACTIVITY#${activity.remoteActivityId}`,
+      ...(activity.externalPublicationId ? {
+        GSI1PK: `EXTERNAL_PUBLICATION_ACTIVITY#${activity.externalPublicationId}`,
+        GSI1SK: `ACTIVITY#${activity.occurredAt || activity.firstSeenAt}#${activity.remoteActivityId}`
+      } : {}),
+      GSI2PK: `EXTERNAL_ACCOUNT_ACTIVITY#${activity.externalAccountId}`,
+      GSI2SK: `ACTIVITY#${activity.occurredAt || activity.firstSeenAt}#${activity.remoteActivityId}`,
+      entityType: 'EXTERNAL_ACTIVITY',
+      ...activity
+    });
+  }
+
+  async getExternalSyncCheckpoint(externalAccountId: string, resourceType: ExternalSyncCheckpoint['resourceType'], resourceId: string): Promise<ExternalSyncCheckpoint | null> {
+    return this.get(`EXTERNAL_ACCOUNT#${externalAccountId}`, `SYNC_CHECKPOINT#${resourceType}#${resourceId}`);
+  }
+
+  async upsertExternalSyncCheckpoint(checkpoint: ExternalSyncCheckpoint): Promise<void> {
+    await this.put({
+      PK: `EXTERNAL_ACCOUNT#${checkpoint.externalAccountId}`,
+      SK: `SYNC_CHECKPOINT#${checkpoint.resourceType}#${checkpoint.resourceId}`,
+      entityType: 'EXTERNAL_SYNC_CHECKPOINT',
+      ...checkpoint
+    });
   }
 
   async getExternalSyncJob(externalSyncJobId: string): Promise<ExternalSyncJob | null> {

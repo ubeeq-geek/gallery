@@ -25,6 +25,7 @@ const buildConfig = (): AppConfig => ({
   trendingCandidateLimit: 1500,
   externalSyncBaseDelaySeconds: 60,
   externalAccountScanIntervalSeconds: 21600,
+  externalActivityScanIntervalSeconds: 120,
   deviantArtPublishedDescriptionUpdate: false,
   externalContentMaxBytes: 50 * 1024 * 1024,
   externalTokenEncryptionKey: 'test-external-encryption-key',
@@ -202,11 +203,16 @@ describe('API contract', () => {
       externalAccountId: 'account-da',
       platform: 'deviantart',
       externalContentId: 'deviation-uuid',
+      externalUrl: 'https://www.deviantart.com/da-user/art/imported-work-123',
       externalTitle: 'Imported work',
       externalDescription: '<p>Original DeviantArt description</p>',
       externalTags: ['portrait'],
       syncStatus: 'active',
       rawMetadataJson: {
+        thumbs: [
+          { src: 'https://images.example.test/imported-work-small.jpg', width: 150, height: 100 },
+          { src: 'https://images.example.test/imported-work-large.jpg', width: 600, height: 400 }
+        ],
         submission: {
           allows_comments: false,
           is_mature: true,
@@ -216,6 +222,31 @@ describe('API contract', () => {
           noai: true
         }
       },
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.upsertExternalEngagementCurrent({
+      externalPublicationId: 'publication-da',
+      capturedAt: now,
+      views: 6492,
+      favourites: 35,
+      comments: 0,
+      downloads: 0
+    });
+    await store.upsertExternalActivity({
+      externalActivityId: 'activity-da',
+      externalAccountId: 'account-da',
+      creatorIdentityId: 'creator-da',
+      assetId: 'asset-da',
+      externalPublicationId: 'publication-da',
+      platform: 'deviantart',
+      type: 'favourite',
+      direction: 'inbound',
+      remoteActivityId: 'remote-activity-da',
+      externalActorName: 'art-fan',
+      occurredAt: now,
+      firstSeenAt: now,
+      lastSeenAt: now,
       createdAt: now,
       updatedAt: now
     });
@@ -236,6 +267,13 @@ describe('API contract', () => {
     expect(catalogueResponse.body.items[0].publications[0].externalContentId).toBe('deviation-uuid');
     expect(catalogueResponse.body.items[0].publications[0].canUpdatePublishedDescription).toBe(false);
     expect(catalogueResponse.body.items[0].publications[0].publishedDescriptionUpdateMode).toBeUndefined();
+    expect(catalogueResponse.body.items[0].engagement).toMatchObject({
+      views: 6492,
+      favourites: 35,
+      comments: 0,
+      downloads: 0,
+      destinations: 1
+    });
     expect(catalogueResponse.body.items[0].publications[0].displayOptions).toMatchObject({
       allowComments: false,
       isMature: true,
@@ -243,6 +281,27 @@ describe('API contract', () => {
       matureClassification: ['ideology'],
       isAiGenerated: true,
       noAi: true
+    });
+
+    const activityResponse = await request(app)
+      .get('/studio/integrations/activity?creatorId=creator-da')
+      .set('x-user-id', 'u-da');
+    expect(activityResponse.status).toBe(200);
+    expect(activityResponse.body.items[0]).toMatchObject({
+      externalActivityId: 'activity-da',
+      account: {
+        externalAccountId: 'account-da',
+        platform: 'deviantart',
+        externalUserId: 'remote-da',
+        externalUsername: 'da-user'
+      },
+      work: {
+        assetId: 'asset-da',
+        title: 'Imported work',
+        assetType: 'image',
+        thumbnailUrl: 'https://images.example.test/imported-work-large.jpg',
+        externalUrl: 'https://www.deviantart.com/da-user/art/imported-work-123'
+      }
     });
 
     const metadataResponse = await request(app)

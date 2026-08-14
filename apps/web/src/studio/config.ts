@@ -1,5 +1,6 @@
 export type StudioSection =
   | 'dashboard'
+  | 'activity'
   | 'publishing'
   | 'settings'
   | 'files-media'
@@ -16,6 +17,7 @@ export type StudioSection =
 
 export const studioSectionDefs: Array<{ key: StudioSection; label: string; description: string }> = [
   { key: 'dashboard', label: 'Home', description: 'Your creator catalogue and publishing activity.' },
+  { key: 'activity', label: 'Activity', description: 'Comments, favourites, and other activity from connected platforms.' },
   { key: 'works', label: 'Works', description: 'Find, organize, and prepare work from your local catalogue.' },
   { key: 'collections', label: 'Collections', description: 'Organize work into Ubeeq collections, galleries, and series.' },
   { key: 'publishing', label: 'Publishing', description: 'Prepare work for external publishing and review its status.' },
@@ -41,6 +43,7 @@ export const readStudioSection = (search: string): StudioSection => {
 
 export const studioPrimaryNavSections: StudioSection[] = [
   'dashboard',
+  'activity',
   'works',
   'collections',
   'publishing',

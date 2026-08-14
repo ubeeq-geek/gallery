@@ -2,19 +2,31 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { Card } from '../components/Card';
-import type { StudioCreator, StudioExternalAsset, StudioExternalComment, StudioExternalPublication } from '../types';
+import type {
+  StudioCreator,
+  StudioExternalActivity,
+  StudioExternalAsset,
+  StudioExternalComment,
+  StudioWorkActivityDestination
+} from '../types';
 
-const relativeDate = (value?: string): string => value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Date unavailable';
+const relativeDate = (value?: string): string => value
+  ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+  : 'Date unavailable';
 
-export function WorkActivityView({ creators }: { creators: StudioCreator[] }) {
+const metric = (value?: number): string => typeof value === 'number' ? new Intl.NumberFormat().format(value) : '—';
+
+type WorkActivityResponse = { asset: StudioExternalAsset; destinations: StudioWorkActivityDestination[] };
+
+export function WorkActivityView({ creators: _creators }: { creators: StudioCreator[] }) {
   const location = useLocation();
   const navigate = useNavigate();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const creatorId = params.get('creatorId') || '';
   const workId = params.get('workId') || '';
+  const collectionId = params.get('collectionId') || '';
   const [asset, setAsset] = useState<StudioExternalAsset | null>(null);
-  const [publication, setPublication] = useState<StudioExternalPublication | null>(null);
-  const [comments, setComments] = useState<StudioExternalComment[]>([]);
+  const [destinations, setDestinations] = useState<StudioWorkActivityDestination[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -24,64 +36,125 @@ export function WorkActivityView({ creators }: { creators: StudioCreator[] }) {
   const [posting, setPosting] = useState(false);
 
   const load = async () => {
-    if (!creatorId || !workId) return;
-    const catalogue = await api.studioListDeviantArtCatalogue(creatorId) as { items?: StudioExternalAsset[] };
-    const nextAsset = catalogue.items?.find((item) => item.assetId === workId) || null;
-    const nextPublication = nextAsset?.publications.find((item) => item.platform === 'deviantart' && item.syncStatus === 'active') || null;
-    setAsset(nextAsset);
-    setPublication(nextPublication);
-    setComments(nextPublication ? await api.studioListDeviantArtComments(nextPublication.externalAccountId, nextPublication.externalContentId) as StudioExternalComment[] : []);
+    if (!workId) return;
+    const response = await api.studioGetWorkActivity(workId) as WorkActivityResponse;
+    setAsset(response.asset);
+    setDestinations(response.destinations || []);
   };
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError('');
-    void load().catch((loadError: unknown) => { if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load DeviantArt activity.'); })
-      .finally(() => { if (active) setLoading(false); });
+    void load().catch((loadError: unknown) => {
+      if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load activity.');
+    }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [creatorId, workId]);
+  }, [workId]);
 
   const refresh = async () => {
-    if (!publication) return;
-    setRefreshing(true); setError(''); setMessage('');
+    if (!workId) return;
+    setRefreshing(true);
+    setError('');
+    setMessage('');
     try {
-      await api.studioSyncDeviantArtComments(publication.externalAccountId, publication.externalContentId);
-      setMessage('Comment refresh queued. Cached activity remains available while DeviantArt synchronizes.');
-    } catch (refreshError) { setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh DeviantArt activity.'); }
-    finally { setRefreshing(false); }
+      await api.studioSyncWorkActivity(workId);
+      setMessage('Activity refresh queued. Stored activity remains available while connected platforms synchronize.');
+      window.setTimeout(() => { void load().catch(() => undefined); }, 2500);
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh activity.');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
-  const reply = async (comment: StudioExternalComment) => {
-    if (!publication || !draft.trim()) return;
-    setPosting(true); setError('');
+  const reply = async (comment: StudioExternalComment, destination: StudioWorkActivityDestination) => {
+    if (!draft.trim()) return;
+    setPosting(true);
+    setError('');
     try {
-      const posted = await api.studioReplyToDeviantArtComment(publication.externalAccountId, publication.externalContentId, comment.externalCommentExternalId, draft.trim()) as StudioExternalComment;
-      setComments((current) => [posted, ...current]); setDraft(''); setReplyingTo('');
-    } catch (replyError) { setError(replyError instanceof Error ? replyError.message : 'DeviantArt did not accept the reply. Your draft is still here.'); }
-    finally { setPosting(false); }
+      await api.studioReplyToDeviantArtComment(
+        destination.publication.externalAccountId,
+        destination.publication.externalContentId,
+        comment.externalCommentExternalId,
+        draft.trim()
+      );
+      setDraft('');
+      setReplyingTo('');
+      await load();
+    } catch (replyError) {
+      setError(replyError instanceof Error ? replyError.message : 'DeviantArt did not accept the reply. Your draft is still here.');
+    } finally {
+      setPosting(false);
+    }
   };
 
-  const back = () => navigate(`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}`);
+  const comments = destinations.flatMap((destination) => destination.comments.map((comment) => ({ comment, destination })))
+    .filter(({ comment }) => !comment.remoteDeletedAt)
+    .sort((left, right) => (right.comment.createdAtRemote || right.comment.firstSeenAt).localeCompare(left.comment.createdAtRemote || left.comment.firstSeenAt));
+  const activities = destinations.flatMap((destination) => destination.activities.map((activity) => ({ activity, destination })))
+    .sort((left, right) => (right.activity.occurredAt || right.activity.firstSeenAt).localeCompare(left.activity.occurredAt || left.activity.firstSeenAt));
+  const activeFavourites = destinations.flatMap((destination) => destination.favourites.map((favourite) => ({ favourite, destination })))
+    .filter(({ favourite }) => favourite.active)
+    .sort((left, right) => (right.favourite.favouritedAtRemote || right.favourite.firstSeenAt).localeCompare(left.favourite.favouritedAtRemote || left.favourite.firstSeenAt));
+  const totals = destinations.reduce((current, destination) => ({
+    views: current.views + (destination.engagement?.views || 0),
+    favourites: current.favourites + (destination.engagement?.favourites || 0),
+    comments: current.comments + (destination.engagement?.comments || 0),
+    downloads: current.downloads + (destination.engagement?.downloads || 0)
+  }), { views: 0, favourites: 0, comments: 0, downloads: 0 });
+
+  const back = () => navigate(`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}`);
   if (loading) return <div className="studio-empty-state">Loading work activity…</div>;
   if (!asset) return <div className="studio-empty-state">This work is no longer available.</div>;
   return <div className="studio-work-metadata">
     <div className="studio-work-metadata-topbar"><button type="button" className="auth-secondary-btn" onClick={back}>← Works</button><span>Work activity</span></div>
-    <Card title={asset.canonicalTitle || publication?.externalTitle || 'Untitled work'}>
-      <p>DeviantArt activity is stored locally and refreshed on demand.</p>
-      {publication ? <button type="button" className="auth-secondary-btn" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? 'Refreshing…' : 'Refresh DeviantArt comments'}</button> : <p className="small">Publish this work to DeviantArt to receive activity here.</p>}
-      {publication?.externalUrl && <a className="auth-secondary-btn no-underline" href={publication.externalUrl} target="_blank" rel="noreferrer">Open on DeviantArt</a>}
+    <Card title={asset.canonicalTitle || 'Untitled work'}>
+      <p>Activity is stored in Ubeeq and refreshed automatically. Manual refresh checks feedback, comments, favourites, and engagement totals.</p>
+      {destinations.length
+        ? <button type="button" className="auth-secondary-btn" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? 'Refreshing…' : 'Refresh activity'}</button>
+        : <p className="small">Publish this work to a connected platform to receive activity here.</p>}
     </Card>
     {error && <p className="studio-work-metadata-warning">{error}</p>}
     {message && <p className="studio-work-metadata-success">{message}</p>}
+    <Card title="Engagement">
+      <div className="studio-work-destination-row"><strong>Views</strong><span>{metric(totals.views)}</span></div>
+      <div className="studio-work-destination-row"><strong>Favourites</strong><span>{metric(totals.favourites)}</span></div>
+      <div className="studio-work-destination-row"><strong>Comments</strong><span>{metric(totals.comments)}</span></div>
+      <div className="studio-work-destination-row"><strong>Downloads</strong><span>{metric(totals.downloads)}</span></div>
+      {destinations.map((destination) => <div className="studio-work-destination-row" key={destination.publication.externalPublicationId}>
+        <strong>{destination.publication.externalUsername ? `@${destination.publication.externalUsername}` : destination.publication.platform}</strong>
+        <small>Updated {relativeDate(destination.engagement?.capturedAt || destination.publication.lastSyncedAt)}</small>
+        {destination.publication.externalUrl && <a href={destination.publication.externalUrl} target="_blank" rel="noreferrer">Open on DeviantArt</a>}
+      </div>)}
+    </Card>
+    <Card title="Recent activity">
+      {!activities.length ? <p className="small">No platform activity has been imported yet.</p> : activities.slice(0, 50).map(({ activity, destination }) => <ActivityRow key={activity.externalActivityId} activity={activity} destination={destination} />)}
+    </Card>
     <Card title="Comments">
-      {!comments.length ? <p className="small">No DeviantArt comments have been imported yet.</p> : comments.map((comment) => <article key={comment.externalCommentId} className="studio-work-destination-row">
-        <strong>{comment.externalAuthorName ? `@${comment.externalAuthorName}` : 'DeviantArt member'}</strong><small>{relativeDate(comment.createdAtRemote || comment.lastSyncedAt)}</small>
+      {!comments.length ? <p className="small">No comments have been imported yet.</p> : comments.map(({ comment, destination }) => <article key={`${destination.publication.externalPublicationId}:${comment.externalCommentId}`} className="studio-work-destination-row">
+        <strong>{comment.externalAuthorName ? `@${comment.externalAuthorName}` : 'Platform member'}</strong>
+        <small>{relativeDate(comment.createdAtRemote || comment.lastSyncedAt)}</small>
         <p>{comment.body}</p>
         {comment.parentExternalCommentExternalId && <small>Reply in thread</small>}
-        <button type="button" className="auth-secondary-btn" onClick={() => { setReplyingTo(comment.externalCommentExternalId); setDraft(''); }}>Reply</button>
-        {replyingTo === comment.externalCommentExternalId && <div><textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Write a DeviantArt reply" /><button type="button" className="auth-primary-btn" disabled={posting || !draft.trim()} onClick={() => void reply(comment)}>{posting ? 'Replying…' : 'Reply'}</button><button type="button" className="auth-secondary-btn" disabled={posting} onClick={() => setReplyingTo('')}>Cancel</button></div>}
-      </article>)}</Card>
-    <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}&workId=${encodeURIComponent(workId)}`}>Edit work metadata</Link>
+        {typeof comment.likeCount === 'number' && <small>{comment.likeCount} likes</small>}
+        <button type="button" className="auth-secondary-btn" onClick={() => { setReplyingTo(comment.externalCommentId); setDraft(''); }}>Reply</button>
+        {replyingTo === comment.externalCommentId && <div><textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Write a DeviantArt reply" /><button type="button" className="auth-primary-btn" disabled={posting || !draft.trim()} onClick={() => void reply(comment, destination)}>{posting ? 'Replying…' : 'Reply'}</button><button type="button" className="auth-secondary-btn" disabled={posting} onClick={() => setReplyingTo('')}>Cancel</button></div>}
+      </article>)}
+    </Card>
+    <Card title="Recent favourites">
+      {!activeFavourites.length ? <p className="small">No current favourites have been imported yet.</p> : activeFavourites.slice(0, 50).map(({ favourite, destination }) => <div className="studio-work-destination-row" key={`${destination.publication.externalPublicationId}:${favourite.externalUserId}`}>
+        <strong>@{favourite.externalUsername}</strong><small>{relativeDate(favourite.favouritedAtRemote || favourite.firstSeenAt)}</small>
+      </div>)}
+    </Card>
+    <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}&workId=${encodeURIComponent(workId)}`}>Edit work metadata</Link>
   </div>;
+}
+
+function ActivityRow({ activity, destination }: { activity: StudioExternalActivity; destination: StudioWorkActivityDestination }) {
+  return <article className="studio-work-destination-row">
+    <strong>{activity.externalActorName ? `@${activity.externalActorName}` : 'DeviantArt'} · {activity.type}</strong>
+    <small>{relativeDate(activity.occurredAt || activity.firstSeenAt)} · @{destination.publication.externalUsername}</small>
+    {activity.body && <p>{activity.body}</p>}
+  </article>;
 }

@@ -147,10 +147,80 @@ export type StudioExternalComment = {
   externalPublicationId: string;
   externalAuthorId?: string;
   externalAuthorName?: string;
+  externalAuthorAvatarUrl?: string;
   body: string;
   createdAtRemote?: string;
   parentExternalCommentExternalId?: string;
+  replyCount?: number;
+  likeCount?: number;
+  isLiked?: boolean;
+  isFeatured?: boolean;
+  hiddenReason?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  remoteDeletedAt?: string;
   lastSyncedAt: string;
+};
+
+export type StudioExternalEngagement = {
+  externalPublicationId: string;
+  capturedAt: string;
+  views?: number;
+  favourites?: number;
+  comments?: number;
+  downloads?: number;
+  viewsToday?: number;
+  downloadsToday?: number;
+};
+
+export type StudioExternalFavourite = {
+  externalPublicationId: string;
+  externalUserId: string;
+  externalUsername: string;
+  externalUserAvatarUrl?: string;
+  favouritedAtRemote?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  active: boolean;
+};
+
+export type StudioExternalActivity = {
+  externalActivityId: string;
+  externalAccountId: string;
+  externalPublicationId?: string;
+  assetId?: string;
+  platform: string;
+  type: 'comment' | 'reply' | 'favourite' | 'watch' | 'mention' | 'activity';
+  direction: 'inbound' | 'outbound';
+  remoteActivityId: string;
+  externalActorName?: string;
+  externalActorAvatarUrl?: string;
+  body?: string;
+  occurredAt?: string;
+  firstSeenAt: string;
+  readAt?: string;
+  account?: {
+    externalAccountId: string;
+    platform: string;
+    externalUserId: string;
+    externalUsername: string;
+  };
+  work?: {
+    assetId: string;
+    title: string;
+    assetType: string;
+    thumbnailUrl?: string;
+    externalUrl?: string;
+  };
+};
+
+export type StudioWorkActivityDestination = {
+  publication: StudioExternalPublication;
+  account?: StudioDeviantArtAccount;
+  engagement: StudioExternalEngagement | null;
+  comments: StudioExternalComment[];
+  favourites: StudioExternalFavourite[];
+  activities: StudioExternalActivity[];
 };
 
 export type StudioExternalPublication = {
@@ -178,6 +248,7 @@ export type StudioExternalPublication = {
   externalCollectionIds: string[];
   publishedAt?: string;
   remoteUpdatedAt?: string;
+  lastSyncedAt?: string;
   syncStatus: 'pending_publish' | 'draft' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
 };
 
@@ -194,6 +265,14 @@ export type StudioExternalAsset = {
   /** A preview from the Ubeeq Space backup, when one is available. */
   thumbnailUrl?: string;
   spacePublication?: StudioSpacePublication | null;
+  engagement?: {
+    views: number;
+    favourites: number;
+    comments: number;
+    downloads: number;
+    capturedAt?: string;
+    destinations: number;
+  };
   publications: StudioExternalPublication[];
 };
 

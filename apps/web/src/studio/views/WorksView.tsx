@@ -32,6 +32,7 @@ const lifecycleFor = (asset: StudioExternalAsset): WorkLifecycle => {
 };
 
 const lifecycleLabel = (lifecycle: WorkLifecycle): string => lifecycle[0].toUpperCase() + lifecycle.slice(1);
+const engagementNumber = (value: number): string => new Intl.NumberFormat().format(value);
 
 function PlatformIcons({ asset }: { asset: StudioExternalAsset }) {
   const destinations = asset.publications.filter((publication) => publication.syncStatus !== 'deleted');
@@ -469,6 +470,12 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                   <strong>{asset.canonicalTitle || asset.publications[0]?.externalTitle || 'Untitled work'}</strong>
                   <span>{assetTypeLabel(asset)} · {asset.publications.map((publication) => publication.externalUsername).filter(Boolean).join(', ') || 'Ubeeq'}</span>
                   <div className="studio-work-lifecycle"><span className={`studio-work-lifecycle-badge studio-work-lifecycle-${assetLifecycle}`}>{lifecycleLabel(assetLifecycle)}</span><PlatformIcons asset={asset} /></div>
+                  {asset.engagement && <div className="studio-work-engagement" title={asset.engagement.capturedAt ? `Updated ${new Date(asset.engagement.capturedAt).toLocaleString()}` : undefined}>
+                    <span><strong>{engagementNumber(asset.engagement.views)}</strong> views</span>
+                    <span><strong>{engagementNumber(asset.engagement.favourites)}</strong> favourites</span>
+                    <span><strong>{engagementNumber(asset.engagement.comments)}</strong> comments</span>
+                    <span><strong>{engagementNumber(asset.engagement.downloads)}</strong> downloads</span>
+                  </div>}
                   <div className="studio-work-destination-target">
                     <span>DeviantArt destination</span>
                     {deviantArtDestinations.length
@@ -539,6 +546,12 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                   >
                     {isCollectionPickerOpen ? 'Done' : 'Manage collections'}
                   </button>
+                  <Link
+                    className="auth-secondary-btn no-underline"
+                    to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}&workId=${encodeURIComponent(asset.assetId)}&tab=activity`}
+                  >
+                    Activity
+                  </Link>
                   <Link
                     className="auth-secondary-btn no-underline"
                     to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}&workId=${encodeURIComponent(asset.assetId)}`}

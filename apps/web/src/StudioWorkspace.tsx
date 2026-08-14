@@ -11,6 +11,7 @@ import { FilesMediaView } from './studio/views/FilesMediaView';
 import { DeviantArtView } from './studio/views/DeviantArtView';
 import { CollectionsView } from './studio/views/CollectionsView';
 import { WorksView } from './studio/views/WorksView';
+import { ActivityView } from './studio/views/ActivityView';
 import { CreatorOnboardingView } from './studio/views/CreatorOnboardingView';
 import { PostsView } from './studio/views/PostsView';
 import { ResourceView } from './studio/views/ResourceView';
@@ -126,6 +127,8 @@ export function StudioWorkspace() {
             </div>
           </Card>
         );
+      case 'activity':
+        return <ActivityView creatorId={activeCreatorId} />;
       case 'settings':
         return (
           <Card title="Creator and Studio settings" eyebrow="Preferences">

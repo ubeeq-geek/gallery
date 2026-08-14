@@ -38,7 +38,11 @@ import type {
   UbeeqCollectionAsset,
   ExternalCollectionMapping,
   ExternalEngagementSnapshot,
+  ExternalEngagementCurrent,
   ExternalComment,
+  ExternalFavourite,
+  ExternalActivity,
+  ExternalSyncCheckpoint,
   ExternalSyncJob,
   ExternalSyncLog
 } from './domain';
@@ -244,9 +248,19 @@ export interface DataStore {
   updateExternalCollectionMapping(mapping: ExternalCollectionMapping): Promise<void>;
   listExternalEngagementSnapshots(externalPublicationId: string, limit?: number): Promise<ExternalEngagementSnapshot[]>;
   createExternalEngagementSnapshot(snapshot: ExternalEngagementSnapshot): Promise<void>;
+  getExternalEngagementCurrent(externalPublicationId: string): Promise<ExternalEngagementCurrent | null>;
+  upsertExternalEngagementCurrent(engagement: ExternalEngagementCurrent): Promise<void>;
   listExternalComments(externalPublicationId: string, limit?: number): Promise<ExternalComment[]>;
   createExternalComment(comment: ExternalComment): Promise<void>;
   updateExternalComment(comment: ExternalComment): Promise<void>;
+  listExternalFavourites(externalPublicationId: string, limit?: number): Promise<ExternalFavourite[]>;
+  upsertExternalFavourite(favourite: ExternalFavourite): Promise<void>;
+  getExternalActivityByRemoteId(externalAccountId: string, remoteActivityId: string): Promise<ExternalActivity | null>;
+  listExternalActivitiesByAccount(externalAccountId: string, limit?: number): Promise<ExternalActivity[]>;
+  listExternalActivitiesByPublication(externalPublicationId: string, limit?: number): Promise<ExternalActivity[]>;
+  upsertExternalActivity(activity: ExternalActivity): Promise<void>;
+  getExternalSyncCheckpoint(externalAccountId: string, resourceType: ExternalSyncCheckpoint['resourceType'], resourceId: string): Promise<ExternalSyncCheckpoint | null>;
+  upsertExternalSyncCheckpoint(checkpoint: ExternalSyncCheckpoint): Promise<void>;
   getExternalSyncJob(externalSyncJobId: string): Promise<ExternalSyncJob | null>;
   listExternalSyncJobs(externalAccountId: string, limit?: number): Promise<ExternalSyncJob[]>;
   listDueExternalSyncJobs(now: string, limit?: number): Promise<ExternalSyncJob[]>;

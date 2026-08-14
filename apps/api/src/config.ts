@@ -30,6 +30,7 @@ export interface AppConfig {
   externalSyncQueueUrl?: string;
   externalSyncBaseDelaySeconds: number;
   externalAccountScanIntervalSeconds: number;
+  externalActivityScanIntervalSeconds: number;
   deviantArtPublishedDescriptionUpdate: boolean;
   externalContentMaxBytes: number;
   localMediaDirectory?: string;
@@ -69,6 +70,7 @@ export const loadConfig = (): AppConfig => ({
   externalSyncQueueUrl: process.env.EXTERNAL_SYNC_QUEUE_URL,
   externalSyncBaseDelaySeconds: Number(process.env.EXTERNAL_SYNC_BASE_DELAY_SECONDS || 60),
   externalAccountScanIntervalSeconds: Number(process.env.EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS || 21600),
+  externalActivityScanIntervalSeconds: Number(process.env.EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS || 120),
   deviantArtPublishedDescriptionUpdate: (
     process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE
     || process.env.DEVIANTART_EXPERIMENTAL_PUBLISHED_DESCRIPTION_UPDATE

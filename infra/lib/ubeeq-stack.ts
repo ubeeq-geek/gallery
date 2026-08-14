@@ -313,6 +313,7 @@ export class UbeeqStack extends Stack {
         COGNITO_TOKEN_USE: 'id',
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
+        EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
         DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true',
         EXTERNAL_OAUTH_REDIRECT_URI: process.env.EXTERNAL_OAUTH_REDIRECT_URI || '',
         EXTERNAL_TOKEN_ENCRYPTION_KEY: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '',
@@ -365,6 +366,7 @@ export class UbeeqStack extends Stack {
         EXTERNAL_TOKEN_ENCRYPTION_KEY: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '',
         EXTERNAL_SYNC_BASE_DELAY_SECONDS: '60',
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
+        EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
         DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true'
       }
     });
@@ -382,7 +384,8 @@ export class UbeeqStack extends Stack {
         CONTENT_CORE_TABLE: contentCoreTable.tableName,
         USE_CONTENT_CORE_TABLE: 'true',
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
-        EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600'
+        EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
+        EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120'
       }
     });
     const ffmpegLayerArn = process.env.FFMPEG_LAYER_ARN;
@@ -451,7 +454,7 @@ export class UbeeqStack extends Stack {
       targets: [new targets.LambdaFunction(trendingRankerFn)]
     });
     new events.Rule(this, 'ExternalSyncRetrySchedule', {
-      schedule: events.Schedule.rate(Duration.minutes(5)),
+      schedule: events.Schedule.rate(Duration.minutes(1)),
       targets: [new targets.LambdaFunction(externalSyncSchedulerFn)]
     });
 

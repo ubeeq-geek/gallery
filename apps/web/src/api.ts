@@ -964,6 +964,32 @@ export const api = {
     });
     return handleJson(response);
   },
+  async studioGetWorkActivity(assetId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/activity/works/${encodeURIComponent(assetId)}`);
+    return handleJson(response);
+  },
+  async studioSyncWorkActivity(assetId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/activity/works/${encodeURIComponent(assetId)}/sync`, {
+      method: 'POST', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async studioListActivity(creatorId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/activity?creatorId=${encodeURIComponent(creatorId)}`);
+    return handleJson(response);
+  },
+  async studioSyncActivity(creatorId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/activity/sync`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ creatorId })
+    });
+    return handleJson(response);
+  },
+  async studioSetActivityRead(externalAccountId: string, remoteActivityId: string, read = true) {
+    const response = await fetch(`${API_BASE}/studio/integrations/activity/accounts/${encodeURIComponent(externalAccountId)}/${encodeURIComponent(remoteActivityId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ read })
+    });
+    return handleJson(response);
+  },
   async studioListDeviantArtCatalogue(creatorId: string, query = '') {
     const params = new URLSearchParams({ creatorId });
     if (query.trim()) params.set('query', query.trim());

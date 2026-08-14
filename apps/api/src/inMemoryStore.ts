@@ -42,7 +42,11 @@ import type {
   UbeeqCollectionAsset,
   ExternalCollectionMapping,
   ExternalEngagementSnapshot,
+  ExternalEngagementCurrent,
   ExternalComment,
+  ExternalFavourite,
+  ExternalActivity,
+  ExternalSyncCheckpoint,
   ExternalSyncJob,
   ExternalSyncLog
 } from './domain';
@@ -108,7 +112,11 @@ export class InMemoryStore implements DataStore {
   ubeeqCollectionAssets: UbeeqCollectionAsset[] = [];
   externalCollectionMappings: ExternalCollectionMapping[] = [];
   externalEngagementSnapshots: ExternalEngagementSnapshot[] = [];
+  externalEngagementCurrent: ExternalEngagementCurrent[] = [];
   externalComments: ExternalComment[] = [];
+  externalFavourites: ExternalFavourite[] = [];
+  externalActivities: ExternalActivity[] = [];
+  externalSyncCheckpoints: ExternalSyncCheckpoint[] = [];
   externalSyncJobs: ExternalSyncJob[] = [];
   externalSyncLogs: ExternalSyncLog[] = [];
   idempotency: IdempotencyRecord[] = [];
@@ -950,6 +958,15 @@ export class InMemoryStore implements DataStore {
     this.externalEngagementSnapshots.push(snapshot);
   }
 
+  async getExternalEngagementCurrent(externalPublicationId: string): Promise<ExternalEngagementCurrent | null> {
+    return this.externalEngagementCurrent.find((item) => item.externalPublicationId === externalPublicationId) || null;
+  }
+
+  async upsertExternalEngagementCurrent(engagement: ExternalEngagementCurrent): Promise<void> {
+    this.externalEngagementCurrent = this.externalEngagementCurrent.filter((item) => item.externalPublicationId !== engagement.externalPublicationId);
+    this.externalEngagementCurrent.push(engagement);
+  }
+
   async listExternalComments(externalPublicationId: string, limit = 100): Promise<ExternalComment[]> {
     return this.externalComments
       .filter((item) => item.externalPublicationId === externalPublicationId)
@@ -958,12 +975,65 @@ export class InMemoryStore implements DataStore {
   }
 
   async createExternalComment(comment: ExternalComment): Promise<void> {
-    this.externalComments = this.externalComments.filter((item) => item.externalCommentId !== comment.externalCommentId);
+    this.externalComments = this.externalComments.filter((item) => !(
+      item.externalPublicationId === comment.externalPublicationId
+      && item.externalCommentExternalId === comment.externalCommentExternalId
+    ));
     this.externalComments.push(comment);
   }
 
   async updateExternalComment(comment: ExternalComment): Promise<void> {
     await this.createExternalComment(comment);
+  }
+
+  async listExternalFavourites(externalPublicationId: string, limit = 100): Promise<ExternalFavourite[]> {
+    return this.externalFavourites
+      .filter((item) => item.externalPublicationId === externalPublicationId)
+      .sort((a, b) => String(b.favouritedAtRemote || b.lastSeenAt).localeCompare(String(a.favouritedAtRemote || a.lastSeenAt)))
+      .slice(0, limit);
+  }
+
+  async upsertExternalFavourite(favourite: ExternalFavourite): Promise<void> {
+    this.externalFavourites = this.externalFavourites.filter((item) => !(
+      item.externalPublicationId === favourite.externalPublicationId && item.externalUserId === favourite.externalUserId
+    ));
+    this.externalFavourites.push(favourite);
+  }
+
+  async getExternalActivityByRemoteId(externalAccountId: string, remoteActivityId: string): Promise<ExternalActivity | null> {
+    return this.externalActivities.find((item) => item.externalAccountId === externalAccountId && item.remoteActivityId === remoteActivityId) || null;
+  }
+
+  async listExternalActivitiesByAccount(externalAccountId: string, limit = 100): Promise<ExternalActivity[]> {
+    return this.externalActivities
+      .filter((item) => item.externalAccountId === externalAccountId)
+      .sort((a, b) => String(b.occurredAt || b.firstSeenAt).localeCompare(String(a.occurredAt || a.firstSeenAt)))
+      .slice(0, limit);
+  }
+
+  async listExternalActivitiesByPublication(externalPublicationId: string, limit = 100): Promise<ExternalActivity[]> {
+    return this.externalActivities
+      .filter((item) => item.externalPublicationId === externalPublicationId)
+      .sort((a, b) => String(b.occurredAt || b.firstSeenAt).localeCompare(String(a.occurredAt || a.firstSeenAt)))
+      .slice(0, limit);
+  }
+
+  async upsertExternalActivity(activity: ExternalActivity): Promise<void> {
+    this.externalActivities = this.externalActivities.filter((item) => !(
+      item.externalAccountId === activity.externalAccountId && item.remoteActivityId === activity.remoteActivityId
+    ));
+    this.externalActivities.push(activity);
+  }
+
+  async getExternalSyncCheckpoint(externalAccountId: string, resourceType: ExternalSyncCheckpoint['resourceType'], resourceId: string): Promise<ExternalSyncCheckpoint | null> {
+    return this.externalSyncCheckpoints.find((item) => item.externalAccountId === externalAccountId && item.resourceType === resourceType && item.resourceId === resourceId) || null;
+  }
+
+  async upsertExternalSyncCheckpoint(checkpoint: ExternalSyncCheckpoint): Promise<void> {
+    this.externalSyncCheckpoints = this.externalSyncCheckpoints.filter((item) => !(
+      item.externalAccountId === checkpoint.externalAccountId && item.resourceType === checkpoint.resourceType && item.resourceId === checkpoint.resourceId
+    ));
+    this.externalSyncCheckpoints.push(checkpoint);
   }
 
   async getExternalSyncJob(externalSyncJobId: string): Promise<ExternalSyncJob | null> {

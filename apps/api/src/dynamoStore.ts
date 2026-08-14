@@ -50,7 +50,11 @@ import type {
   UbeeqCollectionAsset,
   ExternalCollectionMapping,
   ExternalEngagementSnapshot,
+  ExternalEngagementCurrent,
   ExternalComment,
+  ExternalFavourite,
+  ExternalActivity,
+  ExternalSyncCheckpoint,
   ExternalSyncJob,
   ExternalSyncLog
 } from './domain';
@@ -1508,9 +1512,19 @@ export class DynamoStore implements DataStore {
   async updateExternalCollectionMapping(mapping: ExternalCollectionMapping): Promise<void> { await this.externalPlatform().updateExternalCollectionMapping(mapping); }
   async listExternalEngagementSnapshots(externalPublicationId: string, limit?: number): Promise<ExternalEngagementSnapshot[]> { return this.externalPlatform().listExternalEngagementSnapshots(externalPublicationId, limit); }
   async createExternalEngagementSnapshot(snapshot: ExternalEngagementSnapshot): Promise<void> { await this.externalPlatform().createExternalEngagementSnapshot(snapshot); }
+  async getExternalEngagementCurrent(externalPublicationId: string): Promise<ExternalEngagementCurrent | null> { return this.externalPlatform().getExternalEngagementCurrent(externalPublicationId); }
+  async upsertExternalEngagementCurrent(engagement: ExternalEngagementCurrent): Promise<void> { await this.externalPlatform().upsertExternalEngagementCurrent(engagement); }
   async listExternalComments(externalPublicationId: string, limit?: number): Promise<ExternalComment[]> { return this.externalPlatform().listExternalComments(externalPublicationId, limit); }
   async createExternalComment(comment: ExternalComment): Promise<void> { await this.externalPlatform().createExternalComment(comment); }
   async updateExternalComment(comment: ExternalComment): Promise<void> { await this.externalPlatform().updateExternalComment(comment); }
+  async listExternalFavourites(externalPublicationId: string, limit?: number): Promise<ExternalFavourite[]> { return this.externalPlatform().listExternalFavourites(externalPublicationId, limit); }
+  async upsertExternalFavourite(favourite: ExternalFavourite): Promise<void> { await this.externalPlatform().upsertExternalFavourite(favourite); }
+  async getExternalActivityByRemoteId(externalAccountId: string, remoteActivityId: string): Promise<ExternalActivity | null> { return this.externalPlatform().getExternalActivityByRemoteId(externalAccountId, remoteActivityId); }
+  async listExternalActivitiesByAccount(externalAccountId: string, limit?: number): Promise<ExternalActivity[]> { return this.externalPlatform().listExternalActivitiesByAccount(externalAccountId, limit); }
+  async listExternalActivitiesByPublication(externalPublicationId: string, limit?: number): Promise<ExternalActivity[]> { return this.externalPlatform().listExternalActivitiesByPublication(externalPublicationId, limit); }
+  async upsertExternalActivity(activity: ExternalActivity): Promise<void> { await this.externalPlatform().upsertExternalActivity(activity); }
+  async getExternalSyncCheckpoint(externalAccountId: string, resourceType: ExternalSyncCheckpoint['resourceType'], resourceId: string): Promise<ExternalSyncCheckpoint | null> { return this.externalPlatform().getExternalSyncCheckpoint(externalAccountId, resourceType, resourceId); }
+  async upsertExternalSyncCheckpoint(checkpoint: ExternalSyncCheckpoint): Promise<void> { await this.externalPlatform().upsertExternalSyncCheckpoint(checkpoint); }
   async getExternalSyncJob(externalSyncJobId: string): Promise<ExternalSyncJob | null> { return this.externalPlatform().getExternalSyncJob(externalSyncJobId); }
   async listExternalSyncJobs(externalAccountId: string, limit?: number): Promise<ExternalSyncJob[]> { return this.externalPlatform().listExternalSyncJobs(externalAccountId, limit); }
   async listDueExternalSyncJobs(now: string, limit?: number): Promise<ExternalSyncJob[]> { return this.externalPlatform().listDueExternalSyncJobs(now, limit); }

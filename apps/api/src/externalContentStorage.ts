@@ -11,6 +11,9 @@ export interface HostedExternalContent {
   contentType: string;
   byteSize: number;
   checksumSha256: string;
+  unchanged?: boolean;
+  etag?: string;
+  lastModified?: string;
 }
 
 export interface HostedUbeeqWorkImage extends HostedExternalContent {}
@@ -95,7 +98,18 @@ export const readStoredUbeeqWorkImage = async (config: AppConfig, objectKey: str
 
 export const storeExternalContent = async (
   config: AppConfig,
-  input: { userId: string; creatorIdentityId: string; assetId: string; externalContentId: string; sourceUrl: string; contentType?: string; expectedByteSize?: number }
+  input: {
+    userId: string;
+    creatorIdentityId: string;
+    assetId: string;
+    externalContentId: string;
+    sourceUrl: string;
+    contentType?: string;
+    expectedByteSize?: number;
+    existingChecksumSha256?: string;
+    existingObjectKey?: string;
+    existingThumbnailObjectKey?: string;
+  }
 ): Promise<HostedExternalContent> => {
   if (!isApprovedDeviantArtContentUrl(input.sourceUrl)) {
     throw new ExternalProviderError('DeviantArt did not provide an approved source file URL', 'invalid_response');
@@ -121,22 +135,26 @@ export const storeExternalContent = async (
     throw new ExternalProviderError('This source file exceeds the configured Ubeeq Space backup limit', 'unsupported');
   }
   const contentType = input.contentType || response.headers.get('content-type') || 'application/octet-stream';
-  const objectKey = `external-content/${input.userId}/${input.creatorIdentityId}/${input.assetId}/${input.externalContentId}${extensionForContentType(contentType)}`;
-  const thumbnailObjectKey = `external-content/${input.userId}/${input.creatorIdentityId}/${input.assetId}/${input.externalContentId}/thumbnail.jpg`;
   const checksumSha256 = createHash('sha256').update(body).digest('hex');
-  if (config.localMediaDirectory) {
-    const target = path.join(config.localMediaDirectory, objectKey);
-    await mkdir(path.dirname(target), { recursive: true });
-    await writeFile(target, body);
-  } else {
-    await new S3Client({ region: config.awsRegion }).send(new PutObjectCommand({
-      Bucket: config.mediaBucket,
-      Key: objectKey,
-      Body: body,
-      ContentType: contentType,
-      Metadata: { sha256: checksumSha256, source: 'deviantart' }
-    }));
+  const etag = response.headers.get('etag') || undefined;
+  const lastModified = response.headers.get('last-modified') || undefined;
+  if (input.existingChecksumSha256 === checksumSha256 && input.existingObjectKey) {
+    return {
+      objectKey: input.existingObjectKey,
+      thumbnailObjectKey: input.existingThumbnailObjectKey,
+      contentType,
+      byteSize: body.byteLength,
+      checksumSha256,
+      unchanged: true,
+      etag,
+      lastModified
+    };
   }
+
+  const versionPrefix = `external-content/${input.userId}/${input.creatorIdentityId}/${input.assetId}/${input.externalContentId}/versions/${checksumSha256}`;
+  const objectKey = `${versionPrefix}/source${extensionForContentType(contentType)}`;
+  const thumbnailObjectKey = `${versionPrefix}/thumbnail.jpg`;
+  await writeStoredObject(config, objectKey, body, contentType, { sha256: checksumSha256, source: 'deviantart' });
 
   let storedThumbnailObjectKey: string | undefined;
   if (contentType.startsWith('image/')) {
@@ -147,24 +165,20 @@ export const storeExternalContent = async (
         .resize(160, 160, { fit: 'cover', position: 'attention' })
         .jpeg({ quality: 80, mozjpeg: true })
         .toBuffer();
-      if (config.localMediaDirectory) {
-        const target = path.join(config.localMediaDirectory, thumbnailObjectKey);
-        await mkdir(path.dirname(target), { recursive: true });
-        await writeFile(target, thumbnail);
-      } else {
-        await new S3Client({ region: config.awsRegion }).send(new PutObjectCommand({
-          Bucket: config.mediaBucket,
-          Key: thumbnailObjectKey,
-          Body: thumbnail,
-          ContentType: 'image/jpeg',
-          CacheControl: 'public, max-age=31536000, immutable',
-          Metadata: { source: 'deviantart-thumbnail' }
-        }));
-      }
+      await writeStoredObject(config, thumbnailObjectKey, thumbnail, 'image/jpeg', { source: 'deviantart-thumbnail' });
       storedThumbnailObjectKey = thumbnailObjectKey;
     } catch {
       // A source backup remains useful even when it cannot be decoded into a preview.
     }
   }
-  return { objectKey, thumbnailObjectKey: storedThumbnailObjectKey, contentType, byteSize: body.byteLength, checksumSha256 };
+  return {
+    objectKey,
+    thumbnailObjectKey: storedThumbnailObjectKey,
+    contentType,
+    byteSize: body.byteLength,
+    checksumSha256,
+    unchanged: false,
+    etag,
+    lastModified
+  };
 };

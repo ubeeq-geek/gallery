@@ -1,4 +1,7 @@
-import type { ExternalAssetType, ExternalPlatform } from './domain';
+import type { ExternalActivityType, ExternalAssetType, ExternalPlatform } from './domain';
+
+/** DeviantArt rejects /deviation/metadata requests containing more than ten IDs. */
+export const DEVIANTART_METADATA_BATCH_SIZE = 10;
 
 export class ExternalProviderError extends Error {
   constructor(
@@ -57,11 +60,17 @@ export interface ExternalRemoteContent {
     sourceUrl: string;
     contentType?: string;
     byteSize?: number;
+    filename?: string;
+    width?: number;
+    height?: number;
   };
   metrics?: {
     views?: number;
     favourites?: number;
     comments?: number;
+    downloads?: number;
+    viewsToday?: number;
+    downloadsToday?: number;
     other?: Record<string, unknown>;
   };
   rawMetadata: Record<string, unknown>;
@@ -116,10 +125,47 @@ export interface ExternalRemoteComment {
   externalCommentId: string;
   authorId?: string;
   authorName?: string;
+  authorAvatarUrl?: string;
   body: string;
   createdAt?: string;
   parentExternalCommentId?: string;
+  replyCount?: number;
+  likeCount?: number;
+  isLiked?: boolean;
+  isFeatured?: boolean;
+  hiddenReason?: string;
   rawPayload?: Record<string, unknown>;
+}
+
+export interface ExternalRemoteFavourite {
+  externalUserId: string;
+  username: string;
+  avatarUrl?: string;
+  favouritedAt?: string;
+  rawPayload: Record<string, unknown>;
+}
+
+export interface ExternalRemoteActivity {
+  remoteActivityId: string;
+  sourceMessageId: string;
+  type: ExternalActivityType;
+  occurredAt?: string;
+  stackId?: string;
+  isNew?: boolean;
+  actorId?: string;
+  actorName?: string;
+  actorAvatarUrl?: string;
+  externalContentId?: string;
+  externalCommentId?: string;
+  parentExternalCommentId?: string;
+  body?: string;
+  rawPayload: Record<string, unknown>;
+}
+
+export interface ExternalRemoteEngagement {
+  externalContentId: string;
+  metrics: NonNullable<ExternalRemoteContent['metrics']>;
+  rawPayload: Record<string, unknown>;
 }
 
 export interface ExternalContentPage {
@@ -136,8 +182,11 @@ export interface ExternalPlatformProvider {
   getAccount(accessToken: string): Promise<ExternalRemoteAccount>;
   listContent(accessToken: string, options: { username: string; cursor?: string; limit?: number }): Promise<ExternalContentPage>;
   getContent(accessToken: string, externalContentId: string): Promise<ExternalRemoteContent>;
+  getEngagement(accessToken: string, externalContentIds: string[]): Promise<ExternalRemoteEngagement[]>;
   listCollections(accessToken: string, username: string): Promise<ExternalRemoteCollection[]>;
   listComments(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteComment[]; nextCursor?: string }>;
+  listFeedback(accessToken: string, type: 'comments' | 'replies' | 'activity', cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }>;
+  listFavourites(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteFavourite[]; nextCursor?: string }>;
   postComment(accessToken: string, externalContentId: string, body: string, parentExternalCommentId?: string): Promise<ExternalRemoteComment>;
   updateContent(accessToken: string, externalContentId: string, update: ExternalContentUpdate, options?: ExternalContentUpdateOptions): Promise<void>;
   submitContent(accessToken: string, content: ExternalContentPublish, existingDraftId?: string): Promise<ExternalDraftContent>;
@@ -194,6 +243,12 @@ const metadataBoolean = (metadata: Record<string, unknown>, ...keys: string[]): 
 };
 
 const asIsoDate = (value: unknown): string | undefined => {
+  const numeric = asNumber(value);
+  if (typeof value === 'number' || (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value.trim()))) {
+    if (!numeric) return undefined;
+    const parsedNumeric = numeric > 10_000_000_000 ? numeric : numeric * 1000;
+    return Number.isFinite(parsedNumeric) ? new Date(parsedNumeric).toISOString() : undefined;
+  }
   const raw = asString(value);
   if (!raw) return undefined;
   const parsed = Date.parse(raw);
@@ -201,7 +256,7 @@ const asIsoDate = (value: unknown): string | undefined => {
 };
 
 const rawItems = (payload: Record<string, unknown>): unknown[] => {
-  const values = payload.results || payload.metadata || payload.deviations || payload.items || payload.comments;
+  const values = payload.results || payload.metadata || payload.deviations || payload.items || payload.comments || payload.thread;
   return Array.isArray(values) ? values : [];
 };
 
@@ -244,17 +299,65 @@ const normalizeContent = (value: unknown): ExternalRemoteContent | null => {
       content: {
         sourceUrl,
         contentType: asString(content.content_type) || asString(item.mime_type),
-        byteSize: asNumber(content.filesize) || asNumber(item.filesize)
+        byteSize: asNumber(content.filesize) ?? asNumber(item.filesize),
+        filename: asString(content.filename) || asString(item.filename),
+        width: asNumber(content.width) || asNumber(item.width),
+        height: asNumber(content.height) || asNumber(item.height)
       }
     } : {}),
     metrics: {
-      views: asNumber(stats.views) || asNumber(item.views),
-      favourites: asNumber(stats.favourites) || asNumber(stats.favorites) || asNumber(item.favourites),
-      comments: asNumber(stats.comments) || asNumber(item.comments),
+      views: asNumber(stats.views) ?? asNumber(item.views),
+      favourites: asNumber(stats.favourites) ?? asNumber(stats.favorites) ?? asNumber(item.favourites),
+      comments: asNumber(stats.comments) ?? asNumber(item.comments),
+      downloads: asNumber(stats.downloads),
+      viewsToday: asNumber(stats.views_today),
+      downloadsToday: asNumber(stats.downloads_today),
       other: Object.keys(stats).length > 0 ? stats : undefined
     },
     rawMetadata: item
   };
+};
+
+const normalizeRemoteComment = (value: unknown): ExternalRemoteComment | null => {
+  const item = asRecord(value);
+  const externalCommentId = asString(item.commentid) || asString(item.id);
+  if (!externalCommentId) return null;
+  const user = asRecord(item.user);
+  const authorId = asString(item.userid) || asString(user.userid);
+  const authorName = asString(item.username) || asString(user.username);
+  const authorAvatarUrl = asString(item.usericon) || asString(user.usericon);
+  const createdAt = asIsoDate(item.posted) || asIsoDate(item.posted_on) || asIsoDate(item.created_at);
+  const parentExternalCommentId = asString(item.parentid);
+  const hiddenReason = asString(item.hidden);
+  return {
+    externalCommentId,
+    ...(authorId ? { authorId } : {}),
+    ...(authorName ? { authorName } : {}),
+    ...(authorAvatarUrl ? { authorAvatarUrl } : {}),
+    body: asString(item.body) || descriptionFrom(item) || '',
+    ...(createdAt ? { createdAt } : {}),
+    ...(parentExternalCommentId ? { parentExternalCommentId } : {}),
+    replyCount: asNumber(item.replies),
+    likeCount: asNumber(item.likes),
+    isLiked: asBoolean(item.is_liked),
+    isFeatured: asBoolean(item.is_featured),
+    ...(hiddenReason ? { hiddenReason } : {}),
+    rawPayload: item
+  };
+};
+
+const feedbackActivityType = (
+  requestedType: 'comments' | 'replies' | 'activity',
+  providerType: string,
+  comment?: ExternalRemoteComment
+): ExternalActivityType => {
+  const normalized = providerType.toLowerCase();
+  if (requestedType === 'replies' || comment?.parentExternalCommentId) return 'reply';
+  if (requestedType === 'comments' || normalized.includes('comment')) return 'comment';
+  if (normalized.includes('favourite') || normalized.includes('favorite') || normalized.includes('fave')) return 'favourite';
+  if (normalized.includes('watch')) return 'watch';
+  if (normalized.includes('mention')) return 'mention';
+  return 'activity';
 };
 
 export interface DeviantArtPublicAiLabels {
@@ -314,7 +417,7 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
   // text returned by deviation/content?for_edit=true.
   // DeviantArt uses granular comment scopes. `comment` is not a valid OAuth
   // scope; posting a deviation comment specifically requires `comment.post`.
-  private static readonly scopes = ['user', 'user.manage', 'browse', 'gallery', 'collection', 'stash', 'publish', 'comment.post'];
+  private static readonly scopes = ['user', 'user.manage', 'browse', 'gallery', 'collection', 'stash', 'publish', 'comment.post', 'message'];
 
   constructor(private readonly credentials?: ExternalPlatformApplicationCredentials) {}
 
@@ -421,6 +524,7 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     const metadataPayload = await this.request('/deviation/metadata', accessToken, {
       'deviationids[0]': externalContentId,
       ext_submission: 'true',
+      ext_stats: 'true',
       with_session: 'true'
     });
     const metadata = rawItems(metadataPayload)
@@ -493,6 +597,32 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     return content;
   }
 
+  async getEngagement(accessToken: string, externalContentIds: string[]): Promise<ExternalRemoteEngagement[]> {
+    const ids = externalContentIds.filter(Boolean).slice(0, DEVIANTART_METADATA_BATCH_SIZE);
+    if (!ids.length) return [];
+    const query: Record<string, string> = { ext_stats: 'true', with_session: 'true' };
+    ids.forEach((externalContentId, index) => { query[`deviationids[${index}]`] = externalContentId; });
+    const payload = await this.request('/deviation/metadata', accessToken, query);
+    return rawItems(payload).map(asRecord).map((item): ExternalRemoteEngagement | null => {
+      const stats = asRecord(item.stats);
+      const externalContentId = asString(item.deviationid) || asString(item.id);
+      if (!externalContentId) return null;
+      return {
+        externalContentId,
+        metrics: {
+          views: asNumber(stats.views),
+          favourites: asNumber(stats.favourites) ?? asNumber(stats.favorites),
+          comments: asNumber(stats.comments),
+          downloads: asNumber(stats.downloads),
+          viewsToday: asNumber(stats.views_today),
+          downloadsToday: asNumber(stats.downloads_today),
+          other: stats
+        },
+        rawPayload: item
+      };
+    }).filter((item): item is ExternalRemoteEngagement => Boolean(item));
+  }
+
   async listCollections(accessToken: string, username: string): Promise<ExternalRemoteCollection[]> {
     const collections: ExternalRemoteCollection[] = [];
     let offset = 0;
@@ -527,29 +657,80 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     const payload = await this.request(`/comments/deviation/${encodeURIComponent(externalContentId)}`, accessToken, {
       offset: cursor || '0',
       limit: '50',
+      maxdepth: '5',
       // The list response otherwise may contain abbreviated comment bodies.
       expand: 'comment.fulltext'
     });
-    const items: ExternalRemoteComment[] = [];
-    rawItems(payload).forEach((value) => {
-      const item = asRecord(value);
-      const externalCommentId = asString(item.commentid) || asString(item.id);
-      if (!externalCommentId) return;
-      const user = asRecord(item.user);
-      const authorId = asString(item.userid) || asString(user.userid);
-      const authorName = asString(item.username) || asString(user.username);
-      const createdAt = asIsoDate(item.posted_on) || asIsoDate(item.created_at);
-      const parentExternalCommentId = asString(item.parentid);
-      items.push({
-        externalCommentId,
-        ...(authorId ? { authorId } : {}),
-        ...(authorName ? { authorName } : {}),
-        body: asString(item.body) || '',
-        ...(createdAt ? { createdAt } : {}),
-        ...(parentExternalCommentId ? { parentExternalCommentId } : {}),
-        rawPayload: item
-      });
+    const items = rawItems(payload).map(normalizeRemoteComment).filter((item): item is ExternalRemoteComment => Boolean(item));
+    const nextOffset = asNumber(payload.next_offset);
+    return { items, nextCursor: Boolean(payload.has_more) && nextOffset !== undefined ? String(nextOffset) : undefined };
+  }
+
+  async listFeedback(accessToken: string, type: 'comments' | 'replies' | 'activity', cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }> {
+    const payload = await this.request('/messages/feedback', accessToken, {
+      type,
+      stack: 'false',
+      offset: cursor || '0',
+      limit: '50',
+      with_session: 'true'
     });
+    const items = rawItems(payload).map((value): ExternalRemoteActivity | null => {
+      const item = asRecord(value);
+      const sourceMessageId = asString(item.messageid) || asString(item.id);
+      if (!sourceMessageId) return null;
+      const subject = asRecord(item.subject);
+      const deviation = Object.keys(asRecord(item.deviation)).length ? asRecord(item.deviation) : asRecord(subject.deviation);
+      const commentValue = Object.keys(asRecord(item.comment)).length ? item.comment : subject.comment;
+      const comment = normalizeRemoteComment(commentValue);
+      const originator = Object.keys(asRecord(item.originator)).length
+        ? asRecord(item.originator)
+        : asRecord(comment?.rawPayload?.user);
+      const providerType = asString(item.type) || type;
+      const externalContentId = asString(deviation.deviationid) || asString(deviation.id);
+      const remoteActivityId = comment ? `comment:${comment.externalCommentId}` : `message:${sourceMessageId}`;
+      return {
+        remoteActivityId,
+        sourceMessageId,
+        type: feedbackActivityType(type, providerType, comment || undefined),
+        occurredAt: asIsoDate(item.ts) || comment?.createdAt,
+        stackId: asString(item.stackid),
+        isNew: asBoolean(item.is_new),
+        actorId: asString(originator.userid) || comment?.authorId,
+        actorName: asString(originator.username) || comment?.authorName,
+        actorAvatarUrl: asString(originator.usericon) || comment?.authorAvatarUrl,
+        ...(externalContentId ? { externalContentId } : {}),
+        ...(comment ? {
+          externalCommentId: comment.externalCommentId,
+          parentExternalCommentId: comment.parentExternalCommentId,
+          body: comment.body
+        } : {}),
+        rawPayload: item
+      };
+    }).filter((item): item is ExternalRemoteActivity => Boolean(item));
+    const nextOffset = asNumber(payload.next_offset);
+    return { items, nextCursor: Boolean(payload.has_more) && nextOffset !== undefined ? String(nextOffset) : undefined };
+  }
+
+  async listFavourites(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteFavourite[]; nextCursor?: string }> {
+    const payload = await this.request('/deviation/whofaved', accessToken, {
+      deviationid: externalContentId,
+      offset: cursor || '0',
+      limit: '50'
+    });
+    const items = rawItems(payload).map((value): ExternalRemoteFavourite | null => {
+      const item = asRecord(value);
+      const user = asRecord(item.user);
+      const externalUserId = asString(user.userid) || asString(item.userid);
+      const username = asString(user.username) || asString(item.username);
+      if (!externalUserId || !username) return null;
+      return {
+        externalUserId,
+        username,
+        avatarUrl: asString(user.usericon) || asString(item.usericon),
+        favouritedAt: asIsoDate(item.time),
+        rawPayload: item
+      };
+    }).filter((item): item is ExternalRemoteFavourite => Boolean(item));
     const nextOffset = asNumber(payload.next_offset);
     return { items, nextCursor: Boolean(payload.has_more) && nextOffset !== undefined ? String(nextOffset) : undefined };
   }
@@ -558,20 +739,12 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     const form = new URLSearchParams({ body });
     if (parentExternalCommentId) form.set('commentid', parentExternalCommentId);
     const payload = await this.requestForm(`/comments/post/deviation/${encodeURIComponent(externalContentId)}`, accessToken, form);
-    const comment = asRecord(payload.comment);
-    const source = Object.keys(comment).length ? comment : payload;
-    const externalCommentId = asString(source.commentid) || asString(source.id);
-    if (!externalCommentId) throw new ExternalProviderError('DeviantArt did not return a comment ID', 'invalid_response');
-    const user = asRecord(source.user);
-    const authorId = asString(source.userid) || asString(user.userid);
-    const authorName = asString(source.username) || asString(user.username);
-    const createdAt = asIsoDate(source.posted_on) || asIsoDate(source.created_at);
+    const source = Object.keys(asRecord(payload.comment)).length ? asRecord(payload.comment) : payload;
+    const comment = normalizeRemoteComment(source);
+    if (!comment) throw new ExternalProviderError('DeviantArt did not return a comment ID', 'invalid_response');
     return {
-      externalCommentId,
-      ...(authorId ? { authorId } : {}),
-      ...(authorName ? { authorName } : {}),
-      body: asString(source.body) || body,
-      ...(createdAt ? { createdAt } : {}),
+      ...comment,
+      body: comment.body || body,
       ...(parentExternalCommentId ? { parentExternalCommentId } : {}),
       rawPayload: source
     };

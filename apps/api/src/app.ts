@@ -38,6 +38,7 @@ import type {
   ExternalAccount,
   ExternalPlatformCredential,
   ExternalCollectionMapping,
+  ExternalEngagementCurrent,
   ExternalSyncJob,
   UbeeqCollection
 } from './domain';
@@ -4617,8 +4618,15 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const publicationAssets = await Promise.all(publicationAssetIds.map((assetId) => store.getAsset(assetId)));
     const assets = [...new Map([...ownedAssets, ...publicationAssets.filter((asset): asset is Asset => Boolean(asset))]
       .map((asset) => [asset.assetId, asset])).values()];
-    const spacePublicationPairs = await Promise.all(assets.map(async (asset) => [asset.assetId, await store.getSpacePublication(asset.assetId)] as const));
+    const [spacePublicationPairs, engagementPairs] = await Promise.all([
+      Promise.all(assets.map(async (asset) => [asset.assetId, await store.getSpacePublication(asset.assetId)] as const)),
+      Promise.all(publications.map(async (publication) => [
+        publication.externalPublicationId,
+        await store.getExternalEngagementCurrent(publication.externalPublicationId)
+      ] as const))
+    ]);
     const spacePublicationByAssetId = new Map(spacePublicationPairs);
+    const engagementByPublicationId = new Map(engagementPairs);
     const publicationByAssetId = new Map<string, typeof publications>();
     publications.forEach((publication) => {
       const current = publicationByAssetId.get(publication.assetId) || [];
@@ -4677,6 +4685,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const rows = await Promise.all(assets
       .map(async (asset) => {
         const linkedPublications = publicationByAssetId.get(asset.assetId) || [];
+        const linkedEngagement = linkedPublications
+          .map((publication) => engagementByPublicationId.get(publication.externalPublicationId))
+          .filter((engagement): engagement is ExternalEngagementCurrent => Boolean(engagement));
         const spacePublication = spacePublicationByAssetId.get(asset.assetId);
         const thumbnailUrl = spacePublication?.contentSyncStatus === 'hosted'
           && spacePublication.hostedObjectKey
@@ -4689,6 +4700,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
           ...asset,
           thumbnailUrl,
           spacePublication,
+          engagement: linkedEngagement.length ? {
+            views: linkedEngagement.reduce((total, engagement) => total + (engagement.views || 0), 0),
+            favourites: linkedEngagement.reduce((total, engagement) => total + (engagement.favourites || 0), 0),
+            comments: linkedEngagement.reduce((total, engagement) => total + (engagement.comments || 0), 0),
+            downloads: linkedEngagement.reduce((total, engagement) => total + (engagement.downloads || 0), 0),
+            capturedAt: linkedEngagement.map((engagement) => engagement.capturedAt).sort().at(-1),
+            destinations: linkedEngagement.length
+          } : undefined,
           publications: linkedPublications.map((publication) => ({
             externalPublicationId: publication.externalPublicationId,
             externalAccountId: publication.externalAccountId,
@@ -5197,6 +5216,172 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (existing) await store.updateExternalCollectionMapping(mapping);
     else await store.createExternalCollectionMapping(mapping);
     return res.json(mapping);
+  });
+
+  app.get('/studio/integrations/activity/works/:assetId', requireAuth, async (req, res) => {
+    const asset = await store.getAsset(req.params.assetId);
+    if (!asset) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const accounts = (await store.listExternalAccountsByUser(req.authUser!.userId))
+      .filter((account) => account.connectionStatus !== 'disabled');
+    const accountById = new Map(accounts.map((account) => [account.externalAccountId, account]));
+    const publications = (await Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId))))
+      .flat()
+      .filter((publication) => publication.assetId === asset.assetId);
+    const destinations = await Promise.all(publications.map(async (publication) => {
+      const [engagement, comments, favourites, activities] = await Promise.all([
+        store.getExternalEngagementCurrent(publication.externalPublicationId),
+        store.listExternalComments(publication.externalPublicationId, 500),
+        store.listExternalFavourites(publication.externalPublicationId, 500),
+        store.listExternalActivitiesByPublication(publication.externalPublicationId, 500)
+      ]);
+      const account = accountById.get(publication.externalAccountId);
+      const { rawMetadataJson: _rawMetadataJson, ...publicationResponse } = publication;
+      return {
+        publication: { ...publicationResponse, externalUsername: account?.externalUsername || '' },
+        account: account ? toExternalAccountResponse(account) : undefined,
+        engagement,
+        comments: comments.map(({ rawPayload: _rawPayload, ...comment }) => comment),
+        favourites: favourites.map(({ rawPayload: _rawPayload, ...favourite }) => favourite),
+        activities: activities.map(({ rawPayload: _rawPayload, ...activity }) => activity)
+      };
+    }));
+    return res.json({ asset, destinations });
+  });
+
+  app.post('/studio/integrations/activity/works/:assetId/sync', requireAuth, async (req, res) => {
+    const asset = await store.getAsset(req.params.assetId);
+    if (!asset) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, asset.creatorIdentityId))) return;
+    const accounts = (await store.listExternalAccountsByUser(req.authUser!.userId))
+      .filter((account) => account.connectionStatus !== 'disabled');
+    const publications = (await Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId))))
+      .flat()
+      .filter((publication) => publication.assetId === asset.assetId && publication.syncStatus === 'active');
+    const jobs: ExternalSyncJob[] = [];
+    for (const publication of publications) {
+      jobs.push(await enqueueExternalSyncJob(publication.externalAccountId, 'engagement_sync', {
+        externalContentId: publication.externalContentId
+      }));
+    }
+    for (const externalAccountId of [...new Set(publications.map((publication) => publication.externalAccountId))]) {
+      jobs.push(await enqueueExternalSyncJob(externalAccountId, 'activity_sync'));
+    }
+    return res.status(202).json({ jobs });
+  });
+
+  app.get('/studio/integrations/activity', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const accounts = await store.listExternalAccountsByCreatorIdentity(creatorIdentityId);
+    const accountById = new Map(accounts.map((account) => [account.externalAccountId, account]));
+    const [activityLists, publicationLists] = await Promise.all([
+      Promise.all(accounts.map((account) => store.listExternalActivitiesByAccount(account.externalAccountId, 250))),
+      Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId)))
+    ]);
+    const publications = publicationLists.flat();
+    const publicationById = new Map(publications.map((publication) => [publication.externalPublicationId, publication]));
+    const items = activityLists
+      .flat()
+      .filter((activity) => !activity.creatorIdentityId || activity.creatorIdentityId === creatorIdentityId)
+      .sort((left, right) => (right.occurredAt || right.firstSeenAt).localeCompare(left.occurredAt || left.firstSeenAt))
+      .slice(0, 500);
+    const assetIds = [...new Set(items.map((activity) => {
+      const publication = activity.externalPublicationId
+        ? publicationById.get(activity.externalPublicationId)
+        : undefined;
+      return activity.assetId || publication?.assetId;
+    }).filter((assetId): assetId is string => Boolean(assetId)))];
+    const [assetPairs, spacePublicationPairs] = await Promise.all([
+      Promise.all(assetIds.map(async (assetId) => [assetId, await store.getAsset(assetId)] as const)),
+      Promise.all(assetIds.map(async (assetId) => [assetId, await store.getSpacePublication(assetId)] as const))
+    ]);
+    const assetById = new Map(assetPairs);
+    const spacePublicationByAssetId = new Map(spacePublicationPairs);
+    const localOrigin = `${req.protocol}://${req.get('host')}`;
+    const hostedThumbnailPairs = await Promise.all(assetIds.map(async (assetId) => {
+      const spacePublication = spacePublicationByAssetId.get(assetId);
+      const objectKey = spacePublication?.contentSyncStatus === 'hosted'
+        ? spacePublication.hostedThumbnailObjectKey || spacePublication.hostedObjectKey
+        : undefined;
+      return [assetId, await publicMediaUrl(objectKey, localOrigin)] as const;
+    }));
+    const hostedThumbnailByAssetId = new Map(hostedThumbnailPairs);
+    const remotePreviewUrl = (publication?: ExternalPublication): string | undefined => {
+      if (!publication?.rawMetadataJson || typeof publication.rawMetadataJson !== 'object') return undefined;
+      const metadata = publication.rawMetadataJson as Record<string, unknown>;
+      const thumbnails = Array.isArray(metadata.thumbs)
+        ? metadata.thumbs
+          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+          .filter((item) => typeof item.src === 'string')
+          .sort((left, right) => {
+            const leftArea = Number(left.width || 0) * Number(left.height || 0);
+            const rightArea = Number(right.width || 0) * Number(right.height || 0);
+            return rightArea - leftArea;
+          })
+        : [];
+      if (thumbnails.length) return thumbnails[0].src as string;
+      for (const key of ['preview', 'content']) {
+        const value = metadata[key];
+        if (value && typeof value === 'object' && !Array.isArray(value) && typeof (value as Record<string, unknown>).src === 'string') {
+          return (value as Record<string, unknown>).src as string;
+        }
+      }
+      return undefined;
+    };
+    return res.json({
+      items: items.map(({ rawPayload: _rawPayload, ...activity }) => {
+        const account = accountById.get(activity.externalAccountId);
+        const publication = (activity.externalPublicationId
+          ? publicationById.get(activity.externalPublicationId)
+          : undefined) || publications.find((candidate) => (
+          candidate.externalAccountId === activity.externalAccountId
+            && candidate.assetId === activity.assetId
+        ));
+        const assetId = activity.assetId || publication?.assetId;
+        const asset = assetId ? assetById.get(assetId) : undefined;
+        return {
+          ...activity,
+          account: account ? {
+            externalAccountId: account.externalAccountId,
+            platform: account.platform,
+            externalUserId: account.externalUserId,
+            externalUsername: account.externalUsername
+          } : undefined,
+          work: asset && assetId ? {
+            assetId,
+            title: asset.canonicalTitle || publication?.externalTitle || 'Untitled work',
+            assetType: asset.assetType,
+            thumbnailUrl: asset.assetType === 'image'
+              ? hostedThumbnailByAssetId.get(assetId) || remotePreviewUrl(publication)
+              : undefined,
+            externalUrl: publication?.externalUrl
+          } : undefined
+        };
+      })
+    });
+  });
+
+  app.post('/studio/integrations/activity/sync', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const accounts = (await store.listExternalAccountsByCreatorIdentity(creatorIdentityId))
+      .filter((account) => account.connectionStatus === 'connected');
+    const jobs = await Promise.all(accounts.map((account) => enqueueExternalSyncJob(account.externalAccountId, 'activity_sync')));
+    return res.status(202).json({ jobs });
+  });
+
+  app.patch('/studio/integrations/activity/accounts/:externalAccountId/:remoteActivityId', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account) return res.status(404).json({ message: 'Connected account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this connected account.' });
+    const activity = await store.getExternalActivityByRemoteId(account.externalAccountId, req.params.remoteActivityId);
+    if (!activity) return res.status(404).json({ message: 'Activity not found' });
+    const now = new Date().toISOString();
+    const updated = { ...activity, readAt: req.body?.read === false ? undefined : now, updatedAt: now };
+    await store.upsertExternalActivity(updated);
+    const { rawPayload: _rawPayload, ...response } = updated;
+    return res.json(response);
   });
 
   app.get('/studio/integrations/deviantart/accounts/:externalAccountId/publications/:externalContentId/comments', requireAuth, async (req, res) => {

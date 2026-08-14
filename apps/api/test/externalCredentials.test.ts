@@ -51,6 +51,69 @@ describe('external credentials', () => {
     expect(authorizationUrl.searchParams.get('code_challenge')).toBe(pkce.codeChallenge);
     expect(authorizationUrl.searchParams.get('code_challenge_method')).toBe('S256');
     expect(authorizationUrl.searchParams.get('scope')).toContain('user');
+    expect(authorizationUrl.searchParams.get('scope')).toContain('message');
+  });
+
+  it('normalizes DeviantArt engagement, comment threads, feedback, and favourites', async () => {
+    const provider = new DeviantArtProvider({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://fanadmin.top:4000/integrations/deviantart/callback'
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ metadata: [{ deviationid: 'deviation-1', stats: { views: 42, favourites: 3, comments: 2, downloads: 7 } }] }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ thread: [{ commentid: 'comment-1', body: 'Hello', posted: 1786637885, user: { userid: 'user-1', username: 'visitor' }, replies: 1, likes: 2 }], has_more: false }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ results: [{ messageid: 'message-1', type: 'comment', ts: 1786637885, originator: { userid: 'user-1', username: 'visitor' }, subject: { deviation: { deviationid: 'deviation-1' }, comment: { commentid: 'comment-1', body: 'Hello' } } }], has_more: false }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ results: [{ user: { userid: 'user-1', username: 'visitor' }, time: 1786637885 }], has_more: false }),
+        headers: { get: () => null }
+      } as unknown as Response);
+
+    const engagement = await provider.getEngagement('access-token', ['deviation-1']);
+    const comments = await provider.listComments('access-token', 'deviation-1');
+    const feedback = await provider.listFeedback('access-token', 'comments');
+    const favourites = await provider.listFavourites('access-token', 'deviation-1');
+
+    expect(engagement[0].metrics).toMatchObject({ views: 42, favourites: 3, comments: 2, downloads: 7 });
+    expect(comments.items[0]).toMatchObject({ externalCommentId: 'comment-1', authorName: 'visitor', replyCount: 1, likeCount: 2 });
+    expect(feedback.items[0]).toMatchObject({ remoteActivityId: 'comment:comment-1', externalContentId: 'deviation-1', type: 'comment' });
+    expect(favourites.items[0]).toMatchObject({ externalUserId: 'user-1', username: 'visitor' });
+    expect(new URL(String(fetchSpy.mock.calls[1][0])).searchParams.get('maxdepth')).toBe('5');
+    fetchSpy.mockRestore();
+  });
+
+  it('limits DeviantArt metadata requests to the provider maximum', async () => {
+    const provider = new DeviantArtProvider({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://fanadmin.top:4000/integrations/deviantart/callback'
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ metadata: [] }),
+      headers: { get: () => null }
+    } as unknown as Response);
+
+    await provider.getEngagement('access-token', Array.from({ length: 12 }, (_, index) => `deviation-${index + 1}`));
+
+    const requestUrl = new URL(String(fetchSpy.mock.calls[0][0]));
+    expect(requestUrl.searchParams.getAll('deviationids[0]')).toEqual(['deviation-1']);
+    expect(requestUrl.searchParams.get('deviationids[9]')).toBe('deviation-10');
+    expect(requestUrl.searchParams.has('deviationids[10]')).toBe(false);
+    fetchSpy.mockRestore();
   });
 
   it('uses DeviantArt gallery page sizes accepted by the API', async () => {

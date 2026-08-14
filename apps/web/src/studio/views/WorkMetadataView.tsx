@@ -438,7 +438,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       <Card
         title="Edit work metadata"
         eyebrow={`Works / ${creatorName}`}
-        actions={<><Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}&workId=${encodeURIComponent(workId)}&tab=activity`}>Activity</Link><button type="button" className="auth-secondary-btn" onClick={backToWorks}>Back to Works</button></>}
+        actions={<button type="button" className="auth-secondary-btn" onClick={backToWorks}>Back to Works</button>}
       >
         {loading && <p className="small">Loading work metadata…</p>}
         {error && <p className="error">{error}</p>}

@@ -590,6 +590,7 @@ export type ExternalPublicationTargetStatus = 'draft' | 'published';
 export type ExternalCollectionSyncMode = 'continuous' | 'initial_only' | 'manual' | 'ignored';
 export type ExternalSyncJobType =
   | 'account_import'
+  | 'activity_sync'
   | 'content_sync'
   | 'account_scan'
   | 'content_metadata_sync'
@@ -694,6 +695,10 @@ export interface ExternalPublication {
   publishedAt?: string;
   remoteCreatedAt?: string;
   remoteUpdatedAt?: string;
+  /** SHA-256 of normalized provider metadata, excluding volatile metrics and signed URL parameters. */
+  remoteMetadataFingerprint?: string;
+  /** Advisory SHA-256 of the provider's stable file descriptor; the hosted checksum remains authoritative. */
+  remoteContentFingerprint?: string;
   lastSyncedAt?: string;
   lastSeenAt?: string;
   syncStatus: ExternalPublicationSyncStatus;
@@ -712,6 +717,10 @@ export interface SpacePublication {
   hostedContentType?: string;
   hostedByteSize?: number;
   hostedChecksumSha256?: string;
+  remoteContentFingerprint?: string;
+  remoteContentEtag?: string;
+  remoteContentLastModified?: string;
+  lastRemoteContentCheckedAt?: string;
   lastContentSyncAt?: string;
   contentSyncError?: string;
   publishedAt?: string;
@@ -777,6 +786,18 @@ export interface ExternalEngagementSnapshot {
   otherMetricsJson?: Record<string, unknown>;
 }
 
+export interface ExternalEngagementCurrent {
+  externalPublicationId: string;
+  capturedAt: string;
+  views?: number;
+  favourites?: number;
+  comments?: number;
+  downloads?: number;
+  viewsToday?: number;
+  downloadsToday?: number;
+  otherMetricsJson?: Record<string, unknown>;
+}
+
 export interface ExternalComment {
   externalCommentId: string;
   platform: ExternalPlatform;
@@ -784,12 +805,82 @@ export interface ExternalComment {
   externalPublicationId: string;
   externalAuthorId?: string;
   externalAuthorName?: string;
+  externalAuthorAvatarUrl?: string;
   body: string;
   createdAtRemote?: string;
   parentExternalCommentExternalId?: string;
+  replyCount?: number;
+  likeCount?: number;
+  isLiked?: boolean;
+  isFeatured?: boolean;
+  hiddenReason?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  remoteDeletedAt?: string;
   /** Provider payload retained for adapter migrations and diagnostics. */
   rawPayload?: Record<string, unknown>;
   lastSyncedAt: string;
+}
+
+export interface ExternalFavourite {
+  externalPublicationId: string;
+  externalUserId: string;
+  externalUsername: string;
+  externalUserAvatarUrl?: string;
+  favouritedAtRemote?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  active: boolean;
+  removalDetectedAt?: string;
+  rawPayload?: Record<string, unknown>;
+}
+
+export type ExternalActivityType = 'comment' | 'reply' | 'favourite' | 'watch' | 'mention' | 'activity';
+
+export interface ExternalActivity {
+  externalActivityId: string;
+  externalAccountId: string;
+  creatorIdentityId?: string;
+  assetId?: string;
+  externalPublicationId?: string;
+  platform: ExternalPlatform;
+  type: ExternalActivityType;
+  direction: 'inbound' | 'outbound';
+  remoteActivityId: string;
+  remoteObjectType?: string;
+  remoteObjectId?: string;
+  remoteParentId?: string;
+  remoteStackId?: string;
+  externalActorId?: string;
+  externalActorName?: string;
+  externalActorAvatarUrl?: string;
+  body?: string;
+  remoteUrl?: string;
+  occurredAt?: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  seenAt?: string;
+  readAt?: string;
+  remoteDeletedAt?: string;
+  rawPayload?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ExternalSyncResourceType = 'feedback.comments' | 'feedback.replies' | 'feedback.activity' | 'comments' | 'favourites' | 'engagement' | 'catalogue';
+
+export interface ExternalSyncCheckpoint {
+  externalAccountId: string;
+  resourceType: ExternalSyncResourceType;
+  resourceId: string;
+  highWatermarkAt?: string;
+  lastRemoteId?: string;
+  recentRemoteIds?: string[];
+  lastAttemptAt?: string;
+  lastSuccessfulSyncAt?: string;
+  nextEligibleAt?: string;
+  lastError?: string;
+  updatedAt: string;
 }
 
 export interface ExternalSyncJob {
