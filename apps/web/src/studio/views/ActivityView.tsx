@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
 import { Card } from '../components/Card';
@@ -67,16 +67,29 @@ export function ActivityView({ creatorId }: { creatorId: string }) {
   const [items, setItems] = useState<StudioExternalActivity[]>([]);
   const [accountSummaries, setAccountSummaries] = useState<ActivityAccountSummary[]>([]);
   const [filter, setFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'read' | 'unread' | 'dismissed'>('all');
+  const [accountFilter, setAccountFilter] = useState('');
+  const [nextCursor, setNextCursor] = useState<string | undefined>();
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [triaging, setTriaging] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  const load = async () => {
+  const load = async (cursor?: string, append = false) => {
     if (!creatorId) return;
-    const response = await api.studioListActivity(creatorId) as { items?: StudioExternalActivity[]; accounts?: ActivityAccountSummary[] };
-    setItems(response.items || []);
+    const response = await api.studioListActivity(creatorId, {
+      type: filter,
+      status: statusFilter,
+      accountId: accountFilter,
+      cursor,
+      limit: 50
+    }) as { items?: StudioExternalActivity[]; accounts?: ActivityAccountSummary[]; nextCursor?: string; total?: number };
+    setItems((current) => append ? [...current, ...(response.items || [])] : response.items || []);
     setAccountSummaries(response.accounts || []);
+    setNextCursor(response.nextCursor);
+    setTotal(response.total || 0);
   };
 
   useEffect(() => {
@@ -87,9 +100,7 @@ export function ActivityView({ creatorId }: { creatorId: string }) {
       if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load activity.');
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [creatorId]);
-
-  const filtered = useMemo(() => filter === 'all' ? items : items.filter((item) => item.type === filter), [filter, items]);
+  }, [accountFilter, creatorId, filter, statusFilter]);
   const refresh = async () => {
     setRefreshing(true);
     setError('');
@@ -111,6 +122,36 @@ export function ActivityView({ creatorId }: { creatorId: string }) {
       setItems((current) => current.map((item) => item.externalActivityId === updated.externalActivityId ? { ...item, ...updated } : item));
     } catch (readError) {
       setError(readError instanceof Error ? readError.message : 'Unable to update activity.');
+    }
+  };
+
+  const setPageRead = async (read: boolean) => {
+    if (!items.length) return;
+    setTriaging(true);
+    setError('');
+    try {
+      await api.studioSetActivitiesRead(creatorId, items.map((item) => item.externalActivityId), read);
+      setItems((current) => current.map((item) => ({ ...item, readAt: read ? new Date().toISOString() : undefined })));
+      setMessage(`${items.length} loaded activit${items.length === 1 ? 'y' : 'ies'} marked ${read ? 'read' : 'unread'}.`);
+    } catch (bulkError) {
+      setError(bulkError instanceof Error ? bulkError.message : 'Unable to update the loaded activity.');
+    } finally {
+      setTriaging(false);
+    }
+  };
+
+  const dismiss = async (activity: StudioExternalActivity) => {
+    if (!window.confirm('Dismiss this notification from DeviantArt? This removes the remote notification but keeps Ubeeq’s cached activity record.')) return;
+    setTriaging(true);
+    setError('');
+    try {
+      const updated = await api.studioDismissDeviantArtActivity(activity.externalAccountId, activity.remoteActivityId) as StudioExternalActivity;
+      setItems((current) => current.map((item) => item.externalActivityId === activity.externalActivityId ? { ...item, ...updated } : item));
+      setMessage('Notification dismissed from DeviantArt. Its cached Ubeeq history was retained.');
+    } catch (dismissError) {
+      setError(dismissError instanceof Error ? dismissError.message : 'Unable to dismiss the DeviantArt notification.');
+    } finally {
+      setTriaging(false);
     }
   };
 
@@ -137,7 +178,7 @@ export function ActivityView({ creatorId }: { creatorId: string }) {
         </small>}
       </div>)}
       <button type="button" className="auth-secondary-btn" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? 'Refreshing…' : 'Refresh activity'}</button>
-      <label>Show <select value={filter} onChange={(event) => setFilter(event.target.value)}>
+      <label>Type <select value={filter} onChange={(event) => setFilter(event.target.value)}>
         <option value="all">All activity</option>
         <option value="comment">Comments</option>
         <option value="reply">Replies</option>
@@ -146,12 +187,27 @@ export function ActivityView({ creatorId }: { creatorId: string }) {
         <option value="unwatch">Unwatches</option>
         <option value="mention">Mentions</option>
       </select></label>
+      <label>Status <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+        <option value="all">All statuses</option>
+        <option value="unread">Unread</option>
+        <option value="read">Read</option>
+        <option value="dismissed">Dismissed from DeviantArt</option>
+      </select></label>
+      <label>Account <select value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)}>
+        <option value="">All accounts</option>
+        {accountSummaries.map((account) => <option value={account.externalAccountId} key={account.externalAccountId}>@{account.externalUsername}</option>)}
+      </select></label>
+      <div className="studio-inline-actions">
+        <button type="button" className="auth-secondary-btn" disabled={triaging || !items.some((item) => !item.readAt)} onClick={() => void setPageRead(true)}>Mark loaded read</button>
+        <button type="button" className="auth-secondary-btn" disabled={triaging || !items.some((item) => item.readAt)} onClick={() => void setPageRead(false)}>Mark loaded unread</button>
+      </div>
     </Card>
     {error && <p className="studio-work-metadata-warning">{error}</p>}
     {message && <p className="studio-work-metadata-success">{message}</p>}
     <Card title="Latest">
-      {loading ? <p className="small">Loading activity…</p> : !filtered.length ? <p className="small">No matching activity has been imported yet.</p> : <div className="studio-activity-list">
-        {filtered.map((activity) => {
+      {loading ? <p className="small">Loading activity…</p> : !items.length ? <p className="small">No matching activity has been imported yet.</p> : <div className="studio-activity-list">
+        <p className="small">Showing {items.length} of {total}</p>
+        {items.map((activity) => {
           const accountName = activity.account?.externalUsername;
           const workId = activity.work?.assetId || activity.assetId;
           return <article className={`studio-activity-row${activity.work?.assetType === 'image' ? ' studio-activity-row-has-thumbnail' : ''}${activity.readAt ? ' studio-activity-row-read' : ''}`} key={activity.externalActivityId}>
@@ -173,11 +229,14 @@ export function ActivityView({ creatorId }: { creatorId: string }) {
             </div>
             <div className="studio-activity-actions">
               <time dateTime={activity.occurredAt || activity.firstSeenAt}>{when(activity.occurredAt || activity.firstSeenAt)}</time>
+              {activity.remoteDeletedAt && <small>Dismissed from DeviantArt</small>}
               <button type="button" className="auth-secondary-btn" onClick={() => void setRead(activity, !activity.readAt)}>{activity.readAt ? 'Mark unread' : 'Mark read'}</button>
+              {!activity.remoteDeletedAt && activity.remoteMessageId && <button type="button" className="auth-secondary-btn" disabled={triaging} onClick={() => void dismiss(activity)}>Dismiss from DeviantArt</button>}
               {workId && <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}&workId=${encodeURIComponent(workId)}&tab=activity`}>Open work activity</Link>}
             </div>
           </article>;
         })}
+        {nextCursor && <button type="button" className="auth-secondary-btn" disabled={loading} onClick={() => void load(nextCursor, true)}>Load more</button>}
       </div>}
     </Card>
   </div>;

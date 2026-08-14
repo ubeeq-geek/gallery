@@ -9,7 +9,7 @@ import {
 import { BlockEditor } from '../../components/BlockEditor';
 import type { PostBlock } from '../../domainTypes';
 import { Card } from '../components/Card';
-import type { StudioCreator, StudioDeviantArtAccount, StudioExternalAsset, StudioExternalPublication, StudioExternalSyncJob } from '../types';
+import type { StudioCreator, StudioDeviantArtAccount, StudioExternalAsset, StudioExternalCollection, StudioExternalPublication, StudioExternalSyncJob } from '../types';
 
 const sourceLabel = (publication?: StudioExternalPublication): string => {
   if (publication?.platform === 'deviantart') return 'DeviantArt';
@@ -32,6 +32,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const collectionId = params.get('collectionId') || '';
   const [asset, setAsset] = useState<StudioExternalAsset | null>(null);
   const [accounts, setAccounts] = useState<StudioDeviantArtAccount[]>([]);
+  const [externalCollections, setExternalCollections] = useState<StudioExternalCollection[]>([]);
   const [selectedPublicationId, setSelectedPublicationId] = useState('');
   const [newDestinationAccountId, setNewDestinationAccountId] = useState('');
   const [newDestinationTargetStatus, setNewDestinationTargetStatus] = useState<'draft' | 'published'>('published');
@@ -46,6 +47,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const [integrationTitle, setIntegrationTitle] = useState('');
   const [integrationDescriptionBlocks, setIntegrationDescriptionBlocks] = useState<PostBlock[]>(() => parseDescriptionBlocks());
   const [tags, setTags] = useState<string[]>([]);
+  const [integrationCollectionIds, setIntegrationCollectionIds] = useState<string[]>([]);
   const [allowComments, setAllowComments] = useState(true);
   const [isMature, setIsMature] = useState(false);
   const [matureLevel, setMatureLevel] = useState<'strict' | 'moderate'>('moderate');
@@ -76,7 +78,11 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     let active = true;
     setLoading(true);
     setError('');
-    void Promise.all([api.studioListDeviantArtCatalogue(creatorId), api.studioListDeviantArtAccounts(creatorId)]).then(([result, accountResult]) => {
+    void Promise.all([
+      api.studioListDeviantArtCatalogue(creatorId),
+      api.studioListDeviantArtAccounts(creatorId),
+      api.studioListDeviantArtCollections(creatorId)
+    ]).then(([result, accountResult, collectionResult]) => {
       if (!active) return;
       const found = ((result as { items?: StudioExternalAsset[] }).items || []).find((item) => item.assetId === workId) || null;
       if (!found) {
@@ -91,6 +97,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       const connectedAccounts = ((accountResult || []) as StudioDeviantArtAccount[]).filter((account) => account.connectionStatus === 'connected');
       const availableAccounts = connectedAccounts.filter((account) => !destinations.some((publication) => publication.externalAccountId === account.externalAccountId));
       setAccounts(connectedAccounts);
+      setExternalCollections(((collectionResult as { externalCollections?: StudioExternalCollection[] }).externalCollections || []));
       setNewDestinationAccountId(availableAccounts.length === 1 ? availableAccounts[0].externalAccountId : '');
       setSelectedPublicationId(selected?.externalPublicationId || '');
       setLinked(selected ? isMetadataLinked(found) : false);
@@ -99,6 +106,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       setIntegrationTitle(selected?.externalTitle || '');
       setIntegrationDescriptionBlocks(parseDescriptionBlocks(selected?.externalDescription || ''));
       setTags(selected?.externalTags || []);
+      setIntegrationCollectionIds(selected?.externalCollectionIds || []);
       setAllowComments(selected?.displayOptions?.allowComments ?? true);
       setIsMature(selected?.displayOptions?.isMature ?? false);
       setMatureLevel(selected?.displayOptions?.matureLevel ?? 'moderate');
@@ -177,6 +185,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const sourceTitle = integration?.externalTitle || '';
   const sourceDescription = integration?.externalDescription || '';
   const sourceTags = integration?.externalTags || [];
+  const sourceCollectionIds = integration?.externalCollectionIds || [];
   const sourceAllowComments = integration?.displayOptions?.allowComments ?? true;
   const sourceIsMature = integration?.displayOptions?.isMature ?? false;
   const sourceMatureLevel = integration?.displayOptions?.matureLevel ?? 'moderate';
@@ -194,12 +203,17 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const usesStashPublishedDescriptionUpdate = integration?.publishedDescriptionUpdateMode === 'stash';
   const creatorName = creators.find((creator) => creator.creatorId === creatorId)?.name || 'Creator';
   const availableDestinationAccounts = accounts.filter((account) => !destinations.some((publication) => publication.externalAccountId === account.externalAccountId));
+  const availableExternalCollections = externalCollections.filter((collection) => (
+    collection.externalAccountId === integration?.externalAccountId
+    && collection.syncStatus !== 'missing'
+  ));
 
   const selectDestination = (publication: StudioExternalPublication) => {
     setSelectedPublicationId(publication.externalPublicationId);
     setIntegrationTitle(publication.externalTitle || '');
     setIntegrationDescriptionBlocks(parseDescriptionBlocks(publication.externalDescription || ''));
     setTags(publication.externalTags || []);
+    setIntegrationCollectionIds(publication.externalCollectionIds || []);
     setAllowComments(publication.displayOptions?.allowComments ?? true);
     setIsMature(publication.displayOptions?.isMature ?? false);
     setMatureLevel(publication.displayOptions?.matureLevel ?? 'moderate');
@@ -321,6 +335,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       const nextIntegrationDescription = serializeDescriptionBlocks(nextIntegrationBlocks, integration?.platform === 'deviantart' ? 'deviantart' : 'ubeeq');
       const normalizedSourceDescription = serializeDescriptionBlocks(parseDescriptionBlocks(sourceDescription), integration?.platform === 'deviantart' ? 'deviantart' : 'ubeeq');
       const normalizedTags = [...new Set(tags.map((tag) => tag.trim().replace(/\s+/g, '_')).filter(Boolean))];
+      const normalizedCollectionIds = [...new Set(integrationCollectionIds)];
       const normalizedMatureClassification = [...new Set(matureClassification.map((classification) => classification.trim().toLowerCase()).filter((classification): classification is 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology' => (
         classification === 'nudity' || classification === 'sexual' || classification === 'gore' || classification === 'language' || classification === 'ideology'
       )))];
@@ -329,6 +344,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         ...(nextIntegrationTitle !== sourceTitle ? { title: nextIntegrationTitle } : {}),
         ...(canUpdatePublishedDescription && nextIntegrationDescription !== normalizedSourceDescription ? { description: nextIntegrationDescription } : {}),
         ...(normalizedTags.join('\u0000') !== sourceTags.join('\u0000') ? { tags: normalizedTags } : {}),
+        ...(normalizedCollectionIds.slice().sort().join('\u0000') !== sourceCollectionIds.slice().sort().join('\u0000') ? { collectionExternalIds: normalizedCollectionIds } : {}),
         ...(allowComments !== sourceAllowComments ? { allowComments } : {}),
         ...(isMature !== sourceIsMature ? { isMature } : {}),
         ...(matureLevel !== sourceMatureLevel ? { matureLevel } : {}),
@@ -356,6 +372,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
           externalTitle: nextIntegrationTitle,
           externalDescription: nextIntegrationDescription,
           externalTags: normalizedTags,
+          externalCollectionIds: normalizedCollectionIds,
           displayOptions: {
             ...publication.displayOptions,
             allowComments,
@@ -372,6 +389,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       setIntegrationTitle(nextIntegrationTitle);
       setIntegrationDescriptionBlocks(parseDescriptionBlocks(canUpdatePublishedDescription ? nextIntegrationDescription : sourceDescription));
       setTags(normalizedTags);
+      setIntegrationCollectionIds(normalizedCollectionIds);
       setMatureClassification(normalizedMatureClassification);
       setRemoteUpdateJobs(queuedRemoteUpdates);
       setMetadataWarning(updateWarnings.join(' '));
@@ -388,6 +406,26 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       <span>Tags</span>
       <input value={tags.join(', ')} onChange={(event) => setTags(event.target.value.split(','))} placeholder="Add comma-separated tags" />
     </label>
+    <fieldset className="studio-work-metadata-options">
+      <legend>DeviantArt gallery placement</legend>
+      {!availableExternalCollections.length
+        ? <small>No active DeviantArt gallery folders are available for this account.</small>
+        : availableExternalCollections.map((collection) => <label className="studio-work-metadata-option" key={collection.externalCollectionId}>
+          <input
+            type="checkbox"
+            checked={integrationCollectionIds.includes(collection.externalCollectionExternalId)}
+            onChange={(event) => setIntegrationCollectionIds((current) => event.target.checked
+              ? [...new Set([...current, collection.externalCollectionExternalId])]
+              : current.filter((collectionId) => collectionId !== collection.externalCollectionExternalId))}
+          />
+          <span>{collection.name}{typeof collection.remoteSize === 'number' ? ` (${collection.remoteSize})` : ''}</span>
+        </label>)}
+      <small>Gallery placement is applied through DeviantArt’s published-deviation edit API and verified after saving.</small>
+    </fieldset>
+    {integration.metadataSyncStatus === 'conflict' && <p className="studio-work-metadata-warning">Both Ubeeq and DeviantArt changed this destination before synchronization completed. Review the fields above before saving again.</p>}
+    {integration.metadataSyncStatus === 'remote_changed' && <p className="studio-work-metadata-warning">DeviantArt metadata changed since the previous synchronization. The current remote values are shown above.</p>}
+    {integration.metadataSyncStatus === 'local_update_pending' && <p className="small">A Ubeeq metadata update is queued or waiting for DeviantArt verification.</p>}
+    {integration.syncStatus !== 'active' && integration.remoteStateReason && <p className="studio-work-metadata-warning">{integration.remoteStateReason}</p>}
     <label className="studio-work-metadata-option">
       <input type="checkbox" checked={allowComments} onChange={(event) => setAllowComments(event.target.checked)} />
       <span>Allow comments on {integrationLabel}</span>

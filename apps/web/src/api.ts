@@ -979,8 +979,14 @@ export const api = {
     });
     return handleJson(response);
   },
-  async studioListActivity(creatorId: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/activity?creatorId=${encodeURIComponent(creatorId)}`);
+  async studioListActivity(creatorId: string, options?: { type?: string; status?: 'all' | 'read' | 'unread' | 'dismissed'; accountId?: string; cursor?: string; limit?: number }) {
+    const params = new URLSearchParams({ creatorId });
+    if (options?.type && options.type !== 'all') params.set('type', options.type);
+    if (options?.status && options.status !== 'all') params.set('status', options.status);
+    if (options?.accountId) params.set('accountId', options.accountId);
+    if (options?.cursor) params.set('cursor', options.cursor);
+    if (options?.limit) params.set('limit', String(options.limit));
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/activity?${params.toString()}`);
     return handleJson(response);
   },
   async studioSyncActivity(creatorId: string) {
@@ -992,6 +998,22 @@ export const api = {
   async studioSetActivityRead(externalAccountId: string, remoteActivityId: string, read = true) {
     const response = await fetch(`${API_BASE}/studio/integrations/activity/accounts/${encodeURIComponent(externalAccountId)}/${encodeURIComponent(remoteActivityId)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ read })
+    });
+    return handleJson(response);
+  },
+  async studioSetActivitiesRead(creatorId: string, activityIds: string[], read = true) {
+    const response = await fetch(`${API_BASE}/studio/integrations/activity/bulk`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ creatorId, activityIds, read })
+    });
+    return handleJson(response);
+  },
+  async studioDismissDeviantArtActivity(externalAccountId: string, remoteActivityId: string, stack = false) {
+    const response = await fetch(`${API_BASE}/studio/integrations/activity/accounts/${encodeURIComponent(externalAccountId)}/${encodeURIComponent(remoteActivityId)}/dismiss`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ stack })
     });
     return handleJson(response);
   },
@@ -1052,6 +1074,7 @@ export const api = {
       title?: string;
       description?: string;
       tags?: string[];
+      collectionExternalIds?: string[];
       allowComments?: boolean;
       isMature?: boolean;
       matureLevel?: 'strict' | 'moderate';

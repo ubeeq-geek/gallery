@@ -34,6 +34,8 @@ export function WorkActivityView({ creators: _creators }: { creators: StudioCrea
   const [replyingTo, setReplyingTo] = useState('');
   const [draft, setDraft] = useState('');
   const [posting, setPosting] = useState(false);
+  const [failedReplyTo, setFailedReplyTo] = useState('');
+  const [showRemovedComments, setShowRemovedComments] = useState(false);
 
   const load = async () => {
     if (!workId) return;
@@ -81,16 +83,20 @@ export function WorkActivityView({ creators: _creators }: { creators: StudioCrea
       );
       setDraft('');
       setReplyingTo('');
+      setFailedReplyTo('');
       await load();
     } catch (replyError) {
+      setFailedReplyTo(comment.externalCommentId);
       setError(replyError instanceof Error ? replyError.message : 'DeviantArt did not accept the reply. Your draft is still here.');
     } finally {
       setPosting(false);
     }
   };
 
-  const comments = destinations.flatMap((destination) => destination.comments.map((comment) => ({ comment, destination })))
-    .filter(({ comment }) => !comment.remoteDeletedAt)
+  const allComments = destinations.flatMap((destination) => destination.comments.map((comment) => ({ comment, destination })));
+  const removedCommentCount = allComments.filter(({ comment }) => Boolean(comment.remoteDeletedAt)).length;
+  const comments = allComments
+    .filter(({ comment }) => showRemovedComments || !comment.remoteDeletedAt)
     .sort((left, right) => (right.comment.createdAtRemote || right.comment.firstSeenAt).localeCompare(left.comment.createdAtRemote || left.comment.firstSeenAt));
   const activities = destinations.flatMap((destination) => destination.activities.map((activity) => ({ activity, destination })))
     .sort((left, right) => (right.activity.occurredAt || right.activity.firstSeenAt).localeCompare(left.activity.occurredAt || left.activity.firstSeenAt));
@@ -132,14 +138,26 @@ export function WorkActivityView({ creators: _creators }: { creators: StudioCrea
       {!activities.length ? <p className="small">No platform activity has been imported yet.</p> : activities.slice(0, 50).map(({ activity, destination }) => <ActivityRow key={activity.externalActivityId} activity={activity} destination={destination} />)}
     </Card>
     <Card title="Comments">
+      {removedCommentCount > 0 && <label className="studio-work-metadata-option">
+        <input type="checkbox" checked={showRemovedComments} onChange={(event) => setShowRemovedComments(event.target.checked)} />
+        <span>Show {removedCommentCount} comment{removedCommentCount === 1 ? '' : 's'} removed from DeviantArt</span>
+      </label>}
+      {destinations.some((destination) => destination.capabilities?.remoteCommentModeration === false) && <p className="small">Replies can be posted from Ubeeq. DeviantArt’s public API does not provide comment hide or delete operations, so moderation links remain on DeviantArt.</p>}
       {!comments.length ? <p className="small">No comments have been imported yet.</p> : comments.map(({ comment, destination }) => <article key={`${destination.publication.externalPublicationId}:${comment.externalCommentId}`} className="studio-work-destination-row">
         <strong>{comment.externalAuthorName ? `@${comment.externalAuthorName}` : 'Platform member'}</strong>
         <small>{relativeDate(comment.createdAtRemote || comment.lastSyncedAt)}</small>
         <p>{comment.body}</p>
+        {comment.remoteDeletedAt && <small>Removed from DeviantArt · cached history retained by Ubeeq</small>}
         {comment.parentExternalCommentExternalId && <small>Reply in thread</small>}
         {typeof comment.likeCount === 'number' && <small>{comment.likeCount} likes</small>}
-        <button type="button" className="auth-secondary-btn" onClick={() => { setReplyingTo(comment.externalCommentId); setDraft(''); }}>Reply</button>
-        {replyingTo === comment.externalCommentId && <div><textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Write a DeviantArt reply" /><button type="button" className="auth-primary-btn" disabled={posting || !draft.trim()} onClick={() => void reply(comment, destination)}>{posting ? 'Replying…' : 'Reply'}</button><button type="button" className="auth-secondary-btn" disabled={posting} onClick={() => setReplyingTo('')}>Cancel</button></div>}
+        {!comment.remoteDeletedAt && destination.capabilities?.reply !== false && <button type="button" className="auth-secondary-btn" onClick={() => { setReplyingTo(comment.externalCommentId); setDraft(''); setFailedReplyTo(''); }}>Reply</button>}
+        {replyingTo === comment.externalCommentId && <div>
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Write a DeviantArt reply" />
+          {failedReplyTo === comment.externalCommentId && <small>DeviantArt did not confirm this reply. Your draft is retained; retry when ready.</small>}
+          <button type="button" className="auth-primary-btn" disabled={posting || !draft.trim()} onClick={() => void reply(comment, destination)}>{posting ? 'Replying…' : failedReplyTo === comment.externalCommentId ? 'Retry reply' : 'Reply'}</button>
+          <button type="button" className="auth-secondary-btn" disabled={posting} onClick={() => { setReplyingTo(''); setFailedReplyTo(''); }}>Cancel</button>
+          {destination.publication.externalUrl && <a href={destination.publication.externalUrl} target="_blank" rel="noreferrer">Moderate on DeviantArt</a>}
+        </div>}
       </article>)}
     </Card>
     <Card title="Recent favourites">

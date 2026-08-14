@@ -193,12 +193,15 @@ export type StudioExternalActivity = {
   type: 'comment' | 'reply' | 'favourite' | 'watch' | 'unwatch' | 'mention' | 'activity';
   direction: 'inbound' | 'outbound';
   remoteActivityId: string;
+  remoteMessageId?: string;
+  remoteStackId?: string;
   externalActorName?: string;
   externalActorAvatarUrl?: string;
   body?: string;
   occurredAt?: string;
   firstSeenAt: string;
   readAt?: string;
+  remoteDeletedAt?: string;
   account?: {
     externalAccountId: string;
     platform: string;
@@ -221,6 +224,11 @@ export type StudioWorkActivityDestination = {
   comments: StudioExternalComment[];
   favourites: StudioExternalFavourite[];
   activities: StudioExternalActivity[];
+  capabilities?: {
+    reply: boolean;
+    remoteCommentModeration: boolean;
+    remoteCommentModerationReason?: string;
+  };
 };
 
 export type StudioExternalPublication = {
@@ -249,6 +257,10 @@ export type StudioExternalPublication = {
   publishedAt?: string;
   remoteUpdatedAt?: string;
   lastSyncedAt?: string;
+  metadataSyncStatus?: 'in_sync' | 'remote_changed' | 'local_update_pending' | 'conflict';
+  remoteChangeDetectedAt?: string;
+  lastOutboundSyncAt?: string;
+  remoteStateReason?: string;
   syncStatus: 'pending_publish' | 'draft' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
 };
 
@@ -305,8 +317,13 @@ export type StudioExternalCollection = {
   externalCollectionExternalId: string;
   externalUsername: string;
   name: string;
+  description?: string;
   parentExternalCollectionExternalId?: string;
   position?: number;
+  remoteSize?: number;
+  syncStatus?: 'active' | 'missing';
+  lastSeenAt?: string;
+  lastSyncedAt?: string;
 };
 
 export type StudioExternalCollectionMapping = {
@@ -315,4 +332,7 @@ export type StudioExternalCollectionMapping = {
   externalCollectionId: string;
   ubeeqCollectionId: string;
   syncMode: 'continuous' | 'initial_only' | 'manual' | 'ignored';
+  lastMembershipSyncAt?: string;
+  lastMembershipCount?: number;
+  lastMembershipError?: string;
 };

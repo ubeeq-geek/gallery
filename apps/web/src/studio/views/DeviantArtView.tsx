@@ -368,12 +368,33 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       await api.studioSaveDeviantArtCollectionMapping(externalCollection.externalCollectionId, {
         externalAccountId: externalCollection.externalAccountId,
         ubeeqCollectionId,
-        syncMode: 'manual'
+        syncMode: 'continuous'
       });
-      setMessage('Gallery mapping saved. The source gallery remains separate from Ubeeq organization.');
+      setMessage('Gallery mapping saved. DeviantArt membership and folder hierarchy will reconcile continuously.');
       await load();
     } catch (mappingError) {
       setError(mappingError instanceof Error ? mappingError.message : 'Unable to save gallery mapping.');
+    }
+  };
+
+  const updateMappingMode = async (externalCollection: StudioExternalCollection, mapping: StudioExternalCollectionMapping, syncMode: StudioExternalCollectionMapping['syncMode']) => {
+    setError('');
+    try {
+      await api.studioSaveDeviantArtCollectionMapping(externalCollection.externalCollectionId, {
+        externalAccountId: externalCollection.externalAccountId,
+        ubeeqCollectionId: mapping.ubeeqCollectionId,
+        syncMode
+      });
+      setMessage(syncMode === 'continuous'
+        ? 'Continuous DeviantArt gallery reconciliation queued.'
+        : syncMode === 'initial_only'
+          ? 'This gallery will populate once and then remain independent.'
+          : syncMode === 'manual'
+            ? 'Automatic gallery membership changes are paused; current Ubeeq works were preserved.'
+            : 'This DeviantArt gallery is ignored by automatic synchronization.');
+      await load();
+    } catch (mappingError) {
+      setError(mappingError instanceof Error ? mappingError.message : 'Unable to update gallery synchronization.');
     }
   };
 
@@ -551,12 +572,24 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
             const mapping = collections.mappings.find((item) => item.externalCollectionId === externalCollection.externalCollectionId);
             return (
               <div className="studio-integration-mapping-row" key={externalCollection.externalCollectionId}>
-                <span><strong>{externalCollection.name}</strong><small>{externalCollection.externalUsername || 'DeviantArt'} gallery</small></span>
+                <span>
+                  <strong>{externalCollection.name}</strong>
+                  <small>{externalCollection.externalUsername || 'DeviantArt'} gallery{typeof externalCollection.remoteSize === 'number' ? ` · ${externalCollection.remoteSize} works` : ''}</small>
+                  {externalCollection.syncStatus === 'missing' && <small className="error">No longer returned by DeviantArt</small>}
+                  {mapping?.lastMembershipSyncAt && <small>{mapping.lastMembershipCount || 0} mapped works · last reconciled {formatDate(mapping.lastMembershipSyncAt)}</small>}
+                  {mapping?.lastMembershipError && <small className="error">{mapping.lastMembershipError}</small>}
+                </span>
                 <div className="studio-integration-mapping-actions">
-                  <select value={mapping?.ubeeqCollectionId || ''} onChange={(event) => void saveMapping(externalCollection, event.target.value)}>
+                  <select disabled={externalCollection.syncStatus === 'missing'} value={mapping?.ubeeqCollectionId || ''} onChange={(event) => void saveMapping(externalCollection, event.target.value)}>
                     <option value="">Map to Ubeeq collection…</option>
                     {collections.ubeeqCollections.map((collection) => <option key={collection.ubeeqCollectionId} value={collection.ubeeqCollectionId}>{collection.name}</option>)}
                   </select>
+                  {mapping && <select aria-label={`${externalCollection.name} synchronization mode`} value={mapping.syncMode} onChange={(event) => void updateMappingMode(externalCollection, mapping, event.target.value as StudioExternalCollectionMapping['syncMode'])}>
+                    <option value="continuous">Keep synchronized</option>
+                    <option value="initial_only">Import once</option>
+                    <option value="manual">Manual</option>
+                    <option value="ignored">Ignore</option>
+                  </select>}
                   {!mapping && (
                     <button
                       type="button"

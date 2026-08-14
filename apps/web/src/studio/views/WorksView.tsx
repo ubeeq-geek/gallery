@@ -41,7 +41,11 @@ function PlatformIcons({ asset }: { asset: StudioExternalAsset }) {
       <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" strokeWidth="2" /><circle cx="10" cy="10" r="2.5" fill="currentColor" /></svg>
     </span>
     {destinations.map((publication) => {
-      const status = publication.syncStatus === 'active' ? 'published' : publication.syncStatus === 'draft' ? 'draft in Sta.sh' : 'targeted';
+      const status = publication.syncStatus === 'active'
+        ? 'published'
+        : publication.syncStatus === 'draft'
+          ? 'draft in Sta.sh'
+          : publication.syncStatus.replace(/_/g, ' ');
       return <span key={publication.externalPublicationId} className="studio-work-platform-icon studio-work-platform-icon-deviantart" title={`${sourcePlatformLabel(publication)} · ${status}`} aria-label={`${sourcePlatformLabel(publication)} ${status}`}>
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 16.5 10 10 17.5 3.5 10 10 2.5Z" fill="none" stroke="currentColor" strokeWidth="2" /><path d="M8.2 6.4h3.1l1.7 3.6-1.7 3.6H8.2l1.6-3.6-1.6-3.6Z" fill="currentColor" /></svg>
     </span>;
@@ -457,6 +461,10 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
             const isCollectionPickerOpen = collectionPickerAssetId === asset.assetId;
             const assetLifecycle = lifecycleFor(asset);
             const deviantArtDestinations = asset.publications.filter((publication) => publication.platform === 'deviantart' && publication.syncStatus !== 'deleted');
+            const remoteLifecycleIssues = asset.publications.filter((publication) => (
+              publication.platform === 'deviantart'
+              && (publication.syncStatus === 'missing' || publication.syncStatus === 'restricted' || publication.syncStatus === 'deleted' || publication.syncStatus === 'error')
+            ));
             const selectedDestinationAccountId = destinationAccountByAsset[asset.assetId] || (accounts.length === 1 ? accounts[0].externalAccountId : '');
             const selectedDestinationStatus = destinationStatusByAsset[asset.assetId] || 'published';
             const isDestinationUpdating = destinationUpdatingAssetId === asset.assetId;
@@ -513,6 +521,9 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                         : <div><small>No connected account is available for this creator.</small><Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}`}>Manage integrations</Link></div>}
                     {destinationMessageByAsset[asset.assetId] && <small className="studio-work-destination-message">{destinationMessageByAsset[asset.assetId]}</small>}
                   </div>
+                  {remoteLifecycleIssues.map((publication) => <small className="studio-work-metadata-warning" key={`remote-state:${publication.externalPublicationId}`}>
+                    @{publication.externalUsername} · {publication.syncStatus.replace(/_/g, ' ')}{publication.remoteStateReason ? ` — ${publication.remoteStateReason}` : ''}
+                  </small>)}
                 </div>
                 <div className="studio-work-actions">
                   <span className="studio-collection-visibility">{asset.visibility}</span>

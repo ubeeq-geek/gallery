@@ -40,7 +40,8 @@ import type {
   ExternalCollectionMapping,
   ExternalEngagementCurrent,
   ExternalSyncJob,
-  UbeeqCollection
+  UbeeqCollection,
+  UbeeqCollectionAsset
 } from './domain';
 import {
   generateCreatorCoverRenditions,
@@ -83,7 +84,7 @@ import { storeUbeeqWorkImage } from './externalContentStorage';
 import { externalOAuthPkce, issueExternalOAuthState, resolveExternalOAuthReturnUrl, verifyExternalOAuthState } from './externalOAuth';
 import { createExternalSyncQueue } from './externalSyncQueue';
 import type { ExternalSyncQueue } from './externalSyncQueue';
-import { replyToExternalComment } from './externalSyncWorker';
+import { dismissExternalActivity, replyToExternalComment } from './externalSyncWorker';
 
 interface CreateAppOptions {
   config: AppConfig;
@@ -4760,6 +4761,10 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
             externalCollectionIds: publication.externalCollectionIds || [],
             publishedAt: publication.publishedAt,
             remoteUpdatedAt: publication.remoteUpdatedAt,
+            metadataSyncStatus: publication.metadataSyncStatus,
+            remoteChangeDetectedAt: publication.remoteChangeDetectedAt,
+            lastOutboundSyncAt: publication.lastOutboundSyncAt,
+            remoteStateReason: publication.remoteStateReason,
             syncStatus: publication.syncStatus
           }))
         };
@@ -4799,6 +4804,12 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         .map((tag) => tag.trim().replace(/\s+/g, '_').slice(0, 64))
         .filter(Boolean))].slice(0, 30)
       : undefined;
+    const integrationCollectionExternalIds = Array.isArray(integrationMetadata?.collectionExternalIds)
+      ? [...new Set(integrationMetadata.collectionExternalIds
+        .filter((collectionId): collectionId is string => typeof collectionId === 'string')
+        .map((collectionId) => collectionId.trim())
+        .filter(Boolean))]
+      : undefined;
     const allowComments = typeof integrationMetadata?.allowComments === 'boolean' ? integrationMetadata.allowComments : undefined;
     const isMature = typeof integrationMetadata?.isMature === 'boolean' ? integrationMetadata.isMature : undefined;
     const matureLevel = integrationMetadata?.matureLevel === 'strict' || integrationMetadata?.matureLevel === 'moderate'
@@ -4836,6 +4847,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const externalMetadataChanged = integrationTitle !== undefined
       || integrationDescription !== undefined
       || integrationTags !== undefined
+      || integrationCollectionExternalIds !== undefined
       || allowComments !== undefined
       || isMature !== undefined
       || matureLevel !== undefined
@@ -4861,6 +4873,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         externalTitle: integrationTitle ?? publication.externalTitle,
         externalDescription: integrationDescription ?? publication.externalDescription,
         externalTags: integrationTags ?? publication.externalTags,
+        externalCollectionIds: integrationCollectionExternalIds ?? publication.externalCollectionIds,
         rawMetadataJson,
         updatedAt: now
       });
@@ -4870,6 +4883,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         externalPublicationId: publication.externalPublicationId,
         ...(integrationTitle !== undefined ? { title: integrationTitle } : {}),
         ...(integrationTags !== undefined ? { tags: integrationTags } : {}),
+        ...(integrationCollectionExternalIds !== undefined ? { collectionExternalIds: integrationCollectionExternalIds } : {}),
         ...(allowComments !== undefined ? { allowComments } : {}),
         ...(isMature !== undefined ? { isMature } : {}),
         ...(matureLevel !== undefined ? { matureLevel } : {}),
@@ -4887,6 +4901,11 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         payload.description = integrationDescription;
       }
       if (!Object.keys(payload).some((key) => key !== 'externalPublicationId')) return null;
+      await store.updateExternalPublication({
+        ...publication,
+        metadataSyncStatus: 'local_update_pending',
+        updatedAt: now
+      });
       try {
         return await enqueueExternalSyncJob(publication.externalAccountId, 'remote_update', payload);
       } catch (queueError) {
@@ -5108,10 +5127,22 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       Promise.all(accounts.map((account) => store.listExternalCollections(account.externalAccountId))),
       Promise.all(accounts.map((account) => store.listExternalCollectionMappings(account.externalAccountId)))
     ]);
-    const collectionAssetIdsByCollection = Object.fromEntries(await Promise.all(ubeeqCollections.map(async (collection) => [
+    const collectionAssetLists = await Promise.all(ubeeqCollections.map(async (collection) => [
       collection.ubeeqCollectionId,
-      (await store.listUbeeqCollectionAssets(collection.ubeeqCollectionId)).map((item) => item.assetId)
-    ] as const)));
+      await store.listUbeeqCollectionAssets(collection.ubeeqCollectionId)
+    ] as const));
+    const collectionAssetIdsByCollection = Object.fromEntries(collectionAssetLists.map(([collectionId, items]) => [
+      collectionId,
+      items.map((item) => item.assetId)
+    ]));
+    const collectionMembershipSummaryByCollection = Object.fromEntries(collectionAssetLists.map(([collectionId, items]) => [
+      collectionId,
+      {
+        total: items.length,
+        manual: items.filter((item) => item.manuallyAssigned ?? !(item.externalCollectionMappingIds || []).length).length,
+        synchronized: items.filter((item) => (item.externalCollectionMappingIds || []).length > 0).length
+      }
+    ]));
     return res.json({
       ubeeqCollections,
       externalCollections: externalCollections.flat().map((collection) => ({
@@ -5119,7 +5150,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         externalUsername: accounts.find((account) => account.externalAccountId === collection.externalAccountId)?.externalUsername || ''
       })),
       mappings: mappings.flat(),
-      collectionAssetIdsByCollection
+      collectionAssetIdsByCollection,
+      collectionMembershipSummaryByCollection
     });
   });
 
@@ -5186,14 +5218,35 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return res.status(400).json({ message: 'Choose works owned by this creator.' });
     }
     const now = new Date().toISOString();
-    await store.replaceUbeeqCollectionAssets(collection.ubeeqCollectionId, assetIds.map((assetId) => ({
-      ubeeqCollectionId: collection.ubeeqCollectionId,
-      assetId,
-      userId: req.authUser!.userId,
-      creatorIdentityId,
-      createdAt: now,
-      updatedAt: now
-    })));
+    const existingAssets = await store.listUbeeqCollectionAssets(collection.ubeeqCollectionId);
+    const existingByAssetId = new Map(existingAssets.map((item) => [item.assetId, item]));
+    const manuallyAssignedAssetIds = new Set(assetIds);
+    const nextAssets = new Map<string, UbeeqCollectionAsset>();
+    for (const existing of existingAssets) {
+      const externalCollectionMappingIds = existing.externalCollectionMappingIds || [];
+      if (externalCollectionMappingIds.length || manuallyAssignedAssetIds.has(existing.assetId)) {
+        nextAssets.set(existing.assetId, {
+          ...existing,
+          manuallyAssigned: manuallyAssignedAssetIds.has(existing.assetId),
+          externalCollectionMappingIds,
+          updatedAt: now
+        });
+      }
+    }
+    for (const assetId of assetIds) {
+      const existing = existingByAssetId.get(assetId);
+      nextAssets.set(assetId, {
+        ubeeqCollectionId: collection.ubeeqCollectionId,
+        assetId,
+        userId: req.authUser!.userId,
+        creatorIdentityId,
+        manuallyAssigned: true,
+        externalCollectionMappingIds: existing?.externalCollectionMappingIds || [],
+        createdAt: existing?.createdAt || now,
+        updatedAt: now
+      });
+    }
+    await store.replaceUbeeqCollectionAssets(collection.ubeeqCollectionId, [...nextAssets.values()]);
     return res.json({ ubeeqCollectionId: collection.ubeeqCollectionId, assetIds });
   });
 
@@ -5222,7 +5275,10 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const syncMode = req.body?.syncMode === 'continuous' || req.body?.syncMode === 'initial_only' || req.body?.syncMode === 'manual' || req.body?.syncMode === 'ignored'
       ? req.body.syncMode
       : 'manual';
+    const mappingTargetChanged = Boolean(existing && existing.ubeeqCollectionId !== ubeeqCollectionId);
+    const mappingModeChanged = Boolean(existing && existing.syncMode !== syncMode);
     const mapping: ExternalCollectionMapping = {
+      ...existing,
       externalCollectionMappingId: existing?.externalCollectionMappingId || randomUUID(),
       externalAccountId,
       externalCollectionId: externalCollection.externalCollectionId,
@@ -5231,9 +5287,35 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       createdAt: existing?.createdAt || now,
       updatedAt: now
     };
+    if (mappingTargetChanged || mappingModeChanged) {
+      mapping.lastMembershipSyncAt = undefined;
+      mapping.lastMembershipFingerprint = undefined;
+      mapping.lastMembershipCount = undefined;
+      mapping.lastMembershipError = undefined;
+    }
+    if (existing && (existing.ubeeqCollectionId !== ubeeqCollectionId || syncMode === 'manual' || syncMode === 'ignored')) {
+      const previousAssets = await store.listUbeeqCollectionAssets(existing.ubeeqCollectionId);
+      const nextPreviousAssets = previousAssets.map((item) => ({
+        ...item,
+        manuallyAssigned: syncMode === 'manual' && (item.externalCollectionMappingIds || []).includes(existing.externalCollectionMappingId)
+          ? true
+          : item.manuallyAssigned,
+        externalCollectionMappingIds: (item.externalCollectionMappingIds || []).filter((mappingId) => mappingId !== existing.externalCollectionMappingId),
+        updatedAt: now
+      })).filter((item) => item.manuallyAssigned || (item.externalCollectionMappingIds || []).length);
+      await store.replaceUbeeqCollectionAssets(existing.ubeeqCollectionId, nextPreviousAssets);
+    }
     if (existing) await store.updateExternalCollectionMapping(mapping);
     else await store.createExternalCollectionMapping(mapping);
-    return res.json(mapping);
+    let syncJob: ExternalSyncJob | undefined;
+    if (syncMode === 'continuous' || (syncMode === 'initial_only' && !mapping.lastMembershipSyncAt)) {
+      try {
+        syncJob = await enqueueExternalSyncJob(account.externalAccountId, 'full_reconciliation', { reason: 'gallery_mapping_updated' });
+      } catch (error) {
+        logServerError('deviantart.gallery-mapping.enqueue', error);
+      }
+    }
+    return res.json({ ...mapping, syncJobId: syncJob?.externalSyncJobId });
   });
 
   app.get('/studio/integrations/activity/works/:assetId', requireAuth, async (req, res) => {
@@ -5261,7 +5343,12 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         engagement,
         comments: comments.map(({ rawPayload: _rawPayload, ...comment }) => comment),
         favourites: favourites.map(({ rawPayload: _rawPayload, ...favourite }) => favourite),
-        activities: activities.map(({ rawPayload: _rawPayload, ...activity }) => activity)
+        activities: activities.map(({ rawPayload: _rawPayload, ...activity }) => activity),
+        capabilities: {
+          reply: publication.syncStatus === 'active',
+          remoteCommentModeration: false,
+          remoteCommentModerationReason: 'DeviantArt’s public API supports posting replies but does not expose comment hide or delete operations.'
+        }
       };
     }));
     return res.json({ asset, destinations });
@@ -5292,20 +5379,35 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
     if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
     const accounts = await store.listExternalAccountsByCreatorIdentity(creatorIdentityId);
+    const requestedAccountId = typeof req.query.accountId === 'string' ? req.query.accountId.trim() : '';
+    const requestedType = typeof req.query.type === 'string' ? req.query.type.trim() : '';
+    const requestedStatus = req.query.status === 'read' || req.query.status === 'unread' || req.query.status === 'dismissed'
+      ? req.query.status
+      : 'all';
+    const limit = Math.max(1, Math.min(100, Math.floor(Number(req.query.limit || 50)) || 50));
+    const offset = Math.max(0, Math.floor(Number(req.query.cursor || 0)) || 0);
     const accountById = new Map(accounts.map((account) => [account.externalAccountId, account]));
     const [activityLists, publicationLists, watcherCheckpoints, profiles] = await Promise.all([
-      Promise.all(accounts.map((account) => store.listExternalActivitiesByAccount(account.externalAccountId, 250))),
+      Promise.all(accounts.map((account) => store.listExternalActivitiesByAccount(account.externalAccountId, 1000))),
       Promise.all(accounts.map((account) => store.listExternalPublications(account.externalAccountId))),
       Promise.all(accounts.map((account) => store.getExternalSyncCheckpoint(account.externalAccountId, 'watchers', account.externalAccountId))),
       Promise.all(accounts.map((account) => store.getExternalAccountProfile(account.externalAccountId)))
     ]);
     const publications = publicationLists.flat();
     const publicationById = new Map(publications.map((publication) => [publication.externalPublicationId, publication]));
-    const items = activityLists
+    const allItems = activityLists
       .flat()
       .filter((activity) => !activity.creatorIdentityId || activity.creatorIdentityId === creatorIdentityId)
-      .sort((left, right) => (right.occurredAt || right.firstSeenAt).localeCompare(left.occurredAt || left.firstSeenAt))
-      .slice(0, 500);
+      .filter((activity) => !requestedAccountId || activity.externalAccountId === requestedAccountId)
+      .filter((activity) => !requestedType || requestedType === 'all' || activity.type === requestedType)
+      .filter((activity) => (
+        requestedStatus === 'all'
+        || (requestedStatus === 'read' && Boolean(activity.readAt) && !activity.remoteDeletedAt)
+        || (requestedStatus === 'unread' && !activity.readAt && !activity.remoteDeletedAt)
+        || (requestedStatus === 'dismissed' && Boolean(activity.remoteDeletedAt))
+      ))
+      .sort((left, right) => (right.occurredAt || right.firstSeenAt).localeCompare(left.occurredAt || left.firstSeenAt));
+    const items = allItems.slice(offset, offset + limit);
     const assetIds = [...new Set(items.map((activity) => {
       const publication = activity.externalPublicationId
         ? publicationById.get(activity.externalPublicationId)
@@ -5390,7 +5492,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
             externalUrl: publication?.externalUrl
           } : undefined
         };
-      })
+      }),
+      total: allItems.length,
+      nextCursor: offset + limit < allItems.length ? String(offset + limit) : undefined
     });
   });
 
@@ -5414,6 +5518,46 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     await store.upsertExternalActivity(updated);
     const { rawPayload: _rawPayload, ...response } = updated;
     return res.json(response);
+  });
+
+  app.patch('/studio/integrations/activity/bulk', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const activityIds = new Set((Array.isArray(req.body?.activityIds) ? req.body.activityIds : [])
+      .filter((activityId: unknown): activityId is string => typeof activityId === 'string' && Boolean(activityId.trim())));
+    if (!activityIds.size) return res.status(400).json({ message: 'Choose at least one activity item.' });
+    const accounts = await store.listExternalAccountsByCreatorIdentity(creatorIdentityId);
+    const now = new Date().toISOString();
+    const read = req.body?.read !== false;
+    let updated = 0;
+    for (const account of accounts) {
+      const activities = await store.listExternalActivitiesByAccount(account.externalAccountId, 1000);
+      for (const activity of activities) {
+        if (!activityIds.has(activity.externalActivityId)) continue;
+        await store.upsertExternalActivity({ ...activity, readAt: read ? now : undefined, updatedAt: now });
+        updated += 1;
+      }
+    }
+    return res.json({ updated, read });
+  });
+
+  app.post('/studio/integrations/activity/accounts/:externalAccountId/:remoteActivityId/dismiss', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const activity = await store.getExternalActivityByRemoteId(account.externalAccountId, req.params.remoteActivityId);
+    if (!activity) return res.status(404).json({ message: 'Activity not found' });
+    try {
+      const updated = await dismissExternalActivity(store, config, account, activity, req.body?.stack === true);
+      const { rawPayload: _rawPayload, ...response } = updated;
+      return res.json(response);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to dismiss this DeviantArt notification.';
+      if (error instanceof ExternalProviderError && error.code === 'unsupported') return res.status(409).json({ message });
+      if (error instanceof ExternalProviderError && error.code === 'authentication_required') return res.status(409).json({ message: 'Reconnect DeviantArt before dismissing notifications.' });
+      if (error instanceof ExternalProviderError && error.code === 'rate_limited') return res.status(429).json({ message });
+      return res.status(502).json({ message });
+    }
   });
 
   app.get('/studio/integrations/deviantart/accounts/:externalAccountId/publications/:externalContentId/comments', requireAuth, async (req, res) => {

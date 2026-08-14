@@ -9,6 +9,8 @@ Ubeeq treats DeviantArt as one adapter behind integration-neutral activity, comm
 - Each activity poll queues `engagement_sync`. Engagement metadata is loaded in batches of 10 deviations, the maximum accepted by DeviantArt's metadata endpoint.
 - A changed comment count causes the work's complete comment thread to be reconciled. A changed favourite count causes the complete `whofaved` result to be reconciled.
 - Full account imports also queue activity and engagement jobs, so a manual/full sync includes catalogue metadata and current activity.
+- Full account imports reconcile gallery folders and continuous folder mappings. Remote membership is attributed to its mapping, so it can be refreshed without removing manually assigned Ubeeq collection works.
+- Publications absent from a complete catalogue scan are checked individually and retained with `missing`, `deleted`, or `restricted` lifecycle state. Remote metadata fingerprints distinguish remote edits, pending outbound updates, and conflicts.
 - Engagement has a mutable current record for fast reads and immutable snapshots written only when a metric changes.
 - Favourite removal and missing comments are soft state changes (`active: false` or `remoteDeletedAt`), rather than destructive deletes.
 
@@ -29,8 +31,12 @@ Hosted works are checked when first copied, when the descriptor changes, or at l
 
 The integration-neutral endpoints are:
 
-- `GET /studio/integrations/activity?creatorId=...` for a creator feed.
+- `GET /studio/integrations/activity?creatorId=...&type=...&status=...&accountId=...&cursor=...&limit=...` for a filtered, paginated creator feed.
 - `POST /studio/integrations/activity/sync` to refresh every connected account assigned to a creator.
 - `PATCH /studio/integrations/activity/accounts/:externalAccountId/:remoteActivityId` for local read/unread state.
+- `PATCH /studio/integrations/activity/bulk` for bulk local read/unread triage.
+- `POST /studio/integrations/activity/accounts/:externalAccountId/:remoteActivityId/dismiss` to dismiss a backed DeviantArt message while retaining its Ubeeq history.
 - `GET /studio/integrations/activity/works/:assetId` for a complete per-work aggregate.
 - `POST /studio/integrations/activity/works/:assetId/sync` to queue feedback and engagement refreshes.
+
+DeviantArt's public API supports posting comment replies but does not expose comment hide/delete operations or deletion of a published deviation. Ubeeq therefore retains removed comments as history, provides retryable replies, links moderation back to the deviation, and reports unsupported lifecycle operations instead of presenting a destructive action that cannot be verified.

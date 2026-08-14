@@ -14,6 +14,7 @@ type CollectionResponse = {
   externalCollections: StudioExternalCollection[];
   mappings: StudioExternalCollectionMapping[];
   collectionAssetIdsByCollection: Record<string, string[]>;
+  collectionMembershipSummaryByCollection?: Record<string, { total: number; manual: number; synchronized: number }>;
 };
 
 export function CollectionsView({ creators }: { creators: StudioCreator[] }) {
@@ -144,14 +145,15 @@ export function CollectionsView({ creators }: { creators: StudioCreator[] }) {
               .filter((mapping) => mapping.ubeeqCollectionId === collection.ubeeqCollectionId)
               .map((mapping) => data.externalCollections.find((source) => source.externalCollectionId === mapping.externalCollectionId))
               .filter((source): source is StudioExternalCollection => Boolean(source));
-            const manualWorkCount = (data.collectionAssetIdsByCollection[collection.ubeeqCollectionId] || []).length;
+            const membership = data.collectionMembershipSummaryByCollection?.[collection.ubeeqCollectionId];
+            const totalWorkCount = membership?.total ?? (data.collectionAssetIdsByCollection[collection.ubeeqCollectionId] || []).length;
             return (
               <article className="studio-collection-row" key={collection.ubeeqCollectionId}>
                 <div>
                   <strong>{collection.name}</strong>
                   <span>{linkedSources.length
                     ? `Mapped from DeviantArt: ${linkedSources.map((source) => source.name).join(', ')}`
-                    : `Independent Ubeeq ${collectionTypeFor(collection)}`}{manualWorkCount ? ` · ${manualWorkCount} manually added work${manualWorkCount === 1 ? '' : 's'}` : ''}</span>
+                    : `Independent Ubeeq ${collectionTypeFor(collection)}`}{totalWorkCount ? ` · ${totalWorkCount} work${totalWorkCount === 1 ? '' : 's'}${membership?.synchronized ? ` (${membership.synchronized} synchronized, ${membership.manual} manual)` : ''}` : ''}</span>
                 </div>
                 <div className="studio-collection-actions">
                   <span className="studio-collection-type">{collectionTypeFor(collection)}</span>

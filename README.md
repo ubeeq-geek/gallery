@@ -190,6 +190,8 @@ New Ubeeq-to-DeviantArt publications retain the Sta.sh `itemid` returned by `sta
 
 Outbound DeviantArt destinations default to **Published**, but can instead target a **Draft in Sta.sh** per work or in bulk from Works. Draft synchronization stops after `stash/submit`; changing that destination to Published later reuses the retained Sta.sh `itemid` and continues with `stash/publish`.
 
+Full account synchronization also reconciles DeviantArt gallery hierarchy and membership for continuous mappings, detects missing/deleted/restricted publications, and records metadata conflicts between queued Ubeeq changes and newer remote edits. The Activity inbox supports server-side filters, pagination, bulk read state, and remote DeviantArt message dismissal while retaining Ubeeq history. See [`docs/deviantart-activity-sync.md`](docs/deviantart-activity-sync.md) for the reconciliation and moderation boundaries.
+
 For local OAuth testing, `npm run dev:api` supplies the required local API environment and queues sync work in-process. Register the exact local callback URL with DeviantArt, then point the web app at the local API.
 
 ```bash

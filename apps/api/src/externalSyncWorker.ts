@@ -4,7 +4,7 @@ import { decryptExternalCredential, encryptExternalCredential } from './external
 import { readStoredUbeeqWorkImage, storeExternalContent } from './externalContentStorage';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 import { createExternalPlatformProvider, DEVIANTART_METADATA_BATCH_SIZE, ExternalProviderError, type ExternalContentPublish, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteActivity, type ExternalRemoteComment, type ExternalRemoteContent, type ExternalRemoteEngagement } from './externalPlatformProvider';
-import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalActivity, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, SpacePublication } from './domain';
+import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalActivity, ExternalCollection, ExternalCollectionMapping, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, SpacePublication, UbeeqCollection, UbeeqCollectionAsset } from './domain';
 import type { DataStore } from './store';
 
 const retryDelaySeconds = (attempt: number, configuredBase: number): number => {
@@ -285,7 +285,8 @@ const upsertContent = async (
   store: DataStore,
   account: ExternalAccount,
   remote: ExternalRemoteContent,
-  now: string
+  now: string,
+  origin: 'remote_scan' | 'outbound_verification' = 'remote_scan'
 ): Promise<{ asset: Asset; publication: ExternalPublication }> => {
   const primaryCreatorIdentityId = account.primaryCreatorIdentityId || account.creatorIdentityId;
   if (!primaryCreatorIdentityId) {
@@ -324,6 +325,20 @@ const upsertContent = async (
     asset = nextAsset;
   }
 
+  const nextRemoteMetadataFingerprint = remoteMetadataFingerprint(remote);
+  const remoteMetadataChanged = Boolean(
+    currentPublication?.remoteMetadataFingerprint
+    && currentPublication.remoteMetadataFingerprint !== nextRemoteMetadataFingerprint
+  );
+  const metadataSyncStatus: ExternalPublication['metadataSyncStatus'] = origin === 'outbound_verification'
+    ? 'in_sync'
+    : !currentPublication
+      ? 'in_sync'
+      : remoteMetadataChanged && currentPublication.metadataSyncStatus === 'local_update_pending'
+        ? 'conflict'
+        : remoteMetadataChanged
+          ? 'remote_changed'
+          : currentPublication.metadataSyncStatus || 'in_sync';
   const publication: ExternalPublication = {
     externalPublicationId: currentPublication?.externalPublicationId || randomUUID(),
     assetId: asset.assetId,
@@ -347,11 +362,17 @@ const upsertContent = async (
     publishedAt: remote.publishedAt,
     remoteCreatedAt: remote.remoteCreatedAt,
     remoteUpdatedAt: remote.remoteUpdatedAt,
-    remoteMetadataFingerprint: remoteMetadataFingerprint(remote),
+    remoteMetadataFingerprint: nextRemoteMetadataFingerprint,
     remoteContentFingerprint: remoteContentFingerprint(remote),
     lastSyncedAt: now,
     lastSeenAt: now,
-    syncStatus: 'active',
+    syncStatus: remote.remoteState === 'deleted' ? 'deleted' : remote.remoteState === 'restricted' ? 'restricted' : 'active',
+    metadataSyncStatus,
+    remoteChangeDetectedAt: remoteMetadataChanged && origin === 'remote_scan'
+      ? currentPublication?.remoteChangeDetectedAt || now
+      : origin === 'outbound_verification' ? undefined : currentPublication?.remoteChangeDetectedAt,
+    lastOutboundSyncAt: origin === 'outbound_verification' ? now : currentPublication?.lastOutboundSyncAt,
+    remoteStateReason: remote.remoteStateReason,
     // DeviantArt's read API currently omits newer AI label values. Retain any
     // values Ubeeq previously submitted while refreshing the fields DA reports,
     // including values nested inside the extended `submission` object.
@@ -653,6 +674,8 @@ const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: Ext
   if (typeof job.payload?.title === 'string') update.title = job.payload.title;
   if (typeof job.payload?.description === 'string') update.description = job.payload.description;
   if (Array.isArray(job.payload?.tags)) update.tags = job.payload.tags.filter((tag): tag is string => typeof tag === 'string');
+  if (Array.isArray(job.payload?.collectionExternalIds)) update.collectionExternalIds = job.payload.collectionExternalIds
+    .filter((collectionId): collectionId is string => typeof collectionId === 'string');
   if (typeof job.payload?.allowComments === 'boolean') update.allowComments = job.payload.allowComments;
   if (typeof job.payload?.isMature === 'boolean') update.isMature = job.payload.isMature;
   if (job.payload?.matureLevel === 'strict' || job.payload?.matureLevel === 'moderate') update.matureLevel = job.payload.matureLevel;
@@ -672,6 +695,25 @@ const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: Ext
   });
   const remote = await provider.getContent(session.accessToken, publication.externalContentId);
   const mismatches = externalContentUpdateMismatches(remote, update);
+  if (update.collectionExternalIds !== undefined) {
+    const desiredCollectionIds = new Set(update.collectionExternalIds);
+    const relevantCollectionIds = [...new Set([
+      ...(publication.externalCollectionIds || []),
+      ...update.collectionExternalIds
+    ])];
+    for (const collectionId of relevantCollectionIds) {
+      let cursor: string | undefined;
+      let found = false;
+      do {
+        const page = await provider.listCollectionContent(session.accessToken, collectionId, session.account.externalUsername, cursor);
+        found ||= page.items.some((item) => item.externalContentId === publication.externalContentId);
+        cursor = found ? undefined : page.nextCursor;
+      } while (cursor);
+      if (found !== desiredCollectionIds.has(collectionId)) {
+        mismatches.push(`gallery placement (${collectionId})`);
+      }
+    }
+  }
   if (mismatches.length) {
     throw new ExternalProviderError(
       `DeviantArt accepted the edit request, but read-back verification did not match: ${mismatches.join(', ')}`,
@@ -683,13 +725,14 @@ const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: Ext
   // incorrectly reverting to an unchecked/unknown presentation.
   const verifiedRemote: ExternalRemoteContent = {
     ...remote,
+    collectionExternalIds: update.collectionExternalIds ?? remote.collectionExternalIds,
     rawMetadata: {
       ...remote.rawMetadata,
       ...(update.isAiGenerated !== undefined ? { is_ai_generated: update.isAiGenerated } : {}),
       ...(update.noAi !== undefined ? { noai: update.noAi } : {})
     }
   };
-  await upsertContent(store, session.account, verifiedRemote, new Date().toISOString());
+  await upsertContent(store, session.account, verifiedRemote, new Date().toISOString(), 'outbound_verification');
   const followUpJob = await enqueueAccountScanIfIdle(store, config, session.account, job.externalSyncJobId, queue);
   await updateJob(store, job, {
     status: 'successful',
@@ -755,6 +798,7 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
     title: pendingPublication.externalTitle || asset.canonicalTitle || filename,
     description: pendingPublication.externalDescription ?? asset.canonicalDescription,
     tags,
+    collectionExternalIds: pendingPublication.externalCollectionIds,
     isMature,
     matureLevel,
     matureClassification,
@@ -836,13 +880,233 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
   await addLog(store, job.externalSyncJobId, 'info', 'Ubeeq work published to DeviantArt', { assetId: asset.assetId, externalContentId: published.externalContentId });
 };
 
+const reconcilePublicationLifecycle = async (
+  store: DataStore,
+  provider: ExternalPlatformProvider,
+  accessToken: string,
+  account: ExternalAccount,
+  seenExternalContentIds: Set<string>,
+  now: string
+): Promise<{ missing: number; deleted: number; restricted: number }> => {
+  const publications = (await store.listExternalPublications(account.externalAccountId))
+    .filter((publication) => (
+      publication.syncStatus === 'active'
+      || publication.syncStatus === 'missing'
+      || publication.syncStatus === 'restricted'
+    ));
+  let missing = 0;
+  let deleted = 0;
+  let restricted = 0;
+  for (const publication of publications) {
+    if (seenExternalContentIds.has(publication.externalContentId)) continue;
+    let syncStatus: ExternalPublication['syncStatus'] = 'missing';
+    let remoteStateReason = 'No longer present in the connected DeviantArt gallery';
+    try {
+      const remote = await provider.getContent(accessToken, publication.externalContentId);
+      if (remote.remoteState === 'deleted') {
+        syncStatus = 'deleted';
+        remoteStateReason = remote.remoteStateReason || 'Deleted on DeviantArt';
+      } else if (remote.remoteState === 'restricted') {
+        syncStatus = 'restricted';
+        remoteStateReason = remote.remoteStateReason || 'Restricted on DeviantArt';
+      }
+    } catch (error) {
+      if (!(error instanceof ExternalProviderError) || error.code !== 'invalid_response') throw error;
+      remoteStateReason = error.message;
+    }
+    if (syncStatus === 'deleted') deleted += 1;
+    else if (syncStatus === 'restricted') restricted += 1;
+    else missing += 1;
+    await store.updateExternalPublication({
+      ...publication,
+      syncStatus,
+      remoteStateReason,
+      lastSyncedAt: now,
+      updatedAt: now
+    });
+  }
+  await updateCheckpoint(store, account, 'publication.lifecycle', account.externalAccountId, now, [...seenExternalContentIds], {
+    missing,
+    deleted,
+    restricted,
+    checkedAt: now
+  });
+  return { missing, deleted, restricted };
+};
+
+const reconcileCollectionMappings = async (
+  store: DataStore,
+  provider: ExternalPlatformProvider,
+  accessToken: string,
+  account: ExternalAccount,
+  externalCollections: ExternalCollection[],
+  now: string
+): Promise<{ mappings: number; memberships: number; errors: number }> => {
+  const mappings = await store.listExternalCollectionMappings(account.externalAccountId);
+  const eligibleMappings = mappings.filter((mapping) => (
+    mapping.syncMode === 'continuous'
+    || (mapping.syncMode === 'initial_only' && !mapping.lastMembershipSyncAt)
+  ));
+  if (!eligibleMappings.length) return { mappings: 0, memberships: 0, errors: 0 };
+
+  const creatorIds = [...new Set([
+    ...(await store.listExternalAccountCreatorAssignments(account.externalAccountId)).map((assignment) => assignment.creatorIdentityId),
+    account.primaryCreatorIdentityId,
+    account.creatorIdentityId
+  ].filter((creatorId): creatorId is string => Boolean(creatorId)))];
+  const ubeeqCollections = (await Promise.all(creatorIds.map((creatorId) => store.listUbeeqCollectionsByCreatorIdentity(creatorId)))).flat();
+  const ubeeqCollectionById = new Map(ubeeqCollections.map((collection) => [collection.ubeeqCollectionId, collection]));
+  const externalCollectionById = new Map(externalCollections.map((collection) => [collection.externalCollectionId, collection]));
+  const mappingByExternalCollectionId = new Map(mappings.map((mapping) => [mapping.externalCollectionId, mapping]));
+  const publications = await store.listExternalPublications(account.externalAccountId);
+  const publicationByExternalContentId = new Map(publications.map((publication) => [publication.externalContentId, publication]));
+  const assetCache = new Map<string, Asset | null>();
+  const remoteAssetIdsByMapping = new Map<string, Set<string>>();
+  let errors = 0;
+
+  for (const mapping of eligibleMappings) {
+    const externalCollection = externalCollectionById.get(mapping.externalCollectionId);
+    const targetCollection = ubeeqCollectionById.get(mapping.ubeeqCollectionId);
+    if (!externalCollection || externalCollection.syncStatus === 'missing' || !targetCollection) {
+      errors += 1;
+      await store.updateExternalCollectionMapping({
+        ...mapping,
+        lastMembershipError: !targetCollection ? 'Mapped Ubeeq collection is unavailable' : 'DeviantArt gallery folder is unavailable',
+        updatedAt: now
+      });
+      continue;
+    }
+    try {
+      const remoteContentIds: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await provider.listCollectionContent(
+          accessToken,
+          externalCollection.externalCollectionExternalId,
+          account.externalUsername,
+          cursor
+        );
+        remoteContentIds.push(...page.items.map((item) => item.externalContentId));
+        cursor = page.nextCursor;
+      } while (cursor);
+      const assetIds = new Set<string>();
+      for (const externalContentId of remoteContentIds) {
+        const publication = publicationByExternalContentId.get(externalContentId);
+        if (!publication) continue;
+        let asset = assetCache.get(publication.assetId);
+        if (asset === undefined) {
+          asset = await store.getAsset(publication.assetId);
+          assetCache.set(publication.assetId, asset);
+        }
+        if (asset?.creatorIdentityId === targetCollection.creatorIdentityId) assetIds.add(publication.assetId);
+      }
+      remoteAssetIdsByMapping.set(mapping.externalCollectionMappingId, assetIds);
+      const membershipFingerprint = fingerprint([...remoteContentIds].sort());
+      await store.updateExternalCollectionMapping({
+        ...mapping,
+        lastMembershipSyncAt: now,
+        lastMembershipFingerprint: membershipFingerprint,
+        lastMembershipCount: assetIds.size,
+        lastMembershipError: undefined,
+        updatedAt: now
+      });
+      await updateCheckpoint(store, account, 'gallery.membership', mapping.externalCollectionMappingId, now, remoteContentIds, {
+        mappedAssetCount: assetIds.size,
+        remoteContentCount: remoteContentIds.length
+      });
+
+      const parentExternalCollection = externalCollection.parentExternalCollectionExternalId
+        ? externalCollections.find((candidate) => candidate.externalCollectionExternalId === externalCollection.parentExternalCollectionExternalId)
+        : undefined;
+      const parentMapping = parentExternalCollection
+        ? mappingByExternalCollectionId.get(parentExternalCollection.externalCollectionId)
+        : undefined;
+      const parentUbeeqCollectionId = parentMapping?.ubeeqCollectionId === targetCollection.ubeeqCollectionId
+        ? undefined
+        : parentMapping?.ubeeqCollectionId;
+      if (
+        targetCollection.parentUbeeqCollectionId !== parentUbeeqCollectionId
+        || (externalCollection.position !== undefined && targetCollection.position !== externalCollection.position)
+      ) {
+        await store.updateUbeeqCollection({
+          ...targetCollection,
+          parentUbeeqCollectionId,
+          position: externalCollection.position ?? targetCollection.position,
+          updatedAt: now
+        });
+      }
+    } catch (error) {
+      if (error instanceof ExternalProviderError && (
+        error.code === 'authentication_required'
+        || error.code === 'rate_limited'
+        || error.code === 'temporarily_unavailable'
+      )) throw error;
+      errors += 1;
+      await store.updateExternalCollectionMapping({
+        ...mapping,
+        lastMembershipError: error instanceof Error ? error.message : 'Unable to synchronize gallery membership',
+        updatedAt: now
+      });
+    }
+  }
+
+  const eligibleMappingIds = new Set(remoteAssetIdsByMapping.keys());
+  const targetCollectionIds = [...new Set(eligibleMappings
+    .filter((mapping) => eligibleMappingIds.has(mapping.externalCollectionMappingId))
+    .map((mapping) => mapping.ubeeqCollectionId))];
+  let memberships = 0;
+  for (const ubeeqCollectionId of targetCollectionIds) {
+    const collection = ubeeqCollectionById.get(ubeeqCollectionId);
+    if (!collection) continue;
+    const targetMappings = eligibleMappings.filter((mapping) => (
+      mapping.ubeeqCollectionId === ubeeqCollectionId
+      && eligibleMappingIds.has(mapping.externalCollectionMappingId)
+    ));
+    const targetMappingIds = new Set(targetMappings.map((mapping) => mapping.externalCollectionMappingId));
+    const existing = await store.listUbeeqCollectionAssets(ubeeqCollectionId);
+    const byAssetId = new Map<string, UbeeqCollectionAsset>();
+    for (const item of existing) {
+      const remainingMappingIds = (item.externalCollectionMappingIds || []).filter((mappingId) => !targetMappingIds.has(mappingId));
+      const manuallyAssigned = item.manuallyAssigned ?? !(item.externalCollectionMappingIds || []).length;
+      if (manuallyAssigned || remainingMappingIds.length) {
+        byAssetId.set(item.assetId, { ...item, manuallyAssigned, externalCollectionMappingIds: remainingMappingIds });
+      }
+    }
+    for (const mapping of targetMappings) {
+      for (const assetId of remoteAssetIdsByMapping.get(mapping.externalCollectionMappingId) || []) {
+        const current = byAssetId.get(assetId) || existing.find((item) => item.assetId === assetId);
+        byAssetId.set(assetId, {
+          ubeeqCollectionId,
+          assetId,
+          userId: collection.userId,
+          creatorIdentityId: collection.creatorIdentityId,
+          manuallyAssigned: current?.manuallyAssigned ?? false,
+          externalCollectionMappingIds: [...new Set([
+            ...(current?.externalCollectionMappingIds || []).filter((mappingId) => !targetMappingIds.has(mappingId)),
+            mapping.externalCollectionMappingId
+          ])],
+          createdAt: current?.createdAt || now,
+          updatedAt: now
+        });
+      }
+    }
+    const nextAssets = [...byAssetId.values()].filter((item) => item.manuallyAssigned || (item.externalCollectionMappingIds || []).length);
+    await store.replaceUbeeqCollectionAssets(ubeeqCollectionId, nextAssets);
+    memberships += nextAssets.filter((item) => (item.externalCollectionMappingIds || []).some((mappingId) => targetMappingIds.has(mappingId))).length;
+  }
+  return { mappings: remoteAssetIdsByMapping.size, memberships, errors };
+};
+
 const executeAccountImport = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount, queue?: ExternalSyncQueue): Promise<void> => {
   const provider = await providerForAccount(store, config, account);
   const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
   const now = new Date().toISOString();
   const collections = await provider.listCollections(session.accessToken, session.account.externalUsername);
+  const existingCollections = await store.listExternalCollections(account.externalAccountId);
+  const seenExternalCollectionIds = new Set<string>();
   for (const collection of collections) {
-    const existing = (await store.listExternalCollections(account.externalAccountId))
+    seenExternalCollectionIds.add(collection.externalCollectionId);
+    const existing = existingCollections
       .find((item) => item.externalCollectionExternalId === collection.externalCollectionId);
     const record = {
       externalCollectionId: existing?.externalCollectionId || randomUUID(),
@@ -850,8 +1114,12 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
       platform: account.platform,
       externalCollectionExternalId: collection.externalCollectionId,
       name: collection.name,
+      description: collection.description,
       parentExternalCollectionExternalId: collection.parentExternalCollectionId,
       position: collection.position,
+      remoteSize: collection.size,
+      syncStatus: 'active' as const,
+      lastSeenAt: now,
       lastSyncedAt: now,
       createdAt: existing?.createdAt || now,
       updatedAt: now
@@ -859,10 +1127,21 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     if (existing) await store.updateExternalCollection(record);
     else await store.createExternalCollection(record);
   }
+  for (const collection of existingCollections) {
+    if (!seenExternalCollectionIds.has(collection.externalCollectionExternalId) && collection.syncStatus !== 'missing') {
+      await store.updateExternalCollection({
+        ...collection,
+        syncStatus: 'missing',
+        lastSyncedAt: now,
+        updatedAt: now
+      });
+    }
+  }
 
   let cursor: string | undefined;
   let discovered = 0;
   let synchronized = 0;
+  const seenExternalContentIds = new Set<string>();
   let currentJob = job;
   const shouldSyncContent = job.payload?.syncContent === true
     || session.account.initialContentSyncRequested === true
@@ -875,6 +1154,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     });
     discovered += page.items.length;
     for (const item of page.items) {
+      seenExternalContentIds.add(item.externalContentId);
       const hasPublishedSettings = metadataBoolean(item.rawMetadata, 'is_mature', 'isMature') !== undefined
         && metadataBoolean(item.rawMetadata, 'allows_comments', 'allow_comments', 'allowComments') !== undefined
         && metadataBoolean(item.rawMetadata, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai') !== undefined
@@ -902,6 +1182,24 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
       progress: { discovered, synchronized, remaining: cursor ? 1 : 0 }
     });
   } while (cursor);
+
+  const lifecycle = await reconcilePublicationLifecycle(
+    store,
+    provider,
+    session.accessToken,
+    session.account,
+    seenExternalContentIds,
+    now
+  );
+  const refreshedCollections = await store.listExternalCollections(account.externalAccountId);
+  const galleryMappings = await reconcileCollectionMappings(
+    store,
+    provider,
+    session.accessToken,
+    session.account,
+    refreshedCollections,
+    now
+  );
 
   const currentAccount = await store.getExternalAccount(account.externalAccountId);
   if (currentAccount?.connectionStatus === 'disabled') {
@@ -936,6 +1234,12 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     discovered,
     synchronized,
     collections: collections.length,
+    galleryMappings: galleryMappings.mappings,
+    galleryMemberships: galleryMappings.memberships,
+    galleryMappingErrors: galleryMappings.errors,
+    missingPublications: lifecycle.missing,
+    deletedPublications: lifecycle.deleted,
+    restrictedPublications: lifecycle.restricted,
     activityJobId: activityJob.externalSyncJobId,
     engagementJobId: engagementJob.externalSyncJobId
   });
@@ -1000,8 +1304,9 @@ const upsertActivity = async (
     remoteActivityId: remote.remoteActivityId,
     remoteObjectType: remote.externalCommentId ? 'comment' : remote.externalContentId ? 'deviation' : 'message',
     remoteObjectId: remote.externalCommentId || remote.externalContentId || remote.sourceMessageId,
+    remoteMessageId: remote.remoteMessageId || existing?.remoteMessageId,
     remoteParentId: remote.parentExternalCommentId,
-    remoteStackId: remote.stackId,
+    remoteStackId: remote.stackId || existing?.remoteStackId,
     externalActorId: remote.actorId,
     externalActorName: remote.actorName,
     externalActorAvatarUrl: remote.actorAvatarUrl,
@@ -1011,6 +1316,7 @@ const upsertActivity = async (
     lastSeenAt: now,
     seenAt: existing?.seenAt || (remote.isNew === false ? now : undefined),
     readAt: existing?.readAt,
+    remoteDeletedAt: existing?.remoteDeletedAt,
     rawPayload: remote.rawPayload,
     createdAt: existing?.createdAt || now,
     updatedAt: now
@@ -1084,6 +1390,10 @@ const reconcileCommentsForPublication = async (
   for (const comment of existing) {
     if (!seen.has(comment.externalCommentExternalId) && !comment.remoteDeletedAt) {
       await store.updateExternalComment({ ...comment, remoteDeletedAt: now, lastSyncedAt: now });
+      const activity = await store.getExternalActivityByRemoteId(account.externalAccountId, `comment:${comment.externalCommentExternalId}`);
+      if (activity) {
+        await store.upsertExternalActivity({ ...activity, remoteDeletedAt: now, updatedAt: now });
+      }
     }
   }
   await updateCheckpoint(store, account, 'comments', publication.externalPublicationId, now, [...seen]);
@@ -1493,6 +1803,42 @@ export const replyToExternalComment = async (
     rawPayload: remote.rawPayload || {}
   }, publication, now, 'outbound');
   return comment;
+};
+
+export const dismissExternalActivity = async (
+  store: DataStore,
+  config: AppConfig,
+  account: ExternalAccount,
+  activity: ExternalActivity,
+  dismissStack = false
+): Promise<ExternalActivity> => {
+  const messageId = dismissStack ? undefined : activity.remoteMessageId;
+  const stackId = dismissStack ? activity.remoteStackId : undefined;
+  if (!messageId && !stackId) {
+    throw new ExternalProviderError('This activity is not backed by a dismissible DeviantArt notification', 'unsupported');
+  }
+  const provider = await providerForAccount(store, config, account);
+  const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
+  await provider.deleteMessage(session.accessToken, { messageId, stackId });
+  const now = new Date().toISOString();
+  const updated: ExternalActivity = {
+    ...activity,
+    readAt: activity.readAt || now,
+    remoteDeletedAt: now,
+    updatedAt: now
+  };
+  await store.upsertExternalActivity(updated);
+  if (dismissStack && stackId) {
+    const stackActivities = (await store.listExternalActivitiesByAccount(account.externalAccountId, 1000))
+      .filter((candidate) => candidate.remoteStackId === stackId && candidate.externalActivityId !== activity.externalActivityId);
+    await Promise.all(stackActivities.map((candidate) => store.upsertExternalActivity({
+      ...candidate,
+      readAt: candidate.readAt || now,
+      remoteDeletedAt: now,
+      updatedAt: now
+    })));
+  }
+  return updated;
 };
 
 export const processExternalSyncJob = async (store: DataStore, config: AppConfig, externalSyncJobId: string, queue?: ExternalSyncQueue): Promise<void> => {

@@ -243,6 +243,7 @@ describe('API contract', () => {
       type: 'favourite',
       direction: 'inbound',
       remoteActivityId: 'remote-activity-da',
+      remoteMessageId: 'message-da',
       externalActorName: 'art-fan',
       occurredAt: now,
       firstSeenAt: now,
@@ -302,6 +303,29 @@ describe('API contract', () => {
         thumbnailUrl: 'https://images.example.test/imported-work-large.jpg',
         externalUrl: 'https://www.deviantart.com/da-user/art/imported-work-123'
       }
+    });
+    expect(activityResponse.body.total).toBe(1);
+    expect(activityResponse.body.nextCursor).toBeUndefined();
+
+    const bulkReadResponse = await request(app)
+      .patch('/studio/integrations/activity/bulk')
+      .set('x-user-id', 'u-da')
+      .send({ creatorId: 'creator-da', activityIds: ['activity-da'], read: true });
+    expect(bulkReadResponse.status).toBe(200);
+    expect(bulkReadResponse.body).toEqual({ updated: 1, read: true });
+    const readActivityResponse = await request(app)
+      .get('/studio/integrations/activity?creatorId=creator-da&status=read&limit=1')
+      .set('x-user-id', 'u-da');
+    expect(readActivityResponse.body.items).toHaveLength(1);
+    expect(readActivityResponse.body.items[0].readAt).toEqual(expect.any(String));
+
+    const workActivityResponse = await request(app)
+      .get('/studio/integrations/activity/works/asset-da')
+      .set('x-user-id', 'u-da');
+    expect(workActivityResponse.status).toBe(200);
+    expect(workActivityResponse.body.destinations[0].capabilities).toMatchObject({
+      reply: true,
+      remoteCommentModeration: false
     });
 
     const metadataResponse = await request(app)

@@ -364,6 +364,7 @@ describe('external credentials', () => {
     await provider.updateContent('access-token', 'deviation-1', {
       title: 'Updated title',
       tags: ['history', 'airship'],
+      collectionExternalIds: ['gallery-1', 'gallery-2'],
       allowComments: false,
       isMature: true,
       matureLevel: 'moderate',
@@ -380,12 +381,58 @@ describe('external credentials', () => {
     expect(body.get('title')).toBe('Updated title');
     expect(body.has('description')).toBe(false);
     expect(body.getAll('tags[]')).toEqual(['history', 'airship']);
+    expect(body.getAll('galleryids[]')).toEqual(['gallery-1', 'gallery-2']);
     expect(body.get('allow_comments')).toBe('false');
     expect(body.get('is_mature')).toBe('true');
     expect(body.get('mature_level')).toBe('moderate');
     expect(body.getAll('mature_classification[]')).toEqual(['ideology']);
     expect(body.get('is_ai_generated')).toBe('true');
     expect(body.get('noai')).toBe('true');
+    fetchSpy.mockRestore();
+  });
+
+  it('normalizes gallery hierarchy and dismisses supported DeviantArt messages', async () => {
+    const provider = new DeviantArtProvider({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://fanadmin.top:4000/integrations/deviantart/callback'
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          results: [{ folderid: 'gallery-1', parent: 'gallery-root', name: 'Portfolio', description: 'Selected work', size: 2 }],
+          has_more: false,
+          next_offset: null
+        }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ results: [{ deviationid: 'deviation-1', title: 'Work', is_deleted: false }], has_more: false, next_offset: null }),
+        headers: { get: () => null }
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+        headers: { get: () => null }
+      } as unknown as Response);
+
+    const collections = await provider.listCollections('access-token', 'owner');
+    const contents = await provider.listCollectionContent('access-token', 'gallery-1', 'owner');
+    await provider.deleteMessage('access-token', { messageId: 'message-1' });
+
+    expect(collections[0]).toMatchObject({
+      externalCollectionId: 'gallery-1',
+      parentExternalCollectionId: 'gallery-root',
+      description: 'Selected work',
+      size: 2
+    });
+    expect(contents.items[0]).toMatchObject({ externalContentId: 'deviation-1', remoteState: 'active' });
+    const folderUrl = new URL(String(fetchSpy.mock.calls[0][0]));
+    expect(folderUrl.searchParams.get('calculate_size')).toBe('true');
+    const messageRequest = fetchSpy.mock.calls[2][1] as RequestInit;
+    expect(new URLSearchParams(String(messageRequest.body)).get('messageid')).toBe('message-1');
     fetchSpy.mockRestore();
   });
 

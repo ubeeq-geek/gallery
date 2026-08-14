@@ -75,8 +75,10 @@ export interface ExternalRemoteDownload {
 export interface ExternalRemoteCollection {
   externalCollectionId: string;
   name: string;
+  description?: string;
   parentExternalCollectionId?: string;
   position?: number;
+  size?: number;
   rawMetadata: Record<string, unknown>;
 }
 
@@ -91,6 +93,8 @@ export interface ExternalRemoteContent {
   remoteCreatedAt?: string;
   remoteUpdatedAt?: string;
   collectionExternalIds: string[];
+  remoteState?: 'active' | 'deleted' | 'restricted';
+  remoteStateReason?: string;
   content?: {
     sourceUrl: string;
     contentType?: string;
@@ -115,6 +119,7 @@ export interface ExternalContentUpdate {
   title?: string;
   description?: string;
   tags?: string[];
+  collectionExternalIds?: string[];
   allowComments?: boolean;
   isMature?: boolean;
   matureLevel?: 'strict' | 'moderate';
@@ -135,6 +140,7 @@ export interface ExternalContentPublish {
   title: string;
   description?: string;
   tags?: string[];
+  collectionExternalIds?: string[];
   isMature?: boolean;
   matureLevel?: 'strict' | 'moderate';
   matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
@@ -183,6 +189,7 @@ export interface ExternalRemoteFavourite {
 export interface ExternalRemoteActivity {
   remoteActivityId: string;
   sourceMessageId: string;
+  remoteMessageId?: string;
   type: ExternalActivityType;
   occurredAt?: string;
   stackId?: string;
@@ -231,11 +238,13 @@ export interface ExternalPlatformProvider {
   getOriginalDownload(accessToken: string, externalContentId: string): Promise<ExternalRemoteDownload>;
   getEngagement(accessToken: string, externalContentIds: string[]): Promise<ExternalRemoteEngagement[]>;
   listCollections(accessToken: string, username: string): Promise<ExternalRemoteCollection[]>;
+  listCollectionContent(accessToken: string, externalCollectionId: string, username: string, cursor?: string): Promise<ExternalContentPage>;
   listComments(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteComment[]; nextCursor?: string }>;
   listFeedback(accessToken: string, type: 'comments' | 'replies' | 'activity', cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }>;
   listMessages(accessToken: string, source: 'feed' | 'mentions', cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }>;
   listMessageStack(accessToken: string, source: 'feedback' | 'mentions', stackId: string, cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }>;
   listWatchers(accessToken: string, username: string, cursor?: string): Promise<{ items: ExternalRemoteWatcher[]; nextCursor?: string; truncated?: boolean }>;
+  deleteMessage(accessToken: string, message: { messageId?: string; stackId?: string; folderId?: string }): Promise<void>;
   listFavourites(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteFavourite[]; nextCursor?: string }>;
   postComment(accessToken: string, externalContentId: string, body: string, parentExternalCommentId?: string): Promise<ExternalRemoteComment>;
   updateContent(accessToken: string, externalContentId: string, update: ExternalContentUpdate, options?: ExternalContentUpdateOptions): Promise<void>;
@@ -334,6 +343,10 @@ const normalizeContent = (value: unknown): ExternalRemoteContent | null => {
   ].filter((item, index, values): item is string => Boolean(item) && values.indexOf(item) === index);
   const content = asRecord(item.content);
   const sourceUrl = asString(content.src);
+  const isDeleted = asBoolean(item.is_deleted) === true;
+  const isBlocked = asBoolean(item.is_blocked) === true;
+  const tierAccess = asString(item.tier_access);
+  const remoteState = isDeleted ? 'deleted' : (isBlocked || tierAccess === 'locked' || tierAccess === 'locked-subscribed') ? 'restricted' : 'active';
   return {
     externalContentId,
     externalUrl: asString(item.url),
@@ -345,6 +358,9 @@ const normalizeContent = (value: unknown): ExternalRemoteContent | null => {
     remoteCreatedAt: asIsoDate(item.published_time) || asIsoDate(item.created_time),
     remoteUpdatedAt: asIsoDate(item.updated_time) || asIsoDate(item.updated_at),
     collectionExternalIds: galleryIds,
+    remoteState,
+    ...(remoteState === 'deleted' ? { remoteStateReason: 'Deleted on DeviantArt' } : {}),
+    ...(remoteState === 'restricted' ? { remoteStateReason: isBlocked ? 'Blocked or unavailable to this DeviantArt account' : 'Restricted to a DeviantArt tier' } : {}),
     ...(sourceUrl ? {
       content: {
         sourceUrl,
@@ -416,7 +432,8 @@ const normalizeRemoteActivity = (
   forceType?: ExternalActivityType
 ): ExternalRemoteActivity | null => {
   const item = asRecord(value);
-  const sourceMessageId = asString(item.messageid) || asString(item.id);
+  const remoteMessageId = asString(item.messageid);
+  const sourceMessageId = remoteMessageId || asString(item.id);
   if (!sourceMessageId) return null;
   const subject = asRecord(item.subject);
   const deviation = Object.keys(asRecord(item.deviation)).length ? asRecord(item.deviation) : asRecord(subject.deviation);
@@ -440,6 +457,7 @@ const normalizeRemoteActivity = (
   return {
     remoteActivityId,
     sourceMessageId,
+    ...(remoteMessageId ? { remoteMessageId } : {}),
     type: forceType || feedbackActivityType(requestedType, providerType, comment || undefined),
     occurredAt: asIsoDate(item.ts) || comment?.createdAt || asIsoDate(status.ts),
     stackId: asString(item.stackid),
@@ -654,6 +672,19 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
 
   async getContent(accessToken: string, externalContentId: string): Promise<ExternalRemoteContent> {
     const summary = await this.request(`/deviation/${encodeURIComponent(externalContentId)}`, accessToken, { with_session: 'true' });
+    // Deleted and access-restricted deviations frequently reject the extended
+    // metadata request even though the summary endpoint still identifies the
+    // lifecycle state. Preserve that state instead of turning it into a generic
+    // provider failure during reconciliation.
+    if (
+      asBoolean(summary.is_deleted) === true
+      || asBoolean(summary.is_blocked) === true
+      || ['locked', 'locked-subscribed'].includes(asString(summary.tier_access) || '')
+    ) {
+      const unavailableContent = normalizeContent({ ...summary, deviationid: externalContentId });
+      if (!unavailableContent) throw new ExternalProviderError('DeviantArt deviation response was incomplete', 'invalid_response');
+      return unavailableContent;
+    }
     const metadataPayload = await this.request('/deviation/metadata', accessToken, {
       'deviationids[0]': externalContentId,
       ext_submission: 'true',
@@ -789,19 +820,22 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     while (hasMore) {
       const payload = await this.request('/gallery/folders', accessToken, {
         username,
+        calculate_size: 'true',
         offset: String(offset),
-        limit: '24'
+        limit: '50'
       });
       rawItems(payload).forEach((value, index) => {
         const item = asRecord(value);
         const externalCollectionId = asString(item.folderid) || asString(item.uuid) || asString(item.id);
         if (!externalCollectionId) return;
-        const parentExternalCollectionId = asString(item.parent_folderid) || asString(item.parent_id);
+        const parentExternalCollectionId = asString(item.parent) || asString(item.parent_folderid) || asString(item.parent_id);
         collections.push({
           externalCollectionId,
           name: asString(item.name) || 'Untitled DeviantArt folder',
+          description: asString(item.description),
           ...(parentExternalCollectionId ? { parentExternalCollectionId } : {}),
           position: asNumber(item.position) || offset + index,
+          size: asNumber(item.size),
           rawMetadata: item
         });
       });
@@ -810,6 +844,22 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
       offset = nextOffset === undefined ? offset : nextOffset;
     }
     return collections;
+  }
+
+  async listCollectionContent(accessToken: string, externalCollectionId: string, username: string, cursor?: string): Promise<ExternalContentPage> {
+    const offset = Number(cursor || '0');
+    const payload = await this.request(`/gallery/${encodeURIComponent(externalCollectionId)}`, accessToken, {
+      username,
+      offset: Number.isFinite(offset) ? String(offset) : '0',
+      limit: '24',
+      with_session: 'true'
+    });
+    const items = rawItems(payload).map(normalizeContent).filter((item): item is ExternalRemoteContent => Boolean(item));
+    const nextOffset = asNumber(payload.next_offset);
+    return {
+      items,
+      nextCursor: Boolean(payload.has_more) && nextOffset !== undefined && nextOffset > offset ? String(nextOffset) : undefined
+    };
   }
 
   async listComments(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteComment[]; nextCursor?: string }> {
@@ -909,6 +959,20 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     };
   }
 
+  async deleteMessage(accessToken: string, message: { messageId?: string; stackId?: string; folderId?: string }): Promise<void> {
+    if (!message.messageId && !message.stackId) {
+      throw new ExternalProviderError('A DeviantArt message or stack ID is required', 'invalid_response');
+    }
+    const form = new URLSearchParams();
+    if (message.folderId) form.set('folderid', message.folderId);
+    if (message.messageId) form.set('messageid', message.messageId);
+    if (message.stackId) form.set('stackid', message.stackId);
+    const payload = await this.requestForm('/messages/delete', accessToken, form);
+    if (payload.success === false) {
+      throw new ExternalProviderError(asString(payload.error_description) || 'DeviantArt did not dismiss the notification', 'invalid_response');
+    }
+  }
+
   async listFavourites(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteFavourite[]; nextCursor?: string }> {
     const payload = await this.request('/deviation/whofaved', accessToken, {
       deviationid: externalContentId,
@@ -974,6 +1038,7 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
       await this.requestMultipart('/stash/submit', accessToken, stashMetadata);
     }
     if (update.tags !== undefined) update.tags.forEach((tag) => form.append('tags[]', tag));
+    if (update.collectionExternalIds !== undefined) update.collectionExternalIds.forEach((collectionId) => form.append('galleryids[]', collectionId));
     if (update.allowComments !== undefined) form.set('allow_comments', String(update.allowComments));
     if (update.isMature !== undefined) form.set('is_mature', String(update.isMature));
     if (update.isMature && update.matureLevel) form.set('mature_level', update.matureLevel);
@@ -1033,6 +1098,7 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     if (content.matureClassification) content.matureClassification.forEach((classification) => publish.append('mature_classification[]', classification));
     if (content.allowComments !== undefined) publish.set('allow_comments', String(content.allowComments));
     if (content.tags) content.tags.forEach((tag) => publish.append('tags[]', tag));
+    if (content.collectionExternalIds) content.collectionExternalIds.forEach((collectionId) => publish.append('galleryids[]', collectionId));
     if (content.isAiGenerated !== undefined) publish.set('is_ai_generated', String(content.isAiGenerated));
     if (content.noAi !== undefined) publish.set('noai', String(content.noAi));
     const published = await this.requestForm('/stash/publish', accessToken, publish);

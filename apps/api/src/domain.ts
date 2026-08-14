@@ -736,6 +736,10 @@ export interface ExternalPublication {
   lastSyncedAt?: string;
   lastSeenAt?: string;
   syncStatus: ExternalPublicationSyncStatus;
+  metadataSyncStatus?: 'in_sync' | 'remote_changed' | 'local_update_pending' | 'conflict';
+  remoteChangeDetectedAt?: string;
+  lastOutboundSyncAt?: string;
+  remoteStateReason?: string;
   rawMetadataJson: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -772,8 +776,12 @@ export interface ExternalCollection {
   platform: ExternalPlatform;
   externalCollectionExternalId: string;
   name: string;
+  description?: string;
   parentExternalCollectionExternalId?: string;
   position?: number;
+  remoteSize?: number;
+  syncStatus?: 'active' | 'missing';
+  lastSeenAt?: string;
   lastSyncedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -798,6 +806,8 @@ export interface UbeeqCollectionAsset {
   assetId: string;
   userId: string;
   creatorIdentityId: string;
+  manuallyAssigned?: boolean;
+  externalCollectionMappingIds?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -808,6 +818,10 @@ export interface ExternalCollectionMapping {
   externalCollectionId: string;
   ubeeqCollectionId: string;
   syncMode: ExternalCollectionSyncMode;
+  lastMembershipSyncAt?: string;
+  lastMembershipFingerprint?: string;
+  lastMembershipCount?: number;
+  lastMembershipError?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -901,6 +915,7 @@ export interface ExternalActivity {
   remoteActivityId: string;
   remoteObjectType?: string;
   remoteObjectId?: string;
+  remoteMessageId?: string;
   remoteParentId?: string;
   remoteStackId?: string;
   externalActorId?: string;
@@ -919,7 +934,7 @@ export interface ExternalActivity {
   updatedAt: string;
 }
 
-export type ExternalSyncResourceType = 'feedback.comments' | 'feedback.replies' | 'feedback.activity' | 'messages.feed' | 'messages.mentions' | 'watchers' | 'comments' | 'favourites' | 'engagement' | 'catalogue';
+export type ExternalSyncResourceType = 'feedback.comments' | 'feedback.replies' | 'feedback.activity' | 'messages.feed' | 'messages.mentions' | 'watchers' | 'comments' | 'favourites' | 'engagement' | 'catalogue' | 'gallery.membership' | 'publication.lifecycle';
 
 export interface ExternalSyncCheckpoint {
   externalAccountId: string;

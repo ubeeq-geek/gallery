@@ -343,8 +343,8 @@ describe('external metadata update verification', () => {
     const activities = await store.listExternalActivitiesByAccount('account-audience', 100);
     expect(activities).toEqual(expect.arrayContaining([
       expect.objectContaining({ remoteActivityId: 'message:feed-message-1', type: 'activity', externalActorName: 'feed-user' }),
-      expect.objectContaining({ remoteActivityId: 'message:mention-1', type: 'mention', remoteStackId: 'mention-stack', externalPublicationId: 'publication-audience' }),
-      expect.objectContaining({ remoteActivityId: 'message:mention-2', type: 'mention', remoteStackId: 'mention-stack', externalPublicationId: 'publication-audience' }),
+      expect.objectContaining({ remoteActivityId: 'message:mention-1', remoteMessageId: 'mention-1', type: 'mention', remoteStackId: 'mention-stack', externalPublicationId: 'publication-audience' }),
+      expect.objectContaining({ remoteActivityId: 'message:mention-2', remoteMessageId: 'mention-2', type: 'mention', remoteStackId: 'mention-stack', externalPublicationId: 'publication-audience' }),
       expect.objectContaining({ type: 'watch', externalActorName: 'charlie' }),
       expect.objectContaining({ type: 'unwatch', externalActorName: 'beta' })
     ]));
@@ -666,6 +666,203 @@ describe('external metadata update verification', () => {
     expect(await store.getExternalSyncJob('engagement-job-batch')).toMatchObject({
       status: 'successful',
       progress: { discovered: 11, synchronized: 11, remaining: 0 }
+    });
+    jest.restoreAllMocks();
+  });
+
+  it('reconciles remote gallery membership and marks deleted publications during account import', async () => {
+    const store = new InMemoryStore();
+    const now = new Date().toISOString();
+    const encryptionKey = 'worker-gallery-lifecycle-test-key';
+    await store.createExternalPlatformCredential({
+      externalPlatformCredentialId: 'credential-gallery',
+      userId: 'user-1',
+      platform: 'deviantart',
+      clientId: 'client-id',
+      clientSecretEncrypted: encryptExternalCredential('client-secret', encryptionKey),
+      redirectUri: 'http://localhost:4000/integrations/deviantart/callback',
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createExternalAccount({
+      externalAccountId: 'account-gallery',
+      userId: 'user-1',
+      creatorIdentityId: 'creator-1',
+      primaryCreatorIdentityId: 'creator-1',
+      externalPlatformCredentialId: 'credential-gallery',
+      platform: 'deviantart',
+      externalUserId: 'owner-1',
+      externalUsername: 'owner',
+      accessTokenEncrypted: encryptExternalCredential('access-token', encryptionKey),
+      connectionStatus: 'connected',
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createUbeeqCollection({
+      ubeeqCollectionId: 'collection-local',
+      userId: 'user-1',
+      creatorIdentityId: 'creator-1',
+      name: 'Portfolio',
+      position: 0,
+      visibility: 'private',
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createExternalCollection({
+      externalCollectionId: 'external-gallery-local',
+      externalAccountId: 'account-gallery',
+      platform: 'deviantart',
+      externalCollectionExternalId: 'folder-remote',
+      name: 'Old Portfolio',
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createExternalCollectionMapping({
+      externalCollectionMappingId: 'mapping-gallery',
+      externalAccountId: 'account-gallery',
+      externalCollectionId: 'external-gallery-local',
+      ubeeqCollectionId: 'collection-local',
+      syncMode: 'continuous',
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createAsset({
+      assetId: 'asset-deleted',
+      userId: 'user-1',
+      creatorIdentityId: 'creator-1',
+      assetType: 'image',
+      canonicalTitle: 'Deleted remote work',
+      visibility: 'private',
+      titleSyncPolicy: 'initially_mirrored',
+      descriptionSyncPolicy: 'initially_mirrored',
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createExternalPublication({
+      externalPublicationId: 'publication-deleted',
+      assetId: 'asset-deleted',
+      externalAccountId: 'account-gallery',
+      platform: 'deviantart',
+      externalContentId: 'deviation-deleted',
+      syncStatus: 'active',
+      rawMetadataJson: {},
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createExternalSyncJob({
+      externalSyncJobId: 'account-import-gallery',
+      externalAccountId: 'account-gallery',
+      type: 'account_import',
+      status: 'queued',
+      attemptCount: 0,
+      createdAt: now,
+      updatedAt: now
+    });
+
+    jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      const requestUrl = new URL(String(input));
+      const ok = (payload: Record<string, unknown>) => ({
+        ok: true,
+        json: async () => payload,
+        headers: { get: () => null }
+      } as unknown as Response);
+      if (requestUrl.pathname.endsWith('/gallery/folders')) {
+        return ok({ results: [{ folderid: 'folder-remote', name: 'Portfolio', description: 'Remote portfolio', size: 1 }] });
+      }
+      if (requestUrl.pathname.endsWith('/gallery/all')) {
+        return ok({ results: [{
+          deviationid: 'deviation-current',
+          title: 'Current work',
+          url: 'https://www.deviantart.com/owner/art/current-work-1',
+          description: 'Current description',
+          tags: ['portfolio'],
+          is_mature: false,
+          allows_comments: true,
+          is_ai_generated: false,
+          noai: false,
+          published_time: 1786637885
+        }], has_more: false });
+      }
+      if (requestUrl.pathname.endsWith('/gallery/folder-remote')) {
+        return ok({ results: [{ deviationid: 'deviation-current', title: 'Current work', tags: [] }], has_more: false });
+      }
+      if (requestUrl.pathname.endsWith('/deviation/deviation-deleted')) {
+        return ok({ deviationid: 'deviation-deleted', title: 'Deleted remote work', is_deleted: true });
+      }
+      throw new Error(`Unexpected test request: ${requestUrl.pathname}`);
+    });
+
+    await processExternalSyncJob(store, {
+      externalTokenEncryptionKey: encryptionKey,
+      externalSyncBaseDelaySeconds: 60
+    } as AppConfig, 'account-import-gallery', { enqueue: jest.fn(async () => undefined) });
+
+    expect(await store.getExternalPublication('account-gallery', 'deviation-deleted')).toMatchObject({
+      syncStatus: 'deleted',
+      remoteStateReason: 'Deleted on DeviantArt'
+    });
+    const currentPublication = await store.getExternalPublication('account-gallery', 'deviation-current');
+    expect(currentPublication).toMatchObject({ syncStatus: 'active', metadataSyncStatus: 'in_sync' });
+    expect(await store.listUbeeqCollectionAssets('collection-local')).toEqual([
+      expect.objectContaining({
+        assetId: currentPublication?.assetId,
+        manuallyAssigned: false,
+        externalCollectionMappingIds: ['mapping-gallery']
+      })
+    ]);
+    expect((await store.listExternalCollectionMappings('account-gallery'))[0]).toMatchObject({
+      lastMembershipCount: 1,
+      lastMembershipError: undefined
+    });
+    expect(await store.getExternalSyncJob('account-import-gallery')).toMatchObject({ status: 'successful' });
+    jest.restoreAllMocks();
+  });
+
+  it('retains comments that disappear remotely and marks them as deleted', async () => {
+    const store = new InMemoryStore();
+    const now = new Date().toISOString();
+    const encryptionKey = 'worker-deleted-comment-test-key';
+    await store.createExternalPlatformCredential({
+      externalPlatformCredentialId: 'credential-comments', userId: 'user-1', platform: 'deviantart', clientId: 'client-id',
+      clientSecretEncrypted: encryptExternalCredential('client-secret', encryptionKey),
+      redirectUri: 'http://localhost:4000/integrations/deviantart/callback', createdAt: now, updatedAt: now
+    });
+    await store.createExternalAccount({
+      externalAccountId: 'account-comments', userId: 'user-1', creatorIdentityId: 'creator-1', primaryCreatorIdentityId: 'creator-1',
+      externalPlatformCredentialId: 'credential-comments', platform: 'deviantart', externalUserId: 'owner-1', externalUsername: 'owner',
+      accessTokenEncrypted: encryptExternalCredential('access-token', encryptionKey), connectionStatus: 'connected', createdAt: now, updatedAt: now
+    });
+    await store.createAsset({
+      assetId: 'asset-comments', userId: 'user-1', creatorIdentityId: 'creator-1', assetType: 'image', canonicalTitle: 'Commented work',
+      visibility: 'private', titleSyncPolicy: 'initially_mirrored', descriptionSyncPolicy: 'initially_mirrored', createdAt: now, updatedAt: now
+    });
+    await store.createExternalPublication({
+      externalPublicationId: 'publication-comments', assetId: 'asset-comments', externalAccountId: 'account-comments', platform: 'deviantart',
+      externalContentId: 'deviation-comments', syncStatus: 'active', rawMetadataJson: {}, createdAt: now, updatedAt: now
+    });
+    await store.createExternalComment({
+      externalCommentId: 'comment-local', externalPublicationId: 'publication-comments', externalCommentExternalId: 'comment-remote',
+      platform: 'deviantart', externalAuthorId: 'visitor-1', externalAuthorName: 'visitor', body: 'Previously imported', createdAtRemote: now,
+      rawPayload: {}, firstSeenAt: now, lastSeenAt: now, lastSyncedAt: now
+    });
+    await store.createExternalSyncJob({
+      externalSyncJobId: 'comment-reconcile-deleted', externalAccountId: 'account-comments', type: 'comment_sync', status: 'queued',
+      attemptCount: 0, payload: { externalPublicationId: 'publication-comments' }, createdAt: now, updatedAt: now
+    });
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ thread: [], has_more: false }),
+      headers: { get: () => null }
+    } as unknown as Response);
+
+    await processExternalSyncJob(store, {
+      externalTokenEncryptionKey: encryptionKey,
+      externalSyncBaseDelaySeconds: 60
+    } as AppConfig, 'comment-reconcile-deleted');
+
+    expect((await store.listExternalComments('publication-comments'))[0]).toMatchObject({
+      externalCommentExternalId: 'comment-remote',
+      remoteDeletedAt: expect.any(String)
     });
     jest.restoreAllMocks();
   });
