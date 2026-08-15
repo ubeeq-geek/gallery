@@ -12,6 +12,14 @@ interface OAuthStatePayload {
   nonce: string;
 }
 
+interface BlueskyOAuthStatePayload {
+  userId: string;
+  creatorIdentityId: string;
+  platform: 'bluesky';
+  returnPath: string;
+  nonce: string;
+}
+
 const stateSecret = (config: AppConfig): string => config.externalTokenEncryptionKey || config.unlockJwtSecret;
 
 const pkceVerifier = (config: AppConfig, nonce: string): string => (
@@ -56,6 +64,36 @@ export const verifyExternalOAuthState = (config: AppConfig, value: string): OAut
     throw new Error('OAuth state is invalid');
   }
   return state as OAuthStatePayload;
+};
+
+/**
+ * A Studio-issued state. The dedicated OAuth service returns it only after its
+ * own PKCE state validation; the product API verifies it again before claiming
+ * the signed connection proof. It never contains a Bluesky credential.
+ */
+export const issueBlueskyOAuthState = (
+  config: AppConfig,
+  value: Omit<BlueskyOAuthStatePayload, 'nonce'>
+): { state: string; nonce: string } => {
+  const nonce = randomUUID();
+  return {
+    state: jwt.sign({ ...value, nonce }, stateSecret(config), { expiresIn: '10m' }),
+    nonce
+  };
+};
+
+export const verifyBlueskyOAuthState = (config: AppConfig, value: string): BlueskyOAuthStatePayload => {
+  const payload = jwt.verify(value, stateSecret(config));
+  if (!payload || typeof payload !== 'object') throw new Error('OAuth state is invalid');
+  const state = payload as Partial<BlueskyOAuthStatePayload>;
+  if (
+    typeof state.userId !== 'string'
+    || typeof state.creatorIdentityId !== 'string'
+    || state.platform !== 'bluesky'
+    || typeof state.returnPath !== 'string'
+    || typeof state.nonce !== 'string'
+  ) throw new Error('OAuth state is invalid');
+  return state as BlueskyOAuthStatePayload;
 };
 
 export const resolveExternalOAuthReturnUrl = (config: AppConfig, returnPath: string, query: Record<string, string>): string => {

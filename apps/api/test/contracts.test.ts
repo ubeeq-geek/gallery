@@ -38,7 +38,20 @@ describe('API contract', () => {
     const store = new InMemoryStore();
     const app = createApp({ config: buildConfig(), store });
     const now = new Date().toISOString();
-    await store.createCreator({ creatorId: 'canonical-creator', name: 'Canonical Creator', slug: 'canonical-creator', status: 'active', sortOrder: 0, createdAt: now });
+    await store.createCreator({
+      creatorId: 'canonical-creator',
+      name: 'Canonical Creator',
+      slug: 'canonical-creator',
+      status: 'active',
+      sortOrder: 0,
+      space: {
+        bio: 'A canonical public Space.',
+        externalLinks: [{ label: 'Portfolio', url: 'https://example.test/' }],
+        theme: 'slate',
+        announcement: { enabled: true, message: 'Welcome to the Space.' }
+      },
+      createdAt: now
+    });
     await store.addCreatorMember({ creatorId: 'canonical-creator', userId: 'canonical-owner', role: 'owner', createdAt: now });
 
     const created = await request(app)
@@ -66,6 +79,20 @@ describe('API contract', () => {
       .send({ published: true, visibility: 'public' });
     expect(published.status).toBe(200);
     expect(published.body).toMatchObject({ destination: 'eversally', status: 'live', visibility: 'public' });
+    expect((await store.getWork('test', workId))?.status).toBe('draft');
+    expect(await store.listPublicationIntentsByWork('test', workId)).toEqual([
+      expect.objectContaining({ destination: 'eversally', enabled: true, desiredStatus: 'live' })
+    ]);
+    const catalogue = await request(app)
+      .get('/studio/works?creatorId=canonical-creator')
+      .set('x-user-id', 'canonical-owner');
+    expect(catalogue.body.items[0]).toMatchObject({
+      workId,
+      status: 'draft',
+      contentAvailability: 'external_reference',
+      publications: [expect.objectContaining({ destination: 'eversally', status: 'live' })],
+      publicationIntents: [expect.objectContaining({ destination: 'eversally', desiredStatus: 'live' })]
+    });
 
     const discovery = await request(app)
       .put(`/studio/works/${workId}/discovery`)
@@ -88,9 +115,22 @@ describe('API contract', () => {
     const publicWorks = await request(app).get('/creators/canonical-creator/works');
     expect(publicWorks.status).toBe(200);
     expect(publicWorks.body.items).toEqual([expect.objectContaining({ workId, title: 'First Work', discovery: 'opted_in' })]);
+    expect(publicWorks.body.creator).toMatchObject({ bio: 'A canonical public Space.', theme: 'slate', announcement: { message: 'Welcome to the Space.' } });
+    const publicWork = await request(app).get('/creators/canonical-creator/works/first-work');
+    expect(publicWork.status).toBe(200);
+    expect(publicWork.body.work).toMatchObject({ workId, contentAvailability: 'external_reference', primaryAsset: { hostingMode: 'external' } });
     const publicCollection = await request(app).get('/creators/canonical-creator/collections/launch-collection');
     expect(publicCollection.status).toBe(200);
     expect(publicCollection.body.works).toEqual([expect.objectContaining({ workId })]);
+    const rss = await request(app).get('/creators/canonical-creator/rss.xml');
+    expect(rss.status).toBe(200);
+    expect(rss.headers['content-type']).toContain('application/rss+xml');
+    expect(rss.text).toContain('<guid isPermaLink="false">urn:ubeeq:work:');
+    expect(rss.text).toContain('First Work');
+    const atom = await request(app).get('/creators/canonical-creator/atom.xml');
+    expect(atom.status).toBe(200);
+    expect(atom.headers['content-type']).toContain('application/atom+xml');
+    expect(atom.text).toContain('<id>urn:ubeeq:work:');
 
     await store.createExternalAccount({
       externalAccountId: 'canonical-da-account',
@@ -271,7 +311,7 @@ describe('API contract', () => {
 
   it('returns only the connected creator catalogue and never token fields', async () => {
     const store = new InMemoryStore();
-    const app = createApp({ config: buildConfig(), store });
+    const app = createApp({ config: buildConfig(), store, externalSyncQueue: { enqueue: jest.fn(async () => undefined) } });
     const now = new Date().toISOString();
     await store.createCreator({ creatorId: 'creator-da', name: 'DA Creator', slug: 'da-creator', status: 'active', sortOrder: 0, createdAt: now });
     await store.addCreatorMember({ creatorId: 'creator-da', userId: 'u-da', role: 'owner', createdAt: now });
@@ -361,6 +401,39 @@ describe('API contract', () => {
       occurredAt: now,
       firstSeenAt: now,
       lastSeenAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createWork({
+      workId: 'asset-da',
+      tenantId: 'test',
+      creatorId: 'creator-da',
+      kind: 'image',
+      title: 'Imported work',
+      slug: 'imported-work',
+      slugHistory: ['imported-work'],
+      description: '<p>Original DeviantArt description</p>',
+      tags: ['portrait'],
+      contentRating: 'general',
+      aiDisclosure: 'none',
+      heavyTopics: [],
+      status: 'draft',
+      origin: { type: 'import', platform: 'deviantart', integrationAccountId: 'account-da', remoteId: 'deviation-uuid' },
+      revision: 1,
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.upsertPublication({
+      publicationId: 'publication-da',
+      tenantId: 'test',
+      creatorId: 'creator-da',
+      workId: 'asset-da',
+      destination: 'deviantart',
+      integrationAccountId: 'account-da',
+      status: 'live',
+      visibility: 'public',
+      remoteId: 'deviation-uuid',
+      sync: { status: 'conflict' },
       createdAt: now,
       updatedAt: now
     });
@@ -459,6 +532,25 @@ describe('API contract', () => {
       'DeviantArt does not permit description changes for already-published deviations through its API. The Ubeeq description was saved, but the DeviantArt description remains unchanged.'
     ]);
     expect((await store.getExternalPublication('account-da', 'deviation-uuid'))?.externalDescription).toBe('<p>Original DeviantArt description</p>');
+
+    const resolvePush = await request(app)
+      .post('/studio/works/asset-da/publications/publication-da/resolve')
+      .set('x-user-id', 'u-da')
+      .send({ strategy: 'push' });
+    expect(resolvePush.status).toBe(202);
+    expect(resolvePush.body.strategy).toBe('push');
+    expect((await store.getPublication('test', 'publication-da'))?.sync.status).toBe('local_newer');
+    const remoteUpdate = await store.getExternalSyncJob(resolvePush.body.job.externalSyncJobId);
+    expect(remoteUpdate).toMatchObject({ type: 'remote_update', status: 'queued' });
+
+    const resolvePull = await request(app)
+      .post('/studio/works/asset-da/publications/publication-da/resolve')
+      .set('x-user-id', 'u-da')
+      .send({ strategy: 'pull' });
+    expect(resolvePull.status).toBe(202);
+    expect(resolvePull.body.strategy).toBe('pull');
+    expect((await store.getPublication('test', 'publication-da'))?.sync.status).toBe('remote_newer');
+    expect(await store.getExternalSyncJob(resolvePull.body.job.externalSyncJobId)).toMatchObject({ type: 'full_reconciliation', status: 'queued' });
 
     const spaceResponse = await request(app)
       .put('/studio/integrations/assets/asset-da/space-publication')

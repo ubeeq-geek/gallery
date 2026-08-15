@@ -28,7 +28,7 @@ export function CreatorOnboardingView({ onCreated }: { onCreated: (creator: Stud
     try {
       const creator = await api.studioCreateCreator({ name: name.trim(), slug: resolvedSlug }) as StudioCreator;
       await onCreated(creator);
-      navigate('/studio/workspace?section=integrations', { replace: true });
+      navigate(`/studio/workspace?section=dashboard&creatorId=${encodeURIComponent(creator.creatorId)}`, { replace: true });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : `Unable to create your ${brand.workspaceName}.`);
     } finally {

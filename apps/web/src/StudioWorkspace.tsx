@@ -14,6 +14,7 @@ import { CollectionsView } from './studio/views/CollectionsView';
 import { WorksView } from './studio/views/WorksView';
 import { ActivityView } from './studio/views/ActivityView';
 import { CreatorOnboardingView } from './studio/views/CreatorOnboardingView';
+import { CreatorLaunchChecklist } from './studio/views/CreatorLaunchChecklist';
 import { PostsView } from './studio/views/PostsView';
 import { ResourceView } from './studio/views/ResourceView';
 import type {
@@ -90,6 +91,7 @@ export function StudioWorkspace() {
   const activeCreatorId = creators.some((creator) => creator.creatorId === requestedCreatorId)
     ? requestedCreatorId
     : creators[0]?.creatorId || '';
+  const activeCreator = creators.find((creator) => creator.creatorId === activeCreatorId);
 
   const load = async () => {
     setLoading(true);
@@ -141,14 +143,17 @@ export function StudioWorkspace() {
     switch (section) {
       case 'dashboard':
         return (
-          <DashboardView
-            metrics={metrics}
-            creators={creators}
-            files={files}
-            posts={posts}
-            entries={entries}
-            activeCreatorId={activeCreatorId}
-          />
+          <>
+            {activeCreator && <CreatorLaunchChecklist creator={activeCreator} />}
+            <DashboardView
+              metrics={metrics}
+              creators={creators}
+              files={files}
+              posts={posts}
+              entries={entries}
+              activeCreatorId={activeCreatorId}
+            />
+          </>
         );
       case 'publishing':
         return (

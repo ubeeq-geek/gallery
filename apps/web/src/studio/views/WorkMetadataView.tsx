@@ -98,9 +98,12 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       // object with an `accounts` property silently hid every valid destination.
       const connectedAccounts = ((accountResult || []) as StudioDeviantArtAccount[]).filter((account) => account.connectionStatus === 'connected');
       const availableAccounts = connectedAccounts.filter((account) => !destinations.some((publication) => publication.externalAccountId === account.externalAccountId));
+      const savedIntent = found.publicationIntents.find((intent) => intent.enabled && intent.destination === 'deviantart' && availableAccounts.some((account) => account.externalAccountId === intent.integrationAccountId));
       setAccounts(connectedAccounts);
       setExternalCollections(((collectionResult as { externalCollections?: StudioExternalCollection[] }).externalCollections || []));
-      setNewDestinationAccountId(availableAccounts.length === 1 ? availableAccounts[0].externalAccountId : '');
+      setNewDestinationAccountId(savedIntent?.integrationAccountId || (availableAccounts.length === 1 ? availableAccounts[0].externalAccountId : ''));
+      setNewDestinationTargetStatus(savedIntent?.desiredStatus === 'draft' ? 'draft' : 'published');
+      if (savedIntent) setDestinationMessage('Publishing intent loaded from Works. Review the destination settings, then prepare it for synchronization.');
       setSelectedPublicationId(selected?.externalPublicationId || '');
       setLinked(selected ? isMetadataLinked(found) : false);
       setTitle(found.canonicalTitle || selected?.externalTitle || '');
@@ -316,6 +319,28 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     }
   };
 
+  const resolveDestination = async (strategy: 'pull' | 'push') => {
+    if (!asset || !integration) return;
+    const source = sourceLabel(integration);
+    const confirmation = strategy === 'pull'
+      ? `Pull the current ${source} metadata into ${brand.productName}? This replaces the local title, description, tags, and supported destination metadata with the remote version.`
+      : `Push the current ${brand.productName} metadata to ${source}? This replaces the supported remote metadata with the local version.`;
+    if (!window.confirm(confirmation)) return;
+    setDestinationBusy(true);
+    setError('');
+    setDestinationMessage('');
+    try {
+      await api.studioResolveWorkPublicationConflict(asset.assetId, integration.externalPublicationId, strategy);
+      setDestinationMessage(strategy === 'pull'
+        ? `${source} changes are being pulled and reconciled.`
+        : `${brand.productName} metadata is queued to replace the ${source} version.`);
+    } catch (resolutionError) {
+      setError(resolutionError instanceof Error ? resolutionError.message : `Unable to reconcile this ${source} publication.`);
+    } finally {
+      setDestinationBusy(false);
+    }
+  };
+
   const handleLinkChange = (nextLinked: boolean) => {
     setLinked(nextLinked);
     if (nextLinked && integration) {
@@ -460,8 +485,15 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         </label>)}
       <small>Gallery placement is applied through DeviantArt’s published-deviation edit API and verified after saving.</small>
     </fieldset>
-    {integration.metadataSyncStatus === 'conflict' && <p className="studio-work-metadata-warning">Both {brand.productName} and DeviantArt changed this destination before synchronization completed. Review the fields above before saving again.</p>}
-    {integration.metadataSyncStatus === 'remote_changed' && <p className="studio-work-metadata-warning">DeviantArt metadata changed since the previous synchronization. The current remote values are shown above.</p>}
+    {(integration.metadataSyncStatus === 'conflict' || integration.metadataSyncStatus === 'remote_changed') && <div className="studio-work-metadata-warning">
+      <p>{integration.metadataSyncStatus === 'conflict'
+        ? `Both ${brand.productName} and DeviantArt changed this destination. Choose the version that should win.`
+        : 'DeviantArt metadata changed since the previous synchronization. Choose whether to keep the remote version or replace it with the local version.'}</p>
+      <div className="studio-inline-actions">
+        <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => void resolveDestination('pull')}>Pull DeviantArt changes</button>
+        <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => void resolveDestination('push')}>Use {brand.productName} version</button>
+      </div>
+    </div>}
     {integration.metadataSyncStatus === 'local_update_pending' && <p className="small">A {brand.productName} metadata update is queued or waiting for DeviantArt verification.</p>}
     {integration.syncStatus !== 'active' && integration.remoteStateReason && <p className="studio-work-metadata-warning">{integration.remoteStateReason}</p>}
     <label className="studio-work-metadata-option">
@@ -544,7 +576,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
                   <option value="published">Published (default)</option>
                   <option value="draft">Draft in Sta.sh</option>
                 </select>
-                <button type="button" className="auth-secondary-btn" disabled={destinationBusy || !newDestinationAccountId} onClick={() => void addDestination()}>Add destination</button>
+                <button type="button" className="auth-secondary-btn" disabled={destinationBusy || !newDestinationAccountId} onClick={() => void addDestination()}>Prepare destination</button>
               </div>}
             </div>
             {!availableDestinationAccounts.length && !accounts.length && <div className="studio-work-destination-unavailable">

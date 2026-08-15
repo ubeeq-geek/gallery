@@ -6,6 +6,7 @@ import type {
   CollectionWork,
   CreatorCollection,
   Publication,
+  PublicationIntent,
   Work,
   WorkAsset,
   WorkDiscoveryParticipation
@@ -166,6 +167,30 @@ export class CanonicalContentRepository implements CanonicalStore {
       entityType: 'PUBLICATION',
       ...publication
     });
+  }
+
+  async listPublicationIntentsByWork(tenantId: string, workId: string): Promise<PublicationIntent[]> {
+    const items = await this.listIndex<PublicationIntent>(`${tenantPrefix(tenantId)}#WORK_PUBLICATION_INTENT#${workId}`, 'PUBLICATION_INTENT#', 'PUBLICATION_INTENT');
+    return items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async getPublicationIntent(tenantId: string, publicationIntentId: string): Promise<PublicationIntent | null> {
+    return this.get(`${tenantPrefix(tenantId)}#PUBLICATION_INTENT#${publicationIntentId}`, 'PROFILE');
+  }
+
+  async upsertPublicationIntent(intent: PublicationIntent): Promise<void> {
+    await this.put({
+      PK: `${tenantPrefix(intent.tenantId)}#PUBLICATION_INTENT#${intent.publicationIntentId}`,
+      SK: 'PROFILE',
+      GSI1PK: `${tenantPrefix(intent.tenantId)}#WORK_PUBLICATION_INTENT#${intent.workId}`,
+      GSI1SK: `PUBLICATION_INTENT#${intent.updatedAt}#${intent.publicationIntentId}`,
+      entityType: 'PUBLICATION_INTENT',
+      ...intent
+    });
+  }
+
+  async deletePublicationIntent(tenantId: string, publicationIntentId: string): Promise<void> {
+    await this.client.send(new DeleteCommand({ TableName: this.tableName, Key: { PK: `${tenantPrefix(tenantId)}#PUBLICATION_INTENT#${publicationIntentId}`, SK: 'PROFILE' } }));
   }
 
   async listCreatorCollections(tenantId: string, creatorId: string): Promise<CreatorCollection[]> {

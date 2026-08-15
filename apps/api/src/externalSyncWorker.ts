@@ -5,7 +5,7 @@ import { readStoredUbeeqWorkImage, storeExternalContent } from './externalConten
 import { brandForConfig } from './brand';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 import { createExternalPlatformProvider, DEVIANTART_METADATA_BATCH_SIZE, ExternalProviderError, type ExternalContentPublish, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteActivity, type ExternalRemoteComment, type ExternalRemoteContent, type ExternalRemoteEngagement } from './externalPlatformProvider';
-import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalActivity, ExternalCollection, ExternalCollectionMapping, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, SpacePublication, UbeeqCollection, UbeeqCollectionAsset } from './domain';
+import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalCollection, ExternalCollectionMapping, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, IntegrationActivity, SpacePublication, UbeeqCollection, UbeeqCollectionAsset } from './domain';
 import type { CanonicalAsset, Publication, Work } from './canonicalDomain';
 import type { DataStore } from './store';
 
@@ -283,6 +283,84 @@ const refreshAccessTokenIfNeeded = async (
   return { account: refreshed, accessToken };
 };
 
+const canonicalPublicationStatus = (publication: ExternalPublication): Publication['status'] => {
+  if (publication.syncStatus === 'active') return 'live';
+  if (publication.syncStatus === 'draft') return 'draft';
+  if (publication.syncStatus === 'pending_publish') return 'queued';
+  if (publication.syncStatus === 'missing' || publication.syncStatus === 'restricted') return 'missing';
+  if (publication.syncStatus === 'deleted') return 'removed';
+  if (publication.syncStatus === 'unknown') return 'unknown';
+  return 'failed';
+};
+
+const canonicalPublicationSyncStatus = (publication: ExternalPublication): Publication['sync']['status'] => {
+  if (publication.metadataSyncStatus === 'remote_changed') return 'remote_newer';
+  if (publication.metadataSyncStatus === 'local_update_pending') return 'local_newer';
+  if (publication.metadataSyncStatus === 'conflict') return 'conflict';
+  if (publication.syncStatus === 'error') return 'error';
+  if (publication.syncStatus === 'unknown') return 'unknown';
+  return 'in_sync';
+};
+
+/**
+ * DeviantArt's compatibility record remains useful for provider details, but
+ * every externally observable state is projected into the generic Publication
+ * contract. Subsequent adapters use this boundary rather than Work state.
+ */
+const syncCanonicalPublication = async (
+  store: DataStore,
+  config: AppConfig,
+  account: ExternalAccount,
+  work: Work,
+  publication: ExternalPublication,
+  now = new Date().toISOString()
+): Promise<void> => {
+  await store.upsertPublication({
+    publicationId: publication.externalPublicationId,
+    tenantId: config.tenantId,
+    creatorId: work.creatorId,
+    workId: work.workId,
+    destination: account.platform,
+    integrationAccountId: account.externalAccountId,
+    status: canonicalPublicationStatus(publication),
+    visibility: 'public',
+    remoteId: publication.externalContentId,
+    remoteUrl: publication.externalUrl,
+    remoteCreatedAt: publication.remoteCreatedAt,
+    remoteUpdatedAt: publication.remoteUpdatedAt,
+    metadataOverrides: {
+      title: publication.externalTitle,
+      description: publication.externalDescription,
+      tags: publication.externalTags,
+      fields: {
+        targetStatus: publication.targetStatus,
+        externalCollectionIds: publication.externalCollectionIds,
+        ...publication.rawMetadataJson
+      }
+    },
+    sync: {
+      status: canonicalPublicationSyncStatus(publication),
+      lastAttemptAt: publication.metadataSyncStatus === 'local_update_pending' ? publication.updatedAt : undefined,
+      lastSuccessfulAt: publication.lastSyncedAt,
+      localRevision: work.revision,
+      remoteMetadataFingerprint: publication.remoteMetadataFingerprint,
+      remoteContentFingerprint: publication.remoteContentFingerprint,
+      errorMessage: publication.remoteStateReason
+    },
+    providerData: {
+      ...publication.rawMetadataJson,
+      externalUsername: account.externalUsername,
+      externalDraftId: publication.externalDraftId,
+      targetStatus: publication.targetStatus,
+      externalCollectionIds: publication.externalCollectionIds
+    },
+    createdAt: publication.createdAt,
+    updatedAt: publication.updatedAt,
+    publishedAt: publication.publishedAt,
+    removedAt: publication.syncStatus === 'deleted' ? now : undefined
+  });
+};
+
 const upsertContent = async (
   store: DataStore,
   config: AppConfig,
@@ -420,12 +498,19 @@ const upsertContent = async (
     contentRating: metadataBoolean(remote.rawMetadata, 'is_mature', 'isMature') ? 'mature' : 'general',
     aiDisclosure: metadataBoolean(remote.rawMetadata, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai') ? 'ai-generated' : 'none',
     heavyTopics: [],
-    status: publication.syncStatus === 'active' ? 'published' : 'draft',
+    status: 'draft',
+    origin: {
+      type: 'import',
+      platform: account.platform,
+      integrationAccountId: account.externalAccountId,
+      remoteId: remote.externalContentId,
+      remoteUrl: remote.externalUrl,
+      importedAt: now
+    },
     primaryAssetId: `${asset.assetId}:remote`,
     revision: 1,
     createdAt: now,
     updatedAt: now,
-    publishedAt: remote.publishedAt
   };
   if (!canonicalWork.slugHistory.length) canonicalWork.slugHistory = [canonicalWork.slug];
   if (currentWork) await store.updateWork(canonicalWork);
@@ -465,68 +550,7 @@ const upsertContent = async (
     await store.createCanonicalAsset(canonicalAsset);
     await store.attachAssetToWork(config.tenantId, { workId: canonicalWork.workId, assetId: canonicalAsset.assetId, role: 'primary', position: 0 });
   }
-  const canonicalPublication: Publication = {
-    publicationId: publication.externalPublicationId,
-    tenantId: config.tenantId,
-    creatorId: primaryCreatorIdentityId,
-    workId: canonicalWork.workId,
-    destination: account.platform,
-    integrationAccountId: account.externalAccountId,
-    status: publication.syncStatus === 'active'
-      ? 'live'
-      : publication.syncStatus === 'draft'
-        ? 'draft'
-        : publication.syncStatus === 'missing' || publication.syncStatus === 'restricted'
-          ? 'missing'
-          : publication.syncStatus === 'deleted'
-            ? 'removed'
-            : publication.syncStatus === 'pending_publish'
-              ? 'queued'
-              : 'failed',
-    visibility: 'public',
-    remoteId: publication.externalContentId,
-    remoteUrl: publication.externalUrl,
-    remoteCreatedAt: publication.remoteCreatedAt,
-    remoteUpdatedAt: publication.remoteUpdatedAt,
-    metadataOverrides: {
-      title: publication.externalTitle,
-      description: publication.externalDescription,
-      tags: publication.externalTags,
-      fields: {
-        targetStatus: publication.targetStatus,
-        externalCollectionIds: publication.externalCollectionIds,
-        ...publication.rawMetadataJson
-      }
-    },
-    sync: {
-      status: publication.metadataSyncStatus === 'remote_changed'
-        ? 'remote_newer'
-        : publication.metadataSyncStatus === 'local_update_pending'
-          ? 'local_newer'
-          : publication.metadataSyncStatus === 'conflict'
-            ? 'conflict'
-            : publication.syncStatus === 'error'
-              ? 'error'
-              : 'in_sync',
-      lastSuccessfulAt: publication.lastSyncedAt,
-      localRevision: canonicalWork.revision,
-      remoteMetadataFingerprint: publication.remoteMetadataFingerprint,
-      remoteContentFingerprint: publication.remoteContentFingerprint,
-      errorMessage: publication.remoteStateReason
-    },
-    providerData: {
-      ...publication.rawMetadataJson,
-      externalUsername: account.externalUsername,
-      externalDraftId: publication.externalDraftId,
-      targetStatus: publication.targetStatus,
-      externalCollectionIds: publication.externalCollectionIds
-    },
-    createdAt: publication.createdAt,
-    updatedAt: publication.updatedAt,
-    publishedAt: publication.publishedAt,
-    removedAt: publication.syncStatus === 'deleted' ? now : undefined
-  };
-  await store.upsertPublication(canonicalPublication);
+  await syncCanonicalPublication(store, config, account, canonicalWork, publication, now);
 
   if (remote.metrics && Object.values(remote.metrics).some((value) => value !== undefined)) {
     await storeEngagement(store, publication, remote.metrics, now);
@@ -680,9 +704,9 @@ const queueSpaceContentSync = async (
   const spacePublication: SpacePublication = {
     ...current,
     assetId: asset.assetId,
-    published: true,
+    published: current?.published || false,
     hostingMode: current?.hostingMode === 'hosted' ? 'hosted' : 'linked',
-    publishedAt: current?.publishedAt || now,
+    publishedAt: current?.publishedAt,
     ubeeqTitleOverride: current?.ubeeqTitleOverride,
     ubeeqDescriptionOverride: current?.ubeeqDescriptionOverride,
     visibility: current?.visibility || 'private',
@@ -707,9 +731,9 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
   await store.upsertSpacePublication({
     ...current,
     assetId: asset.assetId,
-    published: true,
+    published: current?.published || false,
     hostingMode: current?.hostingMode || 'linked',
-    publishedAt: current?.publishedAt || now,
+    publishedAt: current?.publishedAt,
     ubeeqTitleOverride: current?.ubeeqTitleOverride,
     ubeeqDescriptionOverride: current?.ubeeqDescriptionOverride,
     visibility: current?.visibility || 'private',
@@ -740,9 +764,9 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
     await store.upsertSpacePublication({
       ...current,
       assetId: asset.assetId,
-      published: true,
+      published: current?.published || false,
       hostingMode: current?.hostingMode || 'linked',
-      publishedAt: current?.publishedAt || now,
+      publishedAt: current?.publishedAt,
       ubeeqTitleOverride: current?.ubeeqTitleOverride,
       ubeeqDescriptionOverride: current?.ubeeqDescriptionOverride,
       visibility: current?.visibility || 'private',
@@ -776,9 +800,9 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
   await store.upsertSpacePublication({
     ...current,
     assetId: asset.assetId,
-    published: true,
+    published: current?.published || false,
     hostingMode: 'hosted',
-    publishedAt: current?.publishedAt || now,
+    publishedAt: current?.publishedAt,
     ubeeqTitleOverride: current?.ubeeqTitleOverride,
     ubeeqDescriptionOverride: current?.ubeeqDescriptionOverride,
     visibility: current?.visibility || 'private',
@@ -821,26 +845,6 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
         remoteUrl: remote.externalUrl || ''
       },
       updatedAt: new Date().toISOString()
-    });
-    const currentSpace = (await store.listPublicationsByWork(config.tenantId, canonicalWork.workId)).find((item) => item.destination === 'eversally');
-    await store.upsertPublication({
-      publicationId: currentSpace?.publicationId || `${canonicalWork.workId}:eversally`,
-      tenantId: config.tenantId,
-      creatorId: canonicalWork.creatorId,
-      workId: canonicalWork.workId,
-      destination: 'eversally',
-      status: 'live',
-      visibility: currentSpace?.visibility || 'private',
-      metadataOverrides: currentSpace?.metadataOverrides,
-      sync: {
-        status: 'not_applicable',
-        localRevision: canonicalWork.revision,
-        lastSuccessfulAt: new Date().toISOString()
-      },
-      providerData: { hostingMode: 'hosted', sourceCopyQuality: source.quality },
-      createdAt: currentSpace?.createdAt || now,
-      updatedAt: new Date().toISOString(),
-      publishedAt: currentSpace?.publishedAt || now
     });
   }
   await updateJob(store, job, { status: 'successful', progress: { discovered: 1, synchronized: 1, remaining: 0 }, errorCode: undefined, errorMessage: undefined });
@@ -1009,24 +1013,29 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
   const targetStatus = pendingPublication.targetStatus === 'draft' ? 'draft' : 'published';
   const draft = await provider.submitContent(session.accessToken, content, pendingPublication.externalDraftId);
   const now = new Date().toISOString();
+  // Persist the Sta.sh item before attempting the irreversible publish step.
+  // A retry can then update and publish this same draft rather than creating a
+  // second Sta.sh submission after a transient publish failure.
+  const submittedDraftPublication: ExternalPublication = {
+    ...pendingPublication,
+    externalContentId: `stash:${draft.externalDraftId}`,
+    externalDraftId: draft.externalDraftId,
+    externalUrl: draft.externalUrl,
+    externalTitle: pendingPublication.externalTitle || asset.canonicalTitle,
+    externalDescription: pendingPublication.externalDescription ?? asset.canonicalDescription,
+    externalTags: tags,
+    targetStatus,
+    syncStatus: 'draft',
+    rawMetadataJson: { ...savedSettings, ...draft.rawMetadata },
+    remoteUpdatedAt: now,
+    lastSyncedAt: now,
+    lastSeenAt: now,
+    updatedAt: now
+  };
+  await store.updateExternalPublication(submittedDraftPublication, pendingPublication.externalContentId);
+  const work = await store.getWork(config.tenantId, asset.assetId);
+  if (work) await syncCanonicalPublication(store, config, session.account, work, submittedDraftPublication, now);
   if (targetStatus === 'draft') {
-    const draftPublication: ExternalPublication = {
-      ...pendingPublication,
-      externalContentId: `stash:${draft.externalDraftId}`,
-      externalDraftId: draft.externalDraftId,
-      externalUrl: draft.externalUrl,
-      externalTitle: pendingPublication.externalTitle || asset.canonicalTitle,
-      externalDescription: pendingPublication.externalDescription ?? asset.canonicalDescription,
-      externalTags: tags,
-      targetStatus: 'draft',
-      syncStatus: 'draft',
-      rawMetadataJson: { ...savedSettings, ...draft.rawMetadata },
-      remoteUpdatedAt: now,
-      lastSyncedAt: now,
-      lastSeenAt: now,
-      updatedAt: now
-    };
-    await store.updateExternalPublication(draftPublication, pendingPublication.externalContentId);
     await updateJob(store, job, {
       status: 'successful',
       progress: { discovered: 1, synchronized: 1, remaining: 0 },
@@ -1039,7 +1048,7 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
   }
   const published = await provider.publishDraft(session.accessToken, draft.externalDraftId, content);
   const publication: ExternalPublication = {
-    ...(pendingPublication || { externalPublicationId: randomUUID(), createdAt: now }),
+    ...submittedDraftPublication,
     assetId: asset.assetId,
     externalAccountId: account.externalAccountId,
     platform: account.platform,
@@ -1051,17 +1060,18 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
     externalTags: tags,
     targetStatus: 'published',
     syncStatus: 'active',
-    rawMetadataJson: { ...savedSettings, ...draft.rawMetadata, ...published.rawMetadata },
+    rawMetadataJson: { ...submittedDraftPublication.rawMetadataJson, ...published.rawMetadata },
     publishedAt: now,
     remoteCreatedAt: now,
     remoteUpdatedAt: now,
     lastSyncedAt: now,
     lastSeenAt: now,
-    createdAt: pendingPublication?.createdAt || now,
+    createdAt: submittedDraftPublication.createdAt || now,
     updatedAt: now
   };
-  if (pendingPublication) await store.updateExternalPublication(publication, pendingPublication.externalContentId);
+  if (pendingPublication) await store.updateExternalPublication(publication, submittedDraftPublication.externalContentId);
   else await store.createExternalPublication(publication);
+  if (work) await syncCanonicalPublication(store, config, session.account, work, publication, now);
   await updateJob(store, job, {
     status: 'successful',
     progress: { discovered: 1, synchronized: 1, remaining: 0 },
@@ -1074,6 +1084,7 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
 
 const reconcilePublicationLifecycle = async (
   store: DataStore,
+  config: AppConfig,
   provider: ExternalPlatformProvider,
   accessToken: string,
   account: ExternalAccount,
@@ -1109,13 +1120,16 @@ const reconcilePublicationLifecycle = async (
     if (syncStatus === 'deleted') deleted += 1;
     else if (syncStatus === 'restricted') restricted += 1;
     else missing += 1;
-    await store.updateExternalPublication({
+    const updatedPublication: ExternalPublication = {
       ...publication,
       syncStatus,
       remoteStateReason,
       lastSyncedAt: now,
       updatedAt: now
-    });
+    };
+    await store.updateExternalPublication(updatedPublication);
+    const work = await store.getWork(config.tenantId, publication.assetId);
+    if (work) await syncCanonicalPublication(store, config, account, work, updatedPublication, now);
   }
   await updateCheckpoint(store, account, 'publication.lifecycle', account.externalAccountId, now, [...seenExternalContentIds], {
     missing,
@@ -1377,6 +1391,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
 
   const lifecycle = await reconcilePublicationLifecycle(
     store,
+    config,
     provider,
     session.accessToken,
     session.account,
@@ -1479,10 +1494,10 @@ const upsertActivity = async (
   remote: ExternalRemoteActivity,
   publication: ExternalPublication | undefined,
   now: string,
-  direction: ExternalActivity['direction'] = 'inbound'
-): Promise<ExternalActivity> => {
+  direction: IntegrationActivity['direction'] = 'inbound'
+): Promise<IntegrationActivity> => {
   const existing = await store.getExternalActivityByRemoteId(account.externalAccountId, remote.remoteActivityId);
-  const activity: ExternalActivity = {
+  const activity: IntegrationActivity = {
     externalActivityId: existing?.externalActivityId || randomUUID(),
     externalAccountId: account.externalAccountId,
     creatorIdentityId: publication
@@ -2001,9 +2016,9 @@ export const dismissExternalActivity = async (
   store: DataStore,
   config: AppConfig,
   account: ExternalAccount,
-  activity: ExternalActivity,
+  activity: IntegrationActivity,
   dismissStack = false
-): Promise<ExternalActivity> => {
+): Promise<IntegrationActivity> => {
   const messageId = dismissStack ? undefined : activity.remoteMessageId;
   const stackId = dismissStack ? activity.remoteStackId : undefined;
   if (!messageId && !stackId) {
@@ -2013,7 +2028,7 @@ export const dismissExternalActivity = async (
   const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
   await provider.deleteMessage(session.accessToken, { messageId, stackId });
   const now = new Date().toISOString();
-  const updated: ExternalActivity = {
+  const updated: IntegrationActivity = {
     ...activity,
     readAt: activity.readAt || now,
     remoteDeletedAt: now,
@@ -2118,6 +2133,23 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
       });
     } else {
       await updateJob(store, latest, { status: 'failed', errorCode: providerError.code, errorMessage: providerError.message });
+    }
+    const failedPublicationId = typeof job.payload?.externalPublicationId === 'string' ? job.payload.externalPublicationId : '';
+    if (failedPublicationId) {
+      const canonicalPublication = await store.getPublication(config.tenantId, failedPublicationId);
+      if (canonicalPublication) {
+        await store.upsertPublication({
+          ...canonicalPublication,
+          sync: {
+            ...canonicalPublication.sync,
+            status: 'error',
+            lastAttemptAt: new Date().toISOString(),
+            errorCode: providerError.code,
+            errorMessage: providerError.message
+          },
+          updatedAt: new Date().toISOString()
+        });
+      }
     }
     if (job.type === 'content_sync' && typeof job.payload?.assetId === 'string') {
       const current = await store.getSpacePublication(job.payload.assetId);

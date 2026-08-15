@@ -60,6 +60,7 @@ import type {
   CollectionWork,
   CreatorCollection,
   Publication,
+  PublicationIntent,
   Work,
   WorkAsset,
   WorkDiscoveryParticipation
@@ -140,6 +141,7 @@ export class InMemoryStore implements DataStore {
   canonicalAssets: CanonicalAsset[] = [];
   workAssets: Array<WorkAsset & { tenantId: string }> = [];
   publications: Publication[] = [];
+  publicationIntents: PublicationIntent[] = [];
   creatorCollections: CreatorCollection[] = [];
   collectionWorks: Array<CollectionWork & { tenantId: string }> = [];
   workDiscovery: WorkDiscoveryParticipation[] = [];
@@ -214,6 +216,23 @@ export class InMemoryStore implements DataStore {
   async upsertPublication(publication: Publication): Promise<void> {
     this.publications = this.publications.filter((item) => !(item.tenantId === publication.tenantId && item.publicationId === publication.publicationId));
     this.publications.push(publication);
+  }
+
+  async listPublicationIntentsByWork(tenantId: string, workId: string): Promise<PublicationIntent[]> {
+    return this.publicationIntents.filter((intent) => intent.tenantId === tenantId && intent.workId === workId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async getPublicationIntent(tenantId: string, publicationIntentId: string): Promise<PublicationIntent | null> {
+    return this.publicationIntents.find((intent) => intent.tenantId === tenantId && intent.publicationIntentId === publicationIntentId) || null;
+  }
+
+  async upsertPublicationIntent(intent: PublicationIntent): Promise<void> {
+    this.publicationIntents = this.publicationIntents.filter((item) => !(item.tenantId === intent.tenantId && item.publicationIntentId === intent.publicationIntentId));
+    this.publicationIntents.push(intent);
+  }
+
+  async deletePublicationIntent(tenantId: string, publicationIntentId: string): Promise<void> {
+    this.publicationIntents = this.publicationIntents.filter((intent) => !(intent.tenantId === tenantId && intent.publicationIntentId === publicationIntentId));
   }
 
   async listCreatorCollections(tenantId: string, creatorId: string): Promise<CreatorCollection[]> {

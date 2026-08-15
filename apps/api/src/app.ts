@@ -4,7 +4,8 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3
 import { AdminUpdateUserAttributesCommand, CognitoIdentityProviderClient, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSignedUrl as getCloudFrontSignedUrl } from '@aws-sdk/cloudfront-signer';
-import { randomUUID } from 'crypto';
+import { createHash, createPublicKey, randomUUID } from 'crypto';
+import jwt from 'jsonwebtoken';
 import { createOptionalAuthMiddleware, requireAdmin, requireAuth, resolveRole } from './auth';
 import { checkRateLimit } from './rateLimit';
 import { issueRememberAccessToken, issueUnlockToken, verifyPassword, verifyUnlockToken } from './unlock';
@@ -44,7 +45,8 @@ import type {
   UbeeqCollection,
   UbeeqCollectionAsset
 } from './domain';
-import type { CanonicalAsset, CreatorCollection as CanonicalCollection, Publication, Work } from './canonicalDomain';
+import { contentAvailabilityForAssets } from './canonicalDomain';
+import type { CanonicalAsset, CreatorCollection as CanonicalCollection, Publication, PublicationIntent, Work } from './canonicalDomain';
 import {
   generateCreatorCoverRenditions,
   generateCreatorProfileRenditions,
@@ -83,7 +85,7 @@ import { capabilitiesForRole, normalizePlatformRoleValue } from './roleHelpers';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
 import { createExternalPlatformProvider, ExternalProviderError } from './externalPlatformProvider';
 import { storeUbeeqWorkImage } from './externalContentStorage';
-import { externalOAuthPkce, issueExternalOAuthState, resolveExternalOAuthReturnUrl, verifyExternalOAuthState } from './externalOAuth';
+import { externalOAuthPkce, issueBlueskyOAuthState, issueExternalOAuthState, resolveExternalOAuthReturnUrl, verifyBlueskyOAuthState, verifyExternalOAuthState } from './externalOAuth';
 import { createExternalSyncQueue } from './externalSyncQueue';
 import type { ExternalSyncQueue } from './externalSyncQueue';
 import { dismissExternalActivity, replyToExternalComment } from './externalSyncWorker';
@@ -172,6 +174,32 @@ const sanitizeOptional = (value: unknown, maxLen: number): string | undefined =>
   if (!trimmed) return undefined;
   return trimmed.slice(0, maxLen);
 };
+
+const sanitizePublicHttpUrl = (value: unknown, maxLen = 1000): string | undefined => {
+  const candidate = sanitizeOptional(value, maxLen);
+  if (!candidate) return undefined;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const parseCreatorExternalLinks = (value: unknown): NonNullable<NonNullable<Creator['space']>['externalLinks']> => {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 12).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const record = entry as Record<string, unknown>;
+    const url = sanitizePublicHttpUrl(record.url);
+    if (!url) return [];
+    const label = sanitizeOptional(record.label, 80) || new URL(url).hostname;
+    return [{ label, url }];
+  });
+};
+
+const parseCreatorSpaceTheme = (value: unknown): NonNullable<NonNullable<Creator['space']>['theme']> =>
+  value === 'ubeeq' || value === 'sand' || value === 'forest' || value === 'slate' ? value : 'default';
 
 const parseOptionalContentRating = (value: unknown): ContentRating | undefined => {
   if (value === undefined || value === null) return undefined;
@@ -1018,6 +1046,45 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return false;
     }
     return true;
+  };
+
+  type BlueskyConnectionProof = {
+    purpose: 'bluesky_studio_connection';
+    stateHash: string;
+    did: string;
+    handle?: string;
+  };
+
+  const verifyBlueskyConnectionProof = async (proof: string, state: string): Promise<BlueskyConnectionProof> => {
+    const serviceUrl = config.blueskyOAuthServiceUrl?.replace(/\/$/, '');
+    const jwksUrl = config.blueskyOAuthServiceJwksUrl;
+    if (!serviceUrl || !jwksUrl) throw new Error('Bluesky OAuth is not configured for this deployment.');
+    const decoded = jwt.decode(proof, { complete: true });
+    const kid = decoded && typeof decoded === 'object' && typeof decoded.header?.kid === 'string'
+      ? decoded.header.kid
+      : '';
+    if (!kid) throw new Error('The Bluesky connection proof has no signing key.');
+    const response = await fetch(jwksUrl, { headers: { accept: 'application/json' } });
+    if (!response.ok) throw new Error('The Bluesky connection proof could not be verified.');
+    const keyset = await response.json() as { keys?: Array<{ kid?: string; kty?: string; crv?: string } & Record<string, unknown>> };
+    const jwk = keyset.keys?.find((item) => item.kid === kid && item.kty === 'EC' && item.crv === 'P-256');
+    if (!jwk) throw new Error('The Bluesky connection proof uses an unknown signing key.');
+    const verified = jwt.verify(proof, createPublicKey({ key: jwk as unknown as import('crypto').JsonWebKey, format: 'jwk' }), {
+      algorithms: ['ES256'],
+      issuer: `${serviceUrl}/oauth/bluesky/client-metadata.json`,
+      audience: 'ubeeq-studio'
+    }) as Partial<BlueskyConnectionProof>;
+    const expectedStateHash = createHash('sha256').update(state).digest('base64url');
+    if (
+      verified.purpose !== 'bluesky_studio_connection'
+      || verified.stateHash !== expectedStateHash
+      || typeof verified.did !== 'string'
+      || !/^did:[a-z0-9:%._-]+$/i.test(verified.did)
+    ) throw new Error('The Bluesky connection proof is invalid.');
+    if (verified.handle !== undefined && (typeof verified.handle !== 'string' || !/^[a-z0-9][a-z0-9.-]{1,252}[a-z0-9]$/i.test(verified.handle))) {
+      throw new Error('The Bluesky connection proof is invalid.');
+    }
+    return verified as BlueskyConnectionProof;
   };
 
   const auditLog = (
@@ -2019,6 +2086,52 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
 
   app.get('/health', (_req, res) => res.json({ ok: true }));
 
+  // AT Protocol OAuth clients are identified by this publicly fetchable HTTPS
+  // document. It deliberately contains only public metadata and public JWKs;
+  // the confidential signing key stays in managed secret storage.
+  app.get('/oauth/bluesky/client-metadata.json', (_req, res) => {
+    const clientId = config.blueskyOAuthClientMetadataUrl;
+    const callback = config.blueskyOAuthCallbackUrl;
+    if (!clientId || !callback || !config.blueskyOAuthJwksJson) {
+      return res.status(503).json({ message: 'Bluesky OAuth is not configured for this deployment.' });
+    }
+    let jwks: { keys?: unknown[] };
+    try {
+      jwks = JSON.parse(config.blueskyOAuthJwksJson) as { keys?: unknown[] };
+    } catch {
+      return res.status(503).json({ message: 'Bluesky OAuth public JWKS is invalid.' });
+    }
+    if (!Array.isArray(jwks.keys) || !jwks.keys.length) {
+      return res.status(503).json({ message: 'Bluesky OAuth public JWKS is missing keys.' });
+    }
+    const jwksUri = new URL('/oauth/bluesky/jwks.json', clientId).toString();
+    return res.type('application/json').json({
+      client_id: clientId,
+      client_name: brandForConfig(config).productName,
+      client_uri: config.appOrigin || new URL(clientId).origin,
+      redirect_uris: [callback],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      application_type: 'web',
+      scope: 'atproto transition:generic',
+      dpop_bound_access_tokens: true,
+      token_endpoint_auth_method: 'private_key_jwt',
+      token_endpoint_auth_signing_alg: 'ES256',
+      jwks_uri: jwksUri
+    });
+  });
+
+  app.get('/oauth/bluesky/jwks.json', (_req, res) => {
+    if (!config.blueskyOAuthJwksJson) return res.status(503).json({ message: 'Bluesky OAuth is not configured for this deployment.' });
+    try {
+      const jwks = JSON.parse(config.blueskyOAuthJwksJson) as { keys?: unknown[] };
+      if (!Array.isArray(jwks.keys) || !jwks.keys.length) throw new Error('missing keys');
+      return res.type('application/json').json(jwks);
+    } catch {
+      return res.status(503).json({ message: 'Bluesky OAuth public JWKS is invalid.' });
+    }
+  });
+
   app.get('/auth/username/check', async (req, res) => {
     const requested = typeof req.query.username === 'string' ? req.query.username : '';
     const { normalized, reasons } = validateUsername(requested);
@@ -2133,6 +2246,30 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
   });
 
+  const publicCanonicalCreator = async (creator: Creator, requestOrigin?: string) => ({
+    creatorId: creator.creatorId,
+    name: creator.name,
+    slug: creator.slug,
+    bio: creator.space?.bio,
+    externalLinks: creator.space?.externalLinks || [],
+    theme: creator.space?.theme || 'default',
+    announcement: creator.space?.announcement?.enabled && creator.space.announcement.message
+      ? creator.space.announcement
+      : undefined,
+    profileImageUrl: await publicMediaUrl(
+      creator.branding?.profileImage?.thumbnailKeys?.square1024
+        || creator.branding?.profileImage?.thumbnailKeys?.square512
+        || creator.branding?.profileImage?.thumbnailKeys?.square256,
+      requestOrigin
+    ),
+    coverImageUrl: await publicMediaUrl(
+      creator.branding?.coverImage?.renditionKeys?.desktop
+        || creator.branding?.coverImage?.renditionKeys?.tablet
+        || creator.branding?.coverImage?.renditionKeys?.mobile,
+      requestOrigin
+    )
+  });
+
   const publicCanonicalWork = async (work: Work, requestOrigin: string) => {
     const [assets, publications, discovery] = await Promise.all([
       store.listCanonicalAssetsByWork(work.tenantId, work.workId),
@@ -2153,10 +2290,12 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       contentRating: work.contentRating,
       aiDisclosure: work.aiDisclosure,
       heavyTopics: work.heavyTopics,
-      publishedAt: space?.publishedAt || work.publishedAt,
+      publishedAt: space?.publishedAt,
       updatedAt: work.updatedAt,
       visibility: space?.visibility,
       discovery: discovery?.state || 'none',
+      contentAvailability: contentAvailabilityForAssets(assets),
+      origin: work.origin,
       primaryAsset: primary ? {
         assetId: primary.assetId,
         kind: primary.kind,
@@ -2165,6 +2304,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         height: primary.height,
         durationSeconds: primary.durationSeconds,
         altText: primary.attachment.altText,
+        hostingMode: primary.storage.mode,
+        sourceCopyQuality: primary.metadata?.sourceCopyQuality,
         url: primary.storage.objectKey ? await publicMediaUrl(primary.storage.objectKey, requestOrigin) : primary.storage.externalUrl,
         thumbnailUrl: primary.storage.thumbnailObjectKey ? await publicMediaUrl(primary.storage.thumbnailObjectKey, requestOrigin) : undefined
       } : undefined,
@@ -2176,6 +2317,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         position: asset.attachment.position,
         caption: asset.attachment.caption,
         altText: asset.attachment.altText,
+        hostingMode: asset.storage.mode,
+        sourceCopyQuality: asset.metadata?.sourceCopyQuality,
         url: asset.storage.objectKey ? await publicMediaUrl(asset.storage.objectKey, requestOrigin) : asset.storage.externalUrl,
         thumbnailUrl: asset.storage.thumbnailObjectKey ? await publicMediaUrl(asset.storage.thumbnailObjectKey, requestOrigin) : undefined
       }))),
@@ -2194,9 +2337,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const visible = (await Promise.all(works.map(async (work) => ({
       work,
       space: (await store.listPublicationsByWork(config.tenantId, work.workId)).find((publication) => publication.destination === 'eversally')
-    })))).filter(({ work, space }) => work.status === 'published' && space?.status === 'live' && space.visibility === 'public');
+    })))).filter(({ work, space }) => work.status !== 'archived' && work.status !== 'deleted' && space?.status === 'live' && space.visibility === 'public');
     const origin = `${req.protocol}://${req.get('host')}`;
-    return res.json({ creator: { creatorId: creator.creatorId, name: creator.name, slug: creator.slug }, items: await Promise.all(visible.map(({ work }) => publicCanonicalWork(work, origin))) });
+    return res.json({ creator: await publicCanonicalCreator(creator, origin), items: await Promise.all(visible.map(({ work }) => publicCanonicalWork(work, origin))) });
   });
 
   app.get('/creators/:slug/works/:workSlug', async (req, res) => {
@@ -2206,31 +2349,40 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const work = (await store.listWorksByCreator(config.tenantId, creator.creatorId)).find((item) => item.slug === workSlug || item.slugHistory.includes(workSlug));
     if (!work || work.status === 'deleted') return res.status(404).json({ message: 'Work not found' });
     const canManage = req.authUser?.userId ? await store.hasCreatorAccess(req.authUser.userId, creator.creatorId) : false;
+    if (!canManage && work.status === 'archived') return res.status(404).json({ message: 'Work not found' });
     const space = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((publication) => publication.destination === 'eversally');
     if (!canManage && (!space || space.status !== 'live' || space.visibility === 'private')) return res.status(404).json({ message: 'Work not found' });
     if (work.slug !== workSlug) return res.redirect(302, `/creators/${creator.slug}/works/${work.slug}`);
-    return res.json({ creator: { creatorId: creator.creatorId, name: creator.name, slug: creator.slug }, work: await publicCanonicalWork(work, `${req.protocol}://${req.get('host')}`) });
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return res.json({ creator: await publicCanonicalCreator(creator, origin), work: await publicCanonicalWork(work, origin) });
   });
 
   app.get('/creators/:slug/collections', async (req, res) => {
-    const creator = await resolveCreatorFromSlug(String(req.params.slug || '').trim().toLowerCase());
+    const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
+    const creator = await resolveCreatorFromSlug(requestedSlug);
     if (!creator || creator.status !== 'active') return res.status(404).json({ message: 'Creator not found' });
+    if (creator.slug !== requestedSlug) return res.redirect(302, `/creators/${creator.slug}/collections`);
     const collections = (await store.listCreatorCollections(config.tenantId, creator.creatorId))
       .filter((collection) => collection.status === 'published' && collection.visibility === 'public');
-    return res.json({ creator: { creatorId: creator.creatorId, name: creator.name, slug: creator.slug }, items: await Promise.all(collections.map(async (collection) => ({
+    const origin = `${req.protocol}://${req.get('host')}`;
+    return res.json({ creator: await publicCanonicalCreator(creator, origin), items: await Promise.all(collections.map(async (collection) => ({
       ...collection,
       workCount: (await store.listCollectionWorks(config.tenantId, collection.collectionId)).length
     }))) });
   });
 
   app.get('/creators/:slug/collections/:collectionSlug', async (req, res) => {
-    const creator = await resolveCreatorFromSlug(String(req.params.slug || '').trim().toLowerCase());
+    const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
+    const creator = await resolveCreatorFromSlug(requestedSlug);
     if (!creator || creator.status !== 'active') return res.status(404).json({ message: 'Creator not found' });
     const collectionSlug = String(req.params.collectionSlug || '').trim().toLowerCase();
     const collection = (await store.listCreatorCollections(config.tenantId, creator.creatorId)).find((item) => item.slug === collectionSlug || item.slugHistory.includes(collectionSlug));
     if (!collection || collection.status === 'deleted') return res.status(404).json({ message: 'Collection not found' });
     const canManage = req.authUser?.userId ? await store.hasCreatorAccess(req.authUser.userId, creator.creatorId) : false;
     if (!canManage && (collection.status !== 'published' || collection.visibility === 'private')) return res.status(404).json({ message: 'Collection not found' });
+    if (creator.slug !== requestedSlug || collection.slug !== collectionSlug) {
+      return res.redirect(302, `/creators/${creator.slug}/collections/${collection.slug}`);
+    }
     const memberships = await store.listCollectionWorks(config.tenantId, collection.collectionId);
     const works = (await Promise.all(memberships.map((membership) => store.getWork(config.tenantId, membership.workId))))
       .filter((work): work is Work => Boolean(work));
@@ -2238,8 +2390,72 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const visibleWorks = canManage ? works : (await Promise.all(works.map(async (work) => ({
       work,
       space: (await store.listPublicationsByWork(config.tenantId, work.workId)).find((publication) => publication.destination === 'eversally')
-    })))).filter(({ space }) => space?.status === 'live' && space.visibility === 'public').map(({ work }) => work);
-    return res.json({ creator: { creatorId: creator.creatorId, name: creator.name, slug: creator.slug }, collection, works: await Promise.all(visibleWorks.map((work) => publicCanonicalWork(work, origin))) });
+    })))).filter(({ work, space }) => work.status !== 'archived' && work.status !== 'deleted' && space?.status === 'live' && space.visibility === 'public').map(({ work }) => work);
+    return res.json({ creator: await publicCanonicalCreator(creator, origin), collection, works: await Promise.all(visibleWorks.map((work) => publicCanonicalWork(work, origin))) });
+  });
+
+  const xmlEscape = (value: unknown): string => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+  const listPublicSpaceWorks = async (creator: Creator): Promise<Work[]> => {
+    const works = await store.listWorksByCreator(config.tenantId, creator.creatorId);
+    const visible = await Promise.all(works.map(async (work) => ({
+      work,
+      publication: (await store.listPublicationsByWork(config.tenantId, work.workId))
+        .find((item) => item.destination === 'eversally')
+    })));
+    return visible
+      .filter(({ work, publication }) => work.status !== 'archived'
+        && work.status !== 'deleted'
+        && publication?.status === 'live'
+        && publication.visibility === 'public')
+      .sort((a, b) => (b.publication?.publishedAt || b.work.updatedAt).localeCompare(a.publication?.publishedAt || a.work.updatedAt))
+      .map(({ work }) => work);
+  };
+
+  const canonicalSpaceBaseUrl = (creator: Creator): string =>
+    `${(config.appOrigin || brand.siteUrl).replace(/\/$/, '')}/creators/${encodeURIComponent(creator.slug)}`;
+
+  app.get('/creators/:slug/rss.xml', async (req, res) => {
+    const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
+    const creator = await resolveCreatorFromSlug(requestedSlug);
+    if (!creator || creator.status !== 'active') return res.status(404).type('text/plain').send('Creator not found');
+    if (creator.slug !== requestedSlug) return res.redirect(302, `/creators/${creator.slug}/rss.xml`);
+    const baseUrl = canonicalSpaceBaseUrl(creator);
+    const feedUrl = `${baseUrl}/rss.xml`;
+    const works = await listPublicSpaceWorks(creator);
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const items = await Promise.all(works.map((work) => publicCanonicalWork(work, origin)));
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">\n<channel>\n<title>${xmlEscape(creator.name)}</title>\n<link>${xmlEscape(`${baseUrl}/works`)}</link>\n<description>${xmlEscape(creator.space?.bio || `${creator.name} works`)}</description>\n<atom:link href="${xmlEscape(feedUrl)}" rel="self" type="application/rss+xml" />\n${items.map((work) => {
+      const url = `${baseUrl}/works/${encodeURIComponent(work.slug)}`;
+      const preview = work.primaryAsset?.thumbnailUrl || (work.primaryAsset?.kind === 'image' ? work.primaryAsset.url : undefined);
+      return `<item>\n<title>${xmlEscape(work.title)}</title>\n<link>${xmlEscape(url)}</link>\n<guid isPermaLink="false">urn:ubeeq:work:${xmlEscape(work.workId)}</guid>\n<pubDate>${new Date(work.publishedAt || work.updatedAt).toUTCString()}</pubDate>\n<description>${xmlEscape(work.description || '')}</description>${preview ? `\n<media:content url="${xmlEscape(preview)}" medium="image" />` : ''}\n</item>`;
+    }).join('\n')}\n</channel>\n</rss>`;
+    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300');
+    return res.type('application/rss+xml').send(xml);
+  });
+
+  app.get('/creators/:slug/atom.xml', async (req, res) => {
+    const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
+    const creator = await resolveCreatorFromSlug(requestedSlug);
+    if (!creator || creator.status !== 'active') return res.status(404).type('text/plain').send('Creator not found');
+    if (creator.slug !== requestedSlug) return res.redirect(302, `/creators/${creator.slug}/atom.xml`);
+    const baseUrl = canonicalSpaceBaseUrl(creator);
+    const feedUrl = `${baseUrl}/atom.xml`;
+    const works = await listPublicSpaceWorks(creator);
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const items = await Promise.all(works.map((work) => publicCanonicalWork(work, origin)));
+    const updated = items[0]?.updatedAt || creator.createdAt;
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<feed xmlns="http://www.w3.org/2005/Atom">\n<title>${xmlEscape(creator.name)}</title>\n<id>${xmlEscape(`${baseUrl}/works`)}</id>\n<link href="${xmlEscape(`${baseUrl}/works`)}" />\n<link href="${xmlEscape(feedUrl)}" rel="self" type="application/atom+xml" />\n<updated>${xmlEscape(new Date(updated).toISOString())}</updated>\n${items.map((work) => {
+      const url = `${baseUrl}/works/${encodeURIComponent(work.slug)}`;
+      return `<entry>\n<title>${xmlEscape(work.title)}</title>\n<id>urn:ubeeq:work:${xmlEscape(work.workId)}</id>\n<link href="${xmlEscape(url)}" />\n<published>${xmlEscape(new Date(work.publishedAt || work.updatedAt).toISOString())}</published>\n<updated>${xmlEscape(new Date(work.updatedAt).toISOString())}</updated>\n<summary type="text">${xmlEscape(work.description || '')}</summary>\n</entry>`;
+    }).join('\n')}\n</feed>`;
+    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300');
+    return res.type('application/atom+xml').send(xml);
   });
 
   app.get('/creators/:slug/feed', async (req, res) => {
@@ -3176,6 +3392,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       name: creator.name,
       slug: creator.slug,
       status: creator.status,
+      space: {
+        bio: creator.space?.bio,
+        externalLinks: creator.space?.externalLinks || [],
+        theme: creator.space?.theme || 'default',
+        announcement: creator.space?.announcement?.enabled && creator.space.announcement.message
+          ? creator.space.announcement
+          : undefined
+      },
       defaultProfileTab: creator.defaultProfileTab === 'groupings' ? 'groupings' : 'feed',
       branding: {
         profileImage: creator.branding?.profileImage ? {
@@ -4344,6 +4568,109 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return res.json(await listVisibleCreators(req));
   });
 
+  app.get('/studio/integrations/bluesky/configuration', requireAuth, async (_req, res) => {
+    const serviceUrl = config.blueskyOAuthServiceUrl?.replace(/\/$/, '');
+    return res.json({
+      platform: 'bluesky',
+      configured: Boolean(serviceUrl && config.blueskyOAuthServiceJwksUrl && config.externalTokenEncryptionKey),
+      authorizationUrl: serviceUrl ? `${serviceUrl}/oauth/bluesky/authorize` : undefined,
+      requiredConfiguration: [
+        ...(serviceUrl ? [] : ['BLUESKY_OAUTH_SERVICE_URL']),
+        ...(config.blueskyOAuthServiceJwksUrl ? [] : ['BLUESKY_OAUTH_SERVICE_JWKS_URL']),
+        ...(config.externalTokenEncryptionKey ? [] : ['EXTERNAL_TOKEN_ENCRYPTION_KEY'])
+      ]
+    });
+  });
+
+  app.post('/studio/integrations/bluesky/connect', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    const handle = typeof req.body?.handle === 'string' ? req.body.handle.trim().toLowerCase() : '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    if (!config.externalTokenEncryptionKey || !config.blueskyOAuthServiceUrl || !config.blueskyOAuthServiceJwksUrl) {
+      return res.status(503).json({ message: 'Bluesky OAuth is not configured for this deployment.' });
+    }
+    if (!/^[a-z0-9][a-z0-9.-]{1,252}[a-z0-9]$/i.test(handle)) {
+      return res.status(400).json({ message: 'Enter a valid Bluesky handle, such as creator.bsky.social.' });
+    }
+    const requestedReturnPath = typeof req.body?.returnPath === 'string' ? req.body.returnPath : '';
+    const returnPath = requestedReturnPath.startsWith('/studio/')
+      ? requestedReturnPath
+      : '/studio/workspace?section=integrations';
+    const issued = issueBlueskyOAuthState(config, {
+      userId: req.authUser!.userId,
+      creatorIdentityId,
+      platform: 'bluesky',
+      returnPath
+    });
+    const authorizeUrl = new URL('/oauth/bluesky/authorize', config.blueskyOAuthServiceUrl);
+    authorizeUrl.searchParams.set('handle', handle);
+    authorizeUrl.searchParams.set('state', issued.state);
+    return res.json({ authorizationUrl: authorizeUrl.toString() });
+  });
+
+  app.post('/studio/integrations/bluesky/complete', requireAuth, async (req, res) => {
+    const stateValue = typeof req.body?.state === 'string' ? req.body.state : '';
+    const proof = typeof req.body?.proof === 'string' ? req.body.proof : '';
+    if (!stateValue || !proof) return res.status(400).json({ message: 'The Bluesky connection response is incomplete.' });
+    let state: ReturnType<typeof verifyBlueskyOAuthState>;
+    let connection: BlueskyConnectionProof;
+    try {
+      state = verifyBlueskyOAuthState(config, stateValue);
+      connection = await verifyBlueskyConnectionProof(proof, stateValue);
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : 'The Bluesky connection could not be verified.' });
+    }
+    if (state.userId !== req.authUser!.userId || !(await ensureCreatorAccountAccess(req, res, state.creatorIdentityId))) {
+      return res.status(403).json({ message: 'This Bluesky connection is no longer authorized for the selected creator.' });
+    }
+    const now = new Date().toISOString();
+    const existing = (await store.listExternalAccountsByUser(state.userId)).find((account) => (
+      account.platform === 'bluesky' && account.externalUserId === connection.did
+    ));
+    const account: ExternalAccount = {
+      externalAccountId: existing?.externalAccountId || randomUUID(),
+      userId: state.userId,
+      creatorIdentityId: state.creatorIdentityId,
+      primaryCreatorIdentityId: state.creatorIdentityId,
+      // The DPoP session remains in the dedicated OAuth service. This stable
+      // reference deliberately is not a client secret or a token.
+      externalPlatformCredentialId: 'bluesky-oauth-service',
+      platform: 'bluesky',
+      externalUserId: connection.did,
+      externalUsername: connection.handle || connection.did,
+      accessTokenEncrypted: encryptExternalCredential('managed-by-bluesky-oauth-service', config.externalTokenEncryptionKey),
+      connectionStatus: 'connected',
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    if (existing) await store.updateExternalAccount(account);
+    else await store.createExternalAccount(account);
+    await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, [{
+      externalAccountId: account.externalAccountId,
+      creatorIdentityId: state.creatorIdentityId,
+      userId: state.userId,
+      createdAt: now,
+      updatedAt: now
+    }]);
+    auditLog(req, 'bluesky.account.connected', {
+      externalAccountId: account.externalAccountId,
+      creatorIdentityId: state.creatorIdentityId,
+      did: account.externalUserId
+    });
+    return res.json(toExternalAccountResponse(account));
+  });
+
+  app.get('/studio/integrations/bluesky/accounts', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const accounts = creatorIdentityId
+      ? await store.listExternalAccountsByCreatorIdentity(creatorIdentityId)
+      : await store.listExternalAccountsByUser(req.authUser!.userId);
+    return res.json(accounts
+      .filter((account) => account.platform === 'bluesky' && account.connectionStatus !== 'disabled')
+      .map(toExternalAccountResponse));
+  });
+
   app.get('/studio/integrations/deviantart/configuration', requireAuth, async (req, res) => {
     const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
     if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
@@ -5073,6 +5400,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       capturedAt: !total.capturedAt || (row?.capturedAt && row.capturedAt > total.capturedAt) ? row?.capturedAt : total.capturedAt,
       destinations: total.destinations + (row ? 1 : 0)
     }), { views: 0, favourites: 0, comments: 0, downloads: 0, capturedAt: undefined as string | undefined, destinations: 0 });
+    const publicationIntents = await store.listPublicationIntentsByWork(config.tenantId, work.workId);
     return {
       ...work,
       assets: await Promise.all(assets.map(async (asset) => ({
@@ -5080,7 +5408,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         url: asset.storage.objectKey ? await publicMediaUrl(asset.storage.objectKey, requestOrigin) : asset.storage.externalUrl,
         thumbnailUrl: asset.storage.thumbnailObjectKey ? await publicMediaUrl(asset.storage.thumbnailObjectKey, requestOrigin) : undefined
       }))),
+      contentAvailability: contentAvailabilityForAssets(assets),
       publications,
+      publicationIntents,
       engagement,
       collections: collections.filter((collection) => memberCollectionIds.has(collection.collectionId)),
       discovery: discovery || {
@@ -5140,6 +5470,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       aiDisclosure: parseOptionalAiDisclosure(req.body?.aiDisclosure) || 'none',
       heavyTopics: parseOptionalHeavyTopics(req.body?.heavyTopics) || [],
       status: 'draft',
+      origin: { type: 'local' },
       revision: 1,
       createdAt: now,
       updatedAt: now
@@ -5164,7 +5495,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (nextSlug !== work.slug && (await store.listWorksByCreator(config.tenantId, work.creatorId)).some((item) => item.workId !== work.workId && item.slugHistory.includes(nextSlug))) {
       return res.status(409).json({ message: 'Work slug is already in use for this Creator.' });
     }
-    const status = req.body?.status === 'published' || req.body?.status === 'archived' || req.body?.status === 'deleted' || req.body?.status === 'draft'
+    const status = req.body?.status === 'ready' || req.body?.status === 'archived' || req.body?.status === 'deleted' || req.body?.status === 'draft'
       ? req.body.status
       : work.status;
     const now = new Date().toISOString();
@@ -5181,7 +5512,6 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       status,
       revision: work.revision + 1,
       updatedAt: now,
-      publishedAt: status === 'published' ? (work.publishedAt || now) : work.publishedAt,
       archivedAt: status === 'archived' ? now : undefined,
       deletedAt: status === 'deleted' ? now : undefined
     };
@@ -5254,6 +5584,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         aiDisclosure: 'none',
         heavyTopics: [],
         status: 'draft',
+        origin: { type: 'local' },
         revision: 1,
         createdAt: asset.createdAt || now,
         updatedAt: asset.updatedAt || now
@@ -5319,6 +5650,19 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         updatedAt: updatedExisting.updatedAt,
         publishedAt: updatedExisting.publishedAt
       });
+      const existingIntent = (await store.listPublicationIntentsByWork(config.tenantId, work.workId)).find((intent) => intent.destination === 'deviantart' && intent.integrationAccountId === account.externalAccountId);
+      await store.upsertPublicationIntent({
+        publicationIntentId: existingIntent?.publicationIntentId || randomUUID(),
+        tenantId: config.tenantId,
+        creatorId: work.creatorId,
+        workId: work.workId,
+        destination: 'deviantart',
+        integrationAccountId: account.externalAccountId,
+        enabled: true,
+        desiredStatus: targetStatus === 'draft' ? 'draft' : 'live',
+        createdAt: existingIntent?.createdAt || updatedExisting.createdAt,
+        updatedAt: updatedExisting.updatedAt
+      });
       return res.status(200).json({ publication: updatedExisting });
     }
     const now = new Date().toISOString();
@@ -5354,6 +5698,19 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       createdAt: now,
       updatedAt: now
     });
+    const currentIntent = (await store.listPublicationIntentsByWork(config.tenantId, work.workId)).find((intent) => intent.destination === 'deviantart' && intent.integrationAccountId === account.externalAccountId);
+    await store.upsertPublicationIntent({
+      publicationIntentId: currentIntent?.publicationIntentId || randomUUID(),
+      tenantId: config.tenantId,
+      creatorId: work.creatorId,
+      workId: work.workId,
+      destination: 'deviantart',
+      integrationAccountId: account.externalAccountId,
+      enabled: true,
+      desiredStatus: targetStatus === 'draft' ? 'draft' : 'live',
+      createdAt: currentIntent?.createdAt || now,
+      updatedAt: now
+    });
     // A destination starts with shared Ubeeq values. A creator can opt out of that
     // relationship on the metadata review page before the first sync.
     await store.updateAsset({
@@ -5363,6 +5720,53 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       updatedAt: now
     });
     return res.status(201).json({ publication });
+  });
+
+  app.put('/studio/works/:workId/publication-intents', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const destination = req.body?.destination === 'eversally' || req.body?.destination === 'deviantart' ? req.body.destination : '';
+    if (!destination) return res.status(400).json({ message: 'Choose an available publishing destination.' });
+    const integrationAccountId = destination === 'deviantart' && typeof req.body?.integrationAccountId === 'string' ? req.body.integrationAccountId.trim() : undefined;
+    if (destination === 'deviantart') {
+      const account = integrationAccountId ? await store.getExternalAccount(integrationAccountId) : null;
+      if (!account || account.platform !== 'deviantart' || account.userId !== req.authUser!.userId || account.connectionStatus !== 'connected') {
+        return res.status(400).json({ message: 'Choose a connected DeviantArt account.' });
+      }
+      const assignedCreatorIds = (await store.listExternalAccountCreatorAssignments(account.externalAccountId)).map((assignment) => assignment.creatorIdentityId);
+      if (!assignedCreatorIds.includes(work.creatorId) && account.primaryCreatorIdentityId !== work.creatorId && account.creatorIdentityId !== work.creatorId) {
+        return res.status(403).json({ message: 'This DeviantArt account is not connected to the Work’s Creator.' });
+      }
+    }
+    const desiredStatus = req.body?.desiredStatus === 'draft' || req.body?.desiredStatus === 'scheduled' ? req.body.desiredStatus : 'live';
+    const existing = (await store.listPublicationIntentsByWork(config.tenantId, work.workId)).find((intent) => intent.destination === destination && intent.integrationAccountId === integrationAccountId);
+    const now = new Date().toISOString();
+    const intent: PublicationIntent = {
+      publicationIntentId: existing?.publicationIntentId || randomUUID(),
+      tenantId: config.tenantId,
+      creatorId: work.creatorId,
+      workId: work.workId,
+      destination,
+      integrationAccountId,
+      enabled: req.body?.enabled !== false,
+      desiredStatus,
+      scheduledAt: desiredStatus === 'scheduled' && typeof req.body?.scheduledAt === 'string' ? req.body.scheduledAt : undefined,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    await store.upsertPublicationIntent(intent);
+    return res.json(intent);
+  });
+
+  app.delete('/studio/works/:workId/publication-intents/:publicationIntentId', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const intent = await store.getPublicationIntent(config.tenantId, req.params.publicationIntentId);
+    if (!intent || intent.workId !== work.workId) return res.status(404).json({ message: 'Publishing destination selection not found.' });
+    await store.deletePublicationIntent(config.tenantId, intent.publicationIntentId);
+    return res.status(204).end();
   });
 
   app.delete('/studio/works/:assetId/destinations/deviantart/:externalAccountId', requireAuth, async (req, res) => {
@@ -5378,6 +5782,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     await store.updateExternalPublication({ ...publication, syncStatus: 'deleted', updatedAt: now });
     const canonical = await store.getPublication(config.tenantId, publication.externalPublicationId);
     if (canonical) await store.upsertPublication({ ...canonical, status: 'removed', removedAt: now, updatedAt: now });
+    const intent = (await store.listPublicationIntentsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'deviantart' && item.integrationAccountId === req.params.externalAccountId);
+    if (intent) await store.deletePublicationIntent(config.tenantId, intent.publicationIntentId);
     return res.status(204).end();
   });
 
@@ -5402,6 +5808,81 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     } catch (error) {
       logServerError('studio.work.destination.publish.enqueue', error);
       return res.status(503).json({ message: 'The publishing queue is unavailable. Please try again.' });
+    }
+  });
+
+  app.post('/studio/works/:workId/publications/:publicationId/resolve', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.workId !== work.workId || publication.destination !== 'deviantart' || !publication.integrationAccountId) {
+      return res.status(404).json({ message: 'DeviantArt publication not found' });
+    }
+    const account = await store.getExternalAccount(publication.integrationAccountId);
+    if (!account || account.userId !== req.authUser!.userId || account.platform !== 'deviantart') {
+      return res.status(403).json({ message: 'You do not control this DeviantArt publication.' });
+    }
+    const externalPublication = (await store.listExternalPublications(account.externalAccountId))
+      .find((item) => item.externalPublicationId === publication.publicationId);
+    if (!externalPublication || externalPublication.syncStatus !== 'active') {
+      return res.status(409).json({ message: 'Only an active DeviantArt publication can be reconciled.' });
+    }
+    const strategy = req.body?.strategy === 'pull' || req.body?.strategy === 'push' ? req.body.strategy : '';
+    if (!strategy) return res.status(400).json({ message: 'Choose whether to pull from DeviantArt or push the Ubeeq version.' });
+    const now = new Date().toISOString();
+    try {
+      if (strategy === 'pull') {
+        const compatibilityAsset = await store.getAsset(work.workId);
+        if (compatibilityAsset) {
+          await store.updateAsset({
+            ...compatibilityAsset,
+            titleSyncPolicy: 'mirrored',
+            descriptionSyncPolicy: 'mirrored',
+            updatedAt: now
+          });
+        }
+        await store.upsertPublication({
+          ...publication,
+          sync: { ...publication.sync, status: 'remote_newer', lastAttemptAt: now, errorCode: undefined, errorMessage: undefined },
+          updatedAt: now
+        });
+        const job = await enqueueExternalSyncJob(account.externalAccountId, 'full_reconciliation', {
+          reason: 'manual_pull',
+          externalContentId: externalPublication.externalContentId,
+          publicationId: publication.publicationId
+        });
+        auditLog(req, 'deviantart.publication.pull.requested', { workId: work.workId, publicationId: publication.publicationId, jobId: job.externalSyncJobId });
+        return res.status(202).json({ strategy, job });
+      }
+      const compatibilityAsset = await store.getAsset(work.workId);
+      const updatePayload = {
+        externalPublicationId: externalPublication.externalPublicationId,
+        title: work.title,
+        description: work.description || '',
+        tags: work.tags
+      };
+      await store.updateExternalPublication({
+        ...externalPublication,
+        externalTitle: work.title,
+        externalDescription: work.description || '',
+        externalTags: work.tags,
+        metadataSyncStatus: 'local_update_pending',
+        updatedAt: now
+      });
+      await store.upsertPublication({
+        ...publication,
+        metadataOverrides: { ...publication.metadataOverrides, title: work.title, description: work.description, tags: work.tags },
+        sync: { ...publication.sync, status: 'local_newer', lastAttemptAt: now, errorCode: undefined, errorMessage: undefined },
+        updatedAt: now
+      });
+      if (compatibilityAsset) await store.updateAsset({ ...compatibilityAsset, updatedAt: now });
+      const job = await enqueueExternalSyncJob(account.externalAccountId, 'remote_update', updatePayload);
+      auditLog(req, 'deviantart.publication.push.requested', { workId: work.workId, publicationId: publication.publicationId, jobId: job.externalSyncJobId });
+      return res.status(202).json({ strategy, job });
+    } catch (error) {
+      logServerError('deviantart.publication.resolve.enqueue', error);
+      return res.status(503).json({ message: 'The reconciliation job could not be queued. No remote changes were made.' });
     }
   });
 
@@ -5482,6 +5963,18 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       removedAt: shouldPublish ? undefined : existing?.removedAt
     };
     await store.upsertPublication(publication);
+    const currentIntent = (await store.listPublicationIntentsByWork(config.tenantId, work.workId)).find((intent) => intent.destination === 'eversally' && !intent.integrationAccountId);
+    await store.upsertPublicationIntent({
+      publicationIntentId: currentIntent?.publicationIntentId || randomUUID(),
+      tenantId: config.tenantId,
+      creatorId: work.creatorId,
+      workId: work.workId,
+      destination: 'eversally',
+      enabled: shouldPublish,
+      desiredStatus: 'live',
+      createdAt: currentIntent?.createdAt || now,
+      updatedAt: now
+    });
     const currentDiscovery = await store.getWorkDiscoveryParticipation(config.tenantId, work.workId);
     if ((!shouldPublish || visibility !== 'public') && currentDiscovery?.state === 'opted_in') {
       await store.upsertWorkDiscoveryParticipation({
@@ -5490,9 +5983,6 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         withdrawnAt: now,
         updatedAt: now
       });
-    }
-    if (shouldPublish && work.status === 'draft') {
-      await store.updateWork({ ...work, status: 'published', publishedAt: work.publishedAt || now, revision: work.revision + 1, updatedAt: now });
     }
     return res.json(publication);
   });
@@ -5634,12 +6124,13 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const integrationAccounts = await store.listExternalAccountsByCreatorIdentity(creatorId);
     const [workRecords, collectionRecords] = await Promise.all([
       Promise.all(works.map(async (work) => {
-        const [assets, publications, discovery] = await Promise.all([
+        const [assets, publications, publicationIntents, discovery] = await Promise.all([
           store.listCanonicalAssetsByWork(config.tenantId, work.workId),
           store.listPublicationsByWork(config.tenantId, work.workId),
+          store.listPublicationIntentsByWork(config.tenantId, work.workId),
           store.getWorkDiscoveryParticipation(config.tenantId, work.workId)
         ]);
-        return { work, assets, publications, discovery };
+        return { work, assets, publications, publicationIntents, discovery };
       })),
       Promise.all(collections.map(async (collection) => ({
         collection,
@@ -6173,6 +6664,16 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         : true,
       defaultAiDisclosure: parseOptionalAiDisclosure(req.body?.defaultAiDisclosure) || 'none',
       defaultHeavyTopics: parseOptionalHeavyTopics(req.body?.defaultHeavyTopics) || [],
+      space: req.body?.space && typeof req.body.space === 'object' ? {
+        bio: sanitizeOptional(req.body.space.bio, 5000),
+        externalLinks: parseCreatorExternalLinks(req.body.space.externalLinks),
+        theme: parseCreatorSpaceTheme(req.body.space.theme),
+        announcement: req.body.space.announcement && typeof req.body.space.announcement === 'object' ? {
+          enabled: req.body.space.announcement.enabled === true,
+          message: sanitizeOptional(req.body.space.announcement.message, 500) || '',
+          url: sanitizePublicHttpUrl(req.body.space.announcement.url)
+        } : undefined
+      } : undefined,
       status: req.body?.status === 'inactive' ? 'inactive' : 'active',
       sortOrder: Number(req.body?.sortOrder || 0),
       createdAt: new Date().toISOString()
@@ -6408,6 +6909,18 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       defaultHeavyTopics: req.body?.defaultHeavyTopics !== undefined
         ? (parseOptionalHeavyTopics(req.body.defaultHeavyTopics) || [])
         : normalizeHeavyTopics(existing.defaultHeavyTopics),
+      space: req.body?.space && typeof req.body.space === 'object' ? {
+        bio: req.body.space.bio !== undefined ? sanitizeOptional(req.body.space.bio, 5000) : existing.space?.bio,
+        externalLinks: req.body.space.externalLinks !== undefined ? parseCreatorExternalLinks(req.body.space.externalLinks) : (existing.space?.externalLinks || []),
+        theme: req.body.space.theme !== undefined ? parseCreatorSpaceTheme(req.body.space.theme) : (existing.space?.theme || 'default'),
+        announcement: req.body.space.announcement !== undefined
+          ? (req.body.space.announcement && typeof req.body.space.announcement === 'object' ? {
+              enabled: req.body.space.announcement.enabled === true,
+              message: sanitizeOptional(req.body.space.announcement.message, 500) || '',
+              url: sanitizePublicHttpUrl(req.body.space.announcement.url)
+            } : undefined)
+          : existing.space?.announcement
+      } : existing.space,
       status: req.body?.status === 'inactive' ? 'inactive' : (req.body?.status === 'active' ? 'active' : existing.status),
       sortOrder: req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : existing.sortOrder
     };

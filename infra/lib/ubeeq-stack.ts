@@ -5,6 +5,7 @@ import { Construct } from 'constructs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
@@ -23,6 +24,9 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
 
 export class UbeeqStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -49,8 +53,18 @@ export class UbeeqStack extends Stack {
     const cognitoDomainPrefix = process.env.COGNITO_DOMAIN_PREFIX?.trim();
     const sesFromAddress = process.env.SES_FROM_ADDRESS?.trim();
     const webAppUrl = process.env.WEB_APP_URL?.trim().replace(/\/$/, '');
+    const rootDomain = process.env.ROOT_DOMAIN?.trim().toLowerCase();
+    const apiDomain = process.env.API_DOMAIN?.trim().toLowerCase();
+    const hostedZoneId = process.env.HOSTED_ZONE_ID?.trim();
+    const apiCertificateArn = process.env.API_CERTIFICATE_ARN?.trim();
+    const webCertificateArn = process.env.WEB_CERTIFICATE_ARN?.trim();
+    const manageFullProductDomains = process.env.ENABLE_FULL_PRODUCT_DOMAINS === 'true';
     if (isProduction && !webAppUrl) {
       throw new Error('WEB_APP_URL is required when DEPLOYMENT_STAGE=production so CORS can be restricted.');
+    }
+    const domainValues = [rootDomain, apiDomain, hostedZoneId, apiCertificateArn, webCertificateArn];
+    if (manageFullProductDomains && domainValues.some((value) => !value)) {
+      throw new Error('ROOT_DOMAIN, API_DOMAIN, HOSTED_ZONE_ID, API_CERTIFICATE_ARN, and WEB_CERTIFICATE_ARN must be supplied together.');
     }
     const developmentOrigins = ['http://localhost:5173', 'https://fanadmin.top:5174', 'https://fanadmin.top:5175'];
     const mediaCorsOrigins = isProduction ? [webAppUrl!] : [...new Set([...(webAppUrl ? [webAppUrl] : []), ...developmentOrigins])];
@@ -430,6 +444,10 @@ export class UbeeqStack extends Stack {
         TENANT_ID: process.env.TENANT_ID || productBrand,
         EXTERNAL_OAUTH_REDIRECT_URI: process.env.EXTERNAL_OAUTH_REDIRECT_URI || '',
         EXTERNAL_TOKEN_ENCRYPTION_KEY: externalTokenEncryptionKey,
+        // The Bluesky broker is separately deployed so DPoP refresh tokens do
+        // not enter the main product API. These are public endpoints only.
+        BLUESKY_OAUTH_SERVICE_URL: process.env.BLUESKY_OAUTH_SERVICE_URL || '',
+        BLUESKY_OAUTH_SERVICE_JWKS_URL: process.env.BLUESKY_OAUTH_SERVICE_JWKS_URL || '',
         UNLOCK_JWT_SECRET: unlockJwtSecret,
         APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || ''),
         TRENDING_FEED_MAX_ITEMS: '600',
@@ -642,6 +660,72 @@ export class UbeeqStack extends Stack {
         maxAge: Duration.minutes(10)
       }
     });
+    let apiCustomDomain: apigw.DomainName | undefined;
+    let publicWebDistribution: cloudfront.Distribution | undefined;
+    if (manageFullProductDomains && rootDomain && apiDomain && hostedZoneId && apiCertificateArn) {
+      const zone = route53.HostedZone.fromHostedZoneAttributes(this, 'PublicHostedZone', {
+        hostedZoneId,
+        zoneName: rootDomain
+      });
+      apiCustomDomain = api.addDomainName('PublicApiDomain', {
+        domainName: apiDomain,
+        certificate: acm.Certificate.fromCertificateArn(this, 'PublicApiCertificate', apiCertificateArn),
+        endpointType: apigw.EndpointType.REGIONAL,
+        securityPolicy: apigw.SecurityPolicy.TLS_1_2
+      });
+      new route53.ARecord(this, 'PublicApiAliasRecord', {
+        zone,
+        recordName: apiDomain,
+        target: route53.RecordTarget.fromAlias(new route53Targets.ApiGatewayDomain(apiCustomDomain))
+      });
+      new route53.AaaaRecord(this, 'PublicApiIpv6AliasRecord', {
+        zone,
+        recordName: apiDomain,
+        target: route53.RecordTarget.fromAlias(new route53Targets.ApiGatewayDomain(apiCustomDomain))
+      });
+
+      const webBucket = new s3.Bucket(this, 'PublicWebBucket', {
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        encryption: s3.BucketEncryption.S3_MANAGED,
+        enforceSSL: true,
+        versioned: isProduction,
+        removalPolicy: dataRemovalPolicy,
+        autoDeleteObjects: !isProduction
+      });
+      publicWebDistribution = new cloudfront.Distribution(this, 'PublicWebDistribution', {
+        defaultBehavior: {
+          origin: origins.S3BucketOrigin.withOriginAccessControl(webBucket),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          compress: true
+        },
+        defaultRootObject: 'index.html',
+        errorResponses: [
+          { httpStatus: 403, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: Duration.minutes(1) },
+          { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: Duration.minutes(1) }
+        ],
+        domainNames: [rootDomain],
+        certificate: acm.Certificate.fromCertificateArn(this, 'PublicWebCertificate', webCertificateArn!),
+        minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021
+      });
+      new s3deploy.BucketDeployment(this, 'PublicWebDeployment', {
+        sources: [s3deploy.Source.asset(path.join(__dirname, '../../apps/web/dist'))],
+        destinationBucket: webBucket,
+        distribution: publicWebDistribution,
+        distributionPaths: ['/*'],
+        prune: true
+      });
+      new route53.ARecord(this, 'PublicWebAliasRecord', {
+        zone,
+        recordName: rootDomain,
+        target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(publicWebDistribution))
+      });
+      new route53.AaaaRecord(this, 'PublicWebIpv6AliasRecord', {
+        zone,
+        recordName: rootDomain,
+        target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(publicWebDistribution))
+      });
+    }
 
     let operationsTopic: sns.Topic | undefined;
     if (isProduction) {
@@ -756,6 +840,9 @@ export class UbeeqStack extends Stack {
     }
 
     new CfnOutput(this, 'ApiUrl', { value: api.url });
+    if (apiCustomDomain) new CfnOutput(this, 'CustomApiUrl', { value: `https://${apiCustomDomain.domainName}` });
+    if (publicWebDistribution && rootDomain) new CfnOutput(this, 'PublicWebUrl', { value: `https://${rootDomain}` });
+    if (publicWebDistribution) new CfnOutput(this, 'PublicWebDistributionDomainName', { value: publicWebDistribution.distributionDomainName });
     new CfnOutput(this, 'MediaBucketName', { value: mediaBucket.bucketName });
     new CfnOutput(this, 'VideoPosterIngestQueueUrl', { value: videoPosterIngestQueue.queueUrl });
     new CfnOutput(this, 'VideoPosterIngestQueueArn', { value: videoPosterIngestQueue.queueArn });

@@ -8,7 +8,23 @@ import type { StudioCreator, StudioFile, StudioPost } from '../types';
 
 const slugSuggestion = (name: string): string => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
-type CreatorPayload = { name: string; slug: string; status: 'active' | 'inactive' };
+type CreatorPayload = {
+  name: string;
+  slug: string;
+  status: 'active' | 'inactive';
+  space?: StudioCreator['space'];
+};
+
+const parseExternalLinks = (value: string): Array<{ label: string; url: string }> => value
+  .split('\n')
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .flatMap((line) => {
+    const [first, ...rest] = line.split('|').map((part) => part.trim());
+    const url = rest.length ? rest.join('|') : first;
+    if (!url) return [];
+    return [{ label: rest.length ? first : '', url }];
+  });
 
 export function CreatorsView({
   creators,
@@ -41,6 +57,12 @@ export function CreatorsView({
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [status, setStatus] = useState<'active' | 'inactive'>('active');
+  const [bio, setBio] = useState('');
+  const [externalLinks, setExternalLinks] = useState('');
+  const [spaceTheme, setSpaceTheme] = useState<'default' | 'ubeeq' | 'sand' | 'forest' | 'slate'>('default');
+  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [announcementMessage, setAnnouncementMessage] = useState('');
+  const [announcementUrl, setAnnouncementUrl] = useState('');
   const [profileImage, setProfileImage] = useState<File>();
   const [coverImage, setCoverImage] = useState<File>();
   const [saving, setSaving] = useState(false);
@@ -57,6 +79,12 @@ export function CreatorsView({
     setName(creator?.name || '');
     setSlug(creator?.slug || '');
     setStatus(creator?.status === 'inactive' ? 'inactive' : 'active');
+    setBio(creator?.space?.bio || '');
+    setExternalLinks((creator?.space?.externalLinks || []).map((link) => `${link.label} | ${link.url}`).join('\n'));
+    setSpaceTheme(creator?.space?.theme || 'default');
+    setAnnouncementEnabled(creator?.space?.announcement?.enabled === true);
+    setAnnouncementMessage(creator?.space?.announcement?.message || '');
+    setAnnouncementUrl(creator?.space?.announcement?.url || '');
     setProfileImage(undefined);
     setCoverImage(undefined);
     setFormError('');
@@ -107,7 +135,21 @@ export function CreatorsView({
     setSaving(true);
     setFormError('');
     try {
-      const payload = { name: trimmedName, slug: trimmedSlug, status };
+      const payload: CreatorPayload = {
+        name: trimmedName,
+        slug: trimmedSlug,
+        status,
+        space: {
+          bio: bio.trim(),
+          externalLinks: parseExternalLinks(externalLinks),
+          theme: spaceTheme,
+          announcement: {
+            enabled: announcementEnabled,
+            message: announcementMessage.trim(),
+            url: announcementUrl.trim() || undefined
+          }
+        }
+      };
       if (formMode === 'create') {
         const creator = await onCreateCreator(payload);
         if (profileImage) await onUploadProfileImage(creator.creatorId, profileImage);
@@ -141,7 +183,11 @@ export function CreatorsView({
           <label><span>Handle / slug</span><input value={slug} onChange={(event) => setSlug(event.target.value)} placeholder={slugSuggestion(name) || 'rex-studio'} autoCapitalize="none" autoCorrect="off" /></label>
           <label><span>Profile image</span><input type="file" accept="image/*" onChange={(event) => setProfileImage(event.target.files?.[0])} /></label>
           <label><span>Cover image</span><input type="file" accept="image/*" onChange={(event) => setCoverImage(event.target.files?.[0])} /></label>
+          <label className="studio-creator-form-wide"><span>Space bio</span><textarea value={bio} onChange={(event) => setBio(event.target.value)} rows={5} placeholder="Tell visitors about this creator and their work." /></label>
+          <label className="studio-creator-form-wide"><span>External links</span><textarea value={externalLinks} onChange={(event) => setExternalLinks(event.target.value)} rows={4} placeholder={'Portfolio | https://example.com\nBluesky | https://bsky.app/profile/example.com'} /><small>One link per line. Use “Label | URL”.</small></label>
+          <label><span>Space theme</span><select value={spaceTheme} onChange={(event) => setSpaceTheme(event.target.value as typeof spaceTheme)}><option value="default">Platform default</option><option value="ubeeq">Ubeeq</option><option value="sand">Sand</option><option value="forest">Forest</option><option value="slate">Slate</option></select></label>
           <label><span>{brand.creatorName} status</span><select value={status} onChange={(event) => setStatus(event.target.value as 'active' | 'inactive')}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+          <fieldset className="studio-creator-form-wide studio-space-announcement"><legend>Space announcement</legend><label className="studio-work-metadata-option"><input type="checkbox" checked={announcementEnabled} onChange={(event) => setAnnouncementEnabled(event.target.checked)} /><span>Show an announcement on public Space pages</span></label><label><span>Message</span><input value={announcementMessage} onChange={(event) => setAnnouncementMessage(event.target.value)} placeholder="New collection available now" /></label><label><span>Optional link</span><input type="url" value={announcementUrl} onChange={(event) => setAnnouncementUrl(event.target.value)} placeholder="https://example.com/news" /></label></fieldset>
         </div>
         <div className="studio-inline-actions">
           <button type="button" className="auth-primary-btn" disabled={!name.trim() || saving} onClick={() => void submit()}>{saving ? 'Saving…' : isCreate ? `Create ${brand.creatorName}` : `Save ${brand.creatorName}`}</button>

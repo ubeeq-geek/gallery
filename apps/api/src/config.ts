@@ -38,6 +38,18 @@ export interface AppConfig {
   externalContentMaxBytes: number;
   localMediaDirectory?: string;
   appOrigin?: string;
+  /** Public HTTPS URL hosting the atproto OAuth client metadata document. */
+  blueskyOAuthClientMetadataUrl?: string;
+  /** Public HTTPS callback handled by this API. */
+  blueskyOAuthCallbackUrl?: string;
+  /** Public JWKS JSON for the confidential atproto OAuth client. */
+  blueskyOAuthJwksJson?: string;
+  /** Confidential signing key material; load from Secrets Manager in production. */
+  blueskyOAuthPrivateJwk?: string;
+  /** Dedicated DPoP OAuth broker used to hold Bluesky sessions outside the product API. */
+  blueskyOAuthServiceUrl?: string;
+  /** Public JWKS used to verify one-time connection proofs issued by the OAuth broker. */
+  blueskyOAuthServiceJwksUrl?: string;
   localAuthUserId?: string;
 }
 
@@ -87,6 +99,12 @@ export const loadConfig = (): AppConfig => {
   externalContentMaxBytes: Number(process.env.EXTERNAL_CONTENT_MAX_BYTES || 50 * 1024 * 1024),
   localMediaDirectory: process.env.LOCAL_MEDIA_DIRECTORY || (process.env.LOCAL_AUTH_USER_ID ? '/tmp/ubeeq-media' : undefined),
   appOrigin: process.env.APP_ORIGIN,
+  blueskyOAuthClientMetadataUrl: process.env.BLUESKY_OAUTH_CLIENT_METADATA_URL,
+  blueskyOAuthCallbackUrl: process.env.BLUESKY_OAUTH_CALLBACK_URL,
+  blueskyOAuthJwksJson: process.env.BLUESKY_OAUTH_JWKS_JSON,
+  blueskyOAuthPrivateJwk: process.env.BLUESKY_OAUTH_PRIVATE_JWK,
+  blueskyOAuthServiceUrl: process.env.BLUESKY_OAUTH_SERVICE_URL,
+  blueskyOAuthServiceJwksUrl: process.env.BLUESKY_OAUTH_SERVICE_JWKS_URL,
   localAuthUserId: process.env.LOCAL_AUTH_USER_ID
   };
   if (deploymentStage === 'production' || deploymentStage === 'prod') {

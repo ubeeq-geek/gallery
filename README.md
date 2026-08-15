@@ -67,6 +67,10 @@ The API reads environment variables from the shell that starts it; it does **not
 | `EXTERNAL_CONTENT_MAX_BYTES` | `52428800` | Maximum downloaded external source-file size (50 MiB). |
 | `DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE` | `true` | Enables supported published-description updates through retained Sta.sh IDs. |
 | `COGNITO_USER_POOL_ID` / `COGNITO_CLIENT_ID` | unset | Leave unset for local-header auth. Set both only when testing Cognito token verification locally. |
+| `BLUESKY_OAUTH_CLIENT_METADATA_URL` / `BLUESKY_OAUTH_CALLBACK_URL` | unset | Public HTTPS URLs for the AT Protocol OAuth client metadata and API callback. These cannot use a plain local host. |
+| `BLUESKY_OAUTH_JWKS_JSON` | unset | Public JWKS JSON advertised to Bluesky. Never include private JWK fields here. |
+| `BLUESKY_OAUTH_PRIVATE_JWK` | unset | Confidential ES256 signing JWK. Load from managed secret storage in production; never commit it. |
+| `BLUESKY_OAUTH_SERVICE_URL` / `BLUESKY_OAUTH_SERVICE_JWKS_URL` | unset | The dedicated OAuth broker and its public JWKS. Studio uses these to issue and verify Creator-scoped Bluesky connection proofs without receiving a refresh token. |
 
 For a stable local encryption key, run this once and export the result before starting the API:
 
@@ -129,15 +133,58 @@ Legacy discovery routes remain while the public discovery presentation is moved 
 
 ## Deployment Notes
 
+### Deployment matrix
+
+| Goal | Deployment target | What it creates | What it does not create |
+| --- | --- | --- | --- |
+| Local product development | `npm run dev:ubeeq` | Ubeeq API and Vite web app on local ports | AWS resources, durable data, public domains |
+| Public Ubeeq launch page + Bluesky OAuth | `DEPLOY_TARGET=public` | Static `UbeeqLanding` and minimal `UbeeqBlueskyOAuth` stacks | Product API, Cognito, creator data, media, queues, workers |
+| Full self-hosted Ubeeq product | default `full` target | API, DynamoDB, media/CDN, Cognito, queues, worker Lambdas, monitoring/backup profile in production | A public web hostname unless explicitly enabled below |
+
+All CDK stacks in this repository are deployed in `ca-central-1`. Use Node 22 and bootstrap the account/region once before the first deployment:
+
+```bash
+source ~/.nvm/nvm.sh
+nvm use 22
+
+CDK_DEFAULT_ACCOUNT=<aws-account-id> \
+CDK_DEFAULT_REGION=ca-central-1 \
+AWS_REGION=ca-central-1 \
+AWS_DEFAULT_REGION=ca-central-1 \
+npm --workspace @gallery/infra run cdk -- bootstrap aws://<aws-account-id>/ca-central-1
+```
+
+### Full Ubeeq deployment
+
+The default CDK target is the complete product stack. It does not use the Eversally managed-hosting policy layer; set `PRODUCT_BRAND=ubeeq` and give the deployment its own `TENANT_ID`.
+
 1. Build API before CDK deploy:
 ```bash
 npm --workspace @gallery/api run build
 ```
-2. Deploy infra:
+2. Create an application secret in Secrets Manager using the [production secret schema](docs/production-survivability.md#production-deployment-requirements). The secret must contain stable `externalTokenEncryptionKey` and `unlockJwtSecret` values; do not pass either value through the shell in production.
+3. Deploy infrastructure:
 ```bash
+export DEPLOYMENT_STAGE=production
+export DEPLOY_TARGET=full
+export PRODUCT_BRAND=ubeeq
+export TENANT_ID=ubeeq
+export APP_SECRETS_NAME=ubeeq/production/application
+export WEB_APP_URL=https://<your-ubeeq-web-host>
+export APP_ORIGIN="$WEB_APP_URL"
+export EXTERNAL_OAUTH_REDIRECT_URI=https://<your-ubeeq-api-host>/integrations/deviantart/callback
+
+CDK_DEFAULT_REGION=ca-central-1 AWS_REGION=ca-central-1 AWS_DEFAULT_REGION=ca-central-1 \
 npm --workspace @gallery/infra run deploy
 ```
-3. If your API points at a pre-existing `CONTENT_CORE_TABLE` (legacy/shared table), ensure `GSI1` and `GSI2` exist:
+4. Build the web client against the API stack output. Host `apps/web/dist` on your preferred static HTTPS host when you are not using the optional CDK custom-domain path:
+```bash
+export VITE_PRODUCT_BRAND=ubeeq
+export VITE_API_BASE_URL=https://<your-ubeeq-api-host>
+npm --workspace @gallery/web run build
+```
+5. To let the full stack own a root and `api.` domain, build the web client first, then set `ENABLE_FULL_PRODUCT_DOMAINS=true` along with `ROOT_DOMAIN`, `API_DOMAIN`, `HOSTED_ZONE_ID`, `WEB_CERTIFICATE_ARN` (issued in `us-east-1`), and `API_CERTIFICATE_ARN` (issued in the stack region). This is a domain cutover: do not enable it while the separate `UbeeqLanding` or `UbeeqBlueskyOAuth` stacks still own the same Route 53 records/custom API domain.
+6. If your API points at a pre-existing `CONTENT_CORE_TABLE` (legacy/shared table), ensure `GSI1` and `GSI2` exist:
 ```bash
 # Preview only
 npm --workspace @gallery/api run ensure:core-indexes -- --dry-run --content-core-table <ContentCoreTableName> --region ca-central-1
@@ -145,10 +192,121 @@ npm --workspace @gallery/api run ensure:core-indexes -- --dry-run --content-core
 # Create any missing GSI1/GSI2 definitions
 npm --workspace @gallery/api run ensure:core-indexes -- --content-core-table <ContentCoreTableName> --region ca-central-1
 ```
-4. Configure web env var `VITE_API_BASE_URL` to the deployed API URL. Build with `VITE_PRODUCT_BRAND=eversally` for `eversally.com` or `VITE_PRODUCT_BRAND=ubeeq` for `ubeeq.site`.
-5. Follow the Cognito setup below before enabling social sign-in in a deployed environment.
+7. Follow the Cognito setup below before enabling social sign-in in a deployed environment.
 
 Set `DEPLOYMENT_STAGE=production` to enable the production survivability profile. Production requires `WEB_APP_URL` and `APP_SECRETS_NAME`; it enables retained/deletion-protected data stores, DynamoDB point-in-time recovery, S3 versioning, scheduled AWS Backup recovery points, restricted CORS, structured logs, tracing, alarms, and an operations dashboard. Development stacks remain disposable. See [Production survivability](docs/production-survivability.md) for the secret schema, retention contract, deployment requirements, and restore drill.
+
+### Production custom domains
+
+Route 53 hosted zones and ACM certificates are created/validated outside CDK. There are two deliberately separate deployment targets:
+
+- `full` (the default) deploys the complete Ubeeq/Eversally product stack.
+- `public` deploys only a static landing page and a small Bluesky OAuth service. It creates no product API, Cognito user pool, media bucket, content tables, or background workers.
+
+The full stack does not claim the public root/API domains unless `ENABLE_FULL_PRODUCT_DOMAINS=true` is deliberately set. This avoids a CloudFormation ownership collision while the launch stacks are live; moving the full product onto these domains is an explicit future cutover.
+
+The public target needs a Secrets Manager secret whose JSON contains a single `blueskyOAuthPrivateJwk` field holding a P-256 / ES256 private JWK. This is the confidential OAuth client signing key; never commit it or put it in a shell history. The service derives and publishes a public JWKS automatically.
+
+Generate the secret payload locally, save it directly into Secrets Manager, and securely discard the temporary file afterward:
+
+```bash
+node apps/bluesky-oauth/scripts/generate-private-jwk.mjs > /tmp/eversally-bluesky-oauth-secret.json
+aws secretsmanager create-secret \
+  --name eversally/production/bluesky-oauth \
+  --secret-string file:///tmp/eversally-bluesky-oauth-secret.json \
+  --region ca-central-1
+```
+
+Use a distinct secret/key for Ubeeq. Do not rotate or delete a key while active Bluesky sessions exist; create a planned key/session migration instead.
+
+Use the `ca-central-1` API certificate for API Gateway and the `us-east-1` website certificate for CloudFront. The Eversally public launch deployment is:
+
+```bash
+export DEPLOY_TARGET=public
+export ROOT_DOMAIN=eversally.com
+export API_DOMAIN=api.eversally.com
+export HOSTED_ZONE_ID=Z0933147166BL9EKW6HNC
+export API_CERTIFICATE_ARN=arn:aws:acm:ca-central-1:024505387948:certificate/a112c104-4d43-4604-aed8-ecaecfd43f61
+export WEB_CERTIFICATE_ARN=arn:aws:acm:us-east-1:024505387948:certificate/25ddb503-6b4a-49ad-8a71-475307fa819a
+export PRODUCT_BRAND=eversally
+export BLUESKY_OAUTH_SECRET_NAME=eversally/production/bluesky-oauth
+npm --workspace @gallery/infra run deploy -- --all
+```
+
+For Ubeeq, substitute `ubeeq.site`, `api.ubeeq.site`, hosted zone `Z0932683HY1YB6JSU1XI`, web certificate `arn:aws:acm:us-east-1:024505387948:certificate/e8c28fd0-cf73-49cb-8305-912999b08833`, API certificate `arn:aws:acm:ca-central-1:024505387948:certificate/1b562c5a-4e1e-41b6-aa41-aa40f868a2ee`, `PRODUCT_BRAND=ubeeq`, and a separate `BLUESKY_OAUTH_SECRET_NAME`. The target deploys two stacks: `<Brand>Landing` and `<Brand>BlueskyOAuth`.
+
+The OAuth service exposes `https://api.<domain>/oauth/bluesky/client-metadata.json`, `/oauth/bluesky/jwks.json`, `/oauth/bluesky/authorize?handle=<handle>`, and `/oauth/bluesky/callback`. It uses OAuth authorization-code flow with PKCE, PAR, DPoP, private-key client authentication, state storage with a one-hour TTL, and AWS-managed storage for refreshable sessions.
+
+### Bluesky Studio handoff
+
+The Studio integration uses a deliberately narrow handoff: Studio issues a signed, ten-minute Creator-scoped state; the OAuth service returns that state only after its own PKCE validation, together with a short-lived ES256 connection proof. Studio verifies the proof against the OAuth service's public JWKS before attaching the Bluesky DID to the selected Creator. Refresh tokens and the DPoP key remain solely in the OAuth service.
+
+Configure the full product API with the broker's public endpoints:
+
+```bash
+export BLUESKY_OAUTH_SERVICE_URL=https://oauth.api.eversally.com
+export BLUESKY_OAUTH_SERVICE_JWKS_URL=https://oauth.api.eversally.com/oauth/bluesky/jwks.json
+```
+
+Use a dedicated OAuth subdomain such as `oauth.api.eversally.com` before the full Studio API takes over `api.eversally.com`. The initial landing deployment used `api.eversally.com` as a temporary OAuth host; leaving it there would conflict with the future full-product API custom domain. Moving it now changes the OAuth client ID, so the test account should simply reconnect once after the move. The existing `*.api.eversally.com` certificate covers this subdomain.
+
+### Local landing-page preview
+
+Run either static site alone, with no product API or web app required:
+
+```bash
+npm run dev:landing:eversally # http://127.0.0.1:5180
+npm run dev:landing:ubeeq     # http://127.0.0.1:5181
+```
+
+Or preview both together with `npm run dev:landing`.
+
+### Buttondown redirects
+
+Set these on each Buttondown newsletter (or through its newsletter API):
+
+| Newsletter | `subscription_redirect_url` | `subscription_confirmation_redirect_url` |
+| --- | --- | --- |
+| Eversally | `https://eversally.com/thanks/` | `https://eversally.com/confirmed/` |
+| Ubeeq | `https://ubeeq.site/thanks/` | `https://ubeeq.site/confirmed/` |
+
+The landing deployment includes these branded pages. Buttondown redirects to the first URL immediately after form submission and to the second after email confirmation.
+
+### Portable Ubeeq Creator export
+
+Every Creator member can download a portable manifest from **Studio → Settings → Portable data export**, or through the authenticated endpoint:
+
+```text
+GET /studio/creators/:creatorId/export
+```
+
+The response is a downloaded JSON document with this stable top-level contract:
+
+```json
+{
+  "schema": "https://ubeeq.site/schemas/creator-export/v1",
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-14T00:00:00.000Z",
+  "source": { "product": "Ubeeq", "tenantId": "ubeeq" },
+  "creator": {},
+  "works": [],
+  "collections": [],
+  "integrationAccounts": []
+}
+```
+
+It includes:
+
+- Creator identity, profile, branding, and Space configuration stored in the canonical record.
+- Canonical Works with lifecycle, visibility, metadata, revisions/timestamps, origin, and discovery participation.
+- Asset attachments, original-file storage references, MIME metadata, byte sizes, and checksums where available.
+- Collection records plus ordered Work memberships.
+- Destination-specific Publications and publication intent, including external IDs, URLs, status, synchronization metadata, and destination metadata overrides.
+- Non-secret external account identity and health metadata.
+
+It deliberately excludes OAuth access/refresh tokens, creator-owned application client secrets, encrypted credential payloads, passwords, and other authentication material. It is a metadata manifest, not a ZIP archive: originals remain in the configured object store and are referenced by storage key/checksum. Preserve the manifest together with those originals for migration; an archive/original-file export is a future addition.
+
+For a restore or migration, first provision a compatible Ubeeq deployment, copy the referenced originals into its object store, then import the manifest through the forthcoming import workflow. Today, the export is intentionally read-only and is suitable for ownership records, backup verification, and external migration tooling.
 
 ## Account Email and Social Sign-In
 

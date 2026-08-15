@@ -20,6 +20,12 @@ export type StudioCreator = {
   spaceTier?: 'free' | 'approved';
   approvedCreatorAt?: string;
   createdAt?: string;
+  space?: {
+    bio?: string;
+    externalLinks?: Array<{ label: string; url: string }>;
+    theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+    announcement?: { enabled: boolean; message: string; url?: string };
+  };
   branding?: {
     profileImage?: {
       sourceKey: string;
@@ -276,6 +282,18 @@ export type StudioExternalAsset = {
   titleSyncPolicy: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
   descriptionSyncPolicy: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
   updatedAt: string;
+  workStatus: 'draft' | 'ready' | 'archived' | 'deleted';
+  contentAvailability: 'metadata_only' | 'external_reference' | 'display_copy' | 'original_hosted';
+  origin: {
+    type: 'local' | 'import';
+    platform?: string;
+    integrationAccountId?: string;
+    remoteId?: string;
+    remoteUrl?: string;
+    importedAt?: string;
+  };
+  destinationPublications: StudioDestinationPublication[];
+  publicationIntents: StudioPublicationIntent[];
   /** A preview from the configured creator-workspace backup, when one is available. */
   thumbnailUrl?: string;
   spacePublication?: StudioSpacePublication | null;
@@ -288,6 +306,27 @@ export type StudioExternalAsset = {
     destinations: number;
   };
   publications: StudioExternalPublication[];
+};
+
+export type StudioDestinationPublication = {
+  publicationId: string;
+  destination: string;
+  integrationAccountId?: string;
+  accountLabel?: string;
+  status: 'draft' | 'scheduled' | 'queued' | 'publishing' | 'live' | 'updating' | 'failed' | 'missing' | 'removed' | 'unknown';
+  visibility: 'private' | 'unlisted' | 'public';
+  syncStatus: 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'conflict' | 'error' | 'unknown';
+  remoteUrl?: string;
+  publishedAt?: string;
+};
+
+export type StudioPublicationIntent = {
+  publicationIntentId: string;
+  destination: string;
+  integrationAccountId?: string;
+  enabled: boolean;
+  desiredStatus: 'draft' | 'live' | 'scheduled';
+  scheduledAt?: string;
 };
 
 export type StudioSpacePublication = {

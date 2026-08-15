@@ -3,6 +3,7 @@ import type {
   CollectionWork,
   CreatorCollection,
   Publication,
+  PublicationIntent,
   Work,
   WorkAsset,
   WorkDiscoveryParticipation
@@ -24,6 +25,10 @@ export interface CanonicalStore {
   listPublicationsByWork(tenantId: string, workId: string): Promise<Publication[]>;
   getPublication(tenantId: string, publicationId: string): Promise<Publication | null>;
   upsertPublication(publication: Publication): Promise<void>;
+  listPublicationIntentsByWork(tenantId: string, workId: string): Promise<PublicationIntent[]>;
+  getPublicationIntent(tenantId: string, publicationIntentId: string): Promise<PublicationIntent | null>;
+  upsertPublicationIntent(intent: PublicationIntent): Promise<void>;
+  deletePublicationIntent(tenantId: string, publicationIntentId: string): Promise<void>;
 
   listCreatorCollections(tenantId: string, creatorId: string): Promise<CreatorCollection[]>;
   getCreatorCollection(tenantId: string, collectionId: string): Promise<CreatorCollection | null>;

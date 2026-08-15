@@ -63,14 +63,14 @@ type CanonicalPublication = {
   publicationId: string;
   integrationAccountId?: string;
   destination: string;
-  status: 'draft' | 'queued' | 'publishing' | 'live' | 'updating' | 'failed' | 'missing' | 'removed';
+  status: 'draft' | 'scheduled' | 'queued' | 'publishing' | 'live' | 'updating' | 'failed' | 'missing' | 'removed' | 'unknown';
   visibility: 'private' | 'unlisted' | 'public';
   remoteId?: string;
   remoteUrl?: string;
   remoteUpdatedAt?: string;
   metadataOverrides?: { title?: string; description?: string; tags?: string[]; fields?: Record<string, unknown> };
   providerData?: Record<string, unknown>;
-  sync: { status: 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'conflict' | 'error'; lastSuccessfulAt?: string };
+  sync: { status: 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'conflict' | 'error' | 'unknown'; lastSuccessfulAt?: string };
   publishedAt?: string;
 };
 
@@ -82,8 +82,12 @@ type CanonicalWorkResponse = {
   slug: string;
   description?: string;
   updatedAt: string;
+  status: 'draft' | 'ready' | 'archived' | 'deleted';
+  contentAvailability: 'metadata_only' | 'external_reference' | 'display_copy' | 'original_hosted';
+  origin: StudioExternalAsset['origin'];
   assets: Array<{ url?: string; thumbnailUrl?: string }>;
   publications: CanonicalPublication[];
+  publicationIntents: StudioExternalAsset['publicationIntents'];
   engagement?: StudioExternalAsset['engagement'];
   discovery?: { state?: StudioExternalAsset['discoveryState'] };
 };
@@ -120,6 +124,21 @@ const canonicalWorkToStudioAsset = (work: CanonicalWorkResponse): StudioExternal
     titleSyncPolicy: 'independent',
     descriptionSyncPolicy: 'independent',
     updatedAt: work.updatedAt,
+    workStatus: work.status,
+    contentAvailability: work.contentAvailability,
+    origin: work.origin,
+    destinationPublications: work.publications.map((publication) => ({
+      publicationId: publication.publicationId,
+      destination: publication.destination,
+      integrationAccountId: publication.integrationAccountId,
+      accountLabel: typeof publication.providerData?.externalUsername === 'string' ? publication.providerData.externalUsername : undefined,
+      status: publication.status,
+      visibility: publication.visibility,
+      syncStatus: publication.sync.status,
+      remoteUrl: publication.remoteUrl,
+      publishedAt: publication.publishedAt
+    })),
+    publicationIntents: work.publicationIntents || [],
     thumbnailUrl: work.assets.find((asset) => asset.thumbnailUrl)?.thumbnailUrl || work.assets.find((asset) => asset.url)?.url,
     spacePublication,
     engagement: work.engagement,
@@ -185,6 +204,13 @@ export const api = {
   async getCreatorCollection(slug: string, collectionSlug: string) {
     const response = await fetch(`${API_BASE}/creators/${encodeURIComponent(slug)}/collections/${encodeURIComponent(collectionSlug)}`, { headers: await authHeaders() });
     return handleJson(response);
+  },
+  getCreatorFeedUrls(slug: string) {
+    const encoded = encodeURIComponent(slug);
+    return {
+      rss: `${API_BASE}/creators/${encoded}/rss.xml`,
+      atom: `${API_BASE}/creators/${encoded}/atom.xml`
+    };
   },
   async getLatestGroupings(limit = 12) {
     const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/latest-groupings?limit=${encodeURIComponent(String(limit))}`));
@@ -649,6 +675,12 @@ export const api = {
     discoverSquareCropEnabled?: boolean;
     defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
     defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+    space?: {
+      bio?: string;
+      externalLinks?: Array<{ label: string; url: string }>;
+      theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+      announcement?: { enabled: boolean; message: string; url?: string };
+    };
   }) {
     const response = await fetch(`${API_BASE}/studio/creators/${creator}`, {
       method: 'PATCH',
@@ -773,6 +805,12 @@ export const api = {
     discoverSquareCropEnabled?: boolean;
     defaultAiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
     defaultHeavyTopics?: Array<'politics-public-affairs' | 'crime-disasters-tragedy'>;
+    space?: {
+      bio?: string;
+      externalLinks?: Array<{ label: string; url: string }>;
+      theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+      announcement?: { enabled: boolean; message: string; url?: string };
+    };
   }) {
     const response = await fetch(`${API_BASE}/studio/creators`, {
       method: 'POST',
@@ -1031,6 +1069,31 @@ export const api = {
     });
     return handleJson(response) as Promise<{ authorizationUrl: string }>;
   },
+  async studioGetBlueskyConfiguration() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/bluesky/configuration`);
+    return handleJson(response) as Promise<{ platform: 'bluesky'; configured: boolean; authorizationUrl?: string; requiredConfiguration: string[] }>;
+  },
+  async studioStartBlueskyConnection(creatorId: string, handle: string, returnPath = '/studio/workspace?section=integrations') {
+    const response = await fetch(`${API_BASE}/studio/integrations/bluesky/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ creatorId, handle, returnPath })
+    });
+    return handleJson(response) as Promise<{ authorizationUrl: string }>;
+  },
+  async studioCompleteBlueskyConnection(state: string, proof: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/bluesky/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ state, proof })
+    });
+    return handleJson(response) as Promise<{ externalAccountId: string; externalUsername: string; externalUserId: string; platform: 'bluesky' }>;
+  },
+  async studioListBlueskyAccounts(creatorId?: string) {
+    const query = creatorId ? `?creatorId=${encodeURIComponent(creatorId)}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/bluesky/accounts${query}`);
+    return handleJson(response);
+  },
   async studioListDeviantArtAccounts(creatorId?: string) {
     const query = creatorId ? `?creatorId=${encodeURIComponent(creatorId)}` : '';
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts${query}`);
@@ -1164,6 +1227,27 @@ export const api = {
     });
     return handleJson(response);
   },
+  async studioSetWorkPublicationIntent(workId: string, payload: {
+    destination: 'eversally' | 'deviantart';
+    integrationAccountId?: string;
+    enabled: boolean;
+    desiredStatus?: 'draft' | 'live' | 'scheduled';
+    scheduledAt?: string;
+  }) {
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/publication-intents`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response) as Promise<StudioExternalAsset['publicationIntents'][number]>;
+  },
+  async studioRemoveWorkPublicationIntent(workId: string, publicationIntentId: string) {
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/publication-intents/${encodeURIComponent(publicationIntentId)}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
   async studioRemoveDeviantArtWorkDestination(assetId: string, externalAccountId: string) {
     const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}/destinations/deviantart/${encodeURIComponent(externalAccountId)}`, {
       method: 'DELETE',
@@ -1176,6 +1260,14 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({})
+    });
+    return handleJson(response);
+  },
+  async studioResolveWorkPublicationConflict(workId: string, publicationId: string, strategy: 'pull' | 'push') {
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/publications/${encodeURIComponent(publicationId)}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ strategy })
     });
     return handleJson(response);
   },

@@ -16,6 +16,7 @@ const workFor = (tenantId: string, workId: string, creatorId = 'creator-1'): Wor
   aiDisclosure: 'none',
   heavyTopics: [],
   status: 'draft',
+  origin: { type: 'local' },
   revision: 1,
   createdAt: now,
   updatedAt: now
@@ -77,12 +78,24 @@ describe('canonical content store', () => {
     await store.createCanonicalAsset(asset);
     await store.attachAssetToWork(work.tenantId, { workId: work.workId, assetId: asset.assetId, role: 'primary', position: 0 });
     await store.upsertPublication(publication);
+    await store.upsertPublicationIntent({
+      publicationIntentId: 'intent-1',
+      tenantId: work.tenantId,
+      creatorId: work.creatorId,
+      workId: work.workId,
+      destination: 'eversally',
+      enabled: true,
+      desiredStatus: 'live',
+      createdAt: now,
+      updatedAt: now
+    });
     await store.createCreatorCollection(collection);
     await store.replaceCollectionWorks(work.tenantId, collection.collectionId, [{ collectionId: collection.collectionId, workId: work.workId, position: 0, addedAt: now }]);
     await store.upsertWorkDiscoveryParticipation({ workId: work.workId, tenantId: work.tenantId, creatorId: work.creatorId, state: 'none', updatedAt: now });
 
     expect((await store.listCanonicalAssetsByWork(work.tenantId, work.workId))[0]).toMatchObject({ assetId: 'asset-1', attachment: { role: 'primary' } });
     expect((await store.listPublicationsByWork(work.tenantId, work.workId))[0]).toMatchObject({ destination: 'eversally', visibility: 'unlisted' });
+    expect((await store.listPublicationIntentsByWork(work.tenantId, work.workId))[0]).toMatchObject({ destination: 'eversally', desiredStatus: 'live' });
     expect((await store.listCollectionWorks(work.tenantId, collection.collectionId))[0].workId).toBe(work.workId);
     expect((await store.getWorkDiscoveryParticipation(work.tenantId, work.workId))?.state).toBe('none');
     expect((await store.getWork(work.tenantId, work.workId))?.status).toBe('draft');

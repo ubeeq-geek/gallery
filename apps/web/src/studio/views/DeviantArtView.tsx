@@ -53,6 +53,9 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     credential: null | { clientId: string; redirectUri: string; updatedAt: string };
     credentials?: Array<{ externalPlatformCredentialId: string; applicationLabel?: string; clientId: string; redirectUri: string; updatedAt: string }>;
   } | null>(null);
+  const [blueskyConfiguration, setBlueskyConfiguration] = useState<{ configured: boolean; requiredConfiguration: string[] } | null>(null);
+  const [blueskyAccounts, setBlueskyAccounts] = useState<Array<{ externalAccountId: string; externalUsername: string; externalUserId: string }>>([]);
+  const [blueskyHandle, setBlueskyHandle] = useState('');
   const [accounts, setAccounts] = useState<StudioDeviantArtAccount[]>([]);
   const [jobsByAccount, setJobsByAccount] = useState<Record<string, StudioExternalSyncJob[]>>({});
   const [collections, setCollections] = useState<CollectionResponse>({ ubeeqCollections: [], externalCollections: [], mappings: [] });
@@ -124,15 +127,36 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const state = url.searchParams.get('state');
+    const proof = url.searchParams.get('proof');
+    if (url.searchParams.get('bluesky') !== 'connected' || !state || !proof) return;
+    url.searchParams.delete('bluesky');
+    url.searchParams.delete('state');
+    url.searchParams.delete('proof');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    void api.studioCompleteBlueskyConnection(state, proof)
+      .then((account) => {
+        setMessage(`Bluesky account “${account.externalUsername}” is connected to this ${brand.creatorName}.`);
+        return load();
+      })
+      .catch((connectionError) => setConnectionError(connectionError instanceof Error ? connectionError.message : 'Bluesky authorization completed, but the account could not be attached to this creator.'));
+    // The state contains the selected Creator and is re-authorized by the API.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const load = async (nextCreatorId = creatorId, nextQueuedSyncAccountId = queuedSyncAccountId) => {
     if (!nextCreatorId) return;
     setLoading(true);
     setError('');
     try {
-      const [nextConfiguration, nextAccounts, nextCollections] = await Promise.all([
+      const [nextConfiguration, nextAccounts, nextCollections, nextBlueskyConfiguration, nextBlueskyAccounts] = await Promise.all([
         api.studioGetDeviantArtConfiguration(),
         api.studioListDeviantArtAccounts(),
-        api.studioListDeviantArtCollections(nextCreatorId)
+        api.studioListDeviantArtCollections(nextCreatorId),
+        api.studioGetBlueskyConfiguration(),
+        api.studioListBlueskyAccounts(nextCreatorId)
       ]);
       const typedAccounts = (nextAccounts || []) as StudioDeviantArtAccount[];
       setConfiguration(nextConfiguration);
@@ -146,6 +170,8 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
         account.primaryCreatorIdentityId || account.creatorIdentityId || (creators.length === 1 ? creators[0].creatorId : '')
       ])));
       setCollections(nextCollections as CollectionResponse);
+      setBlueskyConfiguration(nextBlueskyConfiguration);
+      setBlueskyAccounts((nextBlueskyAccounts || []) as Array<{ externalAccountId: string; externalUsername: string; externalUserId: string }>);
       const nextJobs = await Promise.all(typedAccounts.map(async (account) => [
         account.externalAccountId,
         await api.studioListDeviantArtSyncJobs(account.externalAccountId) as StudioExternalSyncJob[]
@@ -234,6 +260,18 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     }
   };
 
+  const connectBluesky = async () => {
+    if (!creatorId || !blueskyHandle.trim()) return;
+    setError('');
+    setConnectionError('');
+    try {
+      const result = await api.studioStartBlueskyConnection(creatorId, blueskyHandle.trim(), '/studio/workspace?section=integrations');
+      window.location.assign(result.authorizationUrl);
+    } catch (connectError) {
+      setError(connectError instanceof Error ? connectError.message : 'Unable to begin Bluesky authorization.');
+    }
+  };
+
   const saveCredentials = async () => {
     if (!clientId.trim()) return;
     setError('');
@@ -307,6 +345,24 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     } catch (syncError) {
       setError(syncError instanceof Error ? syncError.message : 'Unable to queue synchronization.');
     } finally {
+      setWorkingAccountId('');
+    }
+  };
+
+  const reconnect = async (account: StudioDeviantArtAccount) => {
+    setWorkingAccountId(account.externalAccountId);
+    setError('');
+    setConnectionError('');
+    try {
+      const result = await api.studioStartDeviantArtConnection(
+        account.primaryCreatorIdentityId || account.creatorIdentityId,
+        '/studio/workspace?section=integrations',
+        false,
+        account.externalPlatformCredentialId
+      );
+      window.location.assign(result.authorizationUrl);
+    } catch (reconnectError) {
+      setError(reconnectError instanceof Error ? reconnectError.message : 'Unable to begin DeviantArt reauthorization.');
       setWorkingAccountId('');
     }
   };
@@ -426,6 +482,37 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   return (
     <section className="studio-integration-grid">
       <Card
+        title="Bluesky announcements"
+        eyebrow="Optional distribution destination"
+        className="studio-integration-accounts"
+      >
+        <p className="small">Connect the account that can announce eligible Space publications. The secure DPoP session stays in the OAuth service and is never stored in your browser or creator records.</p>
+        <div className="studio-integration-toolbar">
+          <label>
+            <span>Connect for {brand.creatorName}</span>
+            <select value={creatorId} onChange={(event) => setCreatorId(event.target.value)}>
+              {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>Bluesky handle</span>
+            <input value={blueskyHandle} onChange={(event) => setBlueskyHandle(event.target.value)} placeholder="creator.bsky.social" autoComplete="off" />
+          </label>
+          <button type="button" className="auth-primary-btn" disabled={!creatorId || !blueskyHandle.trim() || !blueskyConfiguration?.configured} onClick={() => void connectBluesky()}>
+            Connect Bluesky
+          </button>
+        </div>
+        {blueskyConfiguration && !blueskyConfiguration.configured && <p className="error">Bluesky is not configured. Missing server settings: {blueskyConfiguration.requiredConfiguration.join(', ')}.</p>}
+        {blueskyAccounts.length ? (
+          <div className="studio-integration-account-list">
+            {blueskyAccounts.map((account) => <div key={account.externalAccountId} className="studio-integration-account">
+              <div><p className="auth-eyebrow">Connected account</p><h3>{account.externalUsername}</h3><p className="small">{account.externalUserId}</p></div>
+              <Pill tone="success" label="Connected" />
+            </div>)}
+          </div>
+        ) : <p className="small">No Bluesky account is connected to this {brand.creatorName} yet.</p>}
+      </Card>
+      <Card
         title="DeviantArt integration"
         eyebrow="Your connected publishing accounts"
         className="studio-integration-accounts"
@@ -538,13 +625,17 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                   <div className="studio-integration-row-actions">
                     <Pill label={account.connectionStatus.replace(/_/g, ' ')} tone={accountTone(account.connectionStatus)} />
                     {!savedDestinationCreatorId && <Pill label={`Needs ${brand.creatorName}`} tone="warning" />}
+                    {account.connectionStatus === 'authentication_required' && <button type="button" className="auth-primary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void reconnect(account)}>
+                      Reconnect & repair permissions
+                    </button>}
                     {savedDestinationCreatorId && <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void sync(account.externalAccountId)}>
-                      {workingAccountId === account.externalAccountId ? 'Queueing…' : 'Sync now'}
+                      {workingAccountId === account.externalAccountId ? 'Queueing…' : account.connectionStatus === 'temporarily_unavailable' || account.connectionStatus === 'rate_limited' ? 'Retry sync' : 'Sync now'}
                     </button>}
                     <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void removeAccount(account)}>
                       {workingAccountId === account.externalAccountId ? 'Removing…' : 'Remove this DeviantArt Account'}
                     </button>
                   </div>
+                  {account.connectionStatus === 'authentication_required' && <p className="studio-work-metadata-warning">DeviantArt needs authorization or an updated permission grant. Reconnect this same account to repair it without changing its creator assignment.</p>}
                   {savedDestinationCreatorId && <label className="studio-da-account-source-files">
                     <input type="checkbox" checked={includeSourceFilesByAccount[account.externalAccountId] === true} onChange={(event) => setIncludeSourceFilesByAccount((current) => ({ ...current, [account.externalAccountId]: event.target.checked }))} />
                     <span><strong>Include source files in this sync</strong><small>Copies available DeviantArt source files into private {brand.workspaceFullName} storage.</small></span>

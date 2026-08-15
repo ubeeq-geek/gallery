@@ -170,6 +170,19 @@ export interface Creator {
       updatedAt: string;
     };
   };
+  space?: {
+    bio?: string;
+    externalLinks?: Array<{
+      label: string;
+      url: string;
+    }>;
+    theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+    announcement?: {
+      enabled: boolean;
+      message: string;
+      url?: string;
+    };
+  };
   createdAt: string;
 }
 
@@ -572,7 +585,8 @@ export interface TrendingFeedItem {
   updatedAt: string;
 }
 
-export type ExternalPlatform = 'deviantart';
+/** Platforms with a creator-owned connected account. OAuth custody can differ by platform. */
+export type ExternalPlatform = 'deviantart' | 'bluesky';
 export type ExternalAccountConnectionStatus =
   | 'connected'
   | 'authentication_required'
@@ -933,6 +947,13 @@ export interface ExternalActivity {
   createdAt: string;
   updatedAt: string;
 }
+
+// Activity is an integration-neutral record. The External* aliases remain for
+// backward compatibility with the first DeviantArt adapter and its stored API.
+// New adapters should use this name rather than introduce a platform-specific
+// activity shape.
+export type IntegrationActivity = ExternalActivity;
+export type IntegrationActivityType = ExternalActivityType;
 
 export type ExternalSyncResourceType = 'feedback.comments' | 'feedback.replies' | 'feedback.activity' | 'messages.feed' | 'messages.mentions' | 'watchers' | 'comments' | 'favourites' | 'engagement' | 'catalogue' | 'gallery.membership' | 'publication.lifecycle';
 

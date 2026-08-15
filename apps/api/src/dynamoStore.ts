@@ -71,6 +71,7 @@ import type {
   CollectionWork,
   CreatorCollection,
   Publication,
+  PublicationIntent,
   Work,
   WorkAsset,
   WorkDiscoveryParticipation
@@ -128,6 +129,10 @@ export class DynamoStore implements DataStore {
   async listPublicationsByWork(tenantId: string, workId: string): Promise<Publication[]> { return this.canonicalContent().listPublicationsByWork(tenantId, workId); }
   async getPublication(tenantId: string, publicationId: string): Promise<Publication | null> { return this.canonicalContent().getPublication(tenantId, publicationId); }
   async upsertPublication(publication: Publication): Promise<void> { await this.canonicalContent().upsertPublication(publication); }
+  async listPublicationIntentsByWork(tenantId: string, workId: string): Promise<PublicationIntent[]> { return this.canonicalContent().listPublicationIntentsByWork(tenantId, workId); }
+  async getPublicationIntent(tenantId: string, publicationIntentId: string): Promise<PublicationIntent | null> { return this.canonicalContent().getPublicationIntent(tenantId, publicationIntentId); }
+  async upsertPublicationIntent(intent: PublicationIntent): Promise<void> { await this.canonicalContent().upsertPublicationIntent(intent); }
+  async deletePublicationIntent(tenantId: string, publicationIntentId: string): Promise<void> { await this.canonicalContent().deletePublicationIntent(tenantId, publicationIntentId); }
   async listCreatorCollections(tenantId: string, creatorId: string): Promise<CreatorCollection[]> { return this.canonicalContent().listCreatorCollections(tenantId, creatorId); }
   async getCreatorCollection(tenantId: string, collectionId: string): Promise<CreatorCollection | null> { return this.canonicalContent().getCreatorCollection(tenantId, collectionId); }
   async createCreatorCollection(collection: CreatorCollection): Promise<void> { await this.canonicalContent().createCreatorCollection(collection); }

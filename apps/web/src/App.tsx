@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api';
+import {
+  APPEARANCE_CHANGE_EVENT,
+  readAppearancePreference,
+  setAppearancePreference,
+  type AppearancePreference
+} from './appearance';
 import { brand } from './brand';
 import { StudioWorkspace } from './StudioWorkspace';
 import { ForCreatorsPage } from './pages/ForCreatorsPage';
 import { SpaceRulesPage } from './pages/SpaceRulesPage';
 import { SelfHostingPage } from './pages/SelfHostingPage';
+import { LandingPage } from './pages/LandingPage';
 import { CreatorCollectionPage, CreatorCollectionsPage, CreatorWorkPage, CreatorWorksPage } from './pages/CanonicalSpacePages';
 import DiscoveryQuickReadOverlay, { PostMetaHeader, RichPostRenderer, type DiscoveryOverlayItem, type OverlayPost } from './components/DiscoveryQuickReadOverlay';
 import {
@@ -535,6 +542,12 @@ type CreatorProfilePayload = {
   name: string;
   slug: string;
   status: 'active' | 'inactive';
+  space?: {
+    bio?: string;
+    externalLinks?: Array<{ label: string; url: string }>;
+    theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+    announcement?: { enabled: boolean; message: string; url?: string };
+  };
   branding?: {
     profileImage?: {
       altText?: string;
@@ -1643,12 +1656,22 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
   const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [appearance, setAppearance] = useState<AppearancePreference>(() => readAppearancePreference());
   const selectedArtistId = selectedProfileKey.startsWith('artist:') ? selectedProfileKey.slice('artist:'.length) : '';
   const selectedArtist = managedArtists.find((artist) => artist.artistId === selectedArtistId) || null;
   const profileUrlPreview = `${window.location.origin.replace(/\/$/, '')}/${selectedArtist ? 'creators' : 'u'}/${(usernameInput || '').trim() || 'your-profile-url'}`;
   const selectedOwnerContext = selectedArtist
     ? { ownerProfileType: 'artist' as const, ownerProfileId: selectedArtist.artistId }
     : { ownerProfileType: 'user' as const };
+
+  useEffect(() => {
+    const handleAppearanceChange = (event: Event) => {
+      const preference = (event as CustomEvent<AppearancePreference>).detail;
+      setAppearance(preference || readAppearancePreference());
+    };
+    window.addEventListener(APPEARANCE_CHANGE_EVENT, handleAppearanceChange);
+    return () => window.removeEventListener(APPEARANCE_CHANGE_EVENT, handleAppearanceChange);
+  }, []);
 
   const reloadCuration = async () => {
     const [favoritesPage, collectionsPage] = await Promise.all([
@@ -1949,6 +1972,23 @@ function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfile
     <div className="layout">
       <div className="panel max-w-6xl">
         <h1>Settings</h1>
+        <h2>Appearance</h2>
+        <div className="grid">
+          <div className="settings-field settings-appearance-field">
+            <label htmlFor="settings-appearance" className="settings-field-label">Colour mode</label>
+            <select
+              id="settings-appearance"
+              className="settings-select"
+              value={appearance}
+              onChange={(event) => setAppearancePreference(event.target.value as AppearancePreference)}
+            >
+              <option value="system">System preference</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+            <p className="small">System preference follows this device and updates automatically.</p>
+          </div>
+        </div>
         <h2>Profile Context</h2>
         <div className="grid">
           <div className="settings-field">
@@ -7151,7 +7191,8 @@ function CreatorProfilePage({
   };
 
   return (
-    <div className="layout discovery-layout">
+    <div className="layout discovery-layout" data-theme={profile.space?.theme === 'default' ? undefined : profile.space?.theme}>
+      {profile.space?.announcement && <aside className="canonical-space-announcement">{profile.space.announcement.url ? <a href={profile.space.announcement.url}>{profile.space.announcement.message}</a> : profile.space.announcement.message}</aside>}
       {(coverDesktopUrl || coverTabletUrl || coverMobileUrl) && (
         <section className="panel" style={{ padding: 0, overflow: 'hidden' }}>
           <picture>
@@ -7190,6 +7231,7 @@ function CreatorProfilePage({
           <Link className="auth-secondary-btn no-underline" to="/">Back to discovery</Link>
         </div>
       </section>
+      {(profile.space?.bio || profile.space?.externalLinks?.length) && <section className="panel creator-space-about"><h2>About</h2>{profile.space.bio && <p>{profile.space.bio}</p>}{Boolean(profile.space.externalLinks?.length) && <nav>{profile.space.externalLinks?.map((link) => <a key={link.url} href={link.url} rel="me noreferrer">{link.label}</a>)}</nav>}</section>}
 
       <section id="creator-groupings-section" className="creator-collection-rail-section">
         <div className="creator-section-heading">
@@ -7869,7 +7911,8 @@ export default function App() {
         roleNotificationCounts={roleNotificationCounts}
       />
       <Routes>
-        <Route path="/" element={<HomePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/discover" element={<HomePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/audio" element={<HomePage viewerProfile={myProfile} mediaRoute="audio" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/video" element={<HomePage viewerProfile={myProfile} mediaRoute="video" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/story" element={<HomePage viewerProfile={myProfile} mediaRoute="story" onDiscoveryDockChange={setDiscoveryDock} />} />
