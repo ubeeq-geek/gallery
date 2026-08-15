@@ -25,6 +25,7 @@ const buildConfig = (): AppConfig => ({
   trendingFeedMaxItems: 600,
   trendingCandidateLimit: 1500,
   externalSyncBaseDelaySeconds: 60,
+  deviantArtMinimumRequestIntervalMs: 0,
   externalAccountScanIntervalSeconds: 21600,
   externalActivityScanIntervalSeconds: 120,
   deviantArtPublishedDescriptionUpdate: false,
@@ -443,8 +444,46 @@ describe('API contract', () => {
       .set('x-user-id', 'u-da');
     expect(accountResponse.status).toBe(200);
     expect(accountResponse.body[0].externalUsername).toBe('da-user');
+    expect(accountResponse.body[0].includeSourceFilesOnSync).toBe(true);
     expect(accountResponse.body[0].accessTokenEncrypted).toBeUndefined();
     expect(accountResponse.body[0].refreshTokenEncrypted).toBeUndefined();
+
+    const syncResponse = await request(app)
+      .post('/studio/integrations/deviantart/accounts/account-da/sync')
+      .set('x-user-id', 'u-da')
+      .send({});
+    expect(syncResponse.status).toBe(202);
+    expect(syncResponse.body.payload).toMatchObject({ syncContent: true });
+    expect((await store.getExternalAccount('account-da'))?.includeSourceFilesOnSync).toBe(true);
+    const childCopyJobId = 'child-copy-job';
+    await store.createExternalSyncJob({
+      externalSyncJobId: childCopyJobId,
+      externalAccountId: 'account-da',
+      type: 'content_sync',
+      status: 'queued',
+      payload: { assetId: 'asset-da', externalPublicationId: 'publication-da', parentJobId: syncResponse.body.externalSyncJobId },
+      progress: { discovered: 1, synchronized: 0, remaining: 1 },
+      attemptCount: 0,
+      createdAt: now,
+      updatedAt: now
+    });
+    const forbiddenCancellation = await request(app)
+      .post(`/studio/integrations/deviantart/jobs/${syncResponse.body.externalSyncJobId}/cancel`)
+      .set('x-user-id', 'another-user');
+    expect(forbiddenCancellation.status).toBe(403);
+    const cancellation = await request(app)
+      .post(`/studio/integrations/deviantart/jobs/${syncResponse.body.externalSyncJobId}/cancel`)
+      .set('x-user-id', 'u-da');
+    expect(cancellation.status).toBe(200);
+    expect(cancellation.body.relatedJobsCancelled).toBe(1);
+    expect(await store.getExternalSyncJob(syncResponse.body.externalSyncJobId)).toMatchObject({
+      status: 'cancelled',
+      errorCode: 'CANCELLED_BY_USER'
+    });
+    expect(await store.getExternalSyncJob(childCopyJobId)).toMatchObject({
+      status: 'cancelled',
+      errorCode: 'PARENT_SYNC_CANCELLED'
+    });
 
     const catalogueResponse = await request(app)
       .get('/studio/integrations/deviantart/catalogue?creatorId=creator-da&query=portrait')
@@ -533,6 +572,47 @@ describe('API contract', () => {
     ]);
     expect((await store.getExternalPublication('account-da', 'deviation-uuid'))?.externalDescription).toBe('<p>Original DeviantArt description</p>');
 
+    const bulkEditableMetadataResponse = await request(app)
+      .patch('/studio/integrations/assets/asset-da')
+      .set('x-user-id', 'u-da')
+      .send({
+        integrationMetadata: {
+          externalPublicationId: 'publication-da',
+          title: 'Bulk-edited title',
+          tags: ['bulk', 'edited'],
+          collectionExternalIds: ['gallery-one'],
+          allowComments: false,
+          displayResolution: 1280,
+          allowFreeDownload: true,
+          addWatermark: true,
+          isMature: true,
+          matureLevel: 'strict',
+          matureClassification: ['gore'],
+          isAiGenerated: true,
+          noAi: true
+        }
+      });
+    expect(bulkEditableMetadataResponse.status).toBe(200);
+    expect(bulkEditableMetadataResponse.body.remoteUpdateWarnings).toEqual([]);
+    expect(bulkEditableMetadataResponse.body.remoteUpdateJobs).toHaveLength(1);
+    const bulkMetadataJob = await store.getExternalSyncJob(bulkEditableMetadataResponse.body.remoteUpdateJobs[0].externalSyncJobId);
+    expect(bulkMetadataJob?.payload).toMatchObject({
+      externalPublicationId: 'publication-da',
+      title: 'Bulk-edited title',
+      tags: ['bulk', 'edited'],
+      collectionExternalIds: ['gallery-one'],
+      allowComments: false,
+      displayResolution: 1280,
+      allowFreeDownload: true,
+      addWatermark: true,
+      isMature: true,
+      matureLevel: 'strict',
+      matureClassification: ['gore'],
+      isAiGenerated: true,
+      noAi: true
+    });
+    expect(bulkMetadataJob?.payload?.description).toBeUndefined();
+
     const resolvePush = await request(app)
       .post('/studio/works/asset-da/publications/publication-da/resolve')
       .set('x-user-id', 'u-da')
@@ -580,20 +660,55 @@ describe('API contract', () => {
     const draftDestination = await request(app)
       .post('/studio/works/asset-da-draft/destinations/deviantart')
       .set('x-user-id', 'u-da')
-      .send({ externalAccountId: 'account-da', targetStatus: 'draft' });
+      .send({
+        externalAccountId: 'account-da',
+        targetStatus: 'draft',
+        tags: ['series', 'ai_art'],
+        galleryExternalCollectionIds: ['gallery-one'],
+        displayResolution: 1280,
+        allowFreeDownload: true,
+        addWatermark: true,
+        isMature: true,
+        matureLevel: 'strict',
+        matureClassification: ['gore', 'language'],
+        isAiGenerated: true,
+        noAi: true
+      });
     expect(draftDestination.status).toBe(201);
     expect(draftDestination.body.publication).toMatchObject({
       assetId: 'asset-da-draft',
       targetStatus: 'draft',
-      syncStatus: 'pending_publish'
+      syncStatus: 'pending_publish',
+      externalTags: ['series', 'ai_art'],
+      externalCollectionIds: ['gallery-one']
+    });
+    expect(draftDestination.body.publication.rawMetadataJson).toMatchObject({
+      display_resolution: 1280,
+      allow_free_download: true,
+      add_watermark: true,
+      is_mature: true,
+      mature_level: 'strict',
+      mature_classification: ['gore', 'language'],
+      is_ai_generated: true,
+      noai: true
     });
 
     const publishInstead = await request(app)
       .post('/studio/works/asset-da-draft/destinations/deviantart')
       .set('x-user-id', 'u-da')
-      .send({ externalAccountId: 'account-da', targetStatus: 'published' });
+      .send({ externalAccountId: 'account-da', targetStatus: 'published', displayResolution: null, allowFreeDownload: false, addWatermark: true, isMature: false, isAiGenerated: false, noAi: false });
     expect(publishInstead.status).toBe(200);
     expect(publishInstead.body.publication.targetStatus).toBe('published');
+    expect(publishInstead.body.publication.rawMetadataJson).toMatchObject({
+      allow_free_download: false,
+      add_watermark: false,
+      is_mature: false,
+      is_ai_generated: false,
+      noai: false
+    });
+    expect(publishInstead.body.publication.rawMetadataJson.display_resolution).toBeUndefined();
+    expect(publishInstead.body.publication.rawMetadataJson.mature_level).toBeUndefined();
+    expect(publishInstead.body.publication.rawMetadataJson.mature_classification).toBeUndefined();
   });
 
   it('keeps a DeviantArt integration account-owned and uses one sync destination creator', async () => {

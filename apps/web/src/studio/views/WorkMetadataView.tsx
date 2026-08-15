@@ -10,6 +10,7 @@ import {
 import { BlockEditor } from '../../components/BlockEditor';
 import type { PostBlock } from '../../domainTypes';
 import { Card } from '../components/Card';
+import { worksWorkspacePath } from '../workListNavigation';
 import type { StudioCreator, StudioDeviantArtAccount, StudioExternalAsset, StudioExternalCollection, StudioExternalPublication, StudioExternalSyncJob } from '../types';
 
 const sourceLabel = (publication?: StudioExternalPublication): string => {
@@ -30,7 +31,6 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const creatorId = params.get('creatorId') || '';
   const workId = params.get('workId') || '';
-  const collectionId = params.get('collectionId') || '';
   const [asset, setAsset] = useState<StudioExternalAsset | null>(null);
   const [accounts, setAccounts] = useState<StudioDeviantArtAccount[]>([]);
   const [externalCollections, setExternalCollections] = useState<StudioExternalCollection[]>([]);
@@ -61,10 +61,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const [remoteUpdateJobs, setRemoteUpdateJobs] = useState<StudioExternalSyncJob[]>([]);
 
   const backToWorks = () => {
-    const next = new URLSearchParams({ section: 'works' });
-    if (creatorId) next.set('creatorId', creatorId);
-    if (collectionId) next.set('collectionId', collectionId);
-    navigate(`/studio/workspace?${next.toString()}`);
+    navigate(worksWorkspacePath(location.search));
   };
 
   const destinations = (asset?.publications || []).filter((publication) => publication.syncStatus !== 'deleted');
@@ -80,11 +77,12 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     let active = true;
     setLoading(true);
     setError('');
-    void Promise.all([
-      api.studioListWorks(creatorId),
-      api.studioListDeviantArtAccounts(creatorId),
-      api.studioListDeviantArtCollections(creatorId)
-    ]).then(([result, accountResult, collectionResult]) => {
+    void (async () => {
+      const result = await api.studioListWorks(creatorId);
+      const [accountResult, collectionResult] = await Promise.all([
+        api.studioListDeviantArtAccounts(creatorId).catch(() => []),
+        api.studioListDeviantArtCollections(creatorId).catch(() => ({ externalCollections: [] }))
+      ]);
       if (!active) return;
       const found = ((result as { items?: StudioExternalAsset[] }).items || []).find((item) => item.assetId === workId) || null;
       if (!found) {
@@ -118,7 +116,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       setMatureClassification(selected?.displayOptions?.matureClassification || []);
       setIsAiGenerated(selected?.displayOptions?.isAiGenerated);
       setNoAi(selected?.displayOptions?.noAi);
-    }).catch((loadError: unknown) => {
+    })().catch((loadError: unknown) => {
       if (active) setError(loadError instanceof Error ? loadError.message : 'Unable to load this work.');
     }).finally(() => {
       if (active) setLoading(false);
@@ -306,6 +304,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
 
   const syncDestination = async (publication: StudioExternalPublication) => {
     if (!asset) return;
+    if (publication.syncStatus === 'error' && !window.confirm('The previous DeviantArt submission could not be verified because DeviantArt did not return a Sta.sh item ID. Check Sta.sh for this work before retrying: retrying may create a second draft if the original submission actually succeeded.')) return;
     setDestinationBusy(true);
     setError('');
     setDestinationMessage('');
@@ -566,7 +565,12 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
                 <p>Keep this work in {brand.workspaceFullName}, then add a platform only when you are ready to prepare and sync it.</p>
               </div>
               {availableDestinationAccounts.length > 0 && <div className="studio-work-destination-add">
-                <select value={newDestinationAccountId} disabled={destinationBusy} onChange={(event) => setNewDestinationAccountId(event.target.value)} aria-label="Add DeviantArt destination">
+                <select value={newDestinationAccountId} disabled={destinationBusy} onChange={(event) => {
+                  const nextAccountId = event.target.value;
+                  setNewDestinationAccountId(nextAccountId);
+                  const preset = accounts.find((account) => account.externalAccountId === nextAccountId)?.deviantArtPublishingPreset;
+                  if (preset) setNewDestinationTargetStatus(preset.targetStatus);
+                }} aria-label="Add DeviantArt destination">
                   <option value="">Add DeviantArt destination…</option>
                   {availableDestinationAccounts.map((account) => (
                     <option key={account.externalAccountId} value={account.externalAccountId}>DeviantArt · {account.externalUsername}</option>
@@ -589,6 +593,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
                 <button type="button" className="studio-work-destination-select" onClick={() => selectDestination(publication)}>
                   <strong>{sourceLabel(publication)} · {publication.externalUsername}</strong>
                   <span>{publication.syncStatus === 'pending_publish' ? (publication.targetStatus === 'draft' ? 'Ready to save in Sta.sh' : 'Ready to publish') : publication.syncStatus === 'draft' ? 'Draft in Sta.sh' : publication.syncStatus === 'active' ? 'Published' : publication.syncStatus}</span>
+                  {publication.syncStatus === 'error' && publication.remoteStateReason && <small className="studio-work-metadata-warning">{publication.remoteStateReason}</small>}
                 </button>
                 <div className="studio-work-destination-actions">
                   {(publication.syncStatus === 'pending_publish' || publication.syncStatus === 'draft') && <select
@@ -600,7 +605,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
                     <option value="published">Published</option>
                     <option value="draft">Draft in Sta.sh</option>
                   </select>}
-                  {(publication.syncStatus === 'pending_publish' || publication.syncStatus === 'draft') && <button type="button" className="auth-primary-btn" disabled={destinationBusy} onClick={() => void syncDestination(publication)}>{(publication.targetStatus || (publication.syncStatus === 'draft' ? 'draft' : 'published')) === 'draft' ? 'Save to Sta.sh' : 'Publish to DeviantArt'}</button>}
+                  {(publication.syncStatus === 'pending_publish' || publication.syncStatus === 'draft' || publication.syncStatus === 'error') && <button type="button" className="auth-primary-btn" disabled={destinationBusy} onClick={() => void syncDestination(publication)}>{publication.syncStatus === 'error' ? 'Retry publish' : (publication.targetStatus || (publication.syncStatus === 'draft' ? 'draft' : 'published')) === 'draft' ? 'Save to Sta.sh' : 'Publish to DeviantArt'}</button>}
                   <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => void removeDestination(publication)}>{publication.syncStatus === 'active' ? 'Unpublish…' : 'Remove destination'}</button>
                 </div>
               </article>)}
@@ -716,7 +721,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
 
           <div className="studio-work-metadata-footer">
             <button type="button" className="auth-primary-btn" disabled={saving || remoteUpdateJobs.length > 0} onClick={() => void save()}>{saving ? 'Saving…' : remoteUpdateJobs.length ? 'Verifying…' : 'Save metadata'}</button>
-            <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}`}>Cancel</Link>
+            <Link className="auth-secondary-btn no-underline" to={worksWorkspacePath(location.search)}>Cancel</Link>
           </div>
           {success && <p className="studio-work-metadata-success">{success}</p>}
           {(metadataWarning || !canUpdatePublishedDescription) && <p className="studio-work-metadata-warning">{metadataWarning || `This published DeviantArt work predates retained Sta.sh identifiers. Its ${brand.productName} description remains editable, but cannot be synchronized back automatically.`}</p>}

@@ -4542,6 +4542,18 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     transform: translateY(-1px);
   }
 
+  .auth-primary-btn:disabled,
+  .auth-secondary-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    transform: none;
+  }
+
+  .auth-primary-btn:disabled:hover {
+    background: var(--brand-action);
+    transform: none;
+  }
+
   .auth-secondary-btn {
     @apply rounded-2xl px-4 py-3 text-sm font-semibold no-underline;
     border: 1px solid color-mix(in srgb, var(--line) 80%, white);
@@ -4553,6 +4565,11 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
   .auth-secondary-btn:hover {
     border-color: color-mix(in srgb, var(--line) 100%, #64748b 30%);
     background: color-mix(in srgb, var(--surface-muted) 30%, white);
+  }
+
+  .auth-secondary-btn:disabled:hover {
+    border-color: color-mix(in srgb, var(--line) 80%, white);
+    background: var(--surface);
   }
 
   .auth-card input:not([type='checkbox']) {
@@ -6117,11 +6134,16 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    margin-bottom: 1rem;
     padding: 1rem;
     border: 1px solid #9de8cb;
     border-radius: 6px;
     background: #f0fdf4;
+  }
+
+  .studio-da-application-list {
+    display: grid;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
   }
 
   .studio-da-application-actions {
@@ -6475,6 +6497,9 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     border-radius: 8px;
     background: var(--surface-muted);
     box-shadow: 0 8px 20px rgb(15 23 42 / 10%);
+    max-height: calc(100vh - var(--topbar-height, 0px) - 1rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 0.7rem 0.85rem;
   }
 
@@ -6543,10 +6568,59 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     padding: 0.5rem 0.6rem;
   }
 
-  .studio-works-limit-note {
+  .studio-works-bulk-review {
+    flex: 1 1 100%;
+    margin-top: 0;
+    border-top: 1px solid var(--line);
+    padding-top: 0.75rem;
+  }
+
+  .studio-works-bulk-review :is(p, ul, ol) {
+    margin-block: 0.15rem;
+  }
+
+  .studio-works-bulk-review .auth-primary-btn {
+    justify-self: start;
+  }
+
+  .studio-works-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 1rem;
     color: var(--muted);
-    font-size: 0.8rem;
-    margin: 0.55rem 0 0;
+    font-size: 0.85rem;
+  }
+
+  .studio-works-pagination > label,
+  .studio-works-pagination-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .studio-works-pagination > label {
+    margin-left: auto;
+  }
+
+  .studio-works-pagination select {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    padding: 0.45rem 0.6rem;
+  }
+
+  .studio-works-pagination-actions .auth-secondary-btn {
+    min-width: auto;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .studio-works-pagination-bottom {
+    margin-top: 0.75rem;
   }
 
   .studio-work-row {
@@ -6943,6 +7017,16 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     clip: rect(0 0 0 0);
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+
+  .studio-work-upload-file-count {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.875rem;
+  }
+
+  .studio-work-upload-file-count strong {
+    color: var(--ink);
   }
 
   .studio-work-upload-dropzone {

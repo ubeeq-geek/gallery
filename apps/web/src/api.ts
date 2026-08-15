@@ -1,7 +1,9 @@
 import { getValidIdToken } from './cognitoAuth';
 import type { StudioExternalAsset, StudioExternalPublication, StudioSpacePublication, StudioUbeeqCollection } from './studio/types';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+const configuredApiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+const usesLocalDeveloperApi = import.meta.env.DEV && /^(https?:\/\/)(localhost|127\.0\.0\.1|fanadmin\.top)(?::\d+)?(?:\/|$)/.test(configuredApiBase);
+const API_BASE = usesLocalDeveloperApi ? '/local-api' : configuredApiBase;
 let myProfileInFlight: Promise<unknown> | null = null;
 const withDevCacheBypass = (url: string): string => {
   if (!import.meta.env.DEV) return url;
@@ -10,6 +12,12 @@ const withDevCacheBypass = (url: string): string => {
 };
 
 const authHeaders = async (): Promise<Record<string, string>> => {
+  // Keep local Studio independent of whichever Cognito session happens to be
+  // stored in the browser. Vite adds the explicit developer identity while
+  // proxying same-origin requests to the local API.
+  if (usesLocalDeveloperApi) {
+    return {};
+  }
   const idToken = await getValidIdToken();
   return idToken ? { Authorization: `Bearer ${idToken}` } : {};
 };
@@ -70,7 +78,7 @@ type CanonicalPublication = {
   remoteUpdatedAt?: string;
   metadataOverrides?: { title?: string; description?: string; tags?: string[]; fields?: Record<string, unknown> };
   providerData?: Record<string, unknown>;
-  sync: { status: 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'conflict' | 'error' | 'unknown'; lastSuccessfulAt?: string };
+  sync: { status: 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'conflict' | 'error' | 'unknown'; lastSuccessfulAt?: string; errorCode?: string; errorMessage?: string };
   publishedAt?: string;
 };
 
@@ -154,11 +162,23 @@ const canonicalWorkToStudioAsset = (work: CanonicalWorkResponse): StudioExternal
       externalTitle: publication.metadataOverrides?.title || work.title,
       externalDescription: publication.metadataOverrides?.description || work.description,
       externalTags: publication.metadataOverrides?.tags || [],
+      displayOptions: {
+        allowComments: typeof publication.providerData?.allow_comments === 'boolean' ? publication.providerData.allow_comments : undefined,
+        displayResolution: typeof publication.providerData?.display_resolution === 'number' && publication.providerData.display_resolution > 0 ? publication.providerData.display_resolution : undefined,
+        allowFreeDownload: typeof publication.providerData?.allow_free_download === 'boolean' ? publication.providerData.allow_free_download : undefined,
+        addWatermark: typeof publication.providerData?.add_watermark === 'boolean' ? publication.providerData.add_watermark : undefined,
+        isMature: typeof publication.providerData?.is_mature === 'boolean' ? publication.providerData.is_mature : undefined,
+        matureLevel: publication.providerData?.mature_level === 'strict' || publication.providerData?.mature_level === 'moderate' ? publication.providerData.mature_level : undefined,
+        matureClassification: Array.isArray(publication.providerData?.mature_classification) ? publication.providerData.mature_classification.filter((value): value is string => typeof value === 'string') : undefined,
+        isAiGenerated: typeof publication.providerData?.is_ai_generated === 'boolean' ? publication.providerData.is_ai_generated : undefined,
+        noAi: typeof publication.providerData?.noai === 'boolean' ? publication.providerData.noai : undefined
+      },
       externalCollectionIds: Array.isArray(publication.providerData?.externalCollectionIds) ? publication.providerData.externalCollectionIds.filter((value): value is string => typeof value === 'string') : [],
       publishedAt: publication.publishedAt,
       remoteUpdatedAt: publication.remoteUpdatedAt,
       lastSyncedAt: publication.sync.lastSuccessfulAt,
       metadataSyncStatus: publication.sync.status === 'conflict' ? 'conflict' : publication.sync.status === 'remote_newer' ? 'remote_changed' : publication.sync.status === 'local_newer' ? 'local_update_pending' : 'in_sync',
+      remoteStateReason: publication.sync.errorMessage,
       syncStatus: externalStatusFor(publication)
     }))
   };
@@ -1099,6 +1119,30 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts${query}`);
     return handleJson(response);
   },
+  async studioSaveDeviantArtPublishingPreset(externalAccountId: string, payload: {
+    defaultTags: string[];
+    galleryExternalCollectionIds: string[];
+    targetStatus: 'draft' | 'published';
+    displayResolution?: number;
+    allowFreeDownload: boolean;
+    addWatermark: boolean;
+    isMature: boolean;
+    matureLevel: 'strict' | 'moderate';
+    matureClassification: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
+    isAiGenerated: boolean;
+    noAi: boolean;
+  }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/preset`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload)
+    });
+    return handleJson(response) as Promise<{ deviantArtPublishingPreset: unknown }>;
+  },
+  async studioCreateDeviantArtGallery(externalAccountId: string, name: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/galleries`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ name })
+    });
+    return handleJson(response);
+  },
 
   async studioGetDeviantArtProfileHistory(externalAccountId: string) {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/profile`);
@@ -1119,7 +1163,7 @@ export const api = {
     });
     return handleJson(response);
   },
-  async studioSyncDeviantArtAccount(externalAccountId: string, syncContent = false) {
+  async studioSyncDeviantArtAccount(externalAccountId: string, syncContent = true) {
     const response = await fetch(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
@@ -1129,6 +1173,13 @@ export const api = {
   },
   async studioListDeviantArtSyncJobs(externalAccountId: string) {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/jobs`);
+    return handleJson(response);
+  },
+  async studioCancelDeviantArtSync(externalSyncJobId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/deviantart/jobs/${encodeURIComponent(externalSyncJobId)}/cancel`, {
+      method: 'POST',
+      headers: await authHeaders()
+    });
     return handleJson(response);
   },
   async studioListDeviantArtComments(externalAccountId: string, externalContentId: string) {
@@ -1219,11 +1270,22 @@ export const api = {
     });
     return handleJson(response);
   },
-  async studioAddDeviantArtWorkDestination(assetId: string, externalAccountId: string, targetStatus: 'draft' | 'published' = 'published') {
+  async studioAddDeviantArtWorkDestination(assetId: string, externalAccountId: string, targetStatus?: 'draft' | 'published', options?: {
+    tags?: string[];
+    galleryExternalCollectionIds?: string[];
+    displayResolution?: number | null;
+    allowFreeDownload?: boolean;
+    addWatermark?: boolean;
+    isMature?: boolean;
+    matureLevel?: 'strict' | 'moderate';
+    matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
+    isAiGenerated?: boolean;
+    noAi?: boolean;
+  }) {
     const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}/destinations/deviantart`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
-      body: JSON.stringify({ externalAccountId, targetStatus })
+      body: JSON.stringify({ externalAccountId, ...(targetStatus ? { targetStatus } : {}), ...(options || {}) })
     });
     return handleJson(response);
   },
@@ -1284,6 +1346,9 @@ export const api = {
       tags?: string[];
       collectionExternalIds?: string[];
       allowComments?: boolean;
+      displayResolution?: number | null;
+      allowFreeDownload?: boolean;
+      addWatermark?: boolean;
       isMature?: boolean;
       matureLevel?: 'strict' | 'moderate';
       matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
@@ -1309,6 +1374,28 @@ export const api = {
       if (legacyResponse.status !== 404) await handleJson(legacyResponse);
     }
     return canonicalWorkToStudioAsset(work);
+  },
+  async studioUpdateDeviantArtPublicationMetadata(assetId: string, integrationMetadata: {
+    externalPublicationId: string;
+    title?: string;
+    tags?: string[];
+    collectionExternalIds?: string[];
+    allowComments?: boolean;
+    displayResolution?: number | null;
+    allowFreeDownload?: boolean;
+    addWatermark?: boolean;
+    isMature?: boolean;
+    matureLevel?: 'strict' | 'moderate';
+    matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
+    isAiGenerated?: boolean;
+    noAi?: boolean;
+  }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/assets/${encodeURIComponent(assetId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ integrationMetadata })
+    });
+    return handleJson(response) as Promise<{ remoteUpdateJobs?: Array<{ externalSyncJobId: string }>; remoteUpdateWarnings?: string[] }>;
   },
   async studioUpdateSpacePublication(assetId: string, payload: {
     published: boolean;

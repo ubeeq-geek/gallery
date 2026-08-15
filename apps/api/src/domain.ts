@@ -624,6 +624,30 @@ export type ExternalSyncJobStatus =
   | 'retry_scheduled'
   | 'cancelled';
 
+/** Defaults applied when a creator prepares a new Work for this DA account. */
+export interface DeviantArtPublishingPreset {
+  /** The only shipped formatter; more template variables can be added without changing Work data. */
+  titleFormat: 'filename_title_case';
+  defaultTags: string[];
+  galleryExternalCollectionIds: string[];
+  targetStatus: ExternalPublicationTargetStatus;
+  /** Optional DeviantArt display rendition. Omit to let DeviantArt display the original. */
+  displayResolution?: number;
+  /** Whether DeviantArt may offer the stored original as a free download. */
+  allowFreeDownload: boolean;
+  /** DeviantArt only applies this when a display resolution is selected. */
+  addWatermark: boolean;
+  /** Default DeviantArt mature-content declaration for new destinations. */
+  isMature: boolean;
+  matureLevel: 'strict' | 'moderate';
+  matureClassification: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
+  /** Explicit AI declarations sent when publishing a new deviation. */
+  isAiGenerated: boolean;
+  noAi: boolean;
+  /** Ubeeq currently submits the stored original; DeviantArt creates the display rendition. */
+  sourceFileMode: 'original';
+}
+
 export interface ExternalAccount {
   externalAccountId: string;
   userId: string;
@@ -641,12 +665,15 @@ export interface ExternalAccount {
   refreshTokenEncrypted?: string;
   tokenExpiresAt?: string;
   connectionStatus: ExternalAccountConnectionStatus;
+  /** Account-wide provider cooldown. No job for this account should call the provider before this instant. */
+  rateLimitedUntil?: string;
   lastSuccessfulSyncAt?: string;
   lastSyncAttemptAt?: string;
   /** One-time import preference selected before the account was connected. */
   initialContentSyncRequested?: boolean;
   /** Whether subsequent synchronizations should also copy available source files into the local creator workspace. */
   includeSourceFilesOnSync?: boolean;
+  deviantArtPublishingPreset?: DeviantArtPublishingPreset;
   createdAt: string;
   updatedAt: string;
 }

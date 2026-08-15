@@ -1,5 +1,5 @@
-import { externalContentUpdateMismatches, mergeExternalMetadata, processExternalSyncJob } from '../src/externalSyncWorker';
-import type { ExternalRemoteContent } from '../src/externalPlatformProvider';
+import { externalContentUpdateMismatches, MAX_AMBIGUOUS_PUBLISH_ATTEMPTS, mergeExternalMetadata, processExternalSyncJob, retryDelaySeconds, shouldRetryExternalJobFailure } from '../src/externalSyncWorker';
+import { createExternalPlatformProvider, parseRetryAfterSeconds, type ExternalRemoteContent } from '../src/externalPlatformProvider';
 import { InMemoryStore } from '../src/inMemoryStore';
 import { encryptExternalCredential } from '../src/externalCredentials';
 import type { AppConfig } from '../src/config';
@@ -23,6 +23,127 @@ const remoteContent = (overrides: Partial<ExternalRemoteContent> = {}): External
 });
 
 describe('external metadata update verification', () => {
+  it('paces consecutive DeviantArt API requests before relying on 429 backoff', async () => {
+    jest.useFakeTimers({ now: 0 });
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ userid: 'owner-1', username: 'owner' }),
+      headers: { get: () => null }
+    } as unknown as Response);
+    const provider = createExternalPlatformProvider('deviantart', {
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'http://localhost/callback',
+      minimumRequestIntervalMs: 2_000
+    });
+
+    await provider.getAccount('access-token');
+    const secondRequest = provider.getAccount('access-token');
+    await Promise.resolve();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1_999);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1);
+    await secondRequest;
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it('parses Retry-After seconds and dates and applies bounded jittered backoff', () => {
+    expect(parseRetryAfterSeconds('90', 1_000)).toBe(90);
+    expect(parseRetryAfterSeconds(new Date(121_000).toUTCString(), 1_000)).toBe(120);
+    expect(parseRetryAfterSeconds('not-a-date', 1_000)).toBeUndefined();
+    expect(retryDelaySeconds(1, 60, () => 0)).toBe(60);
+    expect(retryDelaySeconds(2, 60, () => 0)).toBe(60);
+    expect(retryDelaySeconds(2, 60, () => 0.999999)).toBe(120);
+  });
+
+  it('retries a missing Sta.sh item ID three total times, then requires attention', async () => {
+    expect(shouldRetryExternalJobFailure('publish', 'ambiguous_submission', 1)).toBe(true);
+    expect(shouldRetryExternalJobFailure('publish', 'ambiguous_submission', 2)).toBe(true);
+    expect(shouldRetryExternalJobFailure('publish', 'ambiguous_submission', MAX_AMBIGUOUS_PUBLISH_ATTEMPTS)).toBe(false);
+    expect(shouldRetryExternalJobFailure('publish', 'invalid_response', 1)).toBe(false);
+
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      text: async () => '{}',
+      headers: { get: () => null }
+    } as unknown as Response);
+    const provider = createExternalPlatformProvider('deviantart', {
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'http://localhost/callback'
+    });
+
+    await expect(provider.submitContent('access-token', {
+      body: Buffer.from('image'),
+      filename: 'work.png',
+      contentType: 'image/png',
+      title: 'Work'
+    })).rejects.toMatchObject({ code: 'ambiguous_submission' });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+  });
+
+  it('pauses an account and its queued source copies after the first 429', async () => {
+    const store = new InMemoryStore();
+    const now = new Date().toISOString();
+    const encryptionKey = 'worker-rate-limit-test-key';
+    await store.createExternalPlatformCredential({
+      externalPlatformCredentialId: 'credential-rate-limit', userId: 'user-1', platform: 'deviantart', clientId: 'client-id',
+      clientSecretEncrypted: encryptExternalCredential('client-secret', encryptionKey),
+      redirectUri: 'http://localhost:4000/integrations/deviantart/callback', createdAt: now, updatedAt: now
+    });
+    await store.createExternalAccount({
+      externalAccountId: 'account-rate-limit', userId: 'user-1', creatorIdentityId: 'creator-1', primaryCreatorIdentityId: 'creator-1',
+      externalPlatformCredentialId: 'credential-rate-limit', platform: 'deviantart', externalUserId: 'owner-1', externalUsername: 'owner',
+      accessTokenEncrypted: encryptExternalCredential('access-token', encryptionKey), connectionStatus: 'connected', createdAt: now, updatedAt: now
+    });
+    await store.createAsset({
+      assetId: 'asset-rate-limit', userId: 'user-1', creatorIdentityId: 'creator-1', assetType: 'image', canonicalTitle: 'Rate-limited work',
+      visibility: 'private', titleSyncPolicy: 'initially_mirrored', descriptionSyncPolicy: 'initially_mirrored', createdAt: now, updatedAt: now
+    });
+    await store.createExternalPublication({
+      externalPublicationId: 'publication-rate-limit', assetId: 'asset-rate-limit', externalAccountId: 'account-rate-limit', platform: 'deviantart',
+      externalContentId: 'deviation-rate-limit', syncStatus: 'active', rawMetadataJson: {}, createdAt: now, updatedAt: now
+    });
+    for (const externalSyncJobId of ['content-rate-limit-1', 'content-rate-limit-2']) {
+      await store.createExternalSyncJob({
+        externalSyncJobId, externalAccountId: 'account-rate-limit', type: 'content_sync', status: 'queued', attemptCount: 0,
+        payload: { assetId: 'asset-rate-limit', externalPublicationId: 'publication-rate-limit' }, createdAt: now, updatedAt: now
+      });
+    }
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: 'rate_limit', error_description: 'Slow down' }),
+      headers: { get: (name: string) => name.toLowerCase() === 'retry-after' ? '120' : null }
+    } as unknown as Response);
+
+    await processExternalSyncJob(store, {
+      externalTokenEncryptionKey: encryptionKey,
+      externalSyncBaseDelaySeconds: 60
+    } as AppConfig, 'content-rate-limit-1');
+
+    expect(await store.getExternalAccount('account-rate-limit')).toMatchObject({
+      connectionStatus: 'rate_limited',
+      rateLimitedUntil: expect.any(String)
+    });
+    expect(await store.getExternalSyncJob('content-rate-limit-1')).toMatchObject({ status: 'rate_limited', errorCode: 'rate_limited' });
+    expect(await store.getExternalSyncJob('content-rate-limit-2')).toMatchObject({ status: 'rate_limited', errorCode: 'ACCOUNT_RATE_LIMITED' });
+    expect(await store.getSpacePublication('asset-rate-limit')).toMatchObject({ contentSyncStatus: 'queued' });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    await processExternalSyncJob(store, {
+      externalTokenEncryptionKey: encryptionKey,
+      externalSyncBaseDelaySeconds: 60
+    } as AppConfig, 'content-rate-limit-2');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+  });
+
   it('accepts semantically equivalent HTML and normalized tag order', () => {
     expect(externalContentUpdateMismatches(remoteContent(), {
       title: 'Updated title',
@@ -815,6 +936,117 @@ describe('external metadata update verification', () => {
       lastMembershipError: undefined
     });
     expect(await store.getExternalSyncJob('account-import-gallery')).toMatchObject({ status: 'successful' });
+    jest.restoreAllMocks();
+  });
+
+  it('stops on the first reconciliation 429 and resumes from the saved item', async () => {
+    const store = new InMemoryStore();
+    const now = new Date().toISOString();
+    const encryptionKey = 'worker-reconciliation-resume-test-key';
+    await store.createExternalPlatformCredential({
+      externalPlatformCredentialId: 'credential-resume', userId: 'user-1', platform: 'deviantart', clientId: 'client-id',
+      clientSecretEncrypted: encryptExternalCredential('client-secret', encryptionKey),
+      redirectUri: 'http://localhost:4000/integrations/deviantart/callback', createdAt: now, updatedAt: now
+    });
+    await store.createExternalAccount({
+      externalAccountId: 'account-resume', userId: 'user-1', creatorIdentityId: 'creator-1', primaryCreatorIdentityId: 'creator-1',
+      externalPlatformCredentialId: 'credential-resume', platform: 'deviantart', externalUserId: 'owner-1', externalUsername: 'owner',
+      accessTokenEncrypted: encryptExternalCredential('access-token', encryptionKey), connectionStatus: 'connected', createdAt: now, updatedAt: now
+    });
+    await store.createExternalSyncJob({
+      externalSyncJobId: 'account-import-resume', externalAccountId: 'account-resume', type: 'full_reconciliation', status: 'queued',
+      progress: { discovered: 0, synchronized: 0, remaining: 0 }, attemptCount: 0, createdAt: now, updatedAt: now
+    });
+
+    const completeItem = (externalContentId: string) => ({
+      deviationid: externalContentId,
+      title: externalContentId,
+      url: `https://www.deviantart.com/owner/art/${externalContentId}`,
+      description: `${externalContentId} description`,
+      tags: ['resume'],
+      is_mature: false,
+      allows_comments: true,
+      is_ai_generated: false,
+      noai: false,
+      published_time: 1786637885
+    });
+    let rateLimitSecondItem = true;
+    const detailedRequests: string[] = [];
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      const requestUrl = new URL(String(input));
+      const ok = (payload: Record<string, unknown>) => ({
+        ok: true,
+        status: 200,
+        json: async () => payload,
+        headers: { get: () => null }
+      } as unknown as Response);
+      if (requestUrl.pathname.endsWith('/gallery/folders')) return ok({ results: [], has_more: false });
+      if (requestUrl.pathname.endsWith('/gallery/all')) {
+        return ok({
+          results: [completeItem('item-1'), { deviationid: 'item-2', title: 'item-2', tags: [] }, { deviationid: 'item-3', title: 'item-3', tags: [] }],
+          has_more: false
+        });
+      }
+      if (requestUrl.pathname.endsWith('/deviation/item-2') || requestUrl.pathname.endsWith('/deviation/item-3')) {
+        const externalContentId = requestUrl.pathname.endsWith('item-2') ? 'item-2' : 'item-3';
+        detailedRequests.push(externalContentId);
+        if (externalContentId === 'item-2' && rateLimitSecondItem) {
+          return {
+            ok: false,
+            status: 429,
+            json: async () => ({ error: 'User request limit reached.' }),
+            headers: { get: () => null }
+          } as unknown as Response;
+        }
+        return ok(completeItem(externalContentId));
+      }
+      if (requestUrl.pathname.endsWith('/deviation/metadata')) {
+        const externalContentId = requestUrl.searchParams.get('deviationids[0]') || '';
+        return ok({ results: [completeItem(externalContentId)] });
+      }
+      throw new Error(`Unexpected test request: ${requestUrl.pathname}`);
+    });
+    const queue = { enqueue: jest.fn(async () => undefined) };
+    const workerConfig = {
+      externalTokenEncryptionKey: encryptionKey,
+      externalSyncBaseDelaySeconds: 60
+    } as AppConfig;
+
+    await processExternalSyncJob(store, workerConfig, 'account-import-resume', queue);
+
+    expect(detailedRequests).toEqual(['item-2']);
+    expect(await store.getExternalSyncJob('account-import-resume')).toMatchObject({
+      status: 'rate_limited',
+      payload: {
+        resumeCursor: '0',
+        resumeItemIndex: 1,
+        resumePageLoaded: true,
+        contentScanComplete: false,
+        seenExternalContentIds: ['item-1', 'item-2']
+      },
+      progress: { discovered: 3, synchronized: 1, remaining: 1 }
+    });
+
+    const pausedAccount = await store.getExternalAccount('account-resume');
+    await store.updateExternalAccount({
+      ...pausedAccount!,
+      rateLimitedUntil: new Date(Date.now() - 1_000).toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    const pausedJob = await store.getExternalSyncJob('account-import-resume');
+    await store.updateExternalSyncJob({ ...pausedJob!, status: 'queued', nextAttemptAt: undefined, updatedAt: new Date().toISOString() });
+    rateLimitSecondItem = false;
+
+    await processExternalSyncJob(store, workerConfig, 'account-import-resume', queue);
+
+    expect(detailedRequests).toEqual(['item-2', 'item-2', 'item-3']);
+    expect(await store.getExternalSyncJob('account-import-resume')).toMatchObject({
+      status: 'successful',
+      payload: {},
+      progress: { discovered: 3, synchronized: 3, remaining: 0 }
+    });
+    expect((await store.getExternalAccount('account-resume'))?.connectionStatus).toBe('connected');
+    expect(fetchSpy).toHaveBeenCalled();
     jest.restoreAllMocks();
   });
 

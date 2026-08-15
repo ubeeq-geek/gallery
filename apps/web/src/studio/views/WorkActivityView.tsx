@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { brand } from '../../brand';
 import { Card } from '../components/Card';
+import { worksWorkspacePath } from '../workListNavigation';
 import type {
   StudioCreator,
   StudioExternalActivity,
@@ -23,9 +24,7 @@ export function WorkActivityView({ creators: _creators }: { creators: StudioCrea
   const location = useLocation();
   const navigate = useNavigate();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
-  const creatorId = params.get('creatorId') || '';
   const workId = params.get('workId') || '';
-  const collectionId = params.get('collectionId') || '';
   const [asset, setAsset] = useState<StudioExternalAsset | null>(null);
   const [destinations, setDestinations] = useState<StudioWorkActivityDestination[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,7 +110,7 @@ export function WorkActivityView({ creators: _creators }: { creators: StudioCrea
     downloads: current.downloads + (destination.engagement?.downloads || 0)
   }), { views: 0, favourites: 0, comments: 0, downloads: 0 });
 
-  const back = () => navigate(`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}`);
+  const back = () => navigate(worksWorkspacePath(location.search));
   if (loading) return <div className="studio-empty-state">Loading work activity…</div>;
   if (!asset) return <div className="studio-empty-state">This work is no longer available.</div>;
   return <div className="studio-work-metadata">
@@ -166,7 +165,7 @@ export function WorkActivityView({ creators: _creators }: { creators: StudioCrea
         <strong>@{favourite.externalUsername}</strong><small>{relativeDate(favourite.favouritedAtRemote || favourite.firstSeenAt)}</small>
       </div>)}
     </Card>
-    <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}&workId=${encodeURIComponent(workId)}`}>Edit work metadata</Link>
+    <Link className="auth-secondary-btn no-underline" to={worksWorkspacePath(location.search, { workId })}>Edit work metadata</Link>
   </div>;
 }
 

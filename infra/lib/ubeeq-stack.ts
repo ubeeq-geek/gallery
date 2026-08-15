@@ -439,6 +439,7 @@ export class UbeeqStack extends Stack {
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
+        DEVIANTART_MIN_REQUEST_INTERVAL_MS: process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || '2000',
         DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true',
         PRODUCT_BRAND: productBrand,
         TENANT_ID: process.env.TENANT_ID || productBrand,
@@ -488,6 +489,9 @@ export class UbeeqStack extends Stack {
       handler: 'handler',
       timeout: Duration.minutes(15),
       memorySize: 1024,
+      // Keep provider work serialized until account-keyed FIFO processing is
+      // introduced. Adaptive DA rate limits punish concurrent request bursts.
+      reservedConcurrentExecutions: 1,
       depsLockFilePath: path.join(__dirname, '../../package-lock.json'),
       bundling: {
         target: 'node22',
@@ -498,15 +502,20 @@ export class UbeeqStack extends Stack {
         DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
         CONTENT_CORE_TABLE: contentCoreTable.tableName,
         USE_CONTENT_CORE_TABLE: 'true',
+        MEDIA_BUCKET: mediaBucket.bucketName,
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
         EXTERNAL_TOKEN_ENCRYPTION_KEY: externalTokenEncryptionKey,
         UNLOCK_JWT_SECRET: unlockJwtSecret,
         EXTERNAL_SYNC_BASE_DELAY_SECONDS: '60',
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
+        DEVIANTART_MIN_REQUEST_INTERVAL_MS: process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || '2000',
         DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true',
         PRODUCT_BRAND: productBrand,
-        TENANT_ID: process.env.TENANT_ID || productBrand
+        TENANT_ID: process.env.TENANT_ID || productBrand,
+        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || '')
       }
     });
     const externalSyncSchedulerFn = new lambdaNodejs.NodejsFunction(this, 'ExternalSyncSchedulerFunction', {
@@ -524,10 +533,18 @@ export class UbeeqStack extends Stack {
         DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
         CONTENT_CORE_TABLE: contentCoreTable.tableName,
         USE_CONTENT_CORE_TABLE: 'true',
+        MEDIA_BUCKET: mediaBucket.bucketName,
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
+        EXTERNAL_TOKEN_ENCRYPTION_KEY: externalTokenEncryptionKey,
+        UNLOCK_JWT_SECRET: unlockJwtSecret,
+        EXTERNAL_SYNC_BASE_DELAY_SECONDS: '60',
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
-        TENANT_ID: process.env.TENANT_ID || productBrand
+        PRODUCT_BRAND: productBrand,
+        TENANT_ID: process.env.TENANT_ID || productBrand,
+        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || '')
       }
     });
     const ffmpegLayerArn = process.env.FFMPEG_LAYER_ARN;
@@ -592,6 +609,10 @@ export class UbeeqStack extends Stack {
     externalSyncQueue.grantSendMessages(apiFn);
     externalSyncQueue.grantConsumeMessages(externalSyncFn);
     externalSyncQueue.grantSendMessages(externalSyncSchedulerFn);
+    externalSyncFn.addEventSource(new lambdaEventSources.SqsEventSource(externalSyncQueue, {
+      batchSize: 1,
+      reportBatchItemFailures: true
+    }));
 
     new events.Rule(this, 'TrendingRankerSchedule', {
       schedule: events.Schedule.rate(Duration.minutes(5)),

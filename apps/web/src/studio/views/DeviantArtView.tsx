@@ -13,16 +13,58 @@ import type {
   StudioUbeeqCollection
 } from '../types';
 
+const deviantArtDisplayWidths = [400, 600, 800, 900, 1024, 1280, 1600, 1920];
+type MatureClassification = 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology';
+const matureClassificationOptions: Array<{ value: MatureClassification; label: string }> = [
+  { value: 'nudity', label: 'Nudity' },
+  { value: 'sexual', label: 'Sexual themes' },
+  { value: 'gore', label: 'Gore' },
+  { value: 'language', label: 'Strong language' },
+  { value: 'ideology', label: 'Ideology' }
+];
+
 type CollectionResponse = {
   ubeeqCollections: StudioUbeeqCollection[];
   externalCollections: StudioExternalCollection[];
   mappings: StudioExternalCollectionMapping[];
 };
 
+type DeviantArtCredential = {
+  externalPlatformCredentialId: string;
+  applicationLabel?: string;
+  clientId: string;
+  redirectUri: string;
+  updatedAt: string;
+};
+
 const formatDate = (value?: string): string => {
   if (!value) return 'Not yet';
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? 'Not yet' : date.toLocaleString();
+};
+
+const syncPhaseLabel = (type: string): string => ({
+  account_import: 'account import',
+  full_reconciliation: 'catalogue synchronization',
+  account_scan: 'catalogue refresh',
+  content_sync: 'source-file copy',
+  activity_sync: 'notifications and watchers',
+  engagement_sync: 'engagement and comments',
+  comment_sync: 'comments',
+  publish: 'publishing',
+  remote_update: 'metadata update'
+}[type] || type.replace(/_/g, ' '));
+
+const formatCountdown = (value: string | undefined, now: number): string => {
+  if (!value) return '';
+  const remainingSeconds = Math.max(0, Math.ceil((Date.parse(value) - now) / 1000));
+  if (!Number.isFinite(remainingSeconds)) return '';
+  if (remainingSeconds < 60) return `${remainingSeconds}s`;
+  const minutes = Math.ceil(remainingSeconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
 };
 
 const accountTone = (status: StudioDeviantArtAccount['connectionStatus']): 'success' | 'warning' | 'danger' | 'default' => {
@@ -51,7 +93,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     callbackUrl?: string;
     requiredConfiguration: string[];
     credential: null | { clientId: string; redirectUri: string; updatedAt: string };
-    credentials?: Array<{ externalPlatformCredentialId: string; applicationLabel?: string; clientId: string; redirectUri: string; updatedAt: string }>;
+    credentials?: DeviantArtCredential[];
   } | null>(null);
   const [blueskyConfiguration, setBlueskyConfiguration] = useState<{ configured: boolean; requiredConfiguration: string[] } | null>(null);
   const [blueskyAccounts, setBlueskyAccounts] = useState<Array<{ externalAccountId: string; externalUsername: string; externalUserId: string }>>([]);
@@ -65,6 +107,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [clientSecret, setClientSecret] = useState('');
   const [applicationLabel, setApplicationLabel] = useState('');
   const [activeCredentialId, setActiveCredentialId] = useState('');
+  const [accountApplicationFilterId, setAccountApplicationFilterId] = useState('');
   const [editingApplication, setEditingApplication] = useState(false);
   const [creatingApplication, setCreatingApplication] = useState(false);
   const [deletingApplication, setDeletingApplication] = useState(false);
@@ -73,8 +116,24 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [includeSourceFilesByAccount, setIncludeSourceFilesByAccount] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [workingAccountId, setWorkingAccountId] = useState('');
+  const [cancellingSyncJobId, setCancellingSyncJobId] = useState('');
+  const [rateLimitClock, setRateLimitClock] = useState(() => Date.now());
   const [queuedSyncAccountId, setQueuedSyncAccountId] = useState('');
   const [destinationCreatorByAccount, setDestinationCreatorByAccount] = useState<Record<string, string>>({});
+  const [presetAccountId, setPresetAccountId] = useState('');
+  const [presetTags, setPresetTags] = useState('');
+  const [presetGalleryIds, setPresetGalleryIds] = useState<string[]>([]);
+  const [presetTargetStatus, setPresetTargetStatus] = useState<'draft' | 'published'>('published');
+  const [presetDisplayResolution, setPresetDisplayResolution] = useState('');
+  const [presetAllowFreeDownload, setPresetAllowFreeDownload] = useState(false);
+  const [presetAddWatermark, setPresetAddWatermark] = useState(false);
+  const [presetIsMature, setPresetIsMature] = useState(false);
+  const [presetMatureLevel, setPresetMatureLevel] = useState<'strict' | 'moderate'>('moderate');
+  const [presetMatureClassification, setPresetMatureClassification] = useState<MatureClassification[]>([]);
+  const [presetIsAiGenerated, setPresetIsAiGenerated] = useState(false);
+  const [presetNoAi, setPresetNoAi] = useState(false);
+  const [newGalleryName, setNewGalleryName] = useState('');
+  const [presetBusy, setPresetBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [connectionError, setConnectionError] = useState('');
@@ -163,7 +222,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       setAccounts(typedAccounts);
       setIncludeSourceFilesByAccount(Object.fromEntries(typedAccounts.map((account) => [
         account.externalAccountId,
-        account.includeSourceFilesOnSync === true
+        account.includeSourceFilesOnSync !== false
       ])));
       setDestinationCreatorByAccount(Object.fromEntries(typedAccounts.map((account) => [
         account.externalAccountId,
@@ -220,18 +279,23 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     setClientSecret('');
   }, [activeCredential?.externalPlatformCredentialId]);
 
-  const activeAccounts = useMemo(
-    () => activeCredentialId
-      ? accounts
-        .filter((account) => account.externalPlatformCredentialId === activeCredentialId)
-        .sort((left, right) => {
-          if (left.externalAccountId === recentlyConnectedAccountId) return -1;
-          if (right.externalAccountId === recentlyConnectedAccountId) return 1;
-          return left.externalUsername.localeCompare(right.externalUsername, undefined, { sensitivity: 'base' });
-        })
-      : [],
-    [accounts, activeCredentialId, recentlyConnectedAccountId]
+  const visibleAccounts = useMemo(
+    () => accounts
+      .filter((account) => !accountApplicationFilterId || account.externalPlatformCredentialId === accountApplicationFilterId)
+      .sort((left, right) => {
+        if (left.externalAccountId === recentlyConnectedAccountId) return -1;
+        if (right.externalAccountId === recentlyConnectedAccountId) return 1;
+        return left.externalUsername.localeCompare(right.externalUsername, undefined, { sensitivity: 'base' });
+      }),
+    [accountApplicationFilterId, accounts, recentlyConnectedAccountId]
   );
+
+  useEffect(() => {
+    if (!accountApplicationFilterId) return;
+    if (!(configuration?.credentials || []).some((credential) => credential.externalPlatformCredentialId === accountApplicationFilterId)) {
+      setAccountApplicationFilterId('');
+    }
+  }, [accountApplicationFilterId, configuration]);
 
   useEffect(() => {
     if (accounts.length) setConnectionGuideExpanded(false);
@@ -241,6 +305,12 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     () => Object.values(jobsByAccount).flat().some((job) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status)),
     [jobsByAccount]
   );
+  const hasActiveCooldown = useMemo(
+    () => accounts.some((account) => account.connectionStatus === 'rate_limited'
+      && Boolean(account.rateLimitedUntil)
+      && Date.parse(account.rateLimitedUntil || '') > rateLimitClock),
+    [accounts, rateLimitClock]
+  );
 
   useEffect(() => {
     if (!hasActiveSync) return;
@@ -249,11 +319,17 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasActiveSync, creatorId]);
 
-  const connect = async () => {
+  useEffect(() => {
+    if (!hasActiveSync && !hasActiveCooldown) return;
+    const interval = window.setInterval(() => setRateLimitClock(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [hasActiveCooldown, hasActiveSync]);
+
+  const connect = async (credentialId: string) => {
     setError('');
     setConnectionError('');
     try {
-      const result = await api.studioStartDeviantArtConnection(undefined, '/studio/workspace?section=integrations', false, activeCredentialId);
+      const result = await api.studioStartDeviantArtConnection(undefined, '/studio/workspace?section=integrations', false, credentialId);
       window.location.assign(result.authorizationUrl);
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : 'Unable to begin DeviantArt connection.');
@@ -312,19 +388,29 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     setError('');
   };
 
-  const deleteApplication = async () => {
-    if (!activeCredential) return;
-    if (activeAccounts.length) {
+  const editApplication = (credential: DeviantArtCredential) => {
+    setActiveCredentialId(credential.externalPlatformCredentialId);
+    setClientId(credential.clientId);
+    setApplicationLabel(credential.applicationLabel || 'DeviantArt application');
+    setClientSecret('');
+    setCreatingApplication(false);
+    setEditingApplication(true);
+    setError('');
+  };
+
+  const deleteApplication = async (credential: DeviantArtCredential) => {
+    const connectedAccounts = accounts.filter((account) => account.externalPlatformCredentialId === credential.externalPlatformCredentialId);
+    if (connectedAccounts.length) {
       setError('Remove every account connected with this application before deleting it.');
       return;
     }
-    const applicationName = activeCredential.applicationLabel || `DeviantArt app ${activeCredential.clientId}`;
+    const applicationName = credential.applicationLabel || `DeviantArt app ${credential.clientId}`;
     if (!window.confirm(`Delete the DeviantArt application “${applicationName}”? Its saved client secret will be permanently removed.`)) return;
     setDeletingApplication(true);
     setError('');
     try {
-      await api.studioDeleteDeviantArtCredentials(activeCredential.externalPlatformCredentialId);
-      setActiveCredentialId('');
+      await api.studioDeleteDeviantArtCredentials(credential.externalPlatformCredentialId);
+      if (activeCredentialId === credential.externalPlatformCredentialId) setActiveCredentialId('');
       setMessage(`The DeviantArt application “${applicationName}” has been deleted.`);
       await load();
     } catch (deleteError) {
@@ -346,6 +432,21 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       setError(syncError instanceof Error ? syncError.message : 'Unable to queue synchronization.');
     } finally {
       setWorkingAccountId('');
+    }
+  };
+
+  const cancelSync = async (job: StudioExternalSyncJob) => {
+    setCancellingSyncJobId(job.externalSyncJobId);
+    setError('');
+    try {
+      await api.studioCancelDeviantArtSync(job.externalSyncJobId);
+      setQueuedSyncAccountId('');
+      await load(creatorId, '');
+      setMessage('Synchronization cancelled. You can start it again whenever you are ready.');
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : 'Unable to cancel synchronization.');
+    } finally {
+      setCancellingSyncJobId('');
     }
   };
 
@@ -401,6 +502,69 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       setError(removeError instanceof Error ? removeError.message : 'Unable to remove this DeviantArt account.');
     } finally {
       setWorkingAccountId('');
+    }
+  };
+
+  const editPublishingPreset = (account: StudioDeviantArtAccount) => {
+    const preset = account.deviantArtPublishingPreset;
+    setPresetAccountId(account.externalAccountId);
+    setPresetTags((preset?.defaultTags || []).join(', '));
+    setPresetGalleryIds(preset?.galleryExternalCollectionIds || []);
+    setPresetTargetStatus(preset?.targetStatus || 'published');
+    setPresetDisplayResolution(preset?.displayResolution ? String(preset.displayResolution) : '');
+    setPresetAllowFreeDownload(preset?.allowFreeDownload === true);
+    setPresetAddWatermark(preset?.addWatermark === true);
+    setPresetIsMature(preset?.isMature === true);
+    setPresetMatureLevel(preset?.matureLevel || 'moderate');
+    setPresetMatureClassification(preset?.matureClassification || []);
+    setPresetIsAiGenerated(preset?.isAiGenerated === true);
+    setPresetNoAi(preset?.noAi === true);
+    setNewGalleryName('');
+    setError('');
+  };
+
+  const savePublishingPreset = async () => {
+    if (!presetAccountId) return;
+    setPresetBusy(true);
+    setError('');
+    try {
+      await api.studioSaveDeviantArtPublishingPreset(presetAccountId, {
+        defaultTags: presetTags.split(',').map((tag) => tag.trim()).filter(Boolean),
+        galleryExternalCollectionIds: presetGalleryIds,
+        targetStatus: presetTargetStatus,
+        ...(Number.parseInt(presetDisplayResolution, 10) > 0 ? { displayResolution: Number.parseInt(presetDisplayResolution, 10) } : {}),
+        allowFreeDownload: presetAllowFreeDownload,
+        addWatermark: presetAddWatermark,
+        isMature: presetIsMature,
+        matureLevel: presetMatureLevel,
+        matureClassification: presetIsMature ? presetMatureClassification : [],
+        isAiGenerated: presetIsAiGenerated,
+        noAi: presetNoAi
+      });
+      setMessage('DeviantArt publishing preset saved. New destinations will start with these tags, gallery folders, content declarations, display and download settings, and target state.');
+      setPresetAccountId('');
+      await load();
+    } catch (presetError) {
+      setError(presetError instanceof Error ? presetError.message : 'Unable to save the DeviantArt publishing preset.');
+    } finally {
+      setPresetBusy(false);
+    }
+  };
+
+  const createDeviantArtGallery = async () => {
+    if (!presetAccountId || !newGalleryName.trim()) return;
+    setPresetBusy(true);
+    setError('');
+    try {
+      const created = await api.studioCreateDeviantArtGallery(presetAccountId, newGalleryName.trim()) as { externalCollectionExternalId: string; name: string };
+      setPresetGalleryIds((current) => [...new Set([...current, created.externalCollectionExternalId])]);
+      setNewGalleryName('');
+      setMessage(`DeviantArt gallery “${created.name}” created. It is selected for this preset; save the preset to make it the default.`);
+      await load();
+    } catch (galleryError) {
+      setError(galleryError instanceof Error ? galleryError.message : 'Unable to create the DeviantArt gallery.');
+    } finally {
+      setPresetBusy(false);
     }
   };
 
@@ -524,7 +688,14 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
               {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
             </select>
           </label>
-          <p className="small">{activeAccounts.length} account{activeAccounts.length === 1 ? '' : 's'} using this application</p>
+          {(configuration?.credentials || []).length > 1 && <label>
+            <span>Filter connected accounts</span>
+            <select value={accountApplicationFilterId} onChange={(event) => setAccountApplicationFilterId(event.target.value)}>
+              <option value="">All applications</option>
+              {(configuration?.credentials || []).map((credential) => <option key={credential.externalPlatformCredentialId} value={credential.externalPlatformCredentialId}>{credential.applicationLabel || `DeviantArt app ${credential.clientId}`}</option>)}
+            </select>
+          </label>}
+          <p className="small">{accountApplicationFilterId ? `${visibleAccounts.length} of ${accounts.length}` : accounts.length} connected account{accounts.length === 1 ? '' : 's'}</p>
         </div>
         <section className="studio-da-setup-wizard" aria-label="Connect DeviantArt tutorial">
             <div className="studio-da-setup-heading">
@@ -547,27 +718,31 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
               </ol>
             </>}
           </section>
-        {activeCredential && !editingApplication ? (
+        {(configuration?.credentials || []).length > 0 && !editingApplication ? (
           <>
             <div className="studio-da-application-actions">
-              {(configuration?.credentials || []).length > 1 && (
-                <label><span>DeviantArt applications</span><select value={activeCredentialId} onChange={(event) => setActiveCredentialId(event.target.value)}>{configuration?.credentials?.map((credential) => <option key={credential.externalPlatformCredentialId} value={credential.externalPlatformCredentialId}>{credential.applicationLabel || `DeviantArt app ${credential.clientId}`}</option>)}</select></label>
-              )}
+              <strong>DeviantArt applications</strong>
               <button type="button" className="auth-secondary-btn" onClick={beginNewApplication}>Add another DA application</button>
             </div>
-            <section className="studio-da-application-summary" aria-label="Saved DeviantArt application">
-              <div>
-                <p className="auth-eyebrow">Selected application</p>
-                <h3>{activeCredential.applicationLabel || 'DeviantArt application'}</h3>
-                <p className="small">Client ID {activeCredential.clientId} · {activeAccounts.length} connected account{activeAccounts.length === 1 ? '' : 's'}</p>
-              </div>
-              <div className="studio-inline-actions">
-                <button type="button" className="auth-secondary-btn" onClick={() => { setCreatingApplication(false); setEditingApplication(true); }}>Edit application</button>
-                <button type="button" className="auth-secondary-btn" disabled={deletingApplication || activeAccounts.length > 0} title={activeAccounts.length ? 'Remove the connected DeviantArt accounts before deleting this application.' : undefined} onClick={() => void deleteApplication()}>
-                  {deletingApplication ? 'Deleting…' : 'Delete application'}
-                </button>
-              </div>
-            </section>
+            <div className="studio-da-application-list">
+              {(configuration?.credentials || []).map((credential) => {
+                const credentialAccounts = accounts.filter((account) => account.externalPlatformCredentialId === credential.externalPlatformCredentialId);
+                return <section className="studio-da-application-summary" aria-label={`Saved DeviantArt application ${credential.applicationLabel || credential.clientId}`} key={credential.externalPlatformCredentialId}>
+                  <div>
+                    <p className="auth-eyebrow">OAuth application</p>
+                    <h3>{credential.applicationLabel || 'DeviantArt application'}</h3>
+                    <p className="small">Client ID {credential.clientId} · {credentialAccounts.length} connected account{credentialAccounts.length === 1 ? '' : 's'}</p>
+                  </div>
+                  <div className="studio-inline-actions">
+                    <button type="button" className="auth-primary-btn" onClick={() => void connect(credential.externalPlatformCredentialId)}>Connect account</button>
+                    <button type="button" className="auth-secondary-btn" onClick={() => editApplication(credential)}>Edit application</button>
+                    <button type="button" className="auth-secondary-btn" disabled={deletingApplication || credentialAccounts.length > 0} title={credentialAccounts.length ? 'Remove the connected DeviantArt accounts before deleting this application.' : undefined} onClick={() => void deleteApplication(credential)}>
+                      {deletingApplication ? 'Deleting…' : 'Delete application'}
+                    </button>
+                  </div>
+                </section>;
+              })}
+            </div>
           </>
         ) : (
           <div className="studio-integration-credential-form">
@@ -581,20 +756,6 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
             {configuration?.callbackUrl && <p className="small">Callback URL: <code>{configuration.callbackUrl}</code></p>}
           </div>
         )}
-        <section className="studio-da-connect-step" aria-label="Connect a DeviantArt account">
-          <div>
-            <p className="auth-eyebrow">Next step</p>
-            <h3>{activeCredential ? `Connect an account with ${activeCredential.applicationLabel || 'this application'}` : 'Save your DeviantArt application first'}</h3>
-            <p className="small">
-              {configuration?.configured
-                ? 'Sign in to the specific DeviantArt account you want to add. You can repeat this for every account you manage.'
-                : 'Enter the client ID and secret above, then save the application to enable authorization.'}
-            </p>
-          </div>
-          <button type="button" className="auth-primary-btn" disabled={!activeCredential} onClick={() => void connect()}>
-            Connect a DeviantArt account
-          </button>
-        </section>
         {configuration && !configuration.configured && (
           <p className="error">Connection is not configured. Missing server settings: {configuration.requiredConfiguration.join(', ')}.</p>
         )}
@@ -602,37 +763,93 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
         {message && <p className="studio-integration-message">{message}</p>}
         {connectionError && <p className="error">{connectionError}</p>}
         {error && <p className="error">{error}</p>}
-        {activeAccounts.length ? (
+        {visibleAccounts.length ? (
           <div className="studio-integration-account-list">
-            {activeAccounts.map((account) => {
+            {visibleAccounts.map((account) => {
               const accountJobs = jobsByAccount[account.externalAccountId] || [];
               const catalogueJob = accountJobs
                 ?.find((job) => ['account_import', 'full_reconciliation', 'account_scan'].includes(job.type));
+              const activeCatalogueJob = accountJobs
+                ?.find((job) => ['account_import', 'full_reconciliation', 'account_scan'].includes(job.type)
+                  && ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status));
+              const rateLimitedJob = accountJobs
+                .filter((job) => job.status === 'rate_limited')
+                .sort((left, right) => String(left.nextAttemptAt || '').localeCompare(String(right.nextAttemptAt || '')))[0];
+              const rateLimitedUntil = account.rateLimitedUntil || rateLimitedJob?.nextAttemptAt;
+              const cooldownActive = Boolean(rateLimitedUntil && Date.parse(rateLimitedUntil) > rateLimitClock);
+              const recoveryJob = accountJobs.find((job) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status));
+              const recoveryInFlight = account.connectionStatus === 'rate_limited'
+                && Boolean(recoveryJob && ['queued', 'processing'].includes(recoveryJob.status));
+              const connectionStatusLabel = account.connectionStatus === 'rate_limited'
+                ? cooldownActive
+                  ? `rate limited · retry in ${formatCountdown(rateLimitedUntil, rateLimitClock)}`
+                  : recoveryJob?.status === 'processing'
+                    ? 'cooldown elapsed · retrying'
+                    : recoveryJob
+                      ? 'cooldown elapsed · retry queued'
+                      : 'cooldown elapsed · ready to retry'
+                : account.connectionStatus.replace(/_/g, ' ');
               const copySummary = copySyncSummary(accountJobs, catalogueJob);
               const savedDestinationCreatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
               const destinationCreatorId = destinationCreatorByAccount[account.externalAccountId] || '';
               const destinationCreator = creators.find((creator) => creator.creatorId === savedDestinationCreatorId);
+              const accountGalleries = collections.externalCollections.filter((collection) => collection.externalAccountId === account.externalAccountId && collection.syncStatus !== 'missing');
+              const editingPreset = presetAccountId === account.externalAccountId;
               return (
                 <div className="studio-integration-account-row" key={account.externalAccountId}>
                   <div>
                     <strong>{account.externalUsername}</strong>
+                    <span>Connected through {(configuration?.credentials || []).find((credential) => credential.externalPlatformCredentialId === account.externalPlatformCredentialId)?.applicationLabel || 'DeviantArt application'}</span>
                     <span>Last successful sync: {formatDate(account.lastSuccessfulSyncAt)}</span>
                     <span className={destinationCreator ? undefined : 'studio-integration-assignment-needed'}>{destinationCreator ? `Sync destination: ${destinationCreator.name}` : `${brand.creatorName} assignment required before synchronization.`}</span>
                     {catalogueJob?.progress && <span>Metadata: {catalogueJob.progress.discovered} discovered · {catalogueJob.progress.synchronized} synchronized · {catalogueJob.progress.remaining} remaining</span>}
                     {copySummary && <span>Source copies: {copySummary.requested} requested · {copySummary.stored} stored · {copySummary.unavailable} unavailable{copySummary.inProgress ? ` · ${copySummary.inProgress} in progress` : ''}</span>}
-                    {catalogueJob?.errorMessage && <span className="error">{catalogueJob.errorMessage}</span>}
+                    {catalogueJob?.status === 'cancelled' && <span>Last synchronization was cancelled.</span>}
+                    {catalogueJob?.status !== 'cancelled' && catalogueJob?.errorMessage && <span className="error">{catalogueJob.errorMessage}</span>}
+                    {(account.connectionStatus === 'rate_limited' || rateLimitedJob || cooldownActive) && <span className="studio-work-metadata-warning">
+                      {cooldownActive
+                        ? `DeviantArt cooldown active. No account requests will be sent before ${formatDate(rateLimitedUntil)} (in ${formatCountdown(rateLimitedUntil, rateLimitClock)}).`
+                        : recoveryJob?.status === 'processing'
+                          ? `The DeviantArt cooldown has elapsed. Automatic recovery is checking the account now.`
+                          : recoveryJob
+                            ? `The DeviantArt cooldown has elapsed. Automatic recovery is waiting in the retry queue for ${syncPhaseLabel(recoveryJob.type)}.`
+                            : `The DeviantArt cooldown has elapsed, but no automatic retry is currently queued. Use Sync now to verify the connection.`}
+                      {rateLimitedJob?.attemptCount ? ` Attempt ${rateLimitedJob.attemptCount}.` : ''}
+                    </span>}
                   </div>
                   <div className="studio-integration-row-actions">
-                    <Pill label={account.connectionStatus.replace(/_/g, ' ')} tone={accountTone(account.connectionStatus)} />
+                    <Pill label={connectionStatusLabel} tone={accountTone(account.connectionStatus)} />
                     {!savedDestinationCreatorId && <Pill label={`Needs ${brand.creatorName}`} tone="warning" />}
                     {account.connectionStatus === 'authentication_required' && <button type="button" className="auth-primary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void reconnect(account)}>
                       Reconnect & repair permissions
                     </button>}
-                    {savedDestinationCreatorId && <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void sync(account.externalAccountId)}>
-                      {workingAccountId === account.externalAccountId ? 'Queueing…' : account.connectionStatus === 'temporarily_unavailable' || account.connectionStatus === 'rate_limited' ? 'Retry sync' : 'Sync now'}
+                    {savedDestinationCreatorId && <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId || Boolean(activeCatalogueJob) || Boolean(rateLimitedJob) || cooldownActive || recoveryInFlight} onClick={() => void sync(account.externalAccountId)}>
+                      {workingAccountId === account.externalAccountId
+                        ? 'Queueing…'
+                        : cooldownActive
+                          ? 'Waiting for cooldown'
+                          : recoveryJob?.status === 'processing'
+                            ? 'Retrying automatically'
+                            : recoveryInFlight
+                              ? 'Retry queued'
+                              : rateLimitedJob
+                                ? 'Resumes automatically'
+                                : activeCatalogueJob
+                                  ? 'Sync in progress'
+                                  : account.connectionStatus === 'temporarily_unavailable'
+                                    ? 'Retry sync'
+                                    : account.connectionStatus === 'rate_limited'
+                                      ? 'Verify with Sync now'
+                                      : 'Sync now'}
+                    </button>}
+                    {activeCatalogueJob && <button type="button" className="auth-secondary-btn" disabled={cancellingSyncJobId === activeCatalogueJob.externalSyncJobId} onClick={() => void cancelSync(activeCatalogueJob)}>
+                      {cancellingSyncJobId === activeCatalogueJob.externalSyncJobId ? 'Cancelling…' : 'Cancel sync'}
                     </button>}
                     <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void removeAccount(account)}>
                       {workingAccountId === account.externalAccountId ? 'Removing…' : 'Remove this DeviantArt Account'}
+                    </button>
+                    <button type="button" className="auth-secondary-btn" disabled={presetBusy && editingPreset} onClick={() => editPublishingPreset(account)}>
+                      Publishing preset
                     </button>
                   </div>
                   {account.connectionStatus === 'authentication_required' && <p className="studio-work-metadata-warning">DeviantArt needs authorization or an updated permission grant. Reconnect this same account to repair it without changing its creator assignment.</p>}
@@ -647,11 +864,49 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                       {savedDestinationCreatorId && <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void saveAccountDestination(account, true)}>Disconnect {brand.creatorName}</button>}
                     </div>
                   </div>
+                  {editingPreset && <section className="studio-integration-credential-form" aria-label={`Publishing preset for ${account.externalUsername}`}>
+                    <div>
+                      <p className="auth-eyebrow">DeviantArt publishing preset</p>
+                      <h3>Defaults for new destinations</h3>
+                      <p className="small">New local Works use filename title case: <code>brand-name-1-v1.png</code> becomes <strong>Brand Name #1, v1</strong>. You can still edit every Work before publishing.</p>
+                    </div>
+                    <label><span>Default tags</span><input value={presetTags} onChange={(event) => setPresetTags(event.target.value)} placeholder="brand, illustration, series" /></label>
+                    <label><span>Display size</span><select value={presetDisplayResolution} onChange={(event) => setPresetDisplayResolution(event.target.value)}><option value="">Original</option>{deviantArtDisplayWidths.map((width) => <option key={width} value={width}>Size: {width} pixels wide</option>)}</select><small>DeviantArt creates the display rendition. Original retains its normal display size.</small></label>
+                    <label className="studio-work-metadata-option"><input type="checkbox" checked={presetAllowFreeDownload} onChange={(event) => setPresetAllowFreeDownload(event.target.checked)} /><span>Allow free original download</span></label>
+                    <label className="studio-work-metadata-option"><input type="checkbox" checked={presetAddWatermark} disabled={!presetDisplayResolution} onChange={(event) => setPresetAddWatermark(event.target.checked)} /><span>Add DeviantArt watermark to the display rendition</span></label>
+                    <fieldset className="studio-work-metadata-options">
+                      <legend>Content declarations</legend>
+                      <label className="studio-work-metadata-option"><input type="checkbox" checked={presetIsMature} onChange={(event) => { setPresetIsMature(event.target.checked); if (!event.target.checked) setPresetMatureClassification([]); }} /><span>Mature content</span></label>
+                      {presetIsMature && <label><span>Mature level</span><select value={presetMatureLevel} onChange={(event) => setPresetMatureLevel(event.target.value as 'strict' | 'moderate')}><option value="moderate">Moderate</option><option value="strict">Strict</option></select></label>}
+                      {presetIsMature && <div className="studio-work-metadata-options"><span>Mature classifications</span>{matureClassificationOptions.map((option) => <label className="studio-work-metadata-option" key={option.value}><input type="checkbox" checked={presetMatureClassification.includes(option.value)} onChange={(event) => setPresetMatureClassification((current) => event.target.checked ? [...new Set([...current, option.value])] : current.filter((value) => value !== option.value))} /><span>{option.label}</span></label>)}</div>}
+                      <label className="studio-work-metadata-option"><input type="checkbox" checked={presetIsAiGenerated} onChange={(event) => setPresetIsAiGenerated(event.target.checked)} /><span>Made with AI</span></label>
+                      <label className="studio-work-metadata-option"><input type="checkbox" checked={presetNoAi} onChange={(event) => setPresetNoAi(event.target.checked)} /><span>Do not authorize use in third-party AI training datasets</span></label>
+                    </fieldset>
+                    <label><span>Default DeviantArt state</span><select value={presetTargetStatus} onChange={(event) => setPresetTargetStatus(event.target.value as 'draft' | 'published')}><option value="published">Published</option><option value="draft">Draft in Sta.sh</option></select></label>
+                    <p className="small"><strong>Original file:</strong> Ubeeq keeps the original. DeviantArt’s display-resolution option controls its display rendition; it does not change the stored original.</p>
+                    <fieldset className="studio-work-metadata-options">
+                      <legend>Default gallery placement</legend>
+                      {accountGalleries.length ? accountGalleries.map((gallery) => <label className="studio-work-metadata-option" key={gallery.externalCollectionId}>
+                        <input type="checkbox" checked={presetGalleryIds.includes(gallery.externalCollectionExternalId)} onChange={(event) => setPresetGalleryIds((current) => event.target.checked ? [...new Set([...current, gallery.externalCollectionExternalId])] : current.filter((id) => id !== gallery.externalCollectionExternalId))} />
+                        <span>{gallery.name}</span>
+                      </label>) : <small>No imported galleries yet. Create one below or synchronize the account.</small>}
+                    </fieldset>
+                    <div className="studio-inline-form">
+                      <input value={newGalleryName} maxLength={50} onChange={(event) => setNewGalleryName(event.target.value)} placeholder="New DeviantArt gallery name" />
+                      <button type="button" className="auth-secondary-btn" disabled={presetBusy || !newGalleryName.trim()} onClick={() => void createDeviantArtGallery()}>{presetBusy ? 'Working…' : 'Create gallery'}</button>
+                    </div>
+                    <div className="studio-inline-actions">
+                      <button type="button" className="auth-primary-btn" disabled={presetBusy} onClick={() => void savePublishingPreset()}>{presetBusy ? 'Saving…' : 'Save publishing preset'}</button>
+                      <button type="button" className="auth-secondary-btn" disabled={presetBusy} onClick={() => setPresetAccountId('')}>Cancel</button>
+                    </div>
+                  </section>}
                 </div>
               );
             })}
           </div>
-        ) : !loading && <div className="studio-empty-state">Connect an account to import its catalogue, galleries, and engagement history into {brand.productName}.</div>}
+        ) : !loading && <div className="studio-empty-state">{accounts.length
+          ? <>No connected accounts match this application filter. <button type="button" className="auth-secondary-btn" onClick={() => setAccountApplicationFilterId('')}>Show all accounts</button></>
+          : `Connect an account to import its catalogue, galleries, and engagement history into ${brand.productName}.`}</div>}
       </Card>
 
       <Card title="Gallery mapping" eyebrow={`Independent ${brand.productName} collections`} className="studio-integration-gallery-mapping">

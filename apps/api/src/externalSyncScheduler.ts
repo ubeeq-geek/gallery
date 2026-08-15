@@ -11,7 +11,11 @@ export const handler: ScheduledHandler = async () => {
   const now = new Date().toISOString();
   const jobs = await store.listDueExternalSyncJobs(now, 50);
   let queued = 0;
+  const resumedAccounts = new Set<string>();
   for (const job of jobs) {
+    // Resume one job per account per scheduler tick. This prevents a single
+    // cooldown expiry from releasing a burst of requests back at the provider.
+    if (resumedAccounts.has(job.externalAccountId)) continue;
     try {
       await queue.enqueue(job.externalSyncJobId);
       await store.updateExternalSyncJob({
@@ -20,6 +24,7 @@ export const handler: ScheduledHandler = async () => {
         nextAttemptAt: undefined,
         updatedAt: now
       });
+      resumedAccounts.add(job.externalAccountId);
       queued += 1;
     } catch (error) {
       console.error(`[external-sync-scheduler] enqueue_failed job=${job.externalSyncJobId} message=${error instanceof Error ? error.message : String(error)}`);

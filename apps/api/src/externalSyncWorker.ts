@@ -9,10 +9,25 @@ import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalCollection
 import type { CanonicalAsset, Publication, Work } from './canonicalDomain';
 import type { DataStore } from './store';
 
-const retryDelaySeconds = (attempt: number, configuredBase: number): number => {
-  const schedule = [1, 5, 30, 120];
-  const minutes = schedule[Math.min(Math.max(0, attempt - 1), schedule.length - 1)];
-  return Math.max(configuredBase, minutes * 60);
+export const retryDelaySeconds = (attempt: number, configuredBase: number, random = Math.random): number => {
+  const base = Math.max(1, Math.floor(configuredBase));
+  const ceiling = Math.min(60 * 60, base * (2 ** Math.min(Math.max(0, attempt - 1), 10)));
+  const floor = Math.max(base, Math.ceil(ceiling / 2));
+  return floor + Math.floor(random() * (ceiling - floor + 1));
+};
+
+export const MAX_AMBIGUOUS_PUBLISH_ATTEMPTS = 3;
+
+export const shouldRetryExternalJobFailure = (
+  jobType: ExternalSyncJobType,
+  code: ExternalProviderError['code'],
+  attemptCount: number
+): boolean => {
+  if (code === 'rate_limited') return true;
+  if (code === 'temporarily_unavailable') return jobType !== 'content_sync';
+  return code === 'ambiguous_submission'
+    && jobType === 'publish'
+    && attemptCount < MAX_AMBIGUOUS_PUBLISH_ATTEMPTS;
 };
 
 const updateJob = async (
@@ -20,9 +35,24 @@ const updateJob = async (
   job: ExternalSyncJob,
   update: Partial<ExternalSyncJob>
 ): Promise<ExternalSyncJob> => {
-  const next = { ...job, ...update, updatedAt: new Date().toISOString() };
+  const current = await store.getExternalSyncJob(job.externalSyncJobId);
+  if (current?.status === 'cancelled' && update.status !== 'cancelled') return current;
+  const next = { ...(current || job), ...update, updatedAt: new Date().toISOString() };
   await store.updateExternalSyncJob(next);
   return next;
+};
+
+class SyncCancelledError extends Error {
+  constructor() {
+    super('Synchronization cancelled by the user');
+    this.name = 'SyncCancelledError';
+  }
+}
+
+const ensureJobActive = async (store: DataStore, externalSyncJobId: string): Promise<void> => {
+  if ((await store.getExternalSyncJob(externalSyncJobId))?.status === 'cancelled') {
+    throw new SyncCancelledError();
+  }
 };
 
 const addLog = async (store: DataStore, externalSyncJobId: string, level: 'info' | 'warning' | 'error', message: string, detail?: Record<string, unknown>): Promise<void> => {
@@ -33,6 +63,45 @@ const addLog = async (store: DataStore, externalSyncJobId: string, level: 'info'
     message,
     detail,
     createdAt: new Date().toISOString()
+  });
+};
+
+const deferQueuedJobsForAccount = async (
+  store: DataStore,
+  externalAccountId: string,
+  exceptJobId: string,
+  rateLimitedUntil: string
+): Promise<number> => {
+  const jobs = await store.listExternalSyncJobs(externalAccountId, 100);
+  const deferred = jobs.filter((candidate) => (
+    candidate.externalSyncJobId !== exceptJobId
+    && ['queued', 'retry_scheduled', 'rate_limited'].includes(candidate.status)
+  ));
+  await Promise.all(deferred.map((candidate) => store.updateExternalSyncJob({
+    ...candidate,
+    status: 'rate_limited',
+    nextAttemptAt: candidate.nextAttemptAt && candidate.nextAttemptAt > rateLimitedUntil
+      ? candidate.nextAttemptAt
+      : rateLimitedUntil,
+    errorCode: 'ACCOUNT_RATE_LIMITED',
+    errorMessage: 'Waiting for the DeviantArt account cooldown before continuing',
+    updatedAt: new Date().toISOString()
+  })));
+  return deferred.length;
+};
+
+const markAccountRecovered = async (store: DataStore, externalAccountId: string): Promise<void> => {
+  const account = await store.getExternalAccount(externalAccountId);
+  if (!account || (
+    account.connectionStatus !== 'rate_limited'
+    && account.connectionStatus !== 'temporarily_unavailable'
+    && !account.rateLimitedUntil
+  )) return;
+  await store.updateExternalAccount({
+    ...account,
+    connectionStatus: 'connected',
+    rateLimitedUntil: undefined,
+    updatedAt: new Date().toISOString()
   });
 };
 
@@ -159,6 +228,17 @@ const metadataBoolean = (metadata: Record<string, unknown>, ...keys: string[]): 
   }
   return undefined;
 };
+const metadataPositiveInteger = (metadata: Record<string, unknown>, ...keys: string[]): number | undefined => {
+  const submission = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
+    ? metadata.submission as Record<string, unknown>
+    : {};
+  for (const key of keys) {
+    const value = metadata[key] ?? submission[key];
+    const numberValue = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+    if (Number.isInteger(numberValue) && numberValue > 0) return numberValue;
+  }
+  return undefined;
+};
 
 const metadataString = (metadata: Record<string, unknown>, ...keys: string[]): string | undefined => {
   const submission = metadata.submission && typeof metadata.submission === 'object' && !Array.isArray(metadata.submission)
@@ -225,6 +305,14 @@ export const externalContentUpdateMismatches = (remote: ExternalRemoteContent, u
   if (update.description !== undefined && decodeComparableHtml(remote.description || '') !== decodeComparableHtml(update.description)) mismatches.push('description');
   if (update.tags !== undefined && comparableTags(remote.tags) !== comparableTags(update.tags)) mismatches.push('tags');
   if (update.allowComments !== undefined && metadataBoolean(remote.rawMetadata, 'allows_comments', 'allow_comments', 'allowComments') !== update.allowComments) mismatches.push('comment setting');
+  if (update.allowFreeDownload !== undefined) {
+    const remoteAllowFreeDownload = metadataBoolean(remote.rawMetadata, 'allow_free_download', 'allowFreeDownload');
+    if (remoteAllowFreeDownload !== undefined && remoteAllowFreeDownload !== update.allowFreeDownload) mismatches.push('free-download setting');
+  }
+  if (update.addWatermark !== undefined) {
+    const remoteAddWatermark = metadataBoolean(remote.rawMetadata, 'add_watermark', 'addWatermark');
+    if (remoteAddWatermark !== undefined && remoteAddWatermark !== update.addWatermark) mismatches.push('watermark setting');
+  }
   if (update.isMature !== undefined && metadataBoolean(remote.rawMetadata, 'is_mature', 'isMature') !== update.isMature) mismatches.push('mature setting');
   if (update.matureLevel !== undefined && metadataString(remote.rawMetadata, 'mature_level', 'matureLevel') !== update.matureLevel) mismatches.push('mature level');
   if (update.matureClassification !== undefined) {
@@ -248,7 +336,8 @@ const providerForAccount = async (store: DataStore, config: AppConfig, account: 
   return createExternalPlatformProvider(account.platform, {
     clientId: credential.clientId,
     clientSecret: decryptExternalCredential(credential.clientSecretEncrypted, config.externalTokenEncryptionKey),
-    redirectUri: credential.redirectUri
+    redirectUri: credential.redirectUri,
+    minimumRequestIntervalMs: config.deviantArtMinimumRequestIntervalMs
   });
 };
 
@@ -564,6 +653,7 @@ const enqueueContentSyncJob = async (
   externalAccountId: string,
   assetId: string,
   externalPublicationId: string,
+  parentJobId?: string,
   queue?: ExternalSyncQueue
 ): Promise<void> => {
   const activeStatuses = new Set<ExternalSyncJob['status']>(['queued', 'processing', 'retry_scheduled', 'rate_limited']);
@@ -579,7 +669,7 @@ const enqueueContentSyncJob = async (
     externalAccountId,
     type: 'content_sync',
     status: 'queued',
-    payload: { assetId, externalPublicationId },
+    payload: { assetId, externalPublicationId, ...(parentJobId ? { parentJobId } : {}) },
     progress: { discovered: 1, synchronized: 0, remaining: 1 },
     attemptCount: 0,
     createdAt: now,
@@ -692,6 +782,7 @@ const queueSpaceContentSync = async (
   account: ExternalAccount,
   asset: Asset,
   publication: ExternalPublication,
+  parentJobId?: string,
   queue?: ExternalSyncQueue
 ): Promise<void> => {
   const current = await store.getSpacePublication(asset.assetId);
@@ -716,7 +807,7 @@ const queueSpaceContentSync = async (
     updatedAt: now
   };
   await store.upsertSpacePublication(spacePublication);
-  await enqueueContentSyncJob(store, config, account.externalAccountId, asset.assetId, publication.externalPublicationId, queue);
+  await enqueueContentSyncJob(store, config, account.externalAccountId, asset.assetId, publication.externalPublicationId, parentJobId, queue);
 };
 
 const executeContentSync = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
@@ -746,6 +837,7 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
   const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
   const remote = await provider.getContent(session.accessToken, publication.externalContentId);
   const original = await provider.getOriginalDownload(session.accessToken, publication.externalContentId);
+  await ensureJobActive(store, job.externalSyncJobId);
   const source = original.status === 'available' && original.sourceUrl
     ? {
       sourceUrl: original.sourceUrl,
@@ -797,6 +889,7 @@ const executeContentSync = async (store: DataStore, config: AppConfig, job: Exte
     existingObjectKey: current?.hostedObjectKey,
     existingThumbnailObjectKey: current?.hostedThumbnailObjectKey
   });
+  await ensureJobActive(store, job.externalSyncJobId);
   await store.upsertSpacePublication({
     ...current,
     assetId: asset.assetId,
@@ -873,6 +966,12 @@ const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: Ext
   if (Array.isArray(job.payload?.collectionExternalIds)) update.collectionExternalIds = job.payload.collectionExternalIds
     .filter((collectionId): collectionId is string => typeof collectionId === 'string');
   if (typeof job.payload?.allowComments === 'boolean') update.allowComments = job.payload.allowComments;
+  if (job.payload && Object.prototype.hasOwnProperty.call(job.payload, 'displayResolution')) {
+    if (job.payload.displayResolution === null) update.displayResolution = null;
+    else if (typeof job.payload.displayResolution === 'number') update.displayResolution = job.payload.displayResolution;
+  }
+  if (typeof job.payload?.allowFreeDownload === 'boolean') update.allowFreeDownload = job.payload.allowFreeDownload;
+  if (typeof job.payload?.addWatermark === 'boolean') update.addWatermark = job.payload.addWatermark;
   if (typeof job.payload?.isMature === 'boolean') update.isMature = job.payload.isMature;
   if (job.payload?.matureLevel === 'strict' || job.payload?.matureLevel === 'moderate') update.matureLevel = job.payload.matureLevel;
   if (Array.isArray(job.payload?.matureClassification)) update.matureClassification = job.payload.matureClassification
@@ -924,6 +1023,9 @@ const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: Ext
     collectionExternalIds: update.collectionExternalIds ?? remote.collectionExternalIds,
     rawMetadata: {
       ...remote.rawMetadata,
+      ...(update.displayResolution !== undefined ? { display_resolution: update.displayResolution } : {}),
+      ...(update.allowFreeDownload !== undefined ? { allow_free_download: update.allowFreeDownload } : {}),
+      ...(update.addWatermark !== undefined ? { add_watermark: update.addWatermark } : {}),
       ...(update.isAiGenerated !== undefined ? { is_ai_generated: update.isAiGenerated } : {}),
       ...(update.noAi !== undefined ? { noai: update.noAi } : {})
     }
@@ -1001,6 +1103,9 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
     allowComments: typeof job.payload?.allowComments === 'boolean'
       ? job.payload.allowComments
       : metadataBoolean(savedSettings, 'allows_comments', 'allow_comments', 'allowComments'),
+    displayResolution: metadataPositiveInteger(savedSettings, 'display_resolution', 'displayResolution'),
+    allowFreeDownload: metadataBoolean(savedSettings, 'allow_free_download', 'allowFreeDownload'),
+    addWatermark: metadataBoolean(savedSettings, 'add_watermark', 'addWatermark'),
     isAiGenerated: typeof job.payload?.isAiGenerated === 'boolean'
       ? job.payload.isAiGenerated
       : metadataBoolean(savedSettings, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai'),
@@ -1308,9 +1413,11 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
   const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
   const now = new Date().toISOString();
   const collections = await provider.listCollections(session.accessToken, session.account.externalUsername);
+  await ensureJobActive(store, job.externalSyncJobId);
   const existingCollections = await store.listExternalCollections(account.externalAccountId);
   const seenExternalCollectionIds = new Set<string>();
   for (const collection of collections) {
+    await ensureJobActive(store, job.externalSyncJobId);
     seenExternalCollectionIds.add(collection.externalCollectionId);
     const existing = existingCollections
       .find((item) => item.externalCollectionExternalId === collection.externalCollectionId);
@@ -1344,51 +1451,113 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     }
   }
 
-  let cursor: string | undefined;
-  let discovered = 0;
-  let synchronized = 0;
-  const seenExternalContentIds = new Set<string>();
+  let cursor = typeof job.payload?.resumeCursor === 'string' ? job.payload.resumeCursor : undefined;
+  let resumeItemIndex = typeof job.payload?.resumeItemIndex === 'number'
+    ? Math.max(0, Math.floor(job.payload.resumeItemIndex))
+    : 0;
+  let resumePageLoaded = job.payload?.resumePageLoaded === true;
+  let contentScanComplete = job.payload?.contentScanComplete === true;
+  let discovered = job.progress?.discovered || 0;
+  let synchronized = job.progress?.synchronized || 0;
+  const seenExternalContentIds = new Set(
+    Array.isArray(job.payload?.seenExternalContentIds)
+      ? job.payload.seenExternalContentIds.filter((value): value is string => typeof value === 'string' && Boolean(value))
+      : []
+  );
   let currentJob = job;
   const shouldSyncContent = job.payload?.syncContent === true
     || session.account.initialContentSyncRequested === true
     || session.account.includeSourceFilesOnSync === true;
-  do {
-    const page = await provider.listContent(session.accessToken, {
-      username: session.account.externalUsername,
-      cursor,
-      limit: 50
-    });
-    discovered += page.items.length;
-    for (const item of page.items) {
-      seenExternalContentIds.add(item.externalContentId);
-      const hasPublishedSettings = metadataBoolean(item.rawMetadata, 'is_mature', 'isMature') !== undefined
-        && metadataBoolean(item.rawMetadata, 'allows_comments', 'allow_comments', 'allowComments') !== undefined
-        && metadataBoolean(item.rawMetadata, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai') !== undefined
-        && metadataBoolean(item.rawMetadata, 'noai', 'noAI', 'noAi', 'no_ai') !== undefined;
-      let resolvedItem = item;
-      if (!item.description || !item.tags.length || !hasPublishedSettings) {
-        try {
-          resolvedItem = await provider.getContent(session.accessToken, item.externalContentId);
-        } catch (error) {
-          await addLog(store, job.externalSyncJobId, 'warning', 'Could not load complete DeviantArt metadata; retaining catalogue values', {
-            externalContentId: item.externalContentId,
-            message: error instanceof Error ? error.message : String(error)
-          });
+  if (!contentScanComplete) {
+    do {
+      await ensureJobActive(store, job.externalSyncJobId);
+      const pageCursor = cursor || '0';
+      const page = await provider.listContent(session.accessToken, {
+        username: session.account.externalUsername,
+        cursor: pageCursor,
+        limit: 50
+      });
+      if (!resumePageLoaded) discovered += page.items.length;
+      resumePageLoaded = true;
+      const pageStartIndex = Math.min(resumeItemIndex, page.items.length);
+      for (let itemIndex = pageStartIndex; itemIndex < page.items.length; itemIndex += 1) {
+        const item = page.items[itemIndex];
+        await ensureJobActive(store, job.externalSyncJobId);
+        seenExternalContentIds.add(item.externalContentId);
+        const hasPublishedSettings = metadataBoolean(item.rawMetadata, 'is_mature', 'isMature') !== undefined
+          && metadataBoolean(item.rawMetadata, 'allows_comments', 'allow_comments', 'allowComments') !== undefined
+          && metadataBoolean(item.rawMetadata, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai') !== undefined
+          && metadataBoolean(item.rawMetadata, 'noai', 'noAI', 'noAi', 'no_ai') !== undefined;
+        let resolvedItem = item;
+        if (!item.description || !item.tags.length || !hasPublishedSettings) {
+          try {
+            resolvedItem = await provider.getContent(session.accessToken, item.externalContentId);
+          } catch (error) {
+            if (error instanceof ExternalProviderError && error.code === 'rate_limited') {
+              currentJob = await updateJob(store, currentJob, {
+                payload: {
+                  ...(currentJob.payload || {}),
+                  resumeCursor: pageCursor,
+                  resumeItemIndex: itemIndex,
+                  resumePageLoaded: true,
+                  contentScanComplete: false,
+                  seenExternalContentIds: [...seenExternalContentIds]
+                },
+                progress: { discovered, synchronized, remaining: 1 }
+              });
+              await addLog(store, job.externalSyncJobId, 'warning', 'DeviantArt rate limit detected; reconciliation stopped immediately and its position was saved', {
+                externalContentId: item.externalContentId,
+                resumeCursor: pageCursor,
+                resumeItemIndex: itemIndex
+              });
+              throw error;
+            }
+            await addLog(store, job.externalSyncJobId, 'warning', 'Could not load complete DeviantArt metadata; retaining catalogue values', {
+              externalContentId: item.externalContentId,
+              message: error instanceof Error ? error.message : String(error)
+            });
+          }
         }
+        const imported = await upsertContent(store, config, account, resolvedItem, now);
+        if (shouldSyncContent) {
+          await queueSpaceContentSync(store, config, account, imported.asset, imported.publication, job.externalSyncJobId, queue);
+        }
+        synchronized += 1;
+        resumeItemIndex = itemIndex + 1;
+        currentJob = await updateJob(store, currentJob, {
+          status: 'processing',
+          payload: {
+            ...(currentJob.payload || {}),
+            resumeCursor: pageCursor,
+            resumeItemIndex,
+            resumePageLoaded: true,
+            contentScanComplete: false,
+            seenExternalContentIds: [...seenExternalContentIds]
+          },
+          progress: { discovered, synchronized, remaining: 1 }
+        });
       }
-      const imported = await upsertContent(store, config, account, resolvedItem, now);
-      if (shouldSyncContent) {
-        await queueSpaceContentSync(store, config, account, imported.asset, imported.publication, queue);
-      }
-      synchronized += 1;
-    }
-    cursor = page.nextCursor;
-    currentJob = await updateJob(store, currentJob, {
-      status: 'processing',
-      progress: { discovered, synchronized, remaining: cursor ? 1 : 0 }
-    });
-  } while (cursor);
+      cursor = page.nextCursor;
+      resumeItemIndex = 0;
+      resumePageLoaded = false;
+      contentScanComplete = !cursor;
+      const { resumeCursor: _previousResumeCursor, ...pageCompletedPayload } = currentJob.payload || {};
+      currentJob = await updateJob(store, currentJob, {
+        status: 'processing',
+        payload: {
+          ...pageCompletedPayload,
+          ...(cursor ? { resumeCursor: cursor } : {}),
+          resumeItemIndex: 0,
+          resumePageLoaded: false,
+          contentScanComplete,
+          seenExternalContentIds: [...seenExternalContentIds]
+        },
+        progress: { discovered, synchronized, remaining: cursor ? 1 : 0 }
+      });
+    } while (cursor);
+  }
 
+  await ensureJobActive(store, job.externalSyncJobId);
   const lifecycle = await reconcilePublicationLifecycle(
     store,
     config,
@@ -1398,6 +1567,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     seenExternalContentIds,
     now
   );
+  await ensureJobActive(store, job.externalSyncJobId);
   const refreshedCollections = await store.listExternalCollections(account.externalAccountId);
   const galleryMappings = await reconcileCollectionMappings(
     store,
@@ -1407,6 +1577,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     refreshedCollections,
     now
   );
+  await ensureJobActive(store, job.externalSyncJobId);
 
   const currentAccount = await store.getExternalAccount(account.externalAccountId);
   if (currentAccount?.connectionStatus === 'disabled') {
@@ -1418,6 +1589,23 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     return;
   }
 
+  const {
+    resumeCursor: _resumeCursor,
+    resumeItemIndex: _resumeItemIndex,
+    resumePageLoaded: _resumePageLoaded,
+    contentScanComplete: _contentScanComplete,
+    seenExternalContentIds: _seenExternalContentIds,
+    ...completedPayload
+  } = currentJob.payload || {};
+  const completedJob = await updateJob(store, currentJob, {
+    status: 'successful',
+    payload: completedPayload,
+    progress: { discovered, synchronized, remaining: 0 },
+    errorCode: undefined,
+    errorMessage: undefined,
+    nextAttemptAt: undefined
+  });
+  if (completedJob.status === 'cancelled') return;
   await store.updateExternalAccount({
     ...session.account,
     connectionStatus: 'connected',
@@ -1425,13 +1613,6 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     lastSyncAttemptAt: now,
     initialContentSyncRequested: false,
     updatedAt: now
-  });
-  await updateJob(store, currentJob, {
-    status: 'successful',
-    progress: { discovered, synchronized, remaining: 0 },
-    errorCode: undefined,
-    errorMessage: undefined,
-    nextAttemptAt: undefined
   });
   const [activityJob, engagementJob] = await Promise.all([
     enqueueRelatedSyncJob(store, config, session.account, 'activity_sync', queue),
@@ -2060,39 +2241,41 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
     await updateJob(store, job, { status: 'cancelled', errorCode: 'ACCOUNT_REMOVED', errorMessage: 'Synchronization stopped because the DeviantArt account was removed' });
     return;
   }
+  const rateLimitedUntilMs = account.rateLimitedUntil ? Date.parse(account.rateLimitedUntil) : NaN;
+  if (account.connectionStatus === 'rate_limited' && Number.isFinite(rateLimitedUntilMs) && rateLimitedUntilMs > Date.now()) {
+    await updateJob(store, job, {
+      status: 'rate_limited',
+      nextAttemptAt: account.rateLimitedUntil,
+      errorCode: 'ACCOUNT_RATE_LIMITED',
+      errorMessage: 'Waiting for the DeviantArt account cooldown before continuing'
+    });
+    return;
+  }
   const attemptCount = job.attemptCount + 1;
   const processingJob = await updateJob(store, job, { status: 'processing', attemptCount, lastAttemptAt: new Date().toISOString() });
+  if (processingJob.status === 'cancelled') return;
   await addLog(store, job.externalSyncJobId, 'info', 'Sync job started', { type: job.type, attemptCount });
   try {
     if (job.type === 'account_import' || job.type === 'full_reconciliation' || job.type === 'account_scan') {
       await executeAccountImport(store, config, processingJob, account, queue);
-      return;
-    }
-    if (job.type === 'content_sync') {
+    } else if (job.type === 'content_sync') {
       await executeContentSync(store, config, processingJob, account);
-      return;
-    }
-    if (job.type === 'comment_sync') {
+    } else if (job.type === 'comment_sync') {
       await executeCommentSync(store, config, processingJob, account);
-      return;
-    }
-    if (job.type === 'activity_sync') {
+    } else if (job.type === 'activity_sync') {
       await executeActivitySync(store, config, processingJob, account, queue);
-      return;
-    }
-    if (job.type === 'engagement_sync') {
+    } else if (job.type === 'engagement_sync') {
       await executeEngagementSync(store, config, processingJob, account);
-      return;
-    }
-    if (job.type === 'remote_update') {
+    } else if (job.type === 'remote_update') {
       await executeRemoteUpdate(store, config, processingJob, account, queue);
-      return;
-    }
-    if (job.type === 'publish') {
+    } else if (job.type === 'publish') {
       await executePublish(store, config, processingJob, account);
-      return;
+    } else {
+      throw new ExternalProviderError(`Sync job type ${job.type} is not implemented yet`, 'unsupported');
     }
-    throw new ExternalProviderError(`Sync job type ${job.type} is not implemented yet`, 'unsupported');
+    if ((await store.getExternalSyncJob(externalSyncJobId))?.status === 'successful') {
+      await markAccountRecovered(store, account.externalAccountId);
+    }
   } catch (error) {
     const providerError = error instanceof ExternalProviderError
       ? error
@@ -2101,6 +2284,18 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
         'temporarily_unavailable'
       );
     const latest = await store.getExternalSyncJob(externalSyncJobId) || { ...job, attemptCount };
+    if (error instanceof SyncCancelledError || latest.status === 'cancelled') {
+      if (latest.status !== 'cancelled') {
+        await updateJob(store, latest, {
+          status: 'cancelled',
+          nextAttemptAt: undefined,
+          errorCode: 'CANCELLED_BY_USER',
+          errorMessage: 'Synchronization cancelled by the user'
+        });
+      }
+      await addLog(store, externalSyncJobId, 'info', 'Synchronization cancelled');
+      return;
+    }
     const currentAccount = await store.getExternalAccount(account.externalAccountId);
     if (currentAccount?.connectionStatus === 'disabled') {
       await updateJob(store, latest, {
@@ -2114,19 +2309,64 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
     // connection. Keep its failure on the content-sync job/publication so a
     // healthy catalogue connection does not appear unavailable.
     const isContentSync = job.type === 'content_sync';
+    const jobWillRetry = shouldRetryExternalJobFailure(job.type, providerError.code, attemptCount);
     if (providerError.code === 'authentication_required' && !isContentSync) {
       await store.updateExternalAccount({ ...account, connectionStatus: 'authentication_required', lastSyncAttemptAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       await updateJob(store, latest, { status: 'authentication_required', errorCode: providerError.code, errorMessage: providerError.message });
-    } else if ((providerError.code === 'rate_limited' || providerError.code === 'temporarily_unavailable') && !isContentSync) {
-      const delay = providerError.retryAfterSeconds || retryDelaySeconds(attemptCount, config.externalSyncBaseDelaySeconds);
+    } else if (providerError.code === 'rate_limited') {
+      const delay = providerError.retryAfterSeconds !== undefined
+        ? Math.max(1, providerError.retryAfterSeconds)
+        : retryDelaySeconds(attemptCount, config.externalSyncBaseDelaySeconds);
+      const proposedRateLimitedUntil = new Date(Date.now() + delay * 1000).toISOString();
+      const existingRateLimitedUntil = currentAccount?.rateLimitedUntil;
+      const rateLimitedUntil = existingRateLimitedUntil && existingRateLimitedUntil > proposedRateLimitedUntil
+        ? existingRateLimitedUntil
+        : proposedRateLimitedUntil;
       await store.updateExternalAccount({
-        ...account,
-        connectionStatus: providerError.code === 'rate_limited' ? 'rate_limited' : 'temporarily_unavailable',
+        ...(currentAccount || account),
+        connectionStatus: 'rate_limited',
+        rateLimitedUntil,
         lastSyncAttemptAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
       await updateJob(store, latest, {
-        status: providerError.code === 'rate_limited' ? 'rate_limited' : 'retry_scheduled',
+        status: 'rate_limited',
+        nextAttemptAt: rateLimitedUntil,
+        errorCode: providerError.code,
+        errorMessage: providerError.message
+      });
+      const deferredJobs = await deferQueuedJobsForAccount(store, account.externalAccountId, externalSyncJobId, rateLimitedUntil);
+      if (job.type === 'content_sync' && typeof job.payload?.assetId === 'string') {
+        const spacePublication = await store.getSpacePublication(job.payload.assetId);
+        if (spacePublication && spacePublication.contentSyncStatus !== 'hosted') {
+          await store.upsertSpacePublication({
+            ...spacePublication,
+            contentSyncStatus: 'queued',
+            contentSyncError: undefined,
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
+      await addLog(store, externalSyncJobId, 'warning', 'DeviantArt rate limit reached; account work paused', {
+        type: job.type,
+        attemptCount,
+        delaySeconds: delay,
+        rateLimitedUntil,
+        deferredJobs
+      });
+    } else if (providerError.code === 'ambiguous_submission' && jobWillRetry) {
+      const delay = retryDelaySeconds(attemptCount, config.externalSyncBaseDelaySeconds);
+      await updateJob(store, latest, {
+        status: 'retry_scheduled',
+        nextAttemptAt: new Date(Date.now() + delay * 1000).toISOString(),
+        errorCode: providerError.code,
+        errorMessage: `${providerError.message}. Retrying automatically (${attemptCount + 1}/${MAX_AMBIGUOUS_PUBLISH_ATTEMPTS}).`
+      });
+    } else if (providerError.code === 'temporarily_unavailable' && !isContentSync) {
+      const delay = retryDelaySeconds(attemptCount, config.externalSyncBaseDelaySeconds);
+      await store.updateExternalAccount({ ...(currentAccount || account), connectionStatus: 'temporarily_unavailable', lastSyncAttemptAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      await updateJob(store, latest, {
+        status: 'retry_scheduled',
         nextAttemptAt: new Date(Date.now() + delay * 1000).toISOString(),
         errorCode: providerError.code,
         errorMessage: providerError.message
@@ -2135,23 +2375,29 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
       await updateJob(store, latest, { status: 'failed', errorCode: providerError.code, errorMessage: providerError.message });
     }
     const failedPublicationId = typeof job.payload?.externalPublicationId === 'string' ? job.payload.externalPublicationId : '';
-    if (failedPublicationId) {
+    const publishWillRetry = job.type === 'publish' && jobWillRetry;
+    if (failedPublicationId && (providerError.code !== 'rate_limited' || publishWillRetry)) {
       const canonicalPublication = await store.getPublication(config.tenantId, failedPublicationId);
       if (canonicalPublication) {
         await store.upsertPublication({
           ...canonicalPublication,
+          status: publishWillRetry
+            ? 'queued'
+            : job.type === 'publish'
+              ? 'failed'
+              : canonicalPublication.status,
           sync: {
             ...canonicalPublication.sync,
-            status: 'error',
+            status: publishWillRetry ? 'local_newer' : 'error',
             lastAttemptAt: new Date().toISOString(),
-            errorCode: providerError.code,
-            errorMessage: providerError.message
+            errorCode: publishWillRetry ? undefined : providerError.code,
+            errorMessage: publishWillRetry ? undefined : providerError.message
           },
           updatedAt: new Date().toISOString()
         });
       }
     }
-    if (job.type === 'content_sync' && typeof job.payload?.assetId === 'string') {
+    if (job.type === 'content_sync' && providerError.code !== 'rate_limited' && typeof job.payload?.assetId === 'string') {
       const current = await store.getSpacePublication(job.payload.assetId);
       if (current) {
         await store.upsertSpacePublication({
@@ -2163,6 +2409,22 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
         });
       }
     }
-    await addLog(store, externalSyncJobId, 'error', providerError.message, { code: providerError.code, attemptCount });
+    if (providerError.code !== 'rate_limited') {
+      await addLog(store, externalSyncJobId, jobWillRetry ? 'warning' : 'error', providerError.message, {
+        code: providerError.code,
+        attemptCount,
+        retryScheduled: jobWillRetry
+      });
+    }
+  } finally {
+    // Hold the single worker slot briefly after each job as well. This closes
+    // the gap between separate SQS/Lambda invocations, where an in-process
+    // request pacer may be reset by a cold start.
+    const intervalMs = Number.isFinite(config.deviantArtMinimumRequestIntervalMs)
+      ? Math.max(0, Math.floor(config.deviantArtMinimumRequestIntervalMs))
+      : 0;
+    if (account.platform === 'deviantart' && intervalMs) {
+      await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+    }
   }
 };

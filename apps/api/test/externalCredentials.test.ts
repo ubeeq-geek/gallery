@@ -366,6 +366,9 @@ describe('external credentials', () => {
       tags: ['history', 'airship'],
       collectionExternalIds: ['gallery-1', 'gallery-2'],
       allowComments: false,
+      displayResolution: 1280,
+      allowFreeDownload: true,
+      addWatermark: true,
       isMature: true,
       matureLevel: 'moderate',
       matureClassification: ['ideology'],
@@ -383,11 +386,40 @@ describe('external credentials', () => {
     expect(body.getAll('tags[]')).toEqual(['history', 'airship']);
     expect(body.getAll('galleryids[]')).toEqual(['gallery-1', 'gallery-2']);
     expect(body.get('allow_comments')).toBe('false');
+    expect(body.get('display_resolution')).toBe('6');
+    expect(body.get('allow_free_download')).toBe('true');
+    expect(body.get('add_watermark')).toBe('true');
     expect(body.get('is_mature')).toBe('true');
     expect(body.get('mature_level')).toBe('moderate');
     expect(body.getAll('mature_classification[]')).toEqual(['ideology']);
     expect(body.get('is_ai_generated')).toBe('true');
     expect(body.get('noai')).toBe('true');
+    fetchSpy.mockRestore();
+  });
+
+  it('restores DeviantArt original display mode during an edit', async () => {
+    const provider = new DeviantArtProvider({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://fanadmin.top:4000/integrations/deviantart/callback'
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'success' }),
+      headers: { get: () => null }
+    } as unknown as Response);
+
+    await provider.updateContent('access-token', 'deviation-1', {
+      displayResolution: null,
+      allowFreeDownload: false,
+      addWatermark: false
+    });
+
+    const request = fetchSpy.mock.calls[0][1] as RequestInit;
+    const body = new URLSearchParams(String(request.body));
+    expect(body.get('display_resolution')).toBe('0');
+    expect(body.get('allow_free_download')).toBe('false');
+    expect(body.get('add_watermark')).toBe('false');
     fetchSpy.mockRestore();
   });
 
@@ -520,7 +552,7 @@ describe('external credentials', () => {
     fetchSpy.mockRestore();
   });
 
-  it('retains the Sta.sh item ID returned during initial publishing', async () => {
+  it('retains the exact Sta.sh item ID returned during initial publishing, including IDs beyond JavaScript safe integers', async () => {
     const provider = new DeviantArtProvider({
       clientId: 'client-id',
       clientSecret: 'client-secret',
@@ -529,7 +561,7 @@ describe('external credentials', () => {
     const fetchSpy = jest.spyOn(global, 'fetch')
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ status: 'success', itemid: 123456 }),
+        text: async () => '{"status":"success","itemid":9007199254740993}',
         headers: { get: () => null }
       } as unknown as Response)
       .mockResolvedValueOnce({
@@ -547,11 +579,42 @@ describe('external credentials', () => {
     });
 
     expect(published.externalContentId).toBe('deviation-1');
-    expect(published.externalDraftId).toBe('123456');
-    expect(published.rawMetadata.stash_itemid).toBe('123456');
+    expect(published.externalDraftId).toBe('9007199254740993');
+    expect(published.rawMetadata.stash_itemid).toBe('9007199254740993');
     const submitBody = fetchSpy.mock.calls[0][1]?.body as FormData;
     expect(submitBody.get('artist_comments')).toBe('<p>Initial description</p>');
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+    fetchSpy.mockRestore();
+  });
+
+  it('maps human-readable DeviantArt display widths to Sta.sh publish enum values', async () => {
+    const provider = new DeviantArtProvider({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://fanadmin.top:4000/integrations/deviantart/callback'
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'success', deviationid: 'deviation-1', url: 'https://www.deviantart.com/example/art/test-1' }),
+      headers: { get: () => null }
+    } as unknown as Response);
+
+    await provider.publishDraft('access-token', '123456', {
+      body: Buffer.from('image'),
+      filename: 'test.png',
+      contentType: 'image/png',
+      title: 'Test work',
+      isMature: false,
+      displayResolution: 1600,
+      allowFreeDownload: false,
+      addWatermark: true
+    });
+
+    const request = fetchSpy.mock.calls[0][1] as RequestInit;
+    const body = new URLSearchParams(String(request.body));
+    expect(body.get('display_resolution')).toBe('7');
+    expect(body.get('allow_free_download')).toBe('false');
+    expect(body.get('add_watermark')).toBe('true');
     fetchSpy.mockRestore();
   });
 

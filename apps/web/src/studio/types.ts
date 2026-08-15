@@ -131,9 +131,25 @@ export type StudioDeviantArtAccount = {
   externalUsername: string;
   tokenExpiresAt?: string;
   connectionStatus: 'connected' | 'authentication_required' | 'rate_limited' | 'temporarily_unavailable' | 'disabled';
+  rateLimitedUntil?: string;
   lastSuccessfulSyncAt?: string;
   lastSyncAttemptAt?: string;
   includeSourceFilesOnSync?: boolean;
+  deviantArtPublishingPreset?: {
+    titleFormat: 'filename_title_case';
+    defaultTags: string[];
+    galleryExternalCollectionIds: string[];
+    targetStatus: 'draft' | 'published';
+    displayResolution?: number;
+    allowFreeDownload: boolean;
+    addWatermark: boolean;
+    isMature: boolean;
+    matureLevel: 'strict' | 'moderate';
+    matureClassification: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
+    isAiGenerated: boolean;
+    noAi: boolean;
+    sourceFileMode: 'original';
+  };
 };
 
 export type StudioExternalSyncJob = {
@@ -141,6 +157,9 @@ export type StudioExternalSyncJob = {
   externalAccountId: string;
   type: string;
   status: string;
+  attemptCount?: number;
+  nextAttemptAt?: string;
+  errorCode?: string;
   progress?: { discovered: number; synchronized: number; remaining: number };
   errorMessage?: string;
   createdAt: string;
@@ -253,6 +272,9 @@ export type StudioExternalPublication = {
   externalTags: string[];
   displayOptions?: {
     allowComments?: boolean;
+    displayResolution?: number;
+    allowFreeDownload?: boolean;
+    addWatermark?: boolean;
     isMature?: boolean;
     matureLevel?: 'strict' | 'moderate';
     matureClassification?: string[];

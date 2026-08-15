@@ -3,10 +3,24 @@ import type { ExternalActivityType, ExternalAssetType, ExternalPlatform } from '
 /** DeviantArt rejects /deviation/metadata requests containing more than ten IDs. */
 export const DEVIANTART_METADATA_BATCH_SIZE = 10;
 
+// The DeviantArt UI describes these options as pixel widths, while the
+// /stash/publish API expects the option's enum index. `0` means original; we
+// represent that choice by omitting displayResolution from the request model.
+const deviantArtDisplayResolutionCode = new Map<number, number>([
+  [400, 1],
+  [600, 2],
+  [800, 3],
+  [900, 4],
+  [1024, 5],
+  [1280, 6],
+  [1600, 7],
+  [1920, 8]
+]);
+
 export class ExternalProviderError extends Error {
   constructor(
     message: string,
-    readonly code: 'authentication_required' | 'rate_limited' | 'temporarily_unavailable' | 'invalid_response' | 'unsupported',
+    readonly code: 'authentication_required' | 'rate_limited' | 'temporarily_unavailable' | 'ambiguous_submission' | 'invalid_response' | 'unsupported',
     readonly retryAfterSeconds?: number,
     readonly operation?: 'token_exchange' | 'account_lookup'
   ) {
@@ -25,6 +39,8 @@ export interface ExternalPlatformApplicationCredentials {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
+  /** Provider API pacing. OAuth token exchange is intentionally excluded. */
+  minimumRequestIntervalMs?: number;
 }
 
 export interface ExternalOAuthPkce {
@@ -121,6 +137,10 @@ export interface ExternalContentUpdate {
   tags?: string[];
   collectionExternalIds?: string[];
   allowComments?: boolean;
+  /** A width selects a rendition; null explicitly restores DeviantArt's Original option. */
+  displayResolution?: number | null;
+  allowFreeDownload?: boolean;
+  addWatermark?: boolean;
   isMature?: boolean;
   matureLevel?: 'strict' | 'moderate';
   matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
@@ -145,6 +165,9 @@ export interface ExternalContentPublish {
   matureLevel?: 'strict' | 'moderate';
   matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
   allowComments?: boolean;
+  displayResolution?: number;
+  allowFreeDownload?: boolean;
+  addWatermark?: boolean;
   isAiGenerated?: boolean;
   noAi?: boolean;
 }
@@ -238,6 +261,7 @@ export interface ExternalPlatformProvider {
   getOriginalDownload(accessToken: string, externalContentId: string): Promise<ExternalRemoteDownload>;
   getEngagement(accessToken: string, externalContentIds: string[]): Promise<ExternalRemoteEngagement[]>;
   listCollections(accessToken: string, username: string): Promise<ExternalRemoteCollection[]>;
+  createGalleryFolder(accessToken: string, name: string): Promise<ExternalRemoteCollection>;
   listCollectionContent(accessToken: string, externalCollectionId: string, username: string, cursor?: string): Promise<ExternalContentPage>;
   listComments(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteComment[]; nextCursor?: string }>;
   listFeedback(accessToken: string, type: 'comments' | 'replies' | 'activity', cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }>;
@@ -276,6 +300,15 @@ const descriptionFrom = (item: Record<string, unknown>): string | undefined => {
 const asNumber = (value: unknown): number | undefined => {
   const number = Number(value);
   return Number.isFinite(number) ? number : undefined;
+};
+
+export const parseRetryAfterSeconds = (value: string | null | undefined, now = Date.now()): number | undefined => {
+  if (!value) return undefined;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0) return Math.ceil(numeric);
+  const retryAt = Date.parse(value);
+  if (!Number.isFinite(retryAt)) return undefined;
+  return Math.max(0, Math.ceil((retryAt - now) / 1000));
 };
 
 const asBoolean = (value: unknown): boolean | undefined => {
@@ -534,8 +567,28 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
   // DeviantArt uses granular comment scopes. `comment` is not a valid OAuth
   // scope; posting a deviation comment specifically requires `comment.post`.
   private static readonly scopes = ['user', 'user.manage', 'browse', 'gallery', 'collection', 'stash', 'publish', 'comment.post', 'message'];
+  private static nextApiRequestAt = 0;
+  private static pacingTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly credentials?: ExternalPlatformApplicationCredentials) {}
+
+  /**
+   * Serialize and space DeviantArt API calls across every provider instance in
+   * this process. Production also limits the worker Lambda to one concurrent
+   * execution, so this protects both calls within a job and adjacent jobs.
+   */
+  private async waitForApiRequestSlot(): Promise<void> {
+    const configuredInterval = this.credentials?.minimumRequestIntervalMs;
+    const intervalMs = Number.isFinite(configuredInterval) ? Math.max(0, Math.floor(configuredInterval!)) : 0;
+    if (!intervalMs) return;
+    const scheduled = DeviantArtProvider.pacingTail.then(async () => {
+      const waitMs = Math.max(0, DeviantArtProvider.nextApiRequestAt - Date.now());
+      if (waitMs) await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+      DeviantArtProvider.nextApiRequestAt = Date.now() + intervalMs;
+    });
+    DeviantArtProvider.pacingTail = scheduled.catch(() => undefined);
+    await scheduled;
+  }
 
   isConfigured(): boolean {
     return Boolean(
@@ -763,6 +816,7 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
 
   async getOriginalDownload(accessToken: string, externalContentId: string): Promise<ExternalRemoteDownload> {
     const path = `/deviation/download/${encodeURIComponent(externalContentId)}`;
+    await this.waitForApiRequestSlot();
     const response = await fetch(`${DeviantArtProvider.apiBaseUrl}${path}`, {
       headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }
     });
@@ -844,6 +898,20 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
       offset = nextOffset === undefined ? offset : nextOffset;
     }
     return collections;
+  }
+
+  async createGalleryFolder(accessToken: string, name: string): Promise<ExternalRemoteCollection> {
+    const folder = name.trim().slice(0, 50);
+    if (!folder) throw new ExternalProviderError('A DeviantArt gallery name is required', 'invalid_response');
+    const payload = await this.requestForm('/gallery/folders/create', accessToken, new URLSearchParams({ folder }));
+    const externalCollectionId = asString(payload.folderid) || asString(payload.uuid) || asString(payload.id);
+    if (!externalCollectionId) throw new ExternalProviderError('DeviantArt did not return a gallery folder ID', 'invalid_response');
+    return {
+      externalCollectionId,
+      name: asString(payload.name) || folder,
+      position: 0,
+      rawMetadata: payload
+    };
   }
 
   async listCollectionContent(accessToken: string, externalCollectionId: string, username: string, cursor?: string): Promise<ExternalContentPage> {
@@ -1040,6 +1108,20 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     if (update.tags !== undefined) update.tags.forEach((tag) => form.append('tags[]', tag));
     if (update.collectionExternalIds !== undefined) update.collectionExternalIds.forEach((collectionId) => form.append('galleryids[]', collectionId));
     if (update.allowComments !== undefined) form.set('allow_comments', String(update.allowComments));
+    if (update.displayResolution !== undefined) {
+      const displayResolutionCode = update.displayResolution === null
+        ? 0
+        : deviantArtDisplayResolutionCode.get(update.displayResolution);
+      if (displayResolutionCode === undefined) {
+        throw new ExternalProviderError(
+          `Unsupported DeviantArt display width: ${update.displayResolution}px`,
+          'invalid_response'
+        );
+      }
+      form.set('display_resolution', String(displayResolutionCode));
+    }
+    if (update.allowFreeDownload !== undefined) form.set('allow_free_download', String(update.allowFreeDownload));
+    if (update.addWatermark !== undefined) form.set('add_watermark', String(update.addWatermark));
     if (update.isMature !== undefined) form.set('is_mature', String(update.isMature));
     if (update.isMature && update.matureLevel) form.set('mature_level', update.matureLevel);
     if (update.matureClassification !== undefined) update.matureClassification.forEach((classification) => form.append('mature_classification[]', classification));
@@ -1084,7 +1166,7 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     }
     const submitted = await this.requestMultipart('/stash/submit', accessToken, submit);
     const itemId = asIdentifier(submitted.itemid) || asIdentifier(submitted.id);
-    if (!itemId) throw new ExternalProviderError('DeviantArt did not return a Sta.sh item ID', 'invalid_response');
+    if (!itemId) throw new ExternalProviderError('DeviantArt did not return a Sta.sh item ID', 'ambiguous_submission');
     return {
       externalDraftId: itemId,
       externalUrl: asString(submitted.url),
@@ -1097,6 +1179,18 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     if (content.isMature && content.matureLevel) publish.set('mature_level', content.matureLevel);
     if (content.matureClassification) content.matureClassification.forEach((classification) => publish.append('mature_classification[]', classification));
     if (content.allowComments !== undefined) publish.set('allow_comments', String(content.allowComments));
+    if (content.displayResolution !== undefined) {
+      const displayResolutionCode = deviantArtDisplayResolutionCode.get(content.displayResolution);
+      if (displayResolutionCode === undefined) {
+        throw new ExternalProviderError(
+          `Unsupported DeviantArt display width: ${content.displayResolution}px`,
+          'invalid_response'
+        );
+      }
+      publish.set('display_resolution', String(displayResolutionCode));
+    }
+    if (content.allowFreeDownload !== undefined) publish.set('allow_free_download', String(content.allowFreeDownload));
+    if (content.addWatermark && content.displayResolution !== undefined) publish.set('add_watermark', 'true');
     if (content.tags) content.tags.forEach((tag) => publish.append('tags[]', tag));
     if (content.collectionExternalIds) content.collectionExternalIds.forEach((collectionId) => publish.append('galleryids[]', collectionId));
     if (content.isAiGenerated !== undefined) publish.set('is_ai_generated', String(content.isAiGenerated));
@@ -1123,6 +1217,7 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
   private async request(path: string, accessToken: string, query?: Record<string, string>): Promise<Record<string, unknown>> {
     const url = new URL(`${DeviantArtProvider.apiBaseUrl}${path}`);
     Object.entries(query || {}).forEach(([key, value]) => url.searchParams.set(key, value));
+    await this.waitForApiRequestSlot();
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }
     });
@@ -1135,6 +1230,7 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
   }
 
   private async requestForm(path: string, accessToken: string, form: URLSearchParams): Promise<Record<string, unknown>> {
+    await this.waitForApiRequestSlot();
     const response = await fetch(`${DeviantArtProvider.apiBaseUrl}${path}`, {
       method: 'POST',
       headers: {
@@ -1153,12 +1249,23 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
   }
 
   private async requestMultipart(path: string, accessToken: string, form: FormData): Promise<Record<string, unknown>> {
+    await this.waitForApiRequestSlot();
     const response = await fetch(`${DeviantArtProvider.apiBaseUrl}${path}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
       body: form
     });
-    const payload = asRecord(await response.json().catch(() => ({})));
+    // Sta.sh item IDs can exceed JavaScript's safe integer range. Preserve an
+    // unquoted numeric `itemid` from the raw JSON before JSON.parse rounds it.
+    const responseWithText = response as Response & { text?: () => Promise<string> };
+    const responseText = typeof responseWithText.text === 'function' ? await responseWithText.text() : undefined;
+    const payload = responseText === undefined
+      ? asRecord(await response.json().catch(() => ({})))
+      : asRecord((() => {
+        try { return JSON.parse(responseText) as unknown; } catch { return {}; }
+      })());
+    const rawItemId = responseText?.match(/"(?:itemid|stash_itemid)"\s*:\s*(?:"([^"]+)"|(\d+))/)?.slice(1).find(Boolean);
+    if (rawItemId) payload.itemid = rawItemId;
     if (!response.ok) {
       const error = this.errorFromResponse(response.status, payload, response.headers.get('retry-after'));
       throw new ExternalProviderError(`DeviantArt ${path}: ${error.message}`, error.code, error.retryAfterSeconds);
@@ -1167,9 +1274,18 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
   }
 
   private errorFromResponse(status: number, payload: Record<string, unknown>, retryAfter?: string | null): ExternalProviderError {
-    const message = asString(payload.error_description) || asString(payload.error) || `DeviantArt request failed (${status})`;
+    const baseMessage = asString(payload.error_description) || asString(payload.error) || `DeviantArt request failed (${status})`;
+    const details = Object.entries(asRecord(payload.error_details))
+      .map(([field, value]) => `${field}: ${asString(value) || JSON.stringify(value)}`)
+      .filter((detail) => !detail.endsWith(': undefined'));
+    const providerCode = asNumber(payload.error_code);
+    const codeDetail = providerCode === 5
+      ? 'display_resolution: DeviantArt rejected the selected display size.'
+      : undefined;
+    const detailText = details.length > 0 ? details.join('; ') : codeDetail;
+    const message = detailText ? `${baseMessage} (${detailText})` : baseMessage;
     if (status === 401 || status === 403) return new ExternalProviderError(message, 'authentication_required');
-    if (status === 429) return new ExternalProviderError(message, 'rate_limited', asNumber(retryAfter));
+    if (status === 429) return new ExternalProviderError(message, 'rate_limited', parseRetryAfterSeconds(retryAfter));
     if (status >= 500) return new ExternalProviderError(message, 'temporarily_unavailable');
     return new ExternalProviderError(message, 'invalid_response');
   }

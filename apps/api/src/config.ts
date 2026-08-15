@@ -32,6 +32,8 @@ export interface AppConfig {
   externalTokenEncryptionKey?: string;
   externalSyncQueueUrl?: string;
   externalSyncBaseDelaySeconds: number;
+  /** Minimum spacing between DeviantArt API calls. Keep this conservative: DA applies adaptive limits. */
+  deviantArtMinimumRequestIntervalMs: number;
   externalAccountScanIntervalSeconds: number;
   externalActivityScanIntervalSeconds: number;
   deviantArtPublishedDescriptionUpdate: boolean;
@@ -89,6 +91,7 @@ export const loadConfig = (): AppConfig => {
   externalTokenEncryptionKey: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY,
   externalSyncQueueUrl: process.env.EXTERNAL_SYNC_QUEUE_URL,
   externalSyncBaseDelaySeconds: Number(process.env.EXTERNAL_SYNC_BASE_DELAY_SECONDS || 60),
+  deviantArtMinimumRequestIntervalMs: Number(process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || 2000),
   externalAccountScanIntervalSeconds: Number(process.env.EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS || 21600),
   externalActivityScanIntervalSeconds: Number(process.env.EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS || 120),
   deviantArtPublishedDescriptionUpdate: (

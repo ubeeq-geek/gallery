@@ -27,6 +27,29 @@ store.groupings.push({
 let externalSyncQueue: ExternalSyncQueue;
 externalSyncQueue = createInProcessExternalSyncQueue((externalSyncJobId) => processExternalSyncJob(store, config, externalSyncJobId, externalSyncQueue));
 
+let retrySweepRunning = false;
+const retrySweep = async () => {
+  if (retrySweepRunning) return;
+  retrySweepRunning = true;
+  try {
+    const now = new Date().toISOString();
+    const dueJobs = await store.listDueExternalSyncJobs(now, 50);
+    const resumedAccounts = new Set<string>();
+    for (const job of dueJobs) {
+      if (resumedAccounts.has(job.externalAccountId)) continue;
+      await store.updateExternalSyncJob({ ...job, status: 'queued', nextAttemptAt: undefined, updatedAt: now });
+      await externalSyncQueue.enqueue(job.externalSyncJobId);
+      resumedAccounts.add(job.externalAccountId);
+    }
+  } catch (error) {
+    console.error(`[external-sync-local-retry] ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    retrySweepRunning = false;
+  }
+};
+const retryTimer = setInterval(() => void retrySweep(), 5_000);
+retryTimer.unref();
+
 const app = createApp({
   config,
   store,

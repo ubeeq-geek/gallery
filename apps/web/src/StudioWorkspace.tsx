@@ -97,16 +97,7 @@ export function StudioWorkspace() {
     setLoading(true);
     setError('');
     try {
-      const [
-        nextMetrics,
-        nextCreators,
-        nextFiles,
-        nextPosts,
-        nextGroupings,
-        nextChallenges,
-        nextEntries,
-        nextUsers
-      ] = await Promise.all([
+      const results = await Promise.allSettled([
         api.studioMetrics(),
         api.studioListCreators(),
         api.studioListFiles(),
@@ -116,6 +107,18 @@ export function StudioWorkspace() {
         api.studioListEntries(),
         api.studioListUsers()
       ]);
+      const value = <T,>(index: number, fallback: T): T => results[index].status === 'fulfilled'
+        ? results[index].value as T
+        : fallback;
+      const failures = results.filter((result) => result.status === 'rejected');
+      const nextMetrics = value<StudioMetrics>(0, metrics);
+      const nextCreators = value<StudioCreator[]>(1, []);
+      const nextFiles = value<StudioFile[]>(2, []);
+      const nextPosts = value<StudioPost[]>(3, []);
+      const nextGroupings = value<StudioGrouping[]>(4, []);
+      const nextChallenges = value<StudioChallenge[]>(5, []);
+      const nextEntries = value<StudioEntry[]>(6, []);
+      const nextUsers = value<StudioUser[]>(7, []);
       setMetrics((nextMetrics as StudioMetrics) || metrics);
       setCreators((nextCreators as StudioCreator[]) || []);
       setFiles((nextFiles as StudioFile[]) || []);
@@ -124,6 +127,7 @@ export function StudioWorkspace() {
       setChallenges((nextChallenges as StudioChallenge[]) || []);
       setEntries((nextEntries as StudioEntry[]) || []);
       setUsers((nextUsers as StudioUser[]) || []);
+      if (failures.length) setError(`${failures.length} background Studio request${failures.length === 1 ? '' : 's'} could not be loaded.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Studio workspace');
     } finally {

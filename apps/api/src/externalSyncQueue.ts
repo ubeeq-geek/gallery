@@ -7,16 +7,26 @@ export interface ExternalSyncQueue {
 
 export const createInProcessExternalSyncQueue = (
   processJob: (externalSyncJobId: string) => Promise<void>
-): ExternalSyncQueue => ({
-  async enqueue(externalSyncJobId: string, delaySeconds = 0): Promise<void> {
-    const delay = Math.max(0, Math.floor(delaySeconds)) * 1000;
-    setTimeout(() => {
-      void processJob(externalSyncJobId).catch((error) => {
+): ExternalSyncQueue => {
+  // The local server has no SQS worker to provide backpressure. Keep a single
+  // promise chain so a bulk publish reaches a provider in the visible queue
+  // order, rather than starting every upload at once.
+  let tail: Promise<void> = Promise.resolve();
+  return {
+    async enqueue(externalSyncJobId: string, delaySeconds = 0): Promise<void> {
+      const delay = Math.max(0, Math.floor(delaySeconds)) * 1000;
+      const scheduled = tail.then(async () => {
+        if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        await processJob(externalSyncJobId);
+      });
+      // A failed job is recorded by its worker, but must not block subsequent
+      // jobs queued by the creator.
+      tail = scheduled.catch((error) => {
         console.error(`[external-sync-local] job=${externalSyncJobId} message=${error instanceof Error ? error.message : String(error)}`);
       });
-    }, delay);
-  }
-});
+    }
+  };
+};
 
 class SqsExternalSyncQueue implements ExternalSyncQueue {
   private readonly client: SQSClient;

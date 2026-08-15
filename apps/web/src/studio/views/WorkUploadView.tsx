@@ -3,7 +3,19 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { brand } from '../../brand';
 import { Card } from '../components/Card';
+import { worksWorkspacePath } from '../workListNavigation';
 import type { StudioCreator } from '../types';
+
+const titleFromFilename = (filename: string): string => {
+  const tokens = filename.replace(/\.[^.]+$/, '').split(/[-_\s]+/).filter(Boolean);
+  let version = '';
+  let number = '';
+  if (/^v\d+$/i.test(tokens[tokens.length - 1] || '')) version = `, v${tokens.pop()!.slice(1)}`;
+  if (/^\d+$/.test(tokens[tokens.length - 1] || '')) number = ` #${tokens.pop()!}`;
+  const name = tokens.flatMap((token) => token.replace(/([a-z])([A-Z])/g, '$1 $2').split(' ')).filter(Boolean)
+    .map((token) => /^\d+$/.test(token) ? token : `${token.slice(0, 1).toUpperCase()}${token.slice(1).toLowerCase()}`).join(' ');
+  return `${name || 'Untitled work'}${number}${version}`;
+};
 
 export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
   const location = useLocation();
@@ -71,7 +83,7 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
       <Card
         title="Upload works"
         eyebrow={`Works / ${activeCreator?.name || brand.creatorName}`}
-        actions={<button type="button" className="auth-secondary-btn" onClick={() => navigate(`/studio/workspace?section=works${creatorId ? `&creatorId=${encodeURIComponent(creatorId)}` : ''}`)}>Back to Works</button>}
+        actions={<button type="button" className="auth-secondary-btn" onClick={() => navigate(worksWorkspacePath(location.search))}>Back to Works</button>}
       >
         <p className="studio-work-upload-lede">Select one or more images. Each image becomes its own {brand.productName} work; multi-image works will arrive as a separate composition workflow.</p>
         <div className="studio-work-upload-form">
@@ -95,6 +107,9 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
                 event.target.value = '';
               }}
             />
+            <p className="studio-work-upload-file-count" aria-live="polite">
+              <strong>{files.length}</strong> {files.length === 1 ? 'file' : 'files'} added
+            </p>
             <button
               type="button"
               className={`studio-work-upload-dropzone${dragActive ? ' studio-work-upload-dropzone-active' : ''}`}
@@ -116,7 +131,7 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
           </div>
         </div>
         {!!files.length && <ul className="studio-work-upload-file-list">
-          {files.map((file) => <li key={`${file.name}:${file.lastModified}`}><strong>{file.name}</strong><span>{Math.ceil(file.size / 1024)} KB</span></li>)}
+          {files.map((file) => <li key={`${file.name}:${file.lastModified}`}><strong>{file.name}</strong><span>{titleFromFilename(file.name)} · {Math.ceil(file.size / 1024)} KB</span></li>)}
         </ul>}
         {progress && <p className="small">{progress}</p>}
         {error && <p className="error">{error}</p>}

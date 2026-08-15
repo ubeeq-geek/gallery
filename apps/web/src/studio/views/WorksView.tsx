@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { WorkMetadataView } from './WorkMetadataView';
 import { WorkActivityView } from './WorkActivityView';
 import { WorkUploadView } from './WorkUploadView';
+import { worksWorkspacePath } from '../workListNavigation';
 import type {
   StudioCreator,
   StudioDeviantArtAccount,
@@ -23,7 +24,20 @@ type CollectionResponse = {
 };
 
 type WorkLifecycle = 'draft' | 'ready' | 'archived';
-type PlatformFilter = 'all' | 'published_anywhere' | 'published_nowhere' | 'deviantart_live' | 'eversally_live' | 'out_of_sync' | 'error';
+type PlatformFilter = 'all' | 'published_anywhere' | 'published_nowhere' | 'unpublished_unqueued' | 'unpublished_images' | 'deviantart_live' | 'eversally_live' | 'out_of_sync' | 'error';
+type WorkSort = 'name_asc' | 'name_desc' | 'updated_desc';
+const worksPageSizes = [12, 24, 48, 100] as const;
+const platformFilters: PlatformFilter[] = ['all', 'published_anywhere', 'published_nowhere', 'unpublished_unqueued', 'unpublished_images', 'deviantart_live', 'eversally_live', 'out_of_sync', 'error'];
+const workSorts: WorkSort[] = ['name_asc', 'name_desc', 'updated_desc'];
+const deviantArtDisplayWidths = [400, 600, 800, 900, 1024, 1280, 1600, 1920];
+type MatureClassification = 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology';
+const matureClassificationOptions: Array<{ value: MatureClassification; label: string }> = [
+  { value: 'nudity', label: 'Nudity' },
+  { value: 'sexual', label: 'Sexual themes' },
+  { value: 'gore', label: 'Gore' },
+  { value: 'language', label: 'Strong language' },
+  { value: 'ideology', label: 'Ideology' }
+];
 
 const lifecycleLabel = (lifecycle: WorkLifecycle): string => lifecycle[0].toUpperCase() + lifecycle.slice(1);
 const availabilityLabel = (availability: StudioExternalAsset['contentAvailability']): string => ({
@@ -80,16 +94,31 @@ export function WorksView({ creators }: { creators: StudioCreator[] }) {
 
 function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   const location = useLocation();
-  const requestedCreatorId = new URLSearchParams(location.search).get('creatorId') || '';
-  const requestedCollectionId = new URLSearchParams(location.search).get('collectionId') || '';
-  const requestedStatus = new URLSearchParams(location.search).get('status');
+  const navigate = useNavigate();
+  const routeParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const requestedCreatorId = routeParams.get('creatorId') || '';
+  const requestedCollectionId = routeParams.get('collectionId') || '';
+  const requestedStatus = routeParams.get('status');
+  const requestedPlatformFilter = routeParams.get('platformState') as PlatformFilter | null;
+  const requestedPlatformAccountId = routeParams.get('platformAccount') || '';
+  const requestedSort = routeParams.get('sort') as WorkSort | null;
+  const requestedPage = Number.parseInt(routeParams.get('page') || '', 10);
+  const requestedPageSize = Number.parseInt(routeParams.get('perPage') || '', 10);
   const [creatorId, setCreatorId] = useState('');
-  const [collectionId, setCollectionId] = useState('');
-  const [query, setQuery] = useState('');
+  const [collectionId, setCollectionId] = useState(requestedCollectionId);
+  const [query, setQuery] = useState(routeParams.get('q') || '');
   const [lifecycle, setLifecycle] = useState<'all' | WorkLifecycle>(requestedStatus === 'draft' || requestedStatus === 'ready' || requestedStatus === 'archived' ? requestedStatus : 'all');
-  const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all');
-  const [shownPlatforms, setShownPlatforms] = useState({ eversally: true, deviantart: true });
+  const [platformFilter, setPlatformFilter] = useState<PlatformFilter>(requestedPlatformFilter && platformFilters.includes(requestedPlatformFilter) ? requestedPlatformFilter : 'all');
+  const [platformAccountId, setPlatformAccountId] = useState(requestedPlatformAccountId);
+  const [sort, setSort] = useState<WorkSort>(requestedSort && workSorts.includes(requestedSort) ? requestedSort : 'name_asc');
+  const [page, setPage] = useState(Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1);
+  const [pageSize, setPageSize] = useState<number>(worksPageSizes.includes(requestedPageSize as typeof worksPageSizes[number]) ? requestedPageSize : 24);
+  const [shownPlatforms, setShownPlatforms] = useState({
+    eversally: routeParams.get('showSpace') !== '0',
+    deviantart: routeParams.get('showDeviantArt') !== '0'
+  });
   const [assets, setAssets] = useState<StudioExternalAsset[]>([]);
+  const [catalogueLoaded, setCatalogueLoaded] = useState(false);
   const [accounts, setAccounts] = useState<StudioDeviantArtAccount[]>([]);
   const [collections, setCollections] = useState<CollectionResponse>({ ubeeqCollections: [], externalCollections: [], mappings: [], collectionAssetIdsByCollection: {} });
   const [loading, setLoading] = useState(false);
@@ -106,16 +135,46 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   const [destinationMessageByAsset, setDestinationMessageByAsset] = useState<Record<string, string>>({});
   const [bulkDestinationAccountId, setBulkDestinationAccountId] = useState('');
   const [bulkDestinationStatus, setBulkDestinationStatus] = useState<'draft' | 'published'>('published');
+  const [bulkDaDisplayResolution, setBulkDaDisplayResolution] = useState('');
+  const [bulkDaAllowFreeDownload, setBulkDaAllowFreeDownload] = useState(false);
+  const [bulkDaAddWatermark, setBulkDaAddWatermark] = useState(false);
+  const [bulkDaTags, setBulkDaTags] = useState('');
+  const [bulkDaGalleryIds, setBulkDaGalleryIds] = useState<string[]>([]);
+  const [bulkDaIsMature, setBulkDaIsMature] = useState(false);
+  const [bulkDaMatureLevel, setBulkDaMatureLevel] = useState<'strict' | 'moderate'>('moderate');
+  const [bulkDaMatureClassification, setBulkDaMatureClassification] = useState<MatureClassification[]>([]);
+  const [bulkDaIsAiGenerated, setBulkDaIsAiGenerated] = useState(false);
+  const [bulkDaNoAi, setBulkDaNoAi] = useState(false);
+  const [bulkDaAllowComments, setBulkDaAllowComments] = useState(true);
+  const [bulkDaApplyTitle, setBulkDaApplyTitle] = useState(false);
+  const [bulkDaApplyTags, setBulkDaApplyTags] = useState(false);
+  const [bulkDaApplyGalleries, setBulkDaApplyGalleries] = useState(false);
+  const [bulkDaApplyComments, setBulkDaApplyComments] = useState(false);
+  const [bulkDaApplyDisplay, setBulkDaApplyDisplay] = useState(false);
+  const [bulkDaApplyMature, setBulkDaApplyMature] = useState(false);
+  const [bulkDaApplyAiGenerated, setBulkDaApplyAiGenerated] = useState(false);
+  const [bulkDaApplyNoAi, setBulkDaApplyNoAi] = useState(false);
+  const [bulkDaEditing, setBulkDaEditing] = useState(false);
+  const [bulkDaEditMessage, setBulkDaEditMessage] = useState('');
+  const [bulkPresetSaving, setBulkPresetSaving] = useState(false);
   const [bulkSpaceIntent, setBulkSpaceIntent] = useState(false);
+  const [bulkSpaceVisibility, setBulkSpaceVisibility] = useState<'private' | 'unlisted' | 'public'>('private');
   const [bulkDeviantArtIntent, setBulkDeviantArtIntent] = useState(true);
   const [bulkDestinationUpdating, setBulkDestinationUpdating] = useState(false);
   const [bulkDestinationMessage, setBulkDestinationMessage] = useState('');
+  const [bulkReviewOpen, setBulkReviewOpen] = useState(false);
+  const [bulkPublishing, setBulkPublishing] = useState(false);
+  const [bulkPublishMessage, setBulkPublishMessage] = useState('');
   const appliedRouteCollectionFilter = useRef('');
 
   const activeCreator = useMemo(() => creators.find((creator) => creator.creatorId === creatorId), [creatorId, creators]);
   const selectedCollection = useMemo(
     () => collections.ubeeqCollections.find((collection) => collection.ubeeqCollectionId === collectionId),
     [collectionId, collections.ubeeqCollections]
+  );
+  const selectedPlatformAccount = useMemo(
+    () => accounts.find((account) => account.externalAccountId === platformAccountId),
+    [accounts, platformAccountId]
   );
 
   const load = async (nextCreatorId = creatorId) => {
@@ -129,12 +188,22 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
         api.studioListDeviantArtAccounts(nextCreatorId)
       ]);
       setAssets(((catalogue as { items?: StudioExternalAsset[] }).items || []));
+      setCatalogueLoaded(true);
       setCollections(nextCollections as CollectionResponse);
-      const connectedAccounts = ((nextAccounts || []) as StudioDeviantArtAccount[]).filter((account) => account.connectionStatus === 'connected');
-      setAccounts(connectedAccounts);
-      setBulkDeviantArtIntent(connectedAccounts.length > 0);
-      setBulkDestinationAccountId((current) => current || (connectedAccounts.length === 1 ? connectedAccounts[0].externalAccountId : ''));
+      const queueableAccounts = ((nextAccounts || []) as StudioDeviantArtAccount[]).filter((account) => (
+        account.connectionStatus === 'connected'
+        || account.connectionStatus === 'rate_limited'
+        || account.connectionStatus === 'temporarily_unavailable'
+      ));
+      setAccounts(queueableAccounts);
+      setBulkDeviantArtIntent(queueableAccounts.length > 0);
+      setBulkDestinationAccountId((current) => (
+        queueableAccounts.some((account) => account.externalAccountId === current)
+          ? current
+          : queueableAccounts.length === 1 ? queueableAccounts[0].externalAccountId : ''
+      ));
     } catch (loadError) {
+      setCatalogueLoaded(true);
       setError(loadError instanceof Error ? loadError.message : 'Unable to load works for this creator.');
     } finally {
       setLoading(false);
@@ -150,6 +219,28 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [creatorId]);
+
+  useEffect(() => {
+    const selectedAccountId = bulkDestinationAccountId || (accounts.length === 1 ? accounts[0]?.externalAccountId : '');
+    const preset = accounts.find((account) => account.externalAccountId === selectedAccountId)?.deviantArtPublishingPreset;
+    if (!preset) return;
+    setBulkDestinationStatus(preset.targetStatus || 'published');
+    setBulkDaDisplayResolution(preset.displayResolution ? String(preset.displayResolution) : '');
+    setBulkDaAllowFreeDownload(preset.allowFreeDownload === true);
+    setBulkDaAddWatermark(preset.addWatermark === true && Boolean(preset.displayResolution));
+    setBulkDaTags((preset.defaultTags || []).join(', '));
+    setBulkDaGalleryIds(preset.galleryExternalCollectionIds || []);
+    setBulkDaIsMature(preset.isMature === true);
+    setBulkDaMatureLevel(preset.matureLevel || 'moderate');
+    setBulkDaMatureClassification(preset.matureClassification || []);
+    setBulkDaIsAiGenerated(preset.isAiGenerated === true);
+    setBulkDaNoAi(preset.noAi === true);
+  }, [accounts, bulkDestinationAccountId]);
+
+  useEffect(() => {
+    if (!platformAccountId || !accounts.length) return;
+    if (!accounts.some((account) => account.externalAccountId === platformAccountId)) setPlatformAccountId('');
+  }, [accounts, platformAccountId]);
 
   useEffect(() => {
     if (!collections.ubeeqCollections.length) return;
@@ -190,9 +281,32 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
       )) || manuallyAssignedAssetIds.has(asset.assetId);
       if (!inCollection) return false;
       if (lifecycle !== 'all' && asset.workStatus !== lifecycle) return false;
+      if (platformAccountId && !(
+        asset.origin.integrationAccountId === platformAccountId
+        || asset.publications.some((publication) => publication.externalAccountId === platformAccountId)
+        || asset.destinationPublications.some((publication) => publication.integrationAccountId === platformAccountId)
+        || asset.publicationIntents.some((intent) => intent.integrationAccountId === platformAccountId)
+      )) return false;
       const current = asset.destinationPublications.filter((publication) => publication.status !== 'removed');
+      const hasLivePublication = current.some((publication) => publication.status === 'live');
+      const hasActiveQueue = current.some((publication) => (
+        (publication.status === 'scheduled' || publication.status === 'queued' || publication.status === 'publishing' || publication.status === 'updating')
+        && publication.syncStatus !== 'error'
+      ));
       if (platformFilter === 'published_anywhere' && !current.some((publication) => publication.status === 'live')) return false;
       if (platformFilter === 'published_nowhere' && current.some((publication) => publication.status === 'live')) return false;
+      if (platformFilter === 'unpublished_unqueued' && (
+        asset.workStatus === 'archived'
+        || asset.workStatus === 'deleted'
+        || hasLivePublication
+        || hasActiveQueue
+      )) return false;
+      if (platformFilter === 'unpublished_images' && (
+        asset.assetType !== 'image'
+        || asset.workStatus === 'archived'
+        || asset.workStatus === 'deleted'
+        || current.some((publication) => publication.status === 'live')
+      )) return false;
       if (platformFilter === 'deviantart_live' && !current.some((publication) => publication.destination === 'deviantart' && publication.status === 'live')) return false;
       if (platformFilter === 'eversally_live' && !current.some((publication) => publication.destination === 'eversally' && publication.status === 'live')) return false;
       if (platformFilter === 'out_of_sync' && !current.some((publication) => publication.syncStatus === 'local_newer' || publication.syncStatus === 'remote_newer' || publication.syncStatus === 'conflict')) return false;
@@ -201,17 +315,100 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
       return [asset.canonicalTitle || '', asset.canonicalDescription || '', ...asset.publications.flatMap((publication) => [publication.externalTitle || '', ...publication.externalTags])]
         .some((value) => value.toLowerCase().includes(normalizedQuery));
     });
-  }, [assets, collectionId, lifecycle, manuallyAssignedAssetIds, mappedExternalCollectionIds, platformFilter, query]);
-  const displayedAssets = useMemo(() => visibleAssets.slice(0, 100), [visibleAssets]);
+  }, [assets, collectionId, lifecycle, manuallyAssignedAssetIds, mappedExternalCollectionIds, platformAccountId, platformFilter, query]);
+  const sortedAssets = useMemo(() => [...visibleAssets]
+    .sort((left, right) => {
+      if (sort === 'updated_desc') return right.updatedAt.localeCompare(left.updatedAt);
+      const leftTitle = left.canonicalTitle || left.publications[0]?.externalTitle || '';
+      const rightTitle = right.canonicalTitle || right.publications[0]?.externalTitle || '';
+      const comparison = leftTitle.localeCompare(rightTitle, undefined, { numeric: true, sensitivity: 'base' });
+      return sort === 'name_desc' ? -comparison : comparison;
+    }), [sort, visibleAssets]);
+  const pageCount = Math.max(1, Math.ceil(sortedAssets.length / pageSize));
+  const currentPage = catalogueLoaded ? Math.min(page, pageCount) : page;
+  const pageStart = (currentPage - 1) * pageSize;
+  const displayedAssets = useMemo(
+    () => sortedAssets.slice(pageStart, pageStart + pageSize),
+    [pageSize, pageStart, sortedAssets]
+  );
   const displayedAssetIds = useMemo(() => new Set(displayedAssets.map((asset) => asset.assetId)), [displayedAssets]);
   const selectedDisplayedAssetIds = useMemo(
     () => selectedWorkAssetIds.filter((assetId) => displayedAssetIds.has(assetId)),
     [displayedAssetIds, selectedWorkAssetIds]
   );
+  const selectedBulkAccountId = bulkDestinationAccountId || (accounts.length === 1 ? accounts[0]?.externalAccountId : '');
+  const bulkAccountGalleries = useMemo(
+    () => collections.externalCollections.filter((collection) => collection.externalAccountId === selectedBulkAccountId && collection.syncStatus !== 'missing'),
+    [collections.externalCollections, selectedBulkAccountId]
+  );
+  const selectedDeviantArtOriginWorks = useMemo(() => displayedAssets.flatMap((asset) => {
+    if (!selectedDisplayedAssetIds.includes(asset.assetId) || asset.origin.type !== 'import' || asset.origin.platform !== 'deviantart') return [];
+    const publication = asset.publications.find((item) => (
+      item.platform === 'deviantart'
+      && item.externalAccountId === selectedBulkAccountId
+      && (item.syncStatus === 'active' || item.syncStatus === 'draft' || item.syncStatus === 'pending_publish')
+    ));
+    return publication ? [{ asset, publication }] : [];
+  }), [displayedAssets, selectedBulkAccountId, selectedDisplayedAssetIds]);
+  const hasBulkDeviantArtEditFields = bulkDaApplyTitle
+    || bulkDaApplyTags
+    || bulkDaApplyGalleries
+    || bulkDaApplyComments
+    || bulkDaApplyDisplay
+    || bulkDaApplyMature
+    || bulkDaApplyAiGenerated
+    || bulkDaApplyNoAi;
+
+  const bulkDeviantArtOptions = () => {
+    const parsedDisplayResolution = Number.parseInt(bulkDaDisplayResolution, 10);
+    return {
+      tags: [...new Set(bulkDaTags.split(',').map((tag) => tag.trim()).filter(Boolean))],
+      galleryExternalCollectionIds: bulkDaGalleryIds,
+      displayResolution: Number.isInteger(parsedDisplayResolution) && parsedDisplayResolution > 0 ? parsedDisplayResolution : null,
+      allowFreeDownload: bulkDaAllowFreeDownload,
+      addWatermark: Boolean(Number.isInteger(parsedDisplayResolution) && parsedDisplayResolution > 0 && bulkDaAddWatermark),
+      isMature: bulkDaIsMature,
+      matureLevel: bulkDaMatureLevel,
+      matureClassification: bulkDaIsMature ? bulkDaMatureClassification : [],
+      isAiGenerated: bulkDaIsAiGenerated,
+      noAi: bulkDaNoAi
+    };
+  };
 
   useEffect(() => {
     setSelectedWorkAssetIds((current) => current.filter((assetId) => displayedAssetIds.has(assetId)));
   }, [displayedAssetIds]);
+
+  useEffect(() => {
+    if (!catalogueLoaded) return;
+    setPage((current) => Math.min(current, pageCount));
+  }, [catalogueLoaded, pageCount]);
+
+  const worksListParams = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set('section', 'works');
+    if (creatorId) params.set('creatorId', creatorId);
+    if (collectionId) params.set('collectionId', collectionId);
+    if (lifecycle !== 'all') params.set('status', lifecycle);
+    if (platformFilter !== 'all') params.set('platformState', platformFilter);
+    if (platformAccountId) params.set('platformAccount', platformAccountId);
+    if (query) params.set('q', query);
+    if (sort !== 'name_asc') params.set('sort', sort);
+    if (currentPage > 1) params.set('page', String(currentPage));
+    if (pageSize !== 24) params.set('perPage', String(pageSize));
+    if (!shownPlatforms.eversally) params.set('showSpace', '0');
+    if (!shownPlatforms.deviantart) params.set('showDeviantArt', '0');
+    return params;
+  }, [collectionId, creatorId, currentPage, lifecycle, pageSize, platformAccountId, platformFilter, query, shownPlatforms.deviantart, shownPlatforms.eversally, sort]);
+
+  const worksListSearch = worksListParams.toString();
+
+  useEffect(() => {
+    if (!creatorId || worksListSearch === location.search.replace(/^\?/, '')) return;
+    navigate({ pathname: location.pathname, search: `?${worksListSearch}` }, { replace: true });
+  }, [creatorId, location.pathname, location.search, navigate, worksListSearch]);
+
+  const workRoute = (workId: string, tab?: string) => worksWorkspacePath(`?${worksListSearch}`, { workId, tab });
 
   const setAssetCollectionMembership = async (asset: StudioExternalAsset, targetCollectionId: string, shouldInclude: boolean) => {
     if (!targetCollectionId || !creatorId) return;
@@ -304,6 +501,9 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     try {
       const selectedAssets = displayedAssets.filter((asset) => selectedDisplayedAssetIds.includes(asset.assetId));
       const results = await Promise.all(selectedAssets.map(async (asset) => {
+        if (bulkDeviantArtIntent) {
+          await api.studioAddDeviantArtWorkDestination(asset.assetId, externalAccountId, bulkDestinationStatus, bulkDeviantArtOptions());
+        }
         const intents = await Promise.all([
           ...(bulkSpaceIntent ? [api.studioSetWorkPublicationIntent(asset.assetId, { destination: 'eversally', enabled: true, desiredStatus: 'live' })] : []),
           ...(bulkDeviantArtIntent ? [api.studioSetWorkPublicationIntent(asset.assetId, { destination: 'deviantart', integrationAccountId: externalAccountId, enabled: true, desiredStatus: bulkDestinationStatus === 'draft' ? 'draft' : 'live' })] : [])
@@ -321,7 +521,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
       }));
       setSelectedWorkAssetIds([]);
       setBulkDestinationMessage([
-        results.length ? `Publishing intent saved for ${results.length} work${results.length === 1 ? '' : 's'}. No remote publications were created.` : ''
+        results.length ? `Publishing choices and DeviantArt settings saved for ${results.length} work${results.length === 1 ? '' : 's'}. No remote publications were created.` : ''
       ].filter(Boolean).join(' '));
     } catch (destinationError) {
       setError(destinationError instanceof Error ? destinationError.message : 'Unable to update the selected publishing destinations.');
@@ -330,30 +530,192 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     }
   };
 
+  const publishSelectedWorks = async () => {
+    const externalAccountId = bulkDestinationAccountId || (accounts.length === 1 ? accounts[0].externalAccountId : '');
+    if (!selectedDisplayedAssetIds.length || (!bulkSpaceIntent && !bulkDeviantArtIntent) || (bulkDeviantArtIntent && !externalAccountId)) return;
+    const selectedAssets = displayedAssets.filter((asset) => selectedDisplayedAssetIds.includes(asset.assetId));
+    const parsedDisplayResolution = Number.parseInt(bulkDaDisplayResolution, 10);
+    if (bulkDeviantArtIntent && bulkDaDisplayResolution && !deviantArtDisplayWidths.includes(parsedDisplayResolution)) {
+      setError('Choose a supported DeviantArt display size.');
+      return;
+    }
+    const deviantArtOptions = bulkDeviantArtOptions();
+    const destinations = [
+      ...(bulkSpaceIntent ? [`${brand.workspaceFullName} (${bulkSpaceVisibility})`] : []),
+      ...(bulkDeviantArtIntent ? [`DeviantArt · ${accounts.find((account) => account.externalAccountId === externalAccountId)?.externalUsername || 'account'} (${bulkDestinationStatus === 'draft' ? 'Sta.sh draft' : 'publish'})`] : [])
+    ];
+    const includesUnverifiedFailure = selectedAssets.some((asset) => asset.publications.some((publication) => publication.platform === 'deviantart' && publication.syncStatus === 'error'));
+    const retryWarning = includesUnverifiedFailure
+      ? ' At least one selected DeviantArt submission could not previously be verified. Check Sta.sh first: retrying it may create a second draft.'
+      : '';
+    if (!window.confirm(`Publish ${selectedAssets.length} selected work${selectedAssets.length === 1 ? '' : 's'} to ${destinations.join(' and ')}? Existing DeviantArt publications will not be duplicated; Eversally visibility will be set as selected.${retryWarning}`)) return;
+    setBulkPublishing(true);
+    setBulkPublishMessage('');
+    setError('');
+    const results: Array<{ title: string; error?: string }> = [];
+    for (const asset of selectedAssets) {
+      const title = asset.canonicalTitle || asset.publications[0]?.externalTitle || 'Untitled work';
+      try {
+        if (bulkSpaceIntent) {
+          await api.studioUpdateSpacePublication(asset.assetId, { published: true, hostingMode: 'hosted', visibility: bulkSpaceVisibility });
+        }
+        if (bulkDeviantArtIntent) {
+          const result = await api.studioAddDeviantArtWorkDestination(asset.assetId, externalAccountId, bulkDestinationStatus, deviantArtOptions) as { publication?: { syncStatus?: string } };
+          if (result.publication?.syncStatus === 'pending_publish' || result.publication?.syncStatus === 'draft' || result.publication?.syncStatus === 'error') {
+            await api.studioSyncDeviantArtWorkDestination(asset.assetId, externalAccountId);
+          }
+        }
+        results.push({ title });
+      } catch (publishError) {
+        results.push({ title, error: publishError instanceof Error ? publishError.message : 'Unable to publish.' });
+      }
+    }
+    const failed = results.filter((result) => result.error);
+    setBulkPublishMessage(failed.length
+      ? `${results.length - failed.length} published or queued. ${failed.length} need attention: ${failed.slice(0, 3).map((result) => result.title).join(', ')}${failed.length > 3 ? '…' : ''}.`
+      : `${results.length} work${results.length === 1 ? '' : 's'} published or queued successfully.`);
+    setBulkPublishing(false);
+    setBulkReviewOpen(false);
+    await load();
+  };
+
+  const saveBulkDeviantArtPreset = async () => {
+    const externalAccountId = bulkDestinationAccountId || (accounts.length === 1 ? accounts[0].externalAccountId : '');
+    const account = accounts.find((item) => item.externalAccountId === externalAccountId);
+    if (!externalAccountId || !account) return;
+    const parsedDisplayResolution = Number.parseInt(bulkDaDisplayResolution, 10);
+    if (bulkDaDisplayResolution && !deviantArtDisplayWidths.includes(parsedDisplayResolution)) {
+      setError('Choose a supported DeviantArt display size.');
+      return;
+    }
+    setBulkPresetSaving(true);
+    setError('');
+    try {
+      await api.studioSaveDeviantArtPublishingPreset(externalAccountId, {
+        defaultTags: [...new Set(bulkDaTags.split(',').map((tag) => tag.trim()).filter(Boolean))],
+        galleryExternalCollectionIds: bulkDaGalleryIds,
+        targetStatus: bulkDestinationStatus,
+        ...(Number.isInteger(parsedDisplayResolution) && parsedDisplayResolution > 0 ? { displayResolution: parsedDisplayResolution } : {}),
+        allowFreeDownload: bulkDaAllowFreeDownload,
+        addWatermark: Boolean(Number.isInteger(parsedDisplayResolution) && parsedDisplayResolution > 0 && bulkDaAddWatermark),
+        isMature: bulkDaIsMature,
+        matureLevel: bulkDaMatureLevel,
+        matureClassification: bulkDaIsMature ? bulkDaMatureClassification : [],
+        isAiGenerated: bulkDaIsAiGenerated,
+        noAi: bulkDaNoAi
+      });
+      setAccounts((current) => current.map((item) => item.externalAccountId === externalAccountId ? {
+        ...item,
+        deviantArtPublishingPreset: {
+          titleFormat: 'filename_title_case',
+          defaultTags: [...new Set(bulkDaTags.split(',').map((tag) => tag.trim()).filter(Boolean))],
+          galleryExternalCollectionIds: bulkDaGalleryIds,
+          sourceFileMode: 'original',
+          targetStatus: bulkDestinationStatus,
+          ...(Number.isInteger(parsedDisplayResolution) && parsedDisplayResolution > 0 ? { displayResolution: parsedDisplayResolution } : {}),
+          allowFreeDownload: bulkDaAllowFreeDownload,
+          addWatermark: Boolean(Number.isInteger(parsedDisplayResolution) && parsedDisplayResolution > 0 && bulkDaAddWatermark),
+          isMature: bulkDaIsMature,
+          matureLevel: bulkDaMatureLevel,
+          matureClassification: bulkDaIsMature ? bulkDaMatureClassification : [],
+          isAiGenerated: bulkDaIsAiGenerated,
+          noAi: bulkDaNoAi
+        }
+      } : item));
+      setBulkDestinationMessage(`Saved DeviantArt defaults for ${account.externalUsername}.`);
+    } catch (presetError) {
+      setError(presetError instanceof Error ? presetError.message : 'Unable to save DeviantArt defaults.');
+    } finally {
+      setBulkPresetSaving(false);
+    }
+  };
+
+  const bulkEditSelectedDeviantArtWorks = async () => {
+    if (!selectedDeviantArtOriginWorks.length || !hasBulkDeviantArtEditFields) return;
+    const parsedDisplayResolution = Number.parseInt(bulkDaDisplayResolution, 10);
+    if (bulkDaApplyDisplay && bulkDaDisplayResolution && !deviantArtDisplayWidths.includes(parsedDisplayResolution)) {
+      setError('Choose a supported DeviantArt display size.');
+      return;
+    }
+    const tags = [...new Set(bulkDaTags.split(',').map((tag) => tag.trim()).filter(Boolean))];
+    if (bulkDaApplyTags && !tags.length) {
+      setError('Enter at least one tag before applying tags in bulk.');
+      return;
+    }
+    if (bulkDaApplyGalleries && !bulkDaGalleryIds.length) {
+      setError('Choose at least one gallery before applying gallery placement in bulk.');
+      return;
+    }
+    setBulkDaEditing(true);
+    setBulkDaEditMessage('');
+    setError('');
+    const results: Array<{ title: string; queued?: boolean; error?: string }> = [];
+    for (const { asset, publication } of selectedDeviantArtOriginWorks) {
+      const title = asset.canonicalTitle || publication.externalTitle || 'Untitled work';
+      try {
+        const result = await api.studioUpdateDeviantArtPublicationMetadata(asset.assetId, {
+          externalPublicationId: publication.externalPublicationId,
+          ...(bulkDaApplyTitle ? { title } : {}),
+          ...(bulkDaApplyTags ? { tags } : {}),
+          ...(bulkDaApplyGalleries ? { collectionExternalIds: bulkDaGalleryIds } : {}),
+          ...(bulkDaApplyComments ? { allowComments: bulkDaAllowComments } : {}),
+          ...(bulkDaApplyDisplay ? {
+            displayResolution: Number.isInteger(parsedDisplayResolution) && parsedDisplayResolution > 0 ? parsedDisplayResolution : null,
+            allowFreeDownload: bulkDaAllowFreeDownload,
+            addWatermark: Boolean(Number.isInteger(parsedDisplayResolution) && parsedDisplayResolution > 0 && bulkDaAddWatermark)
+          } : {}),
+          ...(bulkDaApplyMature ? {
+            isMature: bulkDaIsMature,
+            matureLevel: bulkDaMatureLevel,
+            matureClassification: bulkDaIsMature ? bulkDaMatureClassification : []
+          } : {}),
+          ...(bulkDaApplyAiGenerated ? { isAiGenerated: bulkDaIsAiGenerated } : {}),
+          ...(bulkDaApplyNoAi ? { noAi: bulkDaNoAi } : {})
+        });
+        results.push({ title, queued: Boolean(result.remoteUpdateJobs?.length) });
+      } catch (editError) {
+        results.push({ title, error: editError instanceof Error ? editError.message : 'Unable to update DeviantArt.' });
+      }
+    }
+    const failed = results.filter((result) => result.error);
+    const queued = results.filter((result) => result.queued).length;
+    const saved = results.length - failed.length - queued;
+    setBulkDaEditMessage(failed.length
+      ? `${queued} remote edit${queued === 1 ? '' : 's'} queued and ${saved} staged locally. ${failed.length} failed: ${failed.slice(0, 3).map((result) => result.title).join(', ')}${failed.length > 3 ? '…' : ''}.`
+      : `${queued} DeviantArt edit${queued === 1 ? '' : 's'} queued${saved ? ` and ${saved} draft edit${saved === 1 ? '' : 's'} saved locally` : ''}. Descriptions were not changed.`);
+    setBulkDaEditing(false);
+    await load();
+  };
+
   return (
     <section className="studio-works-layout">
       <Card
         title="Works"
         eyebrow={`${brand.creatorName} catalogue`}
-        actions={<Link className="auth-primary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}&create=1`}>Upload works</Link>}
+        actions={<>
+          <button type="button" className="auth-secondary-btn" disabled={loading || !creatorId} onClick={() => void load()}>
+            {loading ? 'Refreshing…' : 'Refresh works'}
+          </button>
+          <Link className="auth-primary-btn no-underline" to={worksWorkspacePath(`?${worksListSearch}`, { create: true })}>Upload works</Link>
+        </>}
       >
         <div className="studio-works-controls">
           <label>
             <span>{brand.creatorName}</span>
-            <select value={creatorId} onChange={(event) => { setCreatorId(event.target.value); setCollectionId(''); }}>
+            <select value={creatorId} onChange={(event) => { setCreatorId(event.target.value); setCollectionId(''); setPlatformAccountId(''); setPage(1); }}>
               {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
             </select>
           </label>
           <label>
             <span>Collection</span>
-            <select value={collectionId} onChange={(event) => setCollectionId(event.target.value)}>
+            <select value={collectionId} onChange={(event) => { setCollectionId(event.target.value); setPage(1); }}>
               <option value="">All works</option>
               {collections.ubeeqCollections.map((collection) => <option key={collection.ubeeqCollectionId} value={collection.ubeeqCollectionId}>{collection.name}</option>)}
             </select>
           </label>
           <label>
             <span>Work state</span>
-            <select value={lifecycle} onChange={(event) => setLifecycle(event.target.value as 'all' | WorkLifecycle)}>
+            <select value={lifecycle} onChange={(event) => { setLifecycle(event.target.value as 'all' | WorkLifecycle); setPage(1); }}>
               <option value="all">All works</option>
               <option value="draft">Draft</option>
               <option value="ready">Ready</option>
@@ -362,24 +724,43 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
           </label>
           <label>
             <span>Platform state</span>
-            <select value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value as PlatformFilter)}>
+            <select value={platformFilter} onChange={(event) => { setPlatformFilter(event.target.value as PlatformFilter); setPage(1); }}>
               <option value="all">All platform states</option>
               <option value="published_anywhere">Published anywhere</option>
               <option value="published_nowhere">Published nowhere</option>
+              <option value="unpublished_unqueued">Unpublished and unqueued</option>
+              <option value="unpublished_images">Unpublished images (drafts)</option>
               <option value="eversally_live">Published on {brand.workspaceFullName}</option>
               <option value="deviantart_live">Published on DeviantArt</option>
               <option value="out_of_sync">Out of sync</option>
               <option value="error">Errors</option>
             </select>
           </label>
+          <label>
+            <span>Platform account</span>
+            <select value={platformAccountId} disabled={!accounts.length} onChange={(event) => { setPlatformAccountId(event.target.value); setPage(1); }}>
+              <option value="">{accounts.length ? 'All platform accounts' : 'No connected accounts'}</option>
+              {!!accounts.length && <optgroup label="DeviantArt">
+                {accounts.map((account) => <option key={account.externalAccountId} value={account.externalAccountId}>@{account.externalUsername}</option>)}
+              </optgroup>}
+            </select>
+          </label>
+          <label>
+            <span>Sort</span>
+            <select value={sort} onChange={(event) => { setSort(event.target.value as WorkSort); setPage(1); }}>
+              <option value="name_asc">Name: A–Z</option>
+              <option value="name_desc">Name: Z–A</option>
+              <option value="updated_desc">Last updated</option>
+            </select>
+          </label>
           <label className="studio-works-search">
             <span>Search works</span>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Title, description, or tag" />
+            <input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Title, description, or tag" />
           </label>
         </div>
 
-        <p className="studio-works-context"><strong>{activeCreator?.name || brand.creatorName}</strong>{selectedCollection ? ` · ${selectedCollection.name}` : ' · All works'}{lifecycle !== 'all' ? ` · ${lifecycleLabel(lifecycle)}` : ''}</p>
-        {!selectedCollection && <p className="studio-works-space-note">A Work’s local state is independent from every publishing destination. Selecting a destination records intent; publishing happens during review and sync.</p>}
+        <p className="studio-works-context"><strong>{activeCreator?.name || brand.creatorName}</strong>{selectedCollection ? ` · ${selectedCollection.name}` : ' · All works'}{lifecycle !== 'all' ? ` · ${lifecycleLabel(lifecycle)}` : ''}{selectedPlatformAccount ? ` · DeviantArt / @${selectedPlatformAccount.externalUsername}` : ''}</p>
+        {!selectedCollection && <p className="studio-works-space-note">A Work’s local state is independent from every publishing destination. Select destinations here, then choose <strong>Review &amp; publish</strong> on the Work to publish to DeviantArt or your Space.</p>}
         <fieldset className="studio-works-platform-view">
           <legend>Platforms shown</legend>
           <label><input type="checkbox" checked={shownPlatforms.eversally} onChange={(event) => setShownPlatforms((current) => ({ ...current, eversally: event.target.checked }))} /> <span>{brand.workspaceFullName}</span></label>
@@ -388,6 +769,21 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
         {loading && <p className="small">Loading works…</p>}
         {error && <p className="error">{error}</p>}
 
+        {!!visibleAssets.length && <nav className="studio-works-pagination" aria-label="Works pagination">
+          <span>Showing {pageStart + 1}–{Math.min(pageStart + pageSize, visibleAssets.length)} of {visibleAssets.length} works</span>
+          <label>
+            <span>Per page</span>
+            <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
+              {worksPageSizes.map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
+          <div className="studio-works-pagination-actions">
+            <button type="button" className="auth-secondary-btn" disabled={currentPage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
+            <span>Page {currentPage} of {pageCount}</span>
+            <button type="button" className="auth-secondary-btn" disabled={currentPage === pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>Next</button>
+          </div>
+        </nav>}
+
         {!!displayedAssets.length && <div className="studio-works-bulk-bar">
           <label className="studio-work-select-all">
             <input
@@ -395,7 +791,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
               checked={selectedDisplayedAssetIds.length === displayedAssets.length}
               onChange={(event) => setSelectedWorkAssetIds(event.target.checked ? displayedAssets.map((asset) => asset.assetId) : [])}
             />
-            <span>Select all {displayedAssets.length}{visibleAssets.length > displayedAssets.length ? ' shown' : ''}</span>
+            <span>Select page ({displayedAssets.length})</span>
           </label>
           <span className="studio-works-selection-count">{selectedDisplayedAssetIds.length} selected</span>
           <label className="studio-works-bulk-collection">
@@ -408,27 +804,93 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
           <button type="button" className="auth-primary-btn" disabled={!bulkCollectionId || !selectedDisplayedAssetIds.length || bulkUpdating} onClick={() => void addSelectedWorksToCollection()}>
             {bulkUpdating ? 'Adding…' : 'Add selected'}
           </button>
+          <button type="button" className="auth-primary-btn" disabled={!selectedDisplayedAssetIds.length || bulkPublishing} onClick={() => setBulkReviewOpen((current) => !current)}>
+            {bulkReviewOpen ? 'Close review' : `Review & publish ${selectedDisplayedAssetIds.length}`}
+          </button>
+          {bulkReviewOpen && !!selectedDisplayedAssetIds.length && <div className="studio-work-destination-target studio-works-bulk-review">
+            <span>Bulk publishing review</span>
+            {!bulkSpaceIntent && !bulkDeviantArtIntent && <p className="studio-work-metadata-warning">Choose at least one publish destination below.</p>}
+            {bulkDeviantArtIntent && !bulkDestinationAccountId && <p className="studio-work-metadata-warning">Choose a DeviantArt account below.</p>}
+            {(bulkSpaceIntent || bulkDeviantArtIntent) && <p className="small">{selectedDisplayedAssetIds.length} selected work{selectedDisplayedAssetIds.length === 1 ? '' : 's'} will be sent to:</p>}
+            <ul className="small">
+              {bulkSpaceIntent && <li>{brand.workspaceFullName} — {bulkSpaceVisibility === 'public' ? 'Space-visible' : bulkSpaceVisibility}</li>}
+              {bulkDeviantArtIntent && <li>DeviantArt · {accounts.find((account) => account.externalAccountId === (bulkDestinationAccountId || (accounts.length === 1 ? accounts[0].externalAccountId : '')))?.externalUsername || 'account'} — {bulkDestinationStatus === 'draft' ? 'save as Sta.sh draft' : 'publish'} · {bulkDaDisplayResolution ? `${bulkDaDisplayResolution}px display rendition` : 'original display'} · free download {bulkDaAllowFreeDownload ? 'enabled' : 'disabled'}{bulkDaAddWatermark && bulkDaDisplayResolution ? ' · watermark enabled' : ''} · {bulkDaIsMature ? `mature (${bulkDaMatureLevel})` : 'not mature'} · {bulkDaIsAiGenerated ? 'made with AI' : 'not marked AI-generated'} · AI training {bulkDaNoAi ? 'disallowed' : 'allowed'}</li>}
+            </ul>
+            <p className="small">Queued in the current Works order:</p>
+            <ol className="small">
+              {displayedAssets.filter((asset) => selectedDisplayedAssetIds.includes(asset.assetId)).slice(0, 8).map((asset, index) => <li key={asset.assetId}>{index + 1}. {asset.canonicalTitle || asset.publications[0]?.externalTitle || 'Untitled work'}</li>)}
+            </ol>
+            {selectedDisplayedAssetIds.length > 8 && <p className="small">…and {selectedDisplayedAssetIds.length - 8} more.</p>}
+            <button type="button" className="auth-primary-btn" disabled={bulkPublishing || (!bulkSpaceIntent && !bulkDeviantArtIntent) || (bulkDeviantArtIntent && !bulkDestinationAccountId)} onClick={() => void publishSelectedWorks()}>{bulkPublishing ? 'Publishing…' : `Publish ${selectedDisplayedAssetIds.length} selected work${selectedDisplayedAssetIds.length === 1 ? '' : 's'}`}</button>
+          </div>}
           <div className="studio-works-bulk-destination">
             <span>Publish destinations</span>
             <label><input type="checkbox" checked={bulkSpaceIntent} onChange={(event) => setBulkSpaceIntent(event.target.checked)} /> {brand.workspaceFullName}</label>
+            {bulkSpaceIntent && <select value={bulkSpaceVisibility} onChange={(event) => setBulkSpaceVisibility(event.target.value as 'private' | 'unlisted' | 'public')} aria-label={`${brand.workspaceFullName} visibility for selected works`}>
+              <option value="private">Private</option>
+              <option value="unlisted">Unlisted</option>
+              <option value="public">Space-visible</option>
+            </select>}
             {!!accounts.length && <label><input type="checkbox" checked={bulkDeviantArtIntent} onChange={(event) => setBulkDeviantArtIntent(event.target.checked)} /> DeviantArt</label>}
             {bulkDeviantArtIntent && accounts.length > 1 && <select value={bulkDestinationAccountId} onChange={(event) => setBulkDestinationAccountId(event.target.value)}>
               <option value="">Choose an account…</option>
-              {accounts.map((account) => <option key={account.externalAccountId} value={account.externalAccountId}>{account.externalUsername}</option>)}
+              {accounts.map((account) => <option key={account.externalAccountId} value={account.externalAccountId}>{account.externalUsername}{account.connectionStatus === 'connected' ? '' : ` (${account.connectionStatus === 'rate_limited' ? 'rate limited — queued' : 'temporarily unavailable — queued'})`}</option>)}
             </select>}
-            {bulkDeviantArtIntent && accounts.length === 1 && <small>{accounts[0].externalUsername}</small>}
+            {bulkDeviantArtIntent && accounts.length === 1 && <small>{accounts[0].externalUsername}{accounts[0].connectionStatus === 'connected' ? '' : ` · ${accounts[0].connectionStatus === 'rate_limited' ? 'rate limited; publishing will queue' : 'temporarily unavailable; publishing will queue'}`}</small>}
             {bulkDeviantArtIntent && <select value={bulkDestinationStatus} onChange={(event) => setBulkDestinationStatus(event.target.value as 'draft' | 'published')} aria-label="DeviantArt destination status for selected works">
               <option value="published">Published (default)</option>
               <option value="draft">Draft in Sta.sh</option>
             </select>}
+            {bulkDeviantArtIntent && <label className="studio-works-bulk-da-option"><span>Tags</span><input value={bulkDaTags} onChange={(event) => setBulkDaTags(event.target.value)} placeholder="brand, illustration, series" /></label>}
+            {bulkDeviantArtIntent && bulkAccountGalleries.length > 0 && <fieldset className="studio-work-metadata-options"><legend>Gallery placement</legend>{bulkAccountGalleries.map((gallery) => <label className="studio-work-metadata-option" key={gallery.externalCollectionId}><input type="checkbox" checked={bulkDaGalleryIds.includes(gallery.externalCollectionExternalId)} onChange={(event) => setBulkDaGalleryIds((current) => event.target.checked ? [...new Set([...current, gallery.externalCollectionExternalId])] : current.filter((id) => id !== gallery.externalCollectionExternalId))} /><span>{gallery.name}</span></label>)}</fieldset>}
+            {bulkDeviantArtIntent && <fieldset className="studio-work-metadata-options"><legend>Content declarations</legend>
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaIsMature} onChange={(event) => { setBulkDaIsMature(event.target.checked); if (!event.target.checked) setBulkDaMatureClassification([]); }} /><span>Mature content</span></label>
+              {bulkDaIsMature && <label className="studio-works-bulk-da-option"><span>Mature level</span><select value={bulkDaMatureLevel} onChange={(event) => setBulkDaMatureLevel(event.target.value as 'strict' | 'moderate')}><option value="moderate">Moderate</option><option value="strict">Strict</option></select></label>}
+              {bulkDaIsMature && matureClassificationOptions.map((option) => <label className="studio-work-metadata-option" key={option.value}><input type="checkbox" checked={bulkDaMatureClassification.includes(option.value)} onChange={(event) => setBulkDaMatureClassification((current) => event.target.checked ? [...new Set([...current, option.value])] : current.filter((value) => value !== option.value))} /><span>{option.label}</span></label>)}
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaIsAiGenerated} onChange={(event) => setBulkDaIsAiGenerated(event.target.checked)} /><span>Made with AI</span></label>
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaNoAi} onChange={(event) => setBulkDaNoAi(event.target.checked)} /><span>No third-party AI training</span></label>
+            </fieldset>}
+            {bulkDeviantArtIntent && <label className="studio-works-bulk-da-option"><span>Display size</span><select value={bulkDaDisplayResolution} onChange={(event) => setBulkDaDisplayResolution(event.target.value)} aria-label="DeviantArt display size for selected works"><option value="">Original</option>{deviantArtDisplayWidths.map((width) => <option key={width} value={width}>Size: {width} pixels wide</option>)}</select></label>}
+            {bulkDeviantArtIntent && <label><input type="checkbox" checked={bulkDaAllowFreeDownload} onChange={(event) => setBulkDaAllowFreeDownload(event.target.checked)} /> Allow original download</label>}
+            {bulkDeviantArtIntent && <label><input type="checkbox" checked={bulkDaAddWatermark} disabled={!bulkDaDisplayResolution} onChange={(event) => setBulkDaAddWatermark(event.target.checked)} /> Add watermark</label>}
+            {bulkDeviantArtIntent && <button type="button" className="auth-secondary-btn" disabled={!bulkDestinationAccountId || bulkPresetSaving} onClick={() => void saveBulkDeviantArtPreset()}>
+              {bulkPresetSaving ? 'Saving default…' : 'Save as account default'}
+            </button>}
+            {bulkDeviantArtIntent && (() => {
+              const selectedAccount = accounts.find((account) => account.externalAccountId === (bulkDestinationAccountId || (accounts.length === 1 ? accounts[0].externalAccountId : '')));
+              const preset = selectedAccount?.deviantArtPublishingPreset;
+              return <small className="studio-work-destination-message">Settings began with {selectedAccount?.externalUsername || 'this account'}’s saved preset{preset?.defaultTags?.length ? ` · ${preset.defaultTags.join(', ')}` : ''}. Changes here apply to the selected Works. <Link to={`/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}`}>Edit full preset</Link></small>;
+            })()}
+            {bulkDeviantArtIntent && <fieldset className="studio-work-metadata-options">
+              <legend>Bulk edit existing DeviantArt works</legend>
+              <p className="small">Choose exactly which fields to replace on the selected DeviantArt-originated Works. DeviantArt descriptions are always left unchanged.</p>
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaApplyTitle} onChange={(event) => setBulkDaApplyTitle(event.target.checked)} /><span>Apply each Work’s current title</span></label>
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaApplyTags} onChange={(event) => setBulkDaApplyTags(event.target.checked)} /><span>Replace tags</span></label>
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaApplyGalleries} onChange={(event) => setBulkDaApplyGalleries(event.target.checked)} /><span>Replace gallery placement</span></label>
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaApplyComments} onChange={(event) => setBulkDaApplyComments(event.target.checked)} /><span>Change comment permission</span></label>
+              {bulkDaApplyComments && <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaAllowComments} onChange={(event) => setBulkDaAllowComments(event.target.checked)} /><span>Allow comments</span></label>}
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaApplyDisplay} onChange={(event) => setBulkDaApplyDisplay(event.target.checked)} /><span>Apply display size, download, and watermark options</span></label>
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaApplyMature} onChange={(event) => setBulkDaApplyMature(event.target.checked)} /><span>Apply mature-content declaration</span></label>
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaApplyAiGenerated} onChange={(event) => setBulkDaApplyAiGenerated(event.target.checked)} /><span>Apply “Made with AI” declaration</span></label>
+              <label className="studio-work-metadata-option"><input type="checkbox" checked={bulkDaApplyNoAi} onChange={(event) => setBulkDaApplyNoAi(event.target.checked)} /><span>Apply NoAI declaration</span></label>
+              <button
+                type="button"
+                className="auth-secondary-btn"
+                disabled={!selectedDeviantArtOriginWorks.length || !hasBulkDeviantArtEditFields || bulkDaEditing}
+                onClick={() => void bulkEditSelectedDeviantArtWorks()}
+              >
+                {bulkDaEditing ? 'Applying edits…' : `Apply edits to ${selectedDeviantArtOriginWorks.length} DA-originated work${selectedDeviantArtOriginWorks.length === 1 ? '' : 's'}`}
+              </button>
+              {!!selectedDisplayedAssetIds.length && selectedDeviantArtOriginWorks.length < selectedDisplayedAssetIds.length && <small>{selectedDisplayedAssetIds.length - selectedDeviantArtOriginWorks.length} selected Work{selectedDisplayedAssetIds.length - selectedDeviantArtOriginWorks.length === 1 ? '' : 's'} will be skipped because they were not imported from this DeviantArt account or no longer have an editable publication.</small>}
+              {bulkDaEditMessage && <small className="studio-work-destination-message">{bulkDaEditMessage}</small>}
+            </fieldset>}
             <button type="button" className="auth-secondary-btn" disabled={!selectedDisplayedAssetIds.length || (!bulkSpaceIntent && !bulkDeviantArtIntent) || (bulkDeviantArtIntent && !bulkDestinationAccountId) || bulkDestinationUpdating} onClick={() => void addSelectedWorksToDeviantArt()}>
-              {bulkDestinationUpdating ? 'Saving…' : 'Save intent'}
+              {bulkDestinationUpdating ? 'Saving…' : 'Save choices'}
             </button>
             {bulkDestinationMessage && <small className="studio-work-destination-message">{bulkDestinationMessage}</small>}
+            {bulkPublishMessage && <small className="studio-work-destination-message">{bulkPublishMessage}</small>}
           </div>
         </div>}
-        {visibleAssets.length > 100 && <p className="studio-works-limit-note">Showing the first 100 matching works. Refine your search to select others.</p>}
-
         <div className="studio-works-list">
           {displayedAssets.map((asset) => {
             const manuallyAssigned = manuallyAssignedAssetIds.has(asset.assetId);
@@ -563,15 +1025,17 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                   </button>
                   <Link
                     className="auth-secondary-btn no-underline"
-                    to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}&workId=${encodeURIComponent(asset.assetId)}&tab=activity`}
+                    to={workRoute(asset.assetId, 'activity')}
                   >
                     Activity
                   </Link>
                   <Link
                     className="auth-secondary-btn no-underline"
-                    to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}${collectionId ? `&collectionId=${encodeURIComponent(collectionId)}` : ''}&workId=${encodeURIComponent(asset.assetId)}`}
+                    to={workRoute(asset.assetId)}
                   >
-                    {deviantArtDestinations.some((publication) => publication.syncStatus === 'pending_publish') ? 'Review & sync' : 'Edit metadata'}
+                    {deviantArtDestinations.some((publication) => publication.syncStatus === 'pending_publish') || !asset.destinationPublications.some((publication) => publication.status === 'live')
+                      ? 'Review & publish'
+                      : 'Edit metadata'}
                   </Link>
                   {asset.destinationPublications.some((publication) => publication.destination === 'eversally' && publication.status === 'live' && publication.visibility !== 'private') && asset.canonicalSlug && activeCreator?.slug && <Link
                     className="auth-secondary-btn no-underline"
@@ -600,6 +1064,14 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
             );
           })}
         </div>
+        {pageCount > 1 && <nav className="studio-works-pagination studio-works-pagination-bottom" aria-label="Works pagination">
+          <span>Showing {pageStart + 1}–{Math.min(pageStart + pageSize, visibleAssets.length)} of {visibleAssets.length} works</span>
+          <div className="studio-works-pagination-actions">
+            <button type="button" className="auth-secondary-btn" disabled={currentPage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
+            <span>Page {currentPage} of {pageCount}</span>
+            <button type="button" className="auth-secondary-btn" disabled={currentPage === pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>Next</button>
+          </div>
+        </nav>}
         {!loading && !visibleAssets.length && <div className="studio-empty-state">No works match this creator, collection, and search filter.</div>}
       </Card>
     </section>

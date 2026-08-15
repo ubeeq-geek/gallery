@@ -25,7 +25,11 @@ describe('production API configuration', () => {
   }));
 
   it('keeps local development defaults available', () => {
-    expect(loadConfig()).toMatchObject({ deploymentStage: 'development', unlockJwtSecret: 'dev-secret' });
+    expect(loadConfig()).toMatchObject({
+      deploymentStage: 'development',
+      unlockJwtSecret: 'dev-secret',
+      deviantArtMinimumRequestIntervalMs: 2_000
+    });
   });
 
   it('rejects incomplete or insecure production configuration', () => {

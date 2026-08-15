@@ -106,6 +106,81 @@ const slugify = (value: string): string =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 120) || 'item';
 
+/**
+ * `brand-name-1.png` -> `Brand Name #1`; `brand-name-1-v1.png` ->
+ * `Brand Name #1, v1`. This is intentionally deterministic and is used for
+ * new local Works, while a creator can always edit the resulting title.
+ */
+const titleFromFilename = (filename: string): string => {
+  const stem = filename.replace(/\.[^.]+$/, '').trim();
+  const tokens = stem.split(/[-_\s]+/).filter(Boolean);
+  let version: string | undefined;
+  let number: string | undefined;
+  if (tokens.length && /^v\d+$/i.test(tokens.at(-1)!)) version = `v${tokens.pop()!.slice(1)}`;
+  if (tokens.length && /^\d+$/.test(tokens.at(-1)!)) number = tokens.pop()!;
+  const base = tokens
+    .flatMap((token) => token.replace(/([a-z])([A-Z])/g, '$1 $2').split(' '))
+    .filter(Boolean)
+    .map((token) => /^\d+$/.test(token) ? token : `${token.slice(0, 1).toUpperCase()}${token.slice(1).toLowerCase()}`)
+    .join(' ');
+  return [base || 'Untitled work', number ? `#${number}` : '', version ? `, ${version}` : '']
+    .join(' ')
+    .replace(/\s+,/g, ',')
+    .trim();
+};
+
+const defaultDeviantArtPreset = () => ({
+  titleFormat: 'filename_title_case' as const,
+  defaultTags: [] as string[],
+  galleryExternalCollectionIds: [] as string[],
+  targetStatus: 'published' as const,
+  displayResolution: undefined as number | undefined,
+  allowFreeDownload: false,
+  addWatermark: false,
+  isMature: false,
+  matureLevel: 'moderate' as const,
+  matureClassification: [] as Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>,
+  isAiGenerated: false,
+  noAi: false,
+  sourceFileMode: 'original' as const
+});
+
+/** The complete enum accepted by DeviantArt's Sta.sh publish endpoint. */
+const deviantArtDisplayResolutions = new Set([400, 600, 800, 900, 1024, 1280, 1600, 1920]);
+const deviantArtMatureClassifications = new Set(['nudity', 'sexual', 'gore', 'language', 'ideology']);
+
+const parseDeviantArtPreset = (value: unknown) => {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const tags = Array.isArray(source.defaultTags)
+    ? [...new Set(source.defaultTags.filter((tag): tag is string => typeof tag === 'string').map((tag) => tag.trim().replace(/\s+/g, '_').slice(0, 64)).filter(Boolean))].slice(0, 30)
+    : [];
+  const galleryExternalCollectionIds = Array.isArray(source.galleryExternalCollectionIds)
+    ? [...new Set(source.galleryExternalCollectionIds.filter((id): id is string => typeof id === 'string').map((id) => id.trim()).filter(Boolean))]
+    : [];
+  const displayResolution = typeof source.displayResolution === 'number' && deviantArtDisplayResolutions.has(source.displayResolution)
+    ? source.displayResolution
+    : undefined;
+  const isMature = source.isMature === true;
+  const matureClassification = Array.isArray(source.matureClassification)
+    ? [...new Set(source.matureClassification.filter((value): value is 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology' => typeof value === 'string' && deviantArtMatureClassifications.has(value)))]
+    : [];
+  return {
+    titleFormat: 'filename_title_case' as const,
+    defaultTags: tags,
+    galleryExternalCollectionIds,
+    targetStatus: source.targetStatus === 'draft' ? 'draft' as const : 'published' as const,
+    ...(displayResolution ? { displayResolution } : {}),
+    allowFreeDownload: source.allowFreeDownload === true,
+    addWatermark: displayResolution ? source.addWatermark === true : false,
+    isMature,
+    matureLevel: source.matureLevel === 'strict' ? 'strict' as const : 'moderate' as const,
+    matureClassification: isMature ? matureClassification : [],
+    isAiGenerated: source.isAiGenerated === true,
+    noAi: source.noAi === true,
+    sourceFileMode: 'original' as const
+  };
+};
+
 const uniqueSlugs = (slugs: Array<string | undefined>): string[] => {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -712,9 +787,11 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     externalUsername: account.externalUsername,
     tokenExpiresAt: account.tokenExpiresAt,
     connectionStatus: account.connectionStatus,
+    rateLimitedUntil: account.rateLimitedUntil,
     lastSuccessfulSyncAt: account.lastSuccessfulSyncAt,
     lastSyncAttemptAt: account.lastSyncAttemptAt,
-    includeSourceFilesOnSync: account.includeSourceFilesOnSync === true,
+    includeSourceFilesOnSync: account.includeSourceFilesOnSync !== false,
+    ...(account.platform === 'deviantart' ? { deviantArtPublishingPreset: { ...defaultDeviantArtPreset(), ...account.deviantArtPublishingPreset } } : {}),
     createdAt: account.createdAt,
     updatedAt: account.updatedAt
   });
@@ -733,7 +810,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   const providerForCredential = (credential: ExternalPlatformCredential) => createExternalPlatformProvider(credential.platform, {
     clientId: credential.clientId,
     clientSecret: decryptExternalCredential(credential.clientSecretEncrypted, config.externalTokenEncryptionKey),
-    redirectUri: credential.redirectUri
+    redirectUri: credential.redirectUri,
+    minimumRequestIntervalMs: config.deviantArtMinimumRequestIntervalMs
   });
 
   const enqueueExternalSyncJob = async (
@@ -4881,6 +4959,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         lastSyncAttemptAt: existing?.lastSyncAttemptAt,
         lastSuccessfulSyncAt: existing?.lastSuccessfulSyncAt,
         initialContentSyncRequested: state.syncContentOnInitialImport === true || existing?.initialContentSyncRequested === true,
+        includeSourceFilesOnSync: existing?.includeSourceFilesOnSync ?? true,
         createdAt: existing?.createdAt || now,
         updatedAt: now
       };
@@ -4930,6 +5009,80 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       };
       }));
     return res.json(responses);
+  });
+
+  app.put('/studio/integrations/deviantart/accounts/:externalAccountId/preset', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    const preset = parseDeviantArtPreset(req.body);
+    const updated = { ...account, deviantArtPublishingPreset: preset, updatedAt: new Date().toISOString() };
+    await store.updateExternalAccount(updated);
+    auditLog(req, 'deviantart.publishing-preset.updated', { externalAccountId: account.externalAccountId });
+    return res.json({ deviantArtPublishingPreset: preset });
+  });
+
+  app.post('/studio/integrations/deviantart/accounts/:externalAccountId/galleries', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    const name = sanitizeOptional(req.body?.name, 50);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    if (!name) return res.status(400).json({ message: 'Enter a gallery name (up to 50 characters).' });
+    try {
+      const credential = await store.getExternalPlatformCredential(account.externalPlatformCredentialId);
+      if (!credential || credential.platform !== 'deviantart' || credential.userId !== account.userId) {
+        return res.status(409).json({ message: 'The DeviantArt application credentials are unavailable.' });
+      }
+      const provider = providerForCredential(credential);
+      let currentAccount = account;
+      let accessToken = decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey);
+      const expiresAt = account.tokenExpiresAt ? Date.parse(account.tokenExpiresAt) : NaN;
+      if (Number.isFinite(expiresAt) && expiresAt <= Date.now() + 60_000) {
+        if (!account.refreshTokenEncrypted) {
+          return res.status(401).json({ message: 'Your DeviantArt connection has expired. Reconnect it, then create the gallery.' });
+        }
+        const tokens = await provider.refreshAuthentication(decryptExternalCredential(account.refreshTokenEncrypted, config.externalTokenEncryptionKey));
+        currentAccount = {
+          ...account,
+          accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
+          refreshTokenEncrypted: tokens.refreshToken
+            ? encryptExternalCredential(tokens.refreshToken, config.externalTokenEncryptionKey)
+            : account.refreshTokenEncrypted,
+          tokenExpiresAt: tokens.expiresAt,
+          connectionStatus: 'connected',
+          updatedAt: new Date().toISOString()
+        };
+        await store.updateExternalAccount(currentAccount);
+        accessToken = tokens.accessToken;
+      }
+      const remote = await provider.createGalleryFolder(accessToken, name);
+      const now = new Date().toISOString();
+      const existing = (await store.listExternalCollections(account.externalAccountId))
+        .find((item) => item.externalCollectionExternalId === remote.externalCollectionId);
+      const collection = {
+        externalCollectionId: existing?.externalCollectionId || randomUUID(),
+        externalAccountId: currentAccount.externalAccountId,
+        platform: 'deviantart' as const,
+        externalCollectionExternalId: remote.externalCollectionId,
+        name: remote.name,
+        description: remote.description,
+        position: remote.position,
+        remoteSize: remote.size,
+        syncStatus: 'active' as const,
+        lastSeenAt: now,
+        lastSyncedAt: now,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now
+      };
+      if (existing) await store.updateExternalCollection(collection);
+      else await store.createExternalCollection(collection);
+      auditLog(req, 'deviantart.gallery.created', { externalAccountId: currentAccount.externalAccountId, externalCollectionId: collection.externalCollectionExternalId });
+      return res.status(201).json(collection);
+    } catch (error) {
+      logServerError('deviantart.gallery.create', error);
+      const message = error instanceof ExternalProviderError ? error.message : 'Unable to create the DeviantArt gallery.';
+      return res.status(400).json({ message });
+    }
   });
 
   app.get('/studio/integrations/deviantart/accounts/:externalAccountId/profile', requireAuth, async (req, res) => {
@@ -5048,7 +5201,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return res.status(409).json({ message: 'Assign this DeviantArt account to at least one creator before synchronizing.' });
     }
     try {
-      const includeSourceFilesOnSync = req.body?.syncContent === true;
+      const includeSourceFilesOnSync = req.body?.syncContent !== false;
       await store.updateExternalAccount({ ...account, includeSourceFilesOnSync, updatedAt: new Date().toISOString() });
       const job = await enqueueExternalSyncJob(account.externalAccountId, 'full_reconciliation', {
         syncContent: includeSourceFilesOnSync
@@ -5066,6 +5219,60 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
     if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
     return res.json(await store.listExternalSyncJobs(account.externalAccountId, 50));
+  });
+
+  app.post('/studio/integrations/deviantart/jobs/:externalSyncJobId/cancel', requireAuth, async (req, res) => {
+    const job = await store.getExternalSyncJob(req.params.externalSyncJobId);
+    if (!job) return res.status(404).json({ message: 'Synchronization job not found' });
+    const account = await store.getExternalAccount(job.externalAccountId);
+    if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
+    if (!['account_import', 'full_reconciliation', 'account_scan'].includes(job.type)) {
+      return res.status(409).json({ message: 'Only account synchronization jobs can be cancelled here.' });
+    }
+    if (!['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status)) {
+      return res.status(409).json({ message: `This synchronization is already ${job.status.replace(/_/g, ' ')}.` });
+    }
+    const now = new Date().toISOString();
+    const cancelledJob: ExternalSyncJob = {
+      ...job,
+      status: 'cancelled',
+      nextAttemptAt: undefined,
+      errorCode: 'CANCELLED_BY_USER',
+      errorMessage: 'Synchronization cancelled by the user',
+      updatedAt: now
+    };
+    await store.updateExternalSyncJob(cancelledJob);
+    const relatedJobs = (await store.listExternalSyncJobs(account.externalAccountId, 100))
+      .filter((candidate) => candidate.payload?.parentJobId === job.externalSyncJobId)
+      .filter((candidate) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(candidate.status));
+    await Promise.all(relatedJobs.map(async (candidate) => {
+      await store.updateExternalSyncJob({
+        ...candidate,
+        status: 'cancelled',
+        nextAttemptAt: undefined,
+        errorCode: 'PARENT_SYNC_CANCELLED',
+        errorMessage: 'Synchronization cancelled with its account import',
+        updatedAt: now
+      });
+      if (candidate.type === 'content_sync' && typeof candidate.payload?.assetId === 'string') {
+        const spacePublication = await store.getSpacePublication(candidate.payload.assetId);
+        if (spacePublication && spacePublication.contentSyncStatus !== 'hosted') {
+          await store.upsertSpacePublication({
+            ...spacePublication,
+            contentSyncStatus: 'not_requested',
+            contentSyncError: undefined,
+            updatedAt: now
+          });
+        }
+      }
+    }));
+    auditLog(req, 'deviantart.sync.cancelled', {
+      externalAccountId: account.externalAccountId,
+      jobId: job.externalSyncJobId,
+      relatedJobsCancelled: relatedJobs.length
+    });
+    return res.json({ job: cancelledJob, relatedJobsCancelled: relatedJobs.length });
   });
 
   app.get('/studio/integrations/deviantart/jobs/:externalSyncJobId/logs', requireAuth, async (req, res) => {
@@ -5202,6 +5409,12 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
             externalTags: publication.externalTags || [],
             displayOptions: {
               allowComments: metadataBoolean(publication.rawMetadataJson, 'allows_comments', 'allow_comments', 'allowComments'),
+              displayResolution: (() => {
+                const value = publication.rawMetadataJson.display_resolution ?? publication.rawMetadataJson.displayResolution;
+                return typeof value === 'number' && value > 0 ? value : undefined;
+              })(),
+              allowFreeDownload: metadataBoolean(publication.rawMetadataJson, 'allow_free_download', 'allowFreeDownload'),
+              addWatermark: metadataBoolean(publication.rawMetadataJson, 'add_watermark', 'addWatermark'),
               isMature: metadataBoolean(publication.rawMetadataJson, 'is_mature', 'isMature'),
               matureLevel: (() => {
                 const level = metadataText(publication.rawMetadataJson, 'mature_level', 'matureLevel');
@@ -5264,6 +5477,22 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         .filter(Boolean))]
       : undefined;
     const allowComments = typeof integrationMetadata?.allowComments === 'boolean' ? integrationMetadata.allowComments : undefined;
+    const hasDisplayResolution = Boolean(integrationMetadata && Object.prototype.hasOwnProperty.call(integrationMetadata, 'displayResolution'));
+    const displayResolution = hasDisplayResolution
+      ? integrationMetadata?.displayResolution === null
+        ? null
+        : typeof integrationMetadata?.displayResolution === 'number' && deviantArtDisplayResolutions.has(integrationMetadata.displayResolution)
+          ? integrationMetadata.displayResolution
+          : undefined
+      : undefined;
+    if (hasDisplayResolution && displayResolution === undefined) {
+      return res.status(400).json({ message: 'Choose a supported DeviantArt display size, or Original.' });
+    }
+    const allowFreeDownload = typeof integrationMetadata?.allowFreeDownload === 'boolean' ? integrationMetadata.allowFreeDownload : undefined;
+    const addWatermark = typeof integrationMetadata?.addWatermark === 'boolean' ? integrationMetadata.addWatermark : undefined;
+    if (addWatermark === true && displayResolution === null) {
+      return res.status(400).json({ message: 'A DeviantArt watermark requires a reduced display size.' });
+    }
     const isMature = typeof integrationMetadata?.isMature === 'boolean' ? integrationMetadata.isMature : undefined;
     const matureLevel = integrationMetadata?.matureLevel === 'strict' || integrationMetadata?.matureLevel === 'moderate'
       ? integrationMetadata.matureLevel
@@ -5302,6 +5531,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       || integrationTags !== undefined
       || integrationCollectionExternalIds !== undefined
       || allowComments !== undefined
+      || displayResolution !== undefined
+      || allowFreeDownload !== undefined
+      || addWatermark !== undefined
       || isMature !== undefined
       || matureLevel !== undefined
       || matureClassification !== undefined
@@ -5316,6 +5548,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     await Promise.all(destinationPublications.filter((publication) => publication.syncStatus !== 'active').map(async (publication) => {
       const rawMetadataJson = { ...publication.rawMetadataJson };
       if (allowComments !== undefined) rawMetadataJson.allow_comments = allowComments;
+      if (displayResolution !== undefined) rawMetadataJson.display_resolution = displayResolution;
+      if (allowFreeDownload !== undefined) rawMetadataJson.allow_free_download = allowFreeDownload;
+      if (addWatermark !== undefined) rawMetadataJson.add_watermark = addWatermark;
       if (isMature !== undefined) rawMetadataJson.is_mature = isMature;
       if (matureLevel !== undefined) rawMetadataJson.mature_level = matureLevel;
       if (matureClassification !== undefined) rawMetadataJson.mature_classification = matureClassification;
@@ -5338,6 +5573,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         ...(integrationTags !== undefined ? { tags: integrationTags } : {}),
         ...(integrationCollectionExternalIds !== undefined ? { collectionExternalIds: integrationCollectionExternalIds } : {}),
         ...(allowComments !== undefined ? { allowComments } : {}),
+        ...(displayResolution !== undefined ? { displayResolution } : {}),
+        ...(allowFreeDownload !== undefined ? { allowFreeDownload } : {}),
+        ...(addWatermark !== undefined ? { addWatermark } : {}),
         ...(isMature !== undefined ? { isMature } : {}),
         ...(matureLevel !== undefined ? { matureLevel } : {}),
         ...(matureClassification !== undefined ? { matureClassification } : {}),
@@ -5448,7 +5686,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
     const originalFilename = sanitizeOptional(req.body?.originalFilename, 255) || 'Untitled work';
     const suppliedTitle = sanitizeOptional(req.body?.title, 300);
-    const title = suppliedTitle || originalFilename.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ').trim() || 'Untitled work';
+    const title = suppliedTitle || titleFromFilename(originalFilename);
     const requestedSlug = slugify(String(req.body?.slug || title));
     if ((await store.listWorksByCreator(config.tenantId, creatorId)).some((item) => item.slugHistory.includes(requestedSlug))) {
       return res.status(409).json({ message: 'Work slug is already in use for this Creator.' });
@@ -5558,6 +5796,40 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       await store.attachAssetToWork(config.tenantId, { workId: work.workId, assetId, role: work.primaryAssetId ? 'content' : 'primary', position: (await store.listCanonicalAssetsByWork(config.tenantId, work.workId)).length });
       const updated = work.primaryAssetId ? work : { ...work, primaryAssetId: assetId, revision: work.revision + 1, updatedAt: now };
       if (updated !== work) await store.updateWork(updated);
+      // The DeviantArt worker still consumes the established ExternalAsset /
+      // SpacePublication contract. Mirror a local canonical upload into that
+      // compatibility record so it can be published without first importing
+      // from an external platform.
+      const compatibilityAsset = await store.getAsset(work.workId);
+      const externalAsset: ExternalAsset = {
+        assetId: work.workId,
+        userId: compatibilityAsset?.userId || req.authUser!.userId,
+        creatorIdentityId: work.creatorId,
+        assetType: 'image',
+        canonicalTitle: updated.title,
+        canonicalDescription: updated.description,
+        visibility: 'private',
+        titleSyncPolicy: compatibilityAsset?.titleSyncPolicy || 'mirrored',
+        descriptionSyncPolicy: compatibilityAsset?.descriptionSyncPolicy || 'mirrored',
+        createdAt: compatibilityAsset?.createdAt || now,
+        updatedAt: now
+      };
+      if (compatibilityAsset) await store.updateAsset(externalAsset);
+      else await store.createAsset(externalAsset);
+      await store.upsertSpacePublication({
+        assetId: work.workId,
+        published: false,
+        hostingMode: 'hosted',
+        contentSyncStatus: 'hosted',
+        sourceCopyQuality: 'original',
+        hostedObjectKey: stored.objectKey,
+        hostedThumbnailObjectKey: stored.thumbnailObjectKey,
+        hostedContentType: stored.contentType,
+        hostedByteSize: stored.byteSize,
+        hostedChecksumSha256: stored.checksumSha256,
+        visibility: 'private',
+        updatedAt: now
+      });
       return res.status(201).json(await canonicalWorkView(updated, `${req.protocol}://${req.get('host')}`));
     } catch (error) {
       logServerError('studio.work.image-upload', error);
@@ -5612,11 +5884,49 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       await store.createAsset(asset);
     }
     const externalAccountId = typeof req.body?.externalAccountId === 'string' ? req.body.externalAccountId.trim() : '';
-    const targetStatus = req.body?.targetStatus === 'draft' ? 'draft' : 'published';
     const account = externalAccountId ? await store.getExternalAccount(externalAccountId) : null;
-    if (!account || account.platform !== 'deviantart' || account.userId !== req.authUser!.userId || account.connectionStatus !== 'connected') {
-      return res.status(400).json({ message: 'Choose a connected DeviantArt account.' });
+    if (!account || account.platform !== 'deviantart' || account.userId !== req.authUser!.userId || !['connected', 'rate_limited', 'temporarily_unavailable'].includes(account.connectionStatus)) {
+      return res.status(400).json({ message: 'Choose an available DeviantArt account.' });
     }
+    const preset = { ...defaultDeviantArtPreset(), ...account.deviantArtPublishingPreset };
+    const targetStatus = req.body?.targetStatus === 'draft' || req.body?.targetStatus === 'published'
+      ? req.body.targetStatus
+      : preset.targetStatus;
+    const hasDisplayResolutionOverride = Boolean(req.body && Object.prototype.hasOwnProperty.call(req.body, 'displayResolution'));
+    if (hasDisplayResolutionOverride && req.body.displayResolution !== null && (typeof req.body.displayResolution !== 'number' || !deviantArtDisplayResolutions.has(req.body.displayResolution))) {
+      return res.status(400).json({ message: 'Choose a supported DeviantArt display size, or Original.' });
+    }
+    const requestedDisplayResolution = typeof req.body?.displayResolution === 'number' && deviantArtDisplayResolutions.has(req.body.displayResolution)
+      ? req.body.displayResolution
+      : undefined;
+    const displayResolution = hasDisplayResolutionOverride ? requestedDisplayResolution : preset.displayResolution;
+    const allowFreeDownload = typeof req.body?.allowFreeDownload === 'boolean' ? req.body.allowFreeDownload : preset.allowFreeDownload;
+    const addWatermark = displayResolution ? (typeof req.body?.addWatermark === 'boolean' ? req.body.addWatermark : preset.addWatermark) : false;
+    const hasTagsOverride = Boolean(req.body && Object.prototype.hasOwnProperty.call(req.body, 'tags'));
+    const tags = hasTagsOverride ? parseDeviantArtPreset({ defaultTags: req.body.tags }).defaultTags : preset.defaultTags;
+    const hasGalleryOverride = Boolean(req.body && Object.prototype.hasOwnProperty.call(req.body, 'galleryExternalCollectionIds'));
+    const galleryExternalCollectionIds = hasGalleryOverride
+      ? parseDeviantArtPreset({ galleryExternalCollectionIds: req.body.galleryExternalCollectionIds }).galleryExternalCollectionIds
+      : preset.galleryExternalCollectionIds;
+    const hasMatureOverride = Boolean(req.body && (
+      Object.prototype.hasOwnProperty.call(req.body, 'isMature')
+      || Object.prototype.hasOwnProperty.call(req.body, 'matureLevel')
+      || Object.prototype.hasOwnProperty.call(req.body, 'matureClassification')
+    ));
+    const matureSettings = parseDeviantArtPreset({
+      isMature: typeof req.body?.isMature === 'boolean' ? req.body.isMature : preset.isMature,
+      matureLevel: req.body?.matureLevel || preset.matureLevel,
+      matureClassification: req.body?.matureClassification || preset.matureClassification
+    });
+    const isMature = matureSettings.isMature;
+    const matureLevel = matureSettings.matureLevel;
+    const matureClassification = matureSettings.matureClassification;
+    const hasAiOverride = Boolean(req.body && (
+      Object.prototype.hasOwnProperty.call(req.body, 'isAiGenerated')
+      || Object.prototype.hasOwnProperty.call(req.body, 'noAi')
+    ));
+    const isAiGenerated = typeof req.body?.isAiGenerated === 'boolean' ? req.body.isAiGenerated : preset.isAiGenerated;
+    const noAi = typeof req.body?.noAi === 'boolean' ? req.body.noAi : preset.noAi;
     const assignedCreatorIds = (await store.listExternalAccountCreatorAssignments(account.externalAccountId)).map((assignment) => assignment.creatorIdentityId);
     if (!assignedCreatorIds.includes(asset.creatorIdentityId) && account.primaryCreatorIdentityId !== asset.creatorIdentityId && account.creatorIdentityId !== asset.creatorIdentityId) {
       return res.status(403).json({ message: 'This DeviantArt account is not connected to the work’s creator.' });
@@ -5626,9 +5936,42 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       if (existing.syncStatus === 'active' && targetStatus === 'draft') {
         return res.status(409).json({ message: 'This work is already published on DeviantArt. Unpublishing it to Sta.sh is not available through the connected API.' });
       }
-      const updatedExisting: ExternalPublication = existing.targetStatus === targetStatus ? existing : {
+      const hasSettingsOverride = hasDisplayResolutionOverride
+        || typeof req.body?.allowFreeDownload === 'boolean'
+        || typeof req.body?.addWatermark === 'boolean'
+        || hasTagsOverride
+        || hasGalleryOverride
+        || hasMatureOverride
+        || hasAiOverride;
+      const updatedExisting: ExternalPublication = existing.targetStatus === targetStatus && !hasSettingsOverride ? existing : {
         ...existing,
         targetStatus,
+        ...(hasTagsOverride ? { externalTags: tags } : {}),
+        ...(hasGalleryOverride ? { externalCollectionIds: galleryExternalCollectionIds } : {}),
+        rawMetadataJson: hasSettingsOverride ? (() => {
+          const metadata = { ...existing.rawMetadataJson };
+          if (hasDisplayResolutionOverride) {
+            delete metadata.display_resolution;
+            if (displayResolution) metadata.display_resolution = displayResolution;
+          }
+          if (typeof req.body?.allowFreeDownload === 'boolean') metadata.allow_free_download = allowFreeDownload;
+          if (typeof req.body?.addWatermark === 'boolean' || hasDisplayResolutionOverride) metadata.add_watermark = addWatermark;
+          if (hasMatureOverride) {
+            metadata.is_mature = isMature;
+            if (isMature) {
+              metadata.mature_level = matureLevel;
+              metadata.mature_classification = matureClassification;
+            } else {
+              delete metadata.mature_level;
+              delete metadata.mature_classification;
+            }
+          }
+          if (hasAiOverride) {
+            metadata.is_ai_generated = isAiGenerated;
+            metadata.noai = noAi;
+          }
+          return metadata;
+        })() : existing.rawMetadataJson,
         updatedAt: new Date().toISOString()
       };
       if (updatedExisting !== existing) await store.updateExternalPublication(updatedExisting);
@@ -5666,18 +6009,32 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return res.status(200).json({ publication: updatedExisting });
     }
     const now = new Date().toISOString();
+    const workAssets = await store.listCanonicalAssetsByWork(config.tenantId, work.workId);
+    const sourceFilename = workAssets.find((item) => item.assetId === work.primaryAssetId)?.originalFilename || workAssets[0]?.originalFilename;
+    const presetTitle = sourceFilename && preset.titleFormat === 'filename_title_case'
+      ? titleFromFilename(sourceFilename)
+      : asset.canonicalTitle;
     const publication: ExternalPublication = {
       externalPublicationId: randomUUID(),
       assetId: asset.assetId,
       externalAccountId: account.externalAccountId,
       platform: 'deviantart',
       externalContentId: `pending:${asset.assetId}`,
-      externalTitle: asset.canonicalTitle,
+      externalTitle: presetTitle,
       externalDescription: asset.canonicalDescription,
-      externalTags: [],
+      externalTags: tags,
+      externalCollectionIds: galleryExternalCollectionIds,
       targetStatus,
       syncStatus: 'pending_publish',
-      rawMetadataJson: {},
+      rawMetadataJson: {
+        ...(displayResolution ? { display_resolution: displayResolution } : {}),
+        allow_free_download: allowFreeDownload,
+        add_watermark: addWatermark,
+        is_mature: isMature,
+        ...(isMature ? { mature_level: matureLevel, mature_classification: matureClassification } : {}),
+        is_ai_generated: isAiGenerated,
+        noai: noAi
+      },
       createdAt: now,
       updatedAt: now
     };
@@ -5692,9 +6049,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       status: targetStatus === 'draft' ? 'draft' : 'queued',
       visibility: 'public',
       remoteId: publication.externalContentId,
-      metadataOverrides: { title: publication.externalTitle, description: publication.externalDescription, tags: [] },
+      metadataOverrides: { title: publication.externalTitle, description: publication.externalDescription, tags: publication.externalTags },
       sync: { status: 'local_newer', localRevision: work.revision },
-      providerData: { targetStatus, externalUsername: account.externalUsername, externalCollectionIds: [] },
+      providerData: { targetStatus, externalUsername: account.externalUsername, externalCollectionIds: publication.externalCollectionIds || [] },
       createdAt: now,
       updatedAt: now
     });
@@ -5731,8 +6088,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const integrationAccountId = destination === 'deviantart' && typeof req.body?.integrationAccountId === 'string' ? req.body.integrationAccountId.trim() : undefined;
     if (destination === 'deviantart') {
       const account = integrationAccountId ? await store.getExternalAccount(integrationAccountId) : null;
-      if (!account || account.platform !== 'deviantart' || account.userId !== req.authUser!.userId || account.connectionStatus !== 'connected') {
-        return res.status(400).json({ message: 'Choose a connected DeviantArt account.' });
+      if (!account || account.platform !== 'deviantart' || account.userId !== req.authUser!.userId || !['connected', 'rate_limited', 'temporarily_unavailable'].includes(account.connectionStatus)) {
+        return res.status(400).json({ message: 'Choose an available DeviantArt account.' });
       }
       const assignedCreatorIds = (await store.listExternalAccountCreatorAssignments(account.externalAccountId)).map((assignment) => assignment.creatorIdentityId);
       if (!assignedCreatorIds.includes(work.creatorId) && account.primaryCreatorIdentityId !== work.creatorId && account.creatorIdentityId !== work.creatorId) {
@@ -5794,15 +6151,22 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const asset = await store.getAsset(work.workId);
     if (!asset) return res.status(404).json({ message: 'Work destination compatibility record not found' });
     const publication = (await store.listExternalPublications(req.params.externalAccountId))
-      .find((item) => item.assetId === asset.assetId && item.platform === 'deviantart' && (item.syncStatus === 'pending_publish' || item.syncStatus === 'draft'));
+      .find((item) => item.assetId === asset.assetId && item.platform === 'deviantart' && (item.syncStatus === 'pending_publish' || item.syncStatus === 'draft' || item.syncStatus === 'error'));
     if (!publication) return res.status(409).json({ message: 'This DeviantArt destination is already published or has been removed.' });
     try {
+      const workAssets = await store.listCanonicalAssetsByWork(config.tenantId, work.workId);
+      const sourceAsset = workAssets.find((item) => item.assetId === work.primaryAssetId) || workAssets[0];
+      const queuedPublication = publication.syncStatus === 'error'
+        ? { ...publication, syncStatus: 'pending_publish' as const, updatedAt: new Date().toISOString() }
+        : publication;
+      if (queuedPublication !== publication) await store.updateExternalPublication(queuedPublication);
       const canonical = await store.getPublication(config.tenantId, publication.externalPublicationId);
       if (canonical) await store.upsertPublication({ ...canonical, status: 'queued', sync: { ...canonical.sync, status: 'local_newer', lastAttemptAt: new Date().toISOString() }, updatedAt: new Date().toISOString() });
-      const job = await enqueueExternalSyncJob(publication.externalAccountId, 'publish', {
+      const job = await enqueueExternalSyncJob(queuedPublication.externalAccountId, 'publish', {
         assetId: asset.assetId,
-        externalPublicationId: publication.externalPublicationId,
-        targetStatus: publication.targetStatus || 'published'
+        externalPublicationId: queuedPublication.externalPublicationId,
+        targetStatus: queuedPublication.targetStatus || 'published',
+        ...(sourceAsset?.originalFilename ? { originalFilename: sourceAsset.originalFilename } : {})
       });
       return res.status(202).json(job);
     } catch (error) {
