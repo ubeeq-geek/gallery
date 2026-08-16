@@ -1,4 +1,6 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import type sharpModule from 'sharp';
 
 export interface SquareCropInput {
@@ -88,6 +90,19 @@ const writeS3Object = async (s3: S3Client, bucket: string, key: string, body: Bu
 };
 
 const loadSharp = async (): Promise<typeof sharpModule> => (await import('sharp')).default;
+
+const localMediaPath = (root: string, key: string): string => {
+  const base = resolve(root);
+  const target = resolve(base, key);
+  if (target !== base && !target.startsWith(`${base}/`)) throw new Error('Invalid local media key.');
+  return target;
+};
+
+const writeLocalObject = async (root: string, key: string, body: Buffer): Promise<void> => {
+  const target = localMediaPath(root, key);
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, body);
+};
 
 const readSourceMetadata = async (
   sharp: typeof sharpModule,
@@ -287,6 +302,87 @@ export const generateCreatorCoverRenditions = async (params: {
 
   return {
     sourceKey,
+    renditionKeys,
+    crops: generatedCrops,
+    focalPoint,
+    sourceWidth: width,
+    sourceHeight: height
+  };
+};
+
+export const generateLocalCreatorProfileRenditions = async (params: {
+  root: string;
+  sourceKey: string;
+  targetPrefix: string;
+  squareCrop?: SquareCropInput;
+}): Promise<GeneratedCreatorProfileRenditions> => {
+  const sourceBuffer = await readFile(localMediaPath(params.root, params.sourceKey));
+  const sharp = await loadSharp();
+  const { width, height } = await readSourceMetadata(sharp, sourceBuffer, 'local', params.sourceKey);
+  const crop = pickSquareCrop(width, height, params.squareCrop);
+  const thumbnailKeys = {
+    square256: `${params.targetPrefix}/renditions/square256.jpg`,
+    square512: `${params.targetPrefix}/renditions/square512.jpg`,
+    square1024: `${params.targetPrefix}/renditions/square1024.jpg`
+  };
+  for (const [name, size] of [['square256', 256], ['square512', 512], ['square1024', 1024]] as const) {
+    const output = await sharp(sourceBuffer, { limitInputPixels: false })
+      .extract({ left: crop.x, top: crop.y, width: crop.size, height: crop.size })
+      .resize(size, size)
+      .jpeg({ quality: 82, mozjpeg: true })
+      .toBuffer();
+    await writeLocalObject(params.root, thumbnailKeys[name], output);
+  }
+  return {
+    sourceKey: params.sourceKey,
+    thumbnailKeys,
+    squareCrop: crop,
+    sourceWidth: width,
+    sourceHeight: height
+  };
+};
+
+export const generateLocalCreatorCoverRenditions = async (params: {
+  root: string;
+  sourceKey: string;
+  targetPrefix: string;
+  crops?: Partial<Record<'desktop' | 'tablet' | 'mobile', CoverCropInput>>;
+  focalPoint?: FocalPointInput;
+}): Promise<GeneratedCreatorCoverRenditions> => {
+  const sourceBuffer = await readFile(localMediaPath(params.root, params.sourceKey));
+  const sharp = await loadSharp();
+  const { width, height } = await readSourceMetadata(sharp, sourceBuffer, 'local', params.sourceKey);
+  const focalPoint = {
+    x: clamp(params.focalPoint?.x ?? 0.5, 0, 1),
+    y: clamp(params.focalPoint?.y ?? 0.5, 0, 1)
+  };
+  const renditionKeys = {
+    desktop: `${params.targetPrefix}/renditions/desktop.jpg`,
+    tablet: `${params.targetPrefix}/renditions/tablet.jpg`,
+    mobile: `${params.targetPrefix}/renditions/mobile.jpg`
+  };
+  const outputSizes = {
+    desktop: { width: 2400, height: 900 },
+    tablet: { width: 1600, height: 700 },
+    mobile: { width: 900, height: 1200 }
+  };
+  const generatedCrops = {
+    desktop: pickCoverCrop(width, height, outputSizes.desktop.width, outputSizes.desktop.height, focalPoint, params.crops?.desktop),
+    tablet: pickCoverCrop(width, height, outputSizes.tablet.width, outputSizes.tablet.height, focalPoint, params.crops?.tablet),
+    mobile: pickCoverCrop(width, height, outputSizes.mobile.width, outputSizes.mobile.height, focalPoint, params.crops?.mobile)
+  };
+  for (const name of Object.keys(renditionKeys) as Array<keyof typeof renditionKeys>) {
+    const crop = generatedCrops[name];
+    const size = outputSizes[name];
+    const output = await sharp(sourceBuffer, { limitInputPixels: false })
+      .extract({ left: crop.x, top: crop.y, width: crop.width, height: crop.height })
+      .resize(size.width, size.height)
+      .jpeg({ quality: 82, mozjpeg: true })
+      .toBuffer();
+    await writeLocalObject(params.root, renditionKeys[name], output);
+  }
+  return {
+    sourceKey: params.sourceKey,
     renditionKeys,
     crops: generatedCrops,
     focalPoint,

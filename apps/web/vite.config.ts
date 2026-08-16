@@ -2,6 +2,15 @@ import { defineConfig } from 'vite';
 import fs from 'fs';
 import path from 'path';
 
+const configuredApiUrl = process.env.VITE_API_BASE_URL || 'https://fanadmin.top:4000';
+const configuredApiPort = (() => {
+  try {
+    return new URL(configuredApiUrl).port || '4000';
+  } catch {
+    return '4000';
+  }
+})();
+
 export default defineConfig({
   server: {
     host: 'fanadmin.top',
@@ -24,7 +33,7 @@ export default defineConfig({
     // Cognito-session interference while the local API uses its seeded user.
     proxy: {
       '/local-api': {
-        target: 'https://127.0.0.1:4000',
+        target: `https://127.0.0.1:${configuredApiPort}`,
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path.replace(/^\/local-api/, ''),

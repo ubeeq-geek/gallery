@@ -24,6 +24,8 @@ export type StudioCreator = {
     bio?: string;
     externalLinks?: Array<{ label: string; url: string }>;
     theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+    coverPreset?: string;
+    showOnMemberProfile?: boolean;
     announcement?: { enabled: boolean; message: string; url?: string };
   };
   branding?: {
@@ -34,12 +36,22 @@ export type StudioCreator = {
         square512?: string;
         square1024?: string;
       };
+      thumbnailUrls?: {
+        square256?: string;
+        square512?: string;
+        square1024?: string;
+      };
       altText?: string;
       updatedAt: string;
     };
     coverImage?: {
       sourceKey: string;
       renditionKeys?: {
+        desktop?: string;
+        tablet?: string;
+        mobile?: string;
+      };
+      renditionUrls?: {
         desktop?: string;
         tablet?: string;
         mobile?: string;

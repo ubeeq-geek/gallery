@@ -5,6 +5,8 @@ import { AdminUpdateUserAttributesCommand, CognitoIdentityProviderClient, SignUp
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSignedUrl as getCloudFrontSignedUrl } from '@aws-sdk/cloudfront-signer';
 import { createHash, createPublicKey, randomUUID } from 'crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import jwt from 'jsonwebtoken';
 import { createOptionalAuthMiddleware, requireAdmin, requireAuth, resolveRole } from './auth';
 import { checkRateLimit } from './rateLimit';
@@ -50,6 +52,8 @@ import type { CanonicalAsset, CreatorCollection as CanonicalCollection, Publicat
 import {
   generateCreatorCoverRenditions,
   generateCreatorProfileRenditions,
+  generateLocalCreatorCoverRenditions,
+  generateLocalCreatorProfileRenditions,
   generateImageRenditions,
   type CoverCropInput,
   type FocalPointInput,
@@ -250,6 +254,48 @@ const sanitizeOptional = (value: unknown, maxLen: number): string | undefined =>
   return trimmed.slice(0, maxLen);
 };
 
+const decodeBasicHtmlEntities = (value: string): string => value
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&quot;/gi, '"')
+  .replace(/&#0*39;|&apos;/gi, "'")
+  .replace(/&lt;/gi, '<')
+  .replace(/&gt;/gi, '>')
+  .replace(/&amp;/gi, '&');
+
+const escapeLimitedRichText = (value: string): string => decodeBasicHtmlEntities(value)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
+
+const sanitizeLimitedRichText = (value: unknown, maxTextLength: number): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const source = value.trim();
+  if (!source) return undefined;
+  let textLength = 0;
+  const sanitized = source.split(/(<[^>]*>)/g).map((token) => {
+    if (token.startsWith('<')) {
+      if (/^<br\s*\/?\s*>$/i.test(token)) return '<br>';
+      if (/^<\/?(?:strong|b)\s*>$/i.test(token)) return token.startsWith('</') ? '</strong>' : '<strong>';
+      if (/^<\/?(?:em|i)\s*>$/i.test(token)) return token.startsWith('</') ? '</em>' : '<em>';
+      if (/^<\/?u\s*>$/i.test(token)) return token.startsWith('</') ? '</u>' : '<u>';
+      if (/^<\/?(?:div|p|li)\b[^>]*>$/i.test(token)) return token.startsWith('</') ? '<br>' : '';
+      return '';
+    }
+    const decoded = decodeBasicHtmlEntities(token);
+    const remaining = Math.max(0, maxTextLength - textLength);
+    const limited = decoded.slice(0, remaining);
+    textLength += limited.length;
+    return escapeLimitedRichText(limited);
+  }).join('').replace(/(?:<br>){3,}/g, '<br><br>').replace(/(?:<br>)+$/g, '');
+  return sanitized || undefined;
+};
+
+const limitedRichTextToPlainText = (value: unknown): string => decodeBasicHtmlEntities(String(value || '')
+  .replace(/<br\s*\/?>/gi, '\n')
+  .replace(/<[^>]*>/g, ''));
+
 const sanitizePublicHttpUrl = (value: unknown, maxLen = 1000): string | undefined => {
   const candidate = sanitizeOptional(value, maxLen);
   if (!candidate) return undefined;
@@ -261,20 +307,78 @@ const sanitizePublicHttpUrl = (value: unknown, maxLen = 1000): string | undefine
   }
 };
 
-const parseCreatorExternalLinks = (value: unknown): NonNullable<NonNullable<Creator['space']>['externalLinks']> => {
+const externalLinkDomains: Record<string, string[]> = {
+  'Instagram': ['instagram.com', 'instagr.am'],
+  'TikTok': ['tiktok.com', 'vm.tiktok.com', 'vt.tiktok.com'],
+  'Bluesky': ['bsky.app', 'bsky.social'],
+  'X / Twitter': ['x.com', 'twitter.com', 't.co'],
+  'Threads': ['threads.net'],
+  'Mastodon': ['mastodon.social', 'mastodon.online', 'mastodon.world', 'mastodon.art', 'mastodon.cloud'],
+  'Facebook': ['facebook.com', 'fb.me'],
+  'Tumblr': ['tumblr.com'],
+  'Pinterest': ['pinterest.com', 'pin.it'],
+  'LinkedIn': ['linkedin.com', 'lnkd.in'],
+  'Reddit': ['reddit.com', 'redd.it'],
+  'YouTube': ['youtube.com', 'youtu.be'],
+  'Vimeo': ['vimeo.com'],
+  'Twitch': ['twitch.tv'],
+  'DeviantArt': ['deviantart.com'],
+  'Cara': ['cara.app'],
+  'Behance': ['behance.net'],
+  'ArtStation': ['artstation.com'],
+  'Dribbble': ['dribbble.com'],
+  'Flickr': ['flickr.com', 'flic.kr'],
+  '500px': ['500px.com'],
+  'SoundCloud': ['soundcloud.com', 'on.soundcloud.com'],
+  'Bandcamp': ['bandcamp.com'],
+  'Spotify': ['spotify.com', 'spotify.link'],
+  'Apple Music': ['music.apple.com', 'apple.co'],
+  'FanVue': ['fanvue.com'],
+  'Patreon': ['patreon.com'],
+  'Ko-fi': ['ko-fi.com'],
+  'Buy Me a Coffee': ['buymeacoffee.com', 'bmc.link'],
+  'Etsy': ['etsy.com', 'etsy.me'],
+  'Gumroad': ['gumroad.com'],
+  'Substack': ['substack.com'],
+  'GitHub': ['github.com', 'github.io']
+};
+
+const supportedExternalLinkLabels = Object.keys(externalLinkDomains);
+
+const findSupportedExternalLinkLabel = (label: string): string | undefined =>
+  supportedExternalLinkLabels.find((candidate) => candidate.toLowerCase() === label.trim().toLowerCase());
+
+const isPlatformUrl = (url: string, allowedDomains: string[]): boolean => {
+  const hostname = new URL(url).hostname.toLowerCase();
+  return allowedDomains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+};
+
+const parseProfileExternalLinks = (value: unknown, options: { allowCustom: boolean }): Array<{ label: string; url: string }> => {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 12).flatMap((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
     const record = entry as Record<string, unknown>;
     const url = sanitizePublicHttpUrl(record.url);
     if (!url) return [];
-    const label = sanitizeOptional(record.label, 80) || new URL(url).hostname;
-    return [{ label, url }];
+    const submittedLabel = sanitizeOptional(record.label, 80) || new URL(url).hostname;
+    const supportedLabel = findSupportedExternalLinkLabel(submittedLabel);
+    if (supportedLabel && !isPlatformUrl(url, externalLinkDomains[supportedLabel])) return [];
+    if (!supportedLabel && !options.allowCustom) return [];
+    return [{ label: supportedLabel || submittedLabel, url }];
   });
 };
 
+const parseUserExternalLinks = (value: unknown): Array<{ label: string; url: string }> => parseProfileExternalLinks(value, { allowCustom: false });
+
+const parseCreatorExternalLinks = (value: unknown): NonNullable<NonNullable<Creator['space']>['externalLinks']> => parseProfileExternalLinks(value, { allowCustom: true });
+
 const parseCreatorSpaceTheme = (value: unknown): NonNullable<NonNullable<Creator['space']>['theme']> =>
   value === 'ubeeq' || value === 'sand' || value === 'forest' || value === 'slate' ? value : 'default';
+
+const parseCreatorCoverPreset = (value: unknown): string | undefined => {
+  const preset = sanitizeOptional(value, 80);
+  return preset && /^[a-z0-9][a-z0-9-]*$/.test(preset) ? preset : undefined;
+};
 
 const parseOptionalContentRating = (value: unknown): ContentRating | undefined => {
   if (value === undefined || value === null) return undefined;
@@ -875,10 +979,21 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   ];
 
   const encodeS3LikePath = (key: string): string => key.split('/').map((part) => encodeURIComponent(part)).join('/');
+  const writeLocalMediaSource = async (key: string, body: Buffer): Promise<void> => {
+    if (!config.localMediaDirectory) throw new Error('Local media storage is not configured.');
+    const base = resolve(config.localMediaDirectory);
+    const target = resolve(base, key);
+    if (target !== base && !target.startsWith(`${base}/`)) throw new Error('Invalid local media key.');
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, body);
+  };
   const publicMediaUrl = async (key?: string, localOrigin?: string): Promise<string | undefined> => {
     if (!key) return undefined;
     if (config.localMediaDirectory) {
-      return `${(localOrigin || 'http://localhost:4000').replace(/\/$/, '')}/media/local/${encodeS3LikePath(key)}`;
+      const localPublicOrigin = config.appOrigin
+        ? `${config.appOrigin.replace(/\/$/, '')}/local-api`
+        : (localOrigin || 'http://localhost:4000').replace(/\/$/, '');
+      return `${localPublicOrigin}/media/local/${encodeS3LikePath(key)}`;
     }
     if (mediaCdnDomain) {
       return `https://${mediaCdnDomain}/${encodeS3LikePath(key)}`;
@@ -889,6 +1004,33 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       { expiresIn: config.signedUrlTtlSeconds }
     );
   };
+
+  const publicProfileBranding = async (branding?: Creator['branding'], requestOrigin?: string) => ({
+    profileImage: branding?.profileImage ? {
+      altText: branding.profileImage.altText,
+      updatedAt: branding.profileImage.updatedAt,
+      thumbnailUrls: branding.profileImage.thumbnailKeys
+        ? Object.fromEntries(
+            await Promise.all(
+              Object.entries(branding.profileImage.thumbnailKeys)
+                .map(async ([name, key]) => [name, await publicMediaUrl(key, requestOrigin)])
+            )
+          )
+        : undefined
+    } : undefined,
+    coverImage: branding?.coverImage ? {
+      altText: branding.coverImage.altText,
+      updatedAt: branding.coverImage.updatedAt,
+      renditionUrls: branding.coverImage.renditionKeys
+        ? Object.fromEntries(
+            await Promise.all(
+              Object.entries(branding.coverImage.renditionKeys)
+                .map(async ([name, key]) => [name, await publicMediaUrl(key, requestOrigin)])
+            )
+          )
+        : undefined
+    } : undefined
+  });
 
   const buildPostMediaPayload = async (
     ref: Post['media'][number],
@@ -2331,6 +2473,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     bio: creator.space?.bio,
     externalLinks: creator.space?.externalLinks || [],
     theme: creator.space?.theme || 'default',
+    coverPreset: creator.space?.coverPreset,
     announcement: creator.space?.announcement?.enabled && creator.space.announcement.message
       ? creator.space.announcement
       : undefined,
@@ -2508,7 +2651,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const works = await listPublicSpaceWorks(creator);
     const origin = `${req.protocol}://${req.get('host')}`;
     const items = await Promise.all(works.map((work) => publicCanonicalWork(work, origin)));
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">\n<channel>\n<title>${xmlEscape(creator.name)}</title>\n<link>${xmlEscape(`${baseUrl}/works`)}</link>\n<description>${xmlEscape(creator.space?.bio || `${creator.name} works`)}</description>\n<atom:link href="${xmlEscape(feedUrl)}" rel="self" type="application/rss+xml" />\n${items.map((work) => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">\n<channel>\n<title>${xmlEscape(creator.name)}</title>\n<link>${xmlEscape(`${baseUrl}/works`)}</link>\n<description>${xmlEscape(limitedRichTextToPlainText(creator.space?.bio) || `${creator.name} works`)}</description>\n<atom:link href="${xmlEscape(feedUrl)}" rel="self" type="application/rss+xml" />\n${items.map((work) => {
       const url = `${baseUrl}/works/${encodeURIComponent(work.slug)}`;
       const preview = work.primaryAsset?.thumbnailUrl || (work.primaryAsset?.kind === 'image' ? work.primaryAsset.url : undefined);
       return `<item>\n<title>${xmlEscape(work.title)}</title>\n<link>${xmlEscape(url)}</link>\n<guid isPermaLink="false">urn:ubeeq:work:${xmlEscape(work.workId)}</guid>\n<pubDate>${new Date(work.publishedAt || work.updatedAt).toUTCString()}</pubDate>\n<description>${xmlEscape(work.description || '')}</description>${preview ? `\n<media:content url="${xmlEscape(preview)}" medium="image" />` : ''}\n</item>`;
@@ -3161,12 +3304,41 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (profile.username !== slug) {
       return res.redirect(302, `/u/${profile.username}`);
     }
+    const [publicCollections, publicFavorites, managedCreators, branding] = await Promise.all([
+      store.listPublicCollectionsByProfile('user', profile.userId, 12),
+      store.listPublicFavoritesByProfile('user', profile.userId),
+      store.listCreatorsByUserId(profile.userId),
+      publicProfileBranding(profile.branding, `${req.protocol}://${req.get('host')}`)
+    ]);
+    const publicCreators = (await Promise.all(
+      managedCreators
+        .filter((creator) => creator.status === 'active' && creator.space?.showOnMemberProfile === true)
+        .map(async (creator) => ({
+          creator,
+          isOwner: (await store.listCreatorMembers(creator.creatorId)).some((member) => member.userId === profile.userId && member.role === 'owner')
+        }))
+    )).filter(({ isOwner }) => isOwner).map(({ creator }) => creator);
     return res.json({
       username: profile.username,
       displayName: profile.displayName || profile.username,
       bio: profile.bio,
+      externalLinks: profile.externalLinks || [],
       location: profile.location,
-      website: profile.website
+      website: profile.website,
+      coverPreset: profile.coverPreset,
+      createdAt: profile.createdAt,
+      branding,
+      publicCollectionCount: publicCollections.length,
+      publicFavoriteCount: publicFavorites.length,
+      publicCollections: publicCollections.map((collection) => ({
+        collectionId: collection.collectionId,
+        title: collection.title,
+        description: collection.description,
+        imageCount: collection.imageCount || 0,
+        updatedDate: collection.updatedDate
+      })),
+      creators: publicCreators
+        .map((creator) => ({ creatorId: creator.creatorId, name: creator.name, slug: creator.slug }))
     });
   });
 
@@ -3470,10 +3642,12 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       name: creator.name,
       slug: creator.slug,
       status: creator.status,
+      isFollowing: isFollower,
       space: {
         bio: creator.space?.bio,
         externalLinks: creator.space?.externalLinks || [],
         theme: creator.space?.theme || 'default',
+        coverPreset: creator.space?.coverPreset,
         announcement: creator.space?.announcement?.enabled && creator.space.announcement.message
           ? creator.space.announcement
           : undefined
@@ -3986,6 +4160,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const normalizedDisclosurePolicy = profileDisclosurePolicy(profile);
     return res.json({
       ...profile,
+      branding: await publicProfileBranding(profile.branding, `${req.protocol}://${req.get('host')}`),
       matureContentEnabled: Boolean(profile.matureContentEnabled),
       maxAllowedContentRating: normalizeContentRating(profile.maxAllowedContentRating || 'graphic'),
       aiFilter: normalizedDisclosurePolicy.aiFilter,
@@ -4000,13 +4175,27 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       const creators = isAdminRequest(req)
         ? await store.listCreators()
         : await store.listCreatorsByUserId(req.authUser!.userId);
+      const requestOrigin = `${req.protocol}://${req.get('host')}`;
+      const withResolvedBranding = async (creator: Creator, memberRole: string) => {
+        const branding = await publicProfileBranding(creator.branding, requestOrigin);
+        return {
+          ...creator,
+          // Retain the legacy identifier while the remaining public UI is migrated
+          // from Artist terminology to the canonical Creator model.
+          artistId: creator.creatorId,
+          branding,
+          creatorThumbnailUrl: branding.profileImage?.thumbnailUrls?.square256
+            || branding.profileImage?.thumbnailUrls?.square512,
+          memberRole
+        };
+      };
       if (isAdminRequest(req)) {
-        return res.json(creators.map((creator) => ({ ...creator, memberRole: 'admin' })));
+        return res.json(await Promise.all(creators.map((creator) => withResolvedBranding(creator, 'admin'))));
       }
       const memberships = await Promise.all(
         creators.map(async (creator) => {
           const member = await getCreatorMembership(creator.creatorId, req.authUser!.userId);
-          return { ...creator, memberRole: member?.role || 'editor' };
+          return withResolvedBranding(creator, member?.role || 'editor');
         })
       );
       return res.json(memberships);
@@ -4043,9 +4232,13 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const updated: UserProfile = {
       ...existing,
       displayName: sanitizeOptional(req.body?.displayName, 80),
-      bio: sanitizeOptional(req.body?.bio, 600),
+      bio: sanitizeLimitedRichText(req.body?.bio, 600),
+      externalLinks: req.body?.externalLinks !== undefined
+        ? parseUserExternalLinks(req.body.externalLinks)
+        : (existing.externalLinks || []),
       location: sanitizeOptional(req.body?.location, 120),
       website: sanitizeOptional(req.body?.website, 220),
+      coverPreset: req.body?.coverPreset !== undefined ? parseCreatorCoverPreset(req.body.coverPreset) : existing.coverPreset,
       matureContentEnabled,
       maxAllowedContentRating,
       aiFilter: disclosurePolicy.aiFilter,
@@ -4055,7 +4248,142 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       updatedAt: new Date().toISOString()
     };
     await store.upsertUserProfile(updated);
-    return res.json(updated);
+    return res.json({
+      ...updated,
+      branding: await publicProfileBranding(updated.branding, `${req.protocol}://${req.get('host')}`)
+    });
+  });
+
+  app.post('/me/profile/branding/upload-url', requireAuth, async (req, res) => {
+    const profile = await ensureUserProfile(req);
+    const contentType = req.body?.contentType ? String(req.body.contentType) : 'image/jpeg';
+    if (!contentType.startsWith('image/')) return res.status(400).json({ message: 'Profile media must be an image.' });
+    const extension = contentType.includes('png') ? 'png' : (contentType.includes('webp') ? 'webp' : 'jpg');
+    const kind = req.body?.kind === 'cover' ? 'cover' : 'profile';
+    const key = `${profile.userId}/profile-branding/${kind}/source.${extension}`;
+    if (config.localMediaDirectory) {
+      return res.status(201).json({
+        key,
+        uploadUrl: `${req.protocol}://${req.get('host')}/me/profile/branding/local-upload?kind=${kind}`,
+        contentType,
+        requiresAuth: true
+      });
+    }
+    const uploadUrl = await getS3SignedUrl(
+      s3Client,
+      new PutObjectCommand({
+        Bucket: config.mediaBucket,
+        Key: key,
+        ContentType: contentType,
+        CacheControl: 'public, max-age=31536000, immutable'
+      }),
+      { expiresIn: 300 }
+    );
+    return res.status(201).json({ key, uploadUrl, contentType, requiresAuth: false });
+  });
+
+  app.put('/me/profile/branding/local-upload', requireAuth, express.raw({ type: 'image/*', limit: '25mb' }), async (req, res) => {
+    if (!config.localMediaDirectory) return res.status(404).json({ message: 'Local media storage is not enabled.' });
+    const profile = await ensureUserProfile(req);
+    const contentType = req.get('content-type') || 'image/jpeg';
+    if (!contentType.startsWith('image/') || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ message: 'An image body is required.' });
+    }
+    const extension = contentType.includes('png') ? 'png' : (contentType.includes('webp') ? 'webp' : 'jpg');
+    const kind = req.query.kind === 'cover' ? 'cover' : 'profile';
+    const key = `${profile.userId}/profile-branding/${kind}/source.${extension}`;
+    await writeLocalMediaSource(key, req.body);
+    return res.status(201).json({ key });
+  });
+
+  app.post('/me/profile/branding/profile-image', requireAuth, async (req, res) => {
+    const profile = await ensureUserProfile(req);
+    const sourceKey = sanitizeOptional(req.body?.sourceKey, 1024);
+    if (!sourceKey) return res.status(400).json({ message: 'sourceKey is required' });
+    const generated = config.localMediaDirectory
+      ? await generateLocalCreatorProfileRenditions({
+          root: config.localMediaDirectory,
+          sourceKey,
+          targetPrefix: `${profile.userId}/profile-branding/profile`,
+          squareCrop: parseSquareCrop(req.body?.squareCrop)
+        })
+      : await generateCreatorProfileRenditions({
+          s3: s3Client,
+          bucket: config.mediaBucket,
+          sourceKey,
+          targetPrefix: `${profile.userId}/profile-branding/profile`,
+          squareCrop: parseSquareCrop(req.body?.squareCrop)
+        });
+    const updated: UserProfile = {
+      ...profile,
+      branding: {
+        ...(profile.branding || {}),
+        profileImage: {
+          sourceKey: generated.sourceKey,
+          thumbnailKeys: generated.thumbnailKeys,
+          squareCrop: generated.squareCrop,
+          altText: sanitizeOptional(req.body?.altText, 200),
+          updatedAt: new Date().toISOString()
+        }
+      },
+      updatedAt: new Date().toISOString()
+    };
+    await store.upsertUserProfile(updated);
+    return res.status(201).json(updated);
+  });
+
+  app.post('/me/profile/branding/cover-image', requireAuth, async (req, res) => {
+    const profile = await ensureUserProfile(req);
+    const sourceKey = sanitizeOptional(req.body?.sourceKey, 1024);
+    if (!sourceKey) return res.status(400).json({ message: 'sourceKey is required' });
+    const coverOptions = {
+      sourceKey,
+      targetPrefix: `${profile.userId}/profile-branding/cover`,
+      focalPoint: parseFocalPoint(req.body?.focalPoint),
+      crops: {
+        desktop: parseCoverCrop(req.body?.crops?.desktop),
+        tablet: parseCoverCrop(req.body?.crops?.tablet),
+        mobile: parseCoverCrop(req.body?.crops?.mobile)
+      }
+    };
+    const generated = config.localMediaDirectory
+      ? await generateLocalCreatorCoverRenditions({ root: config.localMediaDirectory, ...coverOptions })
+      : await generateCreatorCoverRenditions({ s3: s3Client, bucket: config.mediaBucket, ...coverOptions });
+    const updated: UserProfile = {
+      ...profile,
+      branding: {
+        ...(profile.branding || {}),
+        coverImage: {
+          sourceKey: generated.sourceKey,
+          renditionKeys: generated.renditionKeys,
+          crops: generated.crops,
+          focalPoint: generated.focalPoint,
+          altText: sanitizeOptional(req.body?.altText, 200),
+          updatedAt: new Date().toISOString()
+        }
+      },
+      updatedAt: new Date().toISOString()
+    };
+    await store.upsertUserProfile(updated);
+    return res.status(201).json(updated);
+  });
+
+  app.delete('/me/profile/branding/:kind', requireAuth, async (req, res) => {
+    const profile = await ensureUserProfile(req);
+    const kind = req.params.kind;
+    if (kind !== 'profile-image' && kind !== 'cover-image') {
+      return res.status(400).json({ message: 'Unknown profile branding kind.' });
+    }
+    const updated: UserProfile = {
+      ...profile,
+      branding: {
+        ...(profile.branding || {}),
+        ...(kind === 'profile-image' ? { profileImage: undefined } : { coverImage: undefined })
+      },
+      updatedAt: new Date().toISOString()
+    };
+    await store.upsertUserProfile(updated);
+    return res.status(204).send();
   });
 
   app.patch('/me/username', requireAuth, async (req, res) => {
@@ -4643,7 +4971,25 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   });
 
   app.get('/studio/creators', requireAuth, async (req, res) => {
-    return res.json(await listVisibleCreators(req));
+    const creators = await listVisibleCreators(req);
+    const requestOrigin = `${req.protocol}://${req.get('host')}`;
+    return res.json(await Promise.all(creators.map(async (creator) => {
+      const resolvedBranding = await publicProfileBranding(creator.branding, requestOrigin);
+      return {
+        ...creator,
+        branding: creator.branding ? {
+          ...creator.branding,
+          profileImage: creator.branding.profileImage ? {
+            ...creator.branding.profileImage,
+            ...resolvedBranding.profileImage
+          } : undefined,
+          coverImage: creator.branding.coverImage ? {
+            ...creator.branding.coverImage,
+            ...resolvedBranding.coverImage
+          } : undefined
+        } : undefined
+      };
+    })));
   });
 
   app.get('/studio/integrations/bluesky/configuration', requireAuth, async (_req, res) => {
@@ -7029,9 +7375,11 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       defaultAiDisclosure: parseOptionalAiDisclosure(req.body?.defaultAiDisclosure) || 'none',
       defaultHeavyTopics: parseOptionalHeavyTopics(req.body?.defaultHeavyTopics) || [],
       space: req.body?.space && typeof req.body.space === 'object' ? {
-        bio: sanitizeOptional(req.body.space.bio, 5000),
+        bio: sanitizeLimitedRichText(req.body.space.bio, 5000),
         externalLinks: parseCreatorExternalLinks(req.body.space.externalLinks),
         theme: parseCreatorSpaceTheme(req.body.space.theme),
+        coverPreset: parseCreatorCoverPreset(req.body.space.coverPreset),
+        showOnMemberProfile: req.body.space.showOnMemberProfile === true,
         announcement: req.body.space.announcement && typeof req.body.space.announcement === 'object' ? {
           enabled: req.body.space.announcement.enabled === true,
           message: sanitizeOptional(req.body.space.announcement.message, 500) || '',
@@ -7274,9 +7622,13 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         ? (parseOptionalHeavyTopics(req.body.defaultHeavyTopics) || [])
         : normalizeHeavyTopics(existing.defaultHeavyTopics),
       space: req.body?.space && typeof req.body.space === 'object' ? {
-        bio: req.body.space.bio !== undefined ? sanitizeOptional(req.body.space.bio, 5000) : existing.space?.bio,
+        bio: req.body.space.bio !== undefined ? sanitizeLimitedRichText(req.body.space.bio, 5000) : existing.space?.bio,
         externalLinks: req.body.space.externalLinks !== undefined ? parseCreatorExternalLinks(req.body.space.externalLinks) : (existing.space?.externalLinks || []),
         theme: req.body.space.theme !== undefined ? parseCreatorSpaceTheme(req.body.space.theme) : (existing.space?.theme || 'default'),
+        coverPreset: req.body.space.coverPreset !== undefined ? parseCreatorCoverPreset(req.body.space.coverPreset) : existing.space?.coverPreset,
+        showOnMemberProfile: req.body.space.showOnMemberProfile !== undefined
+          ? req.body.space.showOnMemberProfile === true
+          : existing.space?.showOnMemberProfile === true,
         announcement: req.body.space.announcement !== undefined
           ? (req.body.space.announcement && typeof req.body.space.announcement === 'object' ? {
               enabled: req.body.space.announcement.enabled === true,
@@ -7302,13 +7654,20 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
     const sourceKey = sanitizeOptional(req.body?.sourceKey, 1024);
     if (!sourceKey) return res.status(400).json({ message: 'sourceKey is required' });
-    const generated = await generateCreatorProfileRenditions({
-      s3: s3Client,
-      bucket: config.mediaBucket,
-      sourceKey,
-      targetPrefix: `${existing.creatorId}/branding/profile`,
-      squareCrop: parseSquareCrop(req.body?.squareCrop)
-    });
+    const generated = config.localMediaDirectory
+      ? await generateLocalCreatorProfileRenditions({
+          root: config.localMediaDirectory,
+          sourceKey,
+          targetPrefix: `${existing.creatorId}/branding/profile`,
+          squareCrop: parseSquareCrop(req.body?.squareCrop)
+        })
+      : await generateCreatorProfileRenditions({
+          s3: s3Client,
+          bucket: config.mediaBucket,
+          sourceKey,
+          targetPrefix: `${existing.creatorId}/branding/profile`,
+          squareCrop: parseSquareCrop(req.body?.squareCrop)
+        });
     const updated: Creator = {
       ...existing,
       branding: {
@@ -7335,6 +7694,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const extension = contentType.includes('png') ? 'png' : (contentType.includes('webp') ? 'webp' : 'jpg');
     const kind = req.body?.kind === 'cover' ? 'cover' : 'profile';
     const key = `${existing.creatorId}/branding/${kind}/source.${extension}`;
+    if (config.localMediaDirectory) {
+      return res.status(201).json({
+        key,
+        uploadUrl: `${req.protocol}://${req.get('host')}/studio/creators/${encodeURIComponent(existing.creatorId)}/branding/local-upload?kind=${kind}`,
+        contentType,
+        requiresAuth: true
+      });
+    }
     const uploadUrl = await getS3SignedUrl(
       s3Client,
       new PutObjectCommand({
@@ -7345,7 +7712,21 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       }),
       { expiresIn: 300 }
     );
-    return res.status(201).json({ key, uploadUrl, contentType });
+    return res.status(201).json({ key, uploadUrl, contentType, requiresAuth: false });
+  });
+
+  app.put('/studio/creators/:creatorId/branding/local-upload', requireAuth, express.raw({ type: 'image/*', limit: '25mb' }), async (req, res) => {
+    if (!config.localMediaDirectory) return res.status(404).json({ message: 'Local media storage is not enabled.' });
+    if (!(await ensureCreatorAccountAccess(req, res, req.params.creatorId))) return;
+    const contentType = req.get('content-type') || 'image/jpeg';
+    if (!contentType.startsWith('image/') || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ message: 'An image body is required.' });
+    }
+    const extension = contentType.includes('png') ? 'png' : (contentType.includes('webp') ? 'webp' : 'jpg');
+    const kind = req.query.kind === 'cover' ? 'cover' : 'profile';
+    const key = `${req.params.creatorId}/branding/${kind}/source.${extension}`;
+    await writeLocalMediaSource(key, req.body);
+    return res.status(201).json({ key });
   });
 
   app.post('/studio/creators/:creatorId/branding/cover-image', requireAuth, async (req, res) => {
@@ -7357,9 +7738,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
     const sourceKey = sanitizeOptional(req.body?.sourceKey, 1024);
     if (!sourceKey) return res.status(400).json({ message: 'sourceKey is required' });
-    const generated = await generateCreatorCoverRenditions({
-      s3: s3Client,
-      bucket: config.mediaBucket,
+    const coverOptions = {
       sourceKey,
       targetPrefix: `${existing.creatorId}/branding/cover`,
       focalPoint: parseFocalPoint(req.body?.focalPoint),
@@ -7368,7 +7747,10 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         tablet: parseCoverCrop(req.body?.crops?.tablet),
         mobile: parseCoverCrop(req.body?.crops?.mobile)
       }
-    });
+    };
+    const generated = config.localMediaDirectory
+      ? await generateLocalCreatorCoverRenditions({ root: config.localMediaDirectory, ...coverOptions })
+      : await generateCreatorCoverRenditions({ s3: s3Client, bucket: config.mediaBucket, ...coverOptions });
     const updated: Creator = {
       ...existing,
       branding: {

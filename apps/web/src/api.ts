@@ -4,6 +4,15 @@ import type { StudioExternalAsset, StudioExternalPublication, StudioSpacePublica
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 const usesLocalDeveloperApi = import.meta.env.DEV && /^(https?:\/\/)(localhost|127\.0\.0\.1|fanadmin\.top)(?::\d+)?(?:\/|$)/.test(configuredApiBase);
 const API_BASE = usesLocalDeveloperApi ? '/local-api' : configuredApiBase;
+const preparedUploadUrl = (upload: { uploadUrl: string; requiresAuth?: boolean }): string => {
+  if (!upload.requiresAuth || !usesLocalDeveloperApi) return upload.uploadUrl;
+  try {
+    const url = new URL(upload.uploadUrl, window.location.origin);
+    return `${API_BASE}${url.pathname}${url.search}`;
+  } catch {
+    return upload.uploadUrl;
+  }
+};
 let myProfileInFlight: Promise<unknown> | null = null;
 const withDevCacheBypass = (url: string): string => {
   if (!import.meta.env.DEV) return url;
@@ -563,11 +572,17 @@ export const api = {
     }
     return myProfileInFlight;
   },
+  async getUserProfile(username: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/u/${encodeURIComponent(username)}`);
+    return handleJson(response);
+  },
   async updateMyProfile(payload: {
     displayName?: string;
     bio?: string;
+    externalLinks?: Array<{ label: string; url: string }>;
     location?: string;
     website?: string;
+    coverPreset?: string;
     matureContentEnabled?: boolean;
     maxAllowedContentRating?: 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
     aiFilter?: 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
@@ -579,6 +594,52 @@ export const api = {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
+    });
+    myProfileInFlight = null;
+    return handleJson(response);
+  },
+  async createMyProfileBrandingUploadUrl(payload: { kind: 'profile' | 'cover'; contentType: string }) {
+    const response = await fetch(`${API_BASE}/me/profile/branding/upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response) as Promise<{ key: string; uploadUrl: string; contentType: string; requiresAuth?: boolean }>;
+  },
+  async uploadPreparedFile(upload: { uploadUrl: string; contentType: string; requiresAuth?: boolean }, file: File) {
+    const response = await fetch(preparedUploadUrl(upload), {
+      method: 'PUT',
+      headers: { 'Content-Type': upload.contentType, ...(upload.requiresAuth ? await authHeaders() : {}) },
+      body: file
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.message || 'Unable to upload image.');
+    }
+    return response.status === 204 ? null : response.json().catch(() => null);
+  },
+  async setMyProfileImage(payload: { sourceKey: string; altText?: string; squareCrop?: { x: number; y: number; size: number } }) {
+    const response = await fetch(`${API_BASE}/me/profile/branding/profile-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    myProfileInFlight = null;
+    return handleJson(response);
+  },
+  async setMyProfileCover(payload: { sourceKey: string; altText?: string; focalPoint?: { x: number; y: number } }) {
+    const response = await fetch(`${API_BASE}/me/profile/branding/cover-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    myProfileInFlight = null;
+    return handleJson(response);
+  },
+  async deleteMyProfileBranding(kind: 'profile-image' | 'cover-image') {
+    const response = await fetch(`${API_BASE}/me/profile/branding/${kind}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
     });
     myProfileInFlight = null;
     return handleJson(response);
@@ -699,6 +760,7 @@ export const api = {
       bio?: string;
       externalLinks?: Array<{ label: string; url: string }>;
       theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+      coverPreset?: string;
       announcement?: { enabled: boolean; message: string; url?: string };
     };
   }) {
@@ -727,7 +789,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
-    return handleJson(response) as Promise<{ key: string; uploadUrl: string; contentType: string }>;
+    return handleJson(response) as Promise<{ key: string; uploadUrl: string; contentType: string; requiresAuth?: boolean }>;
   },
   async studioUploadCreatorCoverImage(creator: string, payload: {
     sourceKey: string;
@@ -829,6 +891,7 @@ export const api = {
       bio?: string;
       externalLinks?: Array<{ label: string; url: string }>;
       theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+      coverPreset?: string;
       announcement?: { enabled: boolean; message: string; url?: string };
     };
   }) {

@@ -8,12 +8,24 @@ import {
   type AppearancePreference
 } from './appearance';
 import { brand } from './brand';
+import { CREATOR_PROFILE_CHANGED_EVENT } from './profileEvents';
 import { StudioWorkspace } from './StudioWorkspace';
 import { ForCreatorsPage } from './pages/ForCreatorsPage';
 import { SpaceRulesPage } from './pages/SpaceRulesPage';
 import { SelfHostingPage } from './pages/SelfHostingPage';
 import { LandingPage } from './pages/LandingPage';
 import { CreatorCollectionPage, CreatorCollectionsPage, CreatorWorkPage, CreatorWorksPage } from './pages/CanonicalSpacePages';
+import UserProfilePage from './pages/UserProfilePage';
+import ProfileSettingsPage from './pages/SettingsPage';
+import { PublicProfileHero } from './components/PublicProfileHero';
+import { ProfileAvatar } from './components/ProfileAvatar';
+import { sanitizeProfileBio } from './profileBio';
+import {
+  si500px, siApplemusic, siArtstation, siBandcamp, siBehance, siBluesky, siBuymeacoffee,
+  siDeviantart, siDribbble, siEtsy, siFacebook, siFlickr, siGithub, siGumroad, siInstagram,
+  siKofi, siMastodon, siPatreon, siPinterest, siReddit, siSoundcloud, siSpotify, siSubstack,
+  siThreads, siTiktok, siTumblr, siTwitch, siVimeo, siX, siYoutube, type SimpleIcon
+} from 'simple-icons';
 import DiscoveryQuickReadOverlay, { PostMetaHeader, RichPostRenderer, type DiscoveryOverlayItem, type OverlayPost } from './components/DiscoveryQuickReadOverlay';
 import {
   changePassword,
@@ -33,7 +45,14 @@ import {
   type CurrentUser
 } from './cognitoAuth';
 
-type Artist = { artistId: string; name: string; slug: string; artistThumbnailUrl?: string; creatorThumbnailUrl?: string };
+type Artist = {
+  artistId: string;
+  name: string;
+  slug: string;
+  artistThumbnailUrl?: string;
+  creatorThumbnailUrl?: string;
+  branding?: { profileImage?: { updatedAt?: string } };
+};
 type ManagedArtist = Artist & { memberRole?: 'owner' | 'manager' | 'editor' | 'admin' };
 type FeedDensity = 'small' | 'medium' | 'large';
 type DensityViewport = 'mobile' | 'tablet' | 'desktop';
@@ -60,9 +79,6 @@ type DiscoveryDockSummary = {
   searchActive: boolean;
 };
 const DISCOVERY_FILTER_EVENT_NAME = 'ubeeq:discovery-filters';
-const DEFAULT_PROFILE_ICON_SRC = brand.id === 'eversally'
-  ? '/default-profile-icon-eversally.svg'
-  : '/default-profile-icon.svg';
 const OTP_TRUST_DAYS = 30;
 const otpTrustStorageKey = (email: string) => `ubeeq.otpTrust.${email.trim().toLowerCase()}`;
 const hasValidOtpTrust = (email: string): boolean => {
@@ -284,11 +300,14 @@ const guessArtistNameFromSlug = (slug?: string): string => {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
 };
-const creatorAvatarUrl = (artist: Artist): string | undefined => artist.creatorThumbnailUrl || artist.artistThumbnailUrl;
 const withAssetVersion = (url?: string, version?: string): string | undefined => {
   if (!url || !version) return url;
   return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}`;
 };
+const creatorAvatarUrl = (artist: Artist): string | undefined => withAssetVersion(
+  artist.creatorThumbnailUrl || artist.artistThumbnailUrl,
+  artist.branding?.profileImage?.updatedAt
+);
 const normalizeCreatorProfilePayload = (raw: CreatorProfilePayload): CreatorProfilePayload => {
   const normalizedGalleries = raw.galleries || raw.groupings || [];
   return {
@@ -542,10 +561,12 @@ type CreatorProfilePayload = {
   name: string;
   slug: string;
   status: 'active' | 'inactive';
+  isFollowing?: boolean;
   space?: {
     bio?: string;
     externalLinks?: Array<{ label: string; url: string }>;
     theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+    coverPreset?: string;
     announcement?: { enabled: boolean; message: string; url?: string };
   };
   branding?: {
@@ -560,6 +581,7 @@ type CreatorProfilePayload = {
     };
     coverImage?: {
       altText?: string;
+      updatedAt?: string;
       renditionUrls?: {
         desktop?: string;
         tablet?: string;
@@ -736,8 +758,24 @@ type UserProfile = {
   username: string;
   displayName?: string;
   bio?: string;
+  externalLinks?: Array<{ label: string; url: string }>;
   location?: string;
   website?: string;
+  coverPreset?: string;
+  branding?: {
+    profileImage?: {
+      sourceKey?: string;
+      thumbnailUrls?: { square256?: string; square512?: string; square1024?: string };
+      altText?: string;
+      updatedAt: string;
+    };
+    coverImage?: {
+      sourceKey?: string;
+      renditionUrls?: { desktop?: string; tablet?: string; mobile?: string };
+      altText?: string;
+      updatedAt: string;
+    };
+  };
   matureContentEnabled?: boolean;
   maxAllowedContentRating?: ContentRating;
   aiFilter?: AiFilterPreference;
@@ -860,7 +898,7 @@ function HeaderAuth({
   const location = useLocation();
   const headerRef = useRef<HTMLElement | null>(null);
   const closeUserMenus = () => {
-    document.querySelectorAll('details.user-menu[open]').forEach((item) => item.removeAttribute('open'));
+    document.querySelectorAll('details.user-menu[open], details.profile-switcher[open]').forEach((item) => item.removeAttribute('open'));
   };
   const handleSignOutClick = async () => {
     closeUserMenus();
@@ -883,9 +921,9 @@ function HeaderAuth({
   const showCreatorNav = Boolean(user);
   const studioCount = sanitizeNotificationCount(roleNotificationCounts?.studio);
   const adminCount = sanitizeNotificationCount(roleNotificationCounts?.admin);
-  // Every signed-in member has a personal profile; a creator workspace simply upgrades
-  // this link to their public creator profile.
-  const artistProfileHref = primaryManagedArtist?.slug ? `/creators/${primaryManagedArtist.slug}` : '/settings';
+  const memberProfileHref = profile?.username ? `/u/${encodeURIComponent(profile.username)}` : '/settings';
+  const creatorProfiles = (managedArtists || []).filter((artist) => Boolean(artist.slug));
+  const artistProfileHref = primaryManagedArtist?.slug ? `/creators/${primaryManagedArtist.slug}` : memberProfileHref;
   const studioHref = '/studio';
   const adminHref = studioHref;
   const isExternalAdminHref = false;
@@ -893,9 +931,7 @@ function HeaderAuth({
   const compactNavHref = canAccessStudio ? studioHref : artistProfileHref;
   const isExternalCompactNavHref = false;
   const compactNavCount = studioCount;
-  const isArtistNavActive = canAccessStudio
-    ? location.pathname.startsWith('/creators/')
-    : location.pathname.startsWith('/settings');
+  const isArtistNavActive = location.pathname.startsWith('/creators/') || location.pathname.startsWith('/u/');
   const isStudioNavActive = location.pathname.startsWith('/studio');
   const isAdminNavActive = false;
   const showMobileDiscoveryButton = discoveryDock?.viewport === 'mobile';
@@ -907,6 +943,50 @@ function HeaderAuth({
       })
     );
   };
+  const memberAvatarUrl = withAssetVersion(
+    profile?.branding?.profileImage?.thumbnailUrls?.square256
+      || profile?.branding?.profileImage?.thumbnailUrls?.square512,
+    profile?.branding?.profileImage?.updatedAt
+  );
+  const memberAvatarIdentity = `member:${profile?.username || user?.username || user?.email || 'member'}`;
+  const profileOptions = (className = 'profile-switcher-menu') => (
+    <div className={className}>
+      <div className="profile-switcher-heading">Your profiles</div>
+      <Link
+        to={memberProfileHref}
+        className={`profile-switcher-option${location.pathname.startsWith('/u/') ? ' is-current' : ''}`}
+        onClick={closeUserMenus}
+      >
+        <span className="profile-switcher-avatar">
+          <ProfileAvatar src={memberAvatarUrl} identity={memberAvatarIdentity} />
+        </span>
+        <span className="profile-switcher-copy">
+          <strong>Your Profile</strong>
+          <small>@{profile?.username || user?.username || 'member'}</small>
+        </span>
+        {location.pathname.startsWith('/u/') && <span className="profile-switcher-current" aria-label="Current profile">✓</span>}
+      </Link>
+      {creatorProfiles.length > 0 && <div className="profile-switcher-group-label">Creator profiles</div>}
+      {creatorProfiles.map((artist) => {
+        const href = `/creators/${encodeURIComponent(artist.slug)}`;
+        const current = location.pathname === href || location.pathname.startsWith(`${href}/`);
+        const thumbnail = creatorAvatarUrl(artist);
+        return (
+          <Link key={artist.artistId} to={href} className={`profile-switcher-option${current ? ' is-current' : ''}`} onClick={closeUserMenus}>
+            <span className="profile-switcher-avatar">
+              <ProfileAvatar src={thumbnail} identity={`creator:${artist.slug || artist.artistId}`} />
+            </span>
+            <span className="profile-switcher-copy">
+              <strong>{artist.name}</strong>
+              <small>@{artist.slug}</small>
+            </span>
+            {current && <span className="profile-switcher-current" aria-label="Current profile">✓</span>}
+          </Link>
+        );
+      })}
+      <Link className="profile-switcher-manage" to="/settings?section=profile" onClick={closeUserMenus}>Manage profiles</Link>
+    </div>
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -994,12 +1074,13 @@ function HeaderAuth({
                           {brand.creatorName}
                         </span>
                       )}
-                      <Link
-                        to={artistProfileHref}
-                        className={`creator-nav-link${isArtistNavActive ? ' is-active' : ''}`}
-                      >
-                        <span>Profile</span>
-                      </Link>
+                      <details className="profile-switcher">
+                        <summary className={`creator-nav-link profile-switcher-trigger${isArtistNavActive ? ' is-active' : ''}`}>
+                          <span>Profile</span>
+                          <span className="profile-switcher-chevron" aria-hidden="true" />
+                        </summary>
+                        {profileOptions()}
+                      </details>
                       {canAccessStudio && (
                         <Link
                           to={studioHref}
@@ -1042,41 +1123,17 @@ function HeaderAuth({
                       )}
                     </nav>
                     <nav className="creator-nav creator-nav-compact" aria-label={`${brand.creatorName} navigation`}>
-                      {canAccessStudio ? (
-                        <Link
-                          to={compactNavHref}
-                          className="creator-nav-link"
-                        >
-                          <span>{compactNavLabel}</span>
-                          {compactNavCount > 0 && (
-                            <span className="creator-nav-notification">
-                              {formatNotificationBadge(compactNavCount)}
-                            </span>
-                          )}
-                        </Link>
-                      ) : isExternalCompactNavHref ? (
-                        <a
-                          href={compactNavHref}
-                          className="creator-nav-link"
-                        >
-                          <span>{compactNavLabel}</span>
-                          {compactNavCount > 0 && (
-                            <span className="creator-nav-notification">
-                              {formatNotificationBadge(compactNavCount)}
-                            </span>
-                          )}
-                        </a>
-                      ) : (
-                        <Link
-                          to={compactNavHref}
-                          className="creator-nav-link"
-                        >
-                          <span>{compactNavLabel}</span>
-                          {compactNavCount > 0 && (
-                            <span className="creator-nav-notification">
-                              {formatNotificationBadge(compactNavCount)}
-                            </span>
-                          )}
+                      <details className="profile-switcher">
+                        <summary className={`creator-nav-link profile-switcher-trigger${isArtistNavActive ? ' is-active' : ''}`}>
+                          <span>Profiles</span>
+                          <span className="profile-switcher-chevron" aria-hidden="true" />
+                        </summary>
+                        {profileOptions()}
+                      </details>
+                      {canAccessStudio && (
+                        <Link to={studioHref} className={`creator-nav-link${isStudioNavActive ? ' is-active' : ''}`}>
+                          <span>Studio</span>
+                          {studioCount > 0 && <span className="creator-nav-notification">{formatNotificationBadge(studioCount)}</span>}
                         </Link>
                       )}
                     </nav>
@@ -1092,11 +1149,11 @@ function HeaderAuth({
                 )}
                 <details className="user-menu">
                   <summary className="user-menu-trigger" aria-label="Open account menu">
-                    <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
+                    <ProfileAvatar className="default-profile-icon" src={memberAvatarUrl} identity={memberAvatarIdentity} />
                   </summary>
                   <div className="user-menu-items">
                     <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
-                    <Link to={artistProfileHref} onClick={closeUserMenus}>{canAccessStudio ? `${brand.creatorName} profile` : 'Profile'}</Link>
+                    <Link to={memberProfileHref} onClick={closeUserMenus}>Your Profile</Link>
                     {canAccessStudio && (
                       <Link to={studioHref} onClick={closeUserMenus}>
                         Studio{studioCount > 0 ? ` (${formatNotificationBadge(studioCount)})` : ''}
@@ -1112,7 +1169,8 @@ function HeaderAuth({
                         Admin{adminCount > 0 ? ` (${formatNotificationBadge(adminCount)})` : ''}
                       </Link>
                     ))}
-                    <Link to="/settings" onClick={closeUserMenus}>Settings</Link>
+                    <Link to="/settings?section=preferences" onClick={closeUserMenus}>Preferences</Link>
+                    <Link to="/settings?section=security" onClick={closeUserMenus}>Security</Link>
                     <button onClick={() => void handleSignOutClick()}>Sign Out</button>
                   </div>
                 </details>
@@ -1188,15 +1246,23 @@ function HeaderAuth({
                 <div className="user-menu-sheet-handle" />
                 <div className="user-menu-profile">
                   <div className="user-menu-profile-avatar">
-                    <img className="default-profile-icon" src={DEFAULT_PROFILE_ICON_SRC} alt="" />
+                    <ProfileAvatar className="default-profile-icon" src={memberAvatarUrl} identity={memberAvatarIdentity} />
                   </div>
                   <div>
                     <div className="user-menu-profile-name">{displayName}</div>
                     <div className="user-menu-profile-email">{menuSecondaryLabel || displayName}</div>
                   </div>
                 </div>
-                <Link to="/settings" className="user-menu-settings-row" onClick={closeUserMenus}>
-                  <span>Settings</span>
+                <Link to={memberProfileHref} className="user-menu-settings-row" onClick={closeUserMenus}>
+                  <span>Your Profile</span>
+                  <span aria-hidden="true">›</span>
+                </Link>
+                <Link to="/settings?section=preferences" className="user-menu-settings-row" onClick={closeUserMenus}>
+                  <span>Preferences</span>
+                  <span aria-hidden="true">›</span>
+                </Link>
+                <Link to="/settings?section=security" className="user-menu-settings-row" onClick={closeUserMenus}>
+                  <span>Security</span>
                   <span aria-hidden="true">›</span>
                 </Link>
                 <Link to="/studio" className="user-menu-settings-row" onClick={closeUserMenus}>
@@ -4284,9 +4350,7 @@ function HomePage({
             {risingArtists.map((artist, i) => (
               <article key={artist.artistId || artist.name || `artist-special-${i}`} className="discovery-rising-pill">
                 <div className="discovery-rising-avatar">
-                  {creatorAvatarUrl(artist)
-                    ? <img src={creatorAvatarUrl(artist)} alt={artist.name || 'Creator'} loading="lazy" decoding="async" />
-                    : <img src={DEFAULT_PROFILE_ICON_SRC} alt="" />}
+                  <ProfileAvatar src={creatorAvatarUrl(artist)} identity={`creator:${artist.slug || artist.artistId || artist.name}`} alt={artist.name || 'Creator'} />
                 </div>
                 <div className="discovery-rising-meta">
                   <div className="discovery-card-title">
@@ -4432,9 +4496,7 @@ function HomePage({
             {risingArtists.map((artist, i) => (
               <article key={artist.artistId || artist.name || `artist-${i}`} className="discovery-artist-card">
                 <div className="discovery-artist-avatar">
-                  {creatorAvatarUrl(artist)
-                    ? <img src={creatorAvatarUrl(artist)} alt={artist.name || 'Creator'} loading="lazy" decoding="async" />
-                    : <img src={DEFAULT_PROFILE_ICON_SRC} alt="" />}
+                  <ProfileAvatar src={creatorAvatarUrl(artist)} identity={`creator:${artist.slug || artist.artistId || artist.name}`} alt={artist.name || 'Creator'} />
                 </div>
                 <div className="discovery-artist-meta">
                   <div className="discovery-card-title">
@@ -6375,23 +6437,43 @@ function TrendingPage({ viewerProfile }: { viewerProfile?: UserProfile | null })
   );
 }
 
+const profilePlatformIcons: Record<string, SimpleIcon> = {
+  Instagram: siInstagram, TikTok: siTiktok, Bluesky: siBluesky, 'X / Twitter': siX,
+  Threads: siThreads, Mastodon: siMastodon, Facebook: siFacebook, Tumblr: siTumblr,
+  Pinterest: siPinterest, Reddit: siReddit, YouTube: siYoutube, Vimeo: siVimeo,
+  Twitch: siTwitch, DeviantArt: siDeviantart, Behance: siBehance, ArtStation: siArtstation,
+  Dribbble: siDribbble, Flickr: siFlickr, '500px': si500px, SoundCloud: siSoundcloud,
+  Bandcamp: siBandcamp, Spotify: siSpotify, 'Apple Music': siApplemusic, Patreon: siPatreon,
+  'Ko-fi': siKofi, 'Buy Me a Coffee': siBuymeacoffee, Etsy: siEtsy, Gumroad: siGumroad,
+  Substack: siSubstack, GitHub: siGithub
+};
+
+function ProfileExternalLinkIcon({ label }: { label: string }) {
+  const icon = profilePlatformIcons[label];
+  if (icon) return <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={icon.path} /></svg>;
+  return <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="7.25" stroke="currentColor" strokeWidth="1.6" /><path d="M2.9 10h14.2M10 2.75c2.05 2.02 3.1 4.44 3.1 7.25S12.05 15.23 10 17.25C7.95 15.23 6.9 12.81 6.9 10S7.95 4.77 10 2.75Z" stroke="currentColor" strokeWidth="1.35" /></svg>;
+}
+
 function CreatorProfilePage({
   viewerProfile,
+  managedArtists,
   onDiscoveryDockChange
 }: {
   viewerProfile?: UserProfile | null;
+  managedArtists?: ManagedArtist[];
   onDiscoveryDockChange?: (state: DiscoveryDockSummary | null) => void;
 }) {
   const { slug = '' } = useParams();
   const [profile, setProfile] = useState<CreatorProfilePayload | null>(null);
   const [creatorPosts, setCreatorPosts] = useState<CreatorPostSummary[]>([]);
-  const [artistTab, setArtistTab] = useState<'feed' | 'galleries'>('feed');
+  const [artistTab, setArtistTab] = useState<'works' | 'about'>('works');
   const [feedItems, setFeedItems] = useState<TrendingImage[]>([]);
   const [feedCursor, setFeedCursor] = useState<string | undefined>(undefined);
   const [artistFeedSort, setArtistFeedSort] = useState<'latest' | 'trending'>('latest');
   const [feedLoading, setFeedLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [followSaving, setFollowSaving] = useState(false);
   const [feedDensity, setFeedDensity] = useState<FeedDensity>('large');
   const [densityViewport, setDensityViewport] = useState<DensityViewport>(() => {
     if (typeof window === 'undefined') return 'desktop';
@@ -6430,6 +6512,10 @@ function CreatorProfilePage({
   const discoverySearchInputRef = useRef<HTMLInputElement | null>(null);
   const compactSearchInputRef = useRef<HTMLInputElement | null>(null);
   const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
+  const profileEditorId = profile?.creatorId || profile?.artistId;
+  const canEditProfile = Boolean(profile && profileEditorId && (managedArtists || []).some((artist) => (
+    artist.artistId === profileEditorId || artist.slug === profile.slug
+  )));
   const creatorPostByMediaId = creatorPosts.reduce<Record<string, { slug: string; title: string }>>((acc, post) => {
     const ids = [
       ...(post.discoveryMediaIds || []),
@@ -6510,7 +6596,7 @@ function CreatorProfilePage({
       const response = normalizeCreatorProfilePayload(await api.getCreatorProfile(slug) as CreatorProfilePayload);
       const creatorId = response.artistId || response.creatorId || '';
       setProfile(response);
-      setArtistTab('feed');
+      setArtistTab('works');
       const initialFeed = (response.feedItems || []).map((item) => mapFeedItemToTrendingShape(item, response.name, creatorId));
       setFeedItems(initialFeed);
       setFeedCursor(undefined);
@@ -6527,6 +6613,25 @@ function CreatorProfilePage({
       setCreatorPosts(response.items || []);
     } catch {
       setCreatorPosts([]);
+    }
+  };
+
+  const toggleCreatorFollow = async () => {
+    if (!profile || !viewerProfile || followSaving) return;
+    setFollowSaving(true);
+    setError('');
+    try {
+      if (profile.isFollowing) await api.unfollowCreator(profile.creatorId || profile.artistId || slug);
+      else await api.followCreator(profile.creatorId || profile.artistId || slug);
+      setProfile((current) => current ? {
+        ...current,
+        isFollowing: !current.isFollowing,
+        followerCount: Math.max(0, current.followerCount + (current.isFollowing ? -1 : 1))
+      } : current);
+    } catch (reason) {
+      setError((reason as Error).message || 'Unable to update this follow.');
+    } finally {
+      setFollowSaving(false);
     }
   };
 
@@ -6571,7 +6676,7 @@ function CreatorProfilePage({
   };
 
   useEffect(() => {
-    setArtistTab('feed');
+    setArtistTab('works');
     setArtistFeedSort('latest');
     setFeedItems([]);
     setFeedCursor(undefined);
@@ -6611,7 +6716,7 @@ function CreatorProfilePage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const evaluate = () => {
-      if (artistTab !== 'feed') {
+      if (artistTab !== 'works') {
         setShowCompactDiscoveryDock(false);
         return;
       }
@@ -6657,7 +6762,7 @@ function CreatorProfilePage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handleCompactFilterIntent = (rawEvent: Event) => {
-      if (artistTab !== 'feed') return;
+      if (artistTab !== 'works') return;
       const detail = (rawEvent as CustomEvent<{ section?: DiscoveryFilterSection }>).detail || {};
       const requestedSection = detail.section || 'period';
       if (densityViewport === 'mobile') {
@@ -6931,11 +7036,8 @@ function CreatorProfilePage({
   if (loading && !profile) return <div className="layout">Loading...</div>;
   if (!profile) return <div className="layout">{error || 'Creator not found'}</div>;
 
-  const followerLabel = `${profile.followerCount} ${profile.followerCount === 1 ? 'follower' : 'followers'}`;
   const creatorGroupings = profile.galleries || [];
   const galleryCount = profile.galleryCount ?? profile.groupingCount ?? creatorGroupings.length;
-  const galleryLabel = `${galleryCount} ${galleryCount === 1 ? 'gallery' : 'galleries'}`;
-  const imageLabel = `${profile.imageCount} ${profile.imageCount === 1 ? 'image' : 'images'}`;
   const profileImageUrl = profile.branding?.profileImage?.thumbnailUrls?.square512
     || profile.branding?.profileImage?.thumbnailUrls?.square256;
   const profileImageSrc = withAssetVersion(profileImageUrl, profile.branding?.profileImage?.updatedAt);
@@ -6944,6 +7046,7 @@ function CreatorProfilePage({
   const coverTabletUrl = profile.branding?.coverImage?.renditionUrls?.tablet;
   const coverMobileUrl = profile.branding?.coverImage?.renditionUrls?.mobile;
   const coverImageAlt = profile.branding?.coverImage?.altText || `${profile.name} cover image`;
+  const creatorFeedUrls = api.getCreatorFeedUrls(profile.slug);
   const renderArtistCard = (item: TrendingImage, index: number) => {
     const assetType = item.assetType || 'image';
     const fallbackPosterUrl = item.previewPosterUrl || (assetType === 'video' && isLikelyImageUrl(item.previewUrl) ? item.previewUrl : undefined);
@@ -7193,109 +7296,153 @@ function CreatorProfilePage({
   return (
     <div className="layout discovery-layout" data-theme={profile.space?.theme === 'default' ? undefined : profile.space?.theme}>
       {profile.space?.announcement && <aside className="canonical-space-announcement">{profile.space.announcement.url ? <a href={profile.space.announcement.url}>{profile.space.announcement.message}</a> : profile.space.announcement.message}</aside>}
-      {(coverDesktopUrl || coverTabletUrl || coverMobileUrl) && (
-        <section className="panel" style={{ padding: 0, overflow: 'hidden' }}>
-          <picture>
-            {coverMobileUrl && <source media="(max-width: 699px)" srcSet={coverMobileUrl} />}
-            {coverTabletUrl && <source media="(max-width: 1099px)" srcSet={coverTabletUrl} />}
-            <img
-              src={coverDesktopUrl || coverTabletUrl || coverMobileUrl || ''}
-              alt={coverImageAlt}
-              style={{ width: '100%', display: 'block', maxHeight: '380px', objectFit: 'cover' }}
-            />
-          </picture>
-        </section>
-      )}
-      <section className="panel discovery-hero">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <img
-            src={profileImageSrc || DEFAULT_PROFILE_ICON_SRC}
-            alt={profileImageSrc ? profileImageAlt : ''}
-            style={{ width: '72px', height: '72px', borderRadius: '999px', objectFit: 'cover', border: '1px solid rgba(255,255,255,0.2)' }}
-          />
-          <div>
-          <h1>{profile.name}</h1>
-          <p>
-            {followerLabel}
-            {' • '}
-            <span>{galleryLabel}</span>
-            {' • '}
-            <span>{imageLabel}</span>
-          </p>
-          </div>
-        </div>
-        <div className="discovery-hero-actions">
-          <button className="auth-primary-btn">Follow creator</button>
-          <Link className="auth-secondary-btn no-underline" to={`/creators/${encodeURIComponent(profile.slug)}/works`}>Works</Link>
-          <Link className="auth-secondary-btn no-underline" to={`/creators/${encodeURIComponent(profile.slug)}/collections`}>Collections</Link>
-          <Link className="auth-secondary-btn no-underline" to="/">Back to discovery</Link>
-        </div>
-      </section>
-      {(profile.space?.bio || profile.space?.externalLinks?.length) && <section className="panel creator-space-about"><h2>About</h2>{profile.space.bio && <p>{profile.space.bio}</p>}{Boolean(profile.space.externalLinks?.length) && <nav>{profile.space.externalLinks?.map((link) => <a key={link.url} href={link.url} rel="me noreferrer">{link.label}</a>)}</nav>}</section>}
-
-      <section id="creator-groupings-section" className="creator-collection-rail-section">
-        <div className="creator-section-heading">
-          <div>
-            <p className="creator-section-kicker">Collections</p>
-            <h2>{profile.name}'s galleries & albums</h2>
-          </div>
-          {creatorGroupings.length > 1 && (
-            <div className="creator-gallery-rail-controls">
-              <button type="button" className="creator-gallery-rail-page-btn" onClick={() => pageGalleryRail(-1)} aria-label="Previous galleries">‹</button>
-              <button type="button" className="creator-gallery-rail-page-btn" onClick={() => pageGalleryRail(1)} aria-label="Next galleries">›</button>
+      <PublicProfileHero
+        kind="creator"
+        name={profile.name}
+        handle={profile.slug}
+        avatarUrl={profileImageSrc}
+        avatarAlt={profileImageAlt}
+        cover={{
+          desktop: withAssetVersion(coverDesktopUrl, profile.branding?.coverImage?.updatedAt),
+          tablet: withAssetVersion(coverTabletUrl, profile.branding?.coverImage?.updatedAt),
+          mobile: withAssetVersion(coverMobileUrl, profile.branding?.coverImage?.updatedAt),
+          alt: coverImageAlt
+        }}
+        coverPreset={profile.space?.coverPreset}
+        stats={[
+          { label: 'Followers', value: profile.followerCount },
+          { label: 'Collections', value: galleryCount },
+          { label: 'Works', value: profile.imageCount }
+        ]}
+        actions={(
+          <div className="public-profile-action-layout">
+            <div className="public-profile-action-buttons">
+            <button
+              type="button"
+              className={`auth-secondary-btn public-profile-view-btn${artistTab === 'works' ? ' is-active' : ''}`}
+              aria-pressed={artistTab === 'works'}
+              onClick={() => setArtistTab('works')}
+            >
+              Works
+            </button>
+            <button
+              type="button"
+              className={`auth-secondary-btn public-profile-view-btn${artistTab === 'about' ? ' is-active' : ''}`}
+              aria-pressed={artistTab === 'about'}
+              onClick={() => setArtistTab('about')}
+            >
+              About
+            </button>
+            {canEditProfile
+              ? <Link className="auth-primary-btn no-underline" to={`/studio/workspace?section=creator-profile&creatorId=${encodeURIComponent(profileEditorId!)}`}>Edit profile</Link>
+              : viewerProfile
+              ? <button className={profile.isFollowing ? 'auth-secondary-btn' : 'auth-primary-btn'} disabled={followSaving} onClick={() => void toggleCreatorFollow()}>{followSaving ? 'Saving…' : profile.isFollowing ? 'Following' : 'Follow'}</button>
+              : <Link className="auth-primary-btn no-underline" to="/auth/signin">Sign in to follow</Link>}
+              <span className="public-profile-feed-links" role="group" aria-label={`${profile.name} syndication feeds`}>
+              <a href={creatorFeedUrls.rss} target="_blank" rel="noreferrer" title="Open RSS feed in a new tab">
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <circle cx="5" cy="15" r="1.5" fill="currentColor" />
+                  <path d="M4 9.25A6.75 6.75 0 0110.75 16M4 4a12 12 0 0112 12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+                RSS
+              </a>
+              <a href={creatorFeedUrls.atom} target="_blank" rel="noreferrer" title="Open Atom feed in a new tab">
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <ellipse cx="10" cy="10" rx="8" ry="3.25" stroke="currentColor" strokeWidth="1.35" />
+                  <ellipse cx="10" cy="10" rx="8" ry="3.25" stroke="currentColor" strokeWidth="1.35" transform="rotate(60 10 10)" />
+                  <ellipse cx="10" cy="10" rx="8" ry="3.25" stroke="currentColor" strokeWidth="1.35" transform="rotate(120 10 10)" />
+                  <circle cx="10" cy="10" r="1.35" fill="currentColor" />
+                </svg>
+                ATOM
+              </a>
+              </span>
             </div>
-          )}
-        </div>
-        {creatorGroupings.length > 0 ? (
-          <div ref={galleryRailRef} className="creator-gallery-rail">
-            {creatorGroupings.map((grouping, i) => {
-              const layers = galleryStackLayersById[grouping.galleryId] || [];
-              const front = layers[0] || grouping.galleryThumbnailUrl;
-              const mid = layers[1] || front;
-              const back = layers[2] || mid;
-              return (
-                <article key={`${grouping.galleryId}-grouping-${i}`} className="creator-gallery-rail-card">
-                  <Link to={`/gallery/${grouping.slug}`} className="no-underline">
-                    <div className="discovery-stack creator-gallery-rail-stack">
-                      <div className="discovery-stack-layer discovery-stack-layer-back">
-                        {back ? <img src={back} alt="" loading="lazy" decoding="async" aria-hidden="true" /> : <div className="discovery-stack-placeholder" aria-hidden="true" />}
-                      </div>
-                      <div className="discovery-stack-layer discovery-stack-layer-mid">
-                        {mid ? <img src={mid} alt="" loading="lazy" decoding="async" aria-hidden="true" /> : <div className="discovery-stack-placeholder" aria-hidden="true" />}
-                      </div>
-                      <div className="discovery-stack-layer discovery-stack-layer-front">
-                        {front ? <img src={front} alt={grouping.title || 'Gallery cover'} loading={i < 2 ? 'eager' : 'lazy'} decoding="async" /> : <div className="discovery-swatch" style={{ backgroundColor: swatches[(i + 2) % swatches.length] }} />}
-                      </div>
-                    </div>
-                    <div className="creator-gallery-rail-meta">
-                      <span className="creator-gallery-visibility">{grouping.visibility === 'premium' ? 'Premium' : grouping.visibility === 'preview' ? 'Preview' : 'Public'}</span>
-                      <h3>{grouping.title || 'Untitled gallery'}</h3>
-                      <p>{grouping.imageCount} creations · {grouping.favoriteCount} favorites</p>
-                    </div>
-                  </Link>
-                </article>
-              );
-            })}
+            <div className="public-profile-action-links">
+              {Boolean(profile.space?.externalLinks?.length) && (
+                <span className="public-profile-external-links" role="group" aria-label={`${profile.name} external links`}>
+                  {profile.space?.externalLinks?.map((link) => (
+                    <a key={link.url} href={link.url} target="_blank" rel="me noreferrer" title={link.label} aria-label={link.label}>
+                      <ProfileExternalLinkIcon label={link.label} />
+                    </a>
+                  ))}
+                </span>
+              )}
+            </div>
           </div>
-        ) : (
-          <p className="small">No published galleries or albums yet.</p>
         )}
-      </section>
+      />
 
-      <section id="creator-discovery-feed" className="creator-discovery-feed-section">
-        <div className="creator-section-heading">
-          <div>
-            <p className="creator-section-kicker">Discovery feed</p>
-            <h2>All creations by {profile.name}</h2>
-          </div>
-          <span className="creator-feed-count">{filteredFeedItems.length} shown</span>
-        </div>
-        <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
-          {filteredFeedItems.map((item, i) => renderArtistCard(item, i))}
-        </div>
-        {filteredFeedItems.length === 0 && <p className="small">No creations match the current discovery preferences.</p>}
-        <AutoLoadSentinel enabled={Boolean(feedCursor)} loading={feedLoading} onLoadMore={() => loadFeed(true)} />
-      </section>
+      {artistTab === 'about' ? (
+        <section id="profile-about" className="panel public-profile-about creator-profile-about-view">
+          <p className="creator-section-kicker">About</p>
+          <h2>About {profile.name}</h2>
+          {profile.space?.bio
+            ? <div className="limited-bio-content" dangerouslySetInnerHTML={{ __html: sanitizeProfileBio(profile.space.bio) }} />
+            : <p className="small">This creator has not added a biography yet.</p>}
+        </section>
+      ) : (
+        <>
+          {creatorGroupings.length > 1 && (
+            <section id="creator-groupings-section" className="creator-collection-rail-section">
+              <div className="creator-section-heading">
+                <div>
+                  <p className="creator-section-kicker">Collections</p>
+                  <h2>Browse {profile.name}'s collections</h2>
+                </div>
+                <div className="creator-gallery-rail-controls">
+                  <button type="button" className="creator-gallery-rail-page-btn" onClick={() => pageGalleryRail(-1)} aria-label="Previous collections">‹</button>
+                  <button type="button" className="creator-gallery-rail-page-btn" onClick={() => pageGalleryRail(1)} aria-label="Next collections">›</button>
+                </div>
+              </div>
+              <div ref={galleryRailRef} className="creator-gallery-rail">
+                {creatorGroupings.map((grouping, i) => {
+                  const layers = galleryStackLayersById[grouping.galleryId] || [];
+                  const front = layers[0] || grouping.galleryThumbnailUrl;
+                  const mid = layers[1] || front;
+                  const back = layers[2] || mid;
+                  return (
+                    <article key={`${grouping.galleryId}-grouping-${i}`} className="creator-gallery-rail-card">
+                      <Link to={`/gallery/${grouping.slug}`} className="no-underline">
+                        <div className="discovery-stack creator-gallery-rail-stack">
+                          <div className="discovery-stack-layer discovery-stack-layer-back">
+                            {back ? <img src={back} alt="" loading="lazy" decoding="async" aria-hidden="true" /> : <div className="discovery-stack-placeholder" aria-hidden="true" />}
+                          </div>
+                          <div className="discovery-stack-layer discovery-stack-layer-mid">
+                            {mid ? <img src={mid} alt="" loading="lazy" decoding="async" aria-hidden="true" /> : <div className="discovery-stack-placeholder" aria-hidden="true" />}
+                          </div>
+                          <div className="discovery-stack-layer discovery-stack-layer-front">
+                            {front ? <img src={front} alt={grouping.title || 'Gallery cover'} loading={i < 2 ? 'eager' : 'lazy'} decoding="async" /> : <div className="discovery-swatch" style={{ backgroundColor: swatches[(i + 2) % swatches.length] }} />}
+                          </div>
+                        </div>
+                        <div className="creator-gallery-rail-meta">
+                          <span className="creator-gallery-visibility">{grouping.visibility === 'premium' ? 'Premium' : grouping.visibility === 'preview' ? 'Preview' : 'Public'}</span>
+                          <h3>{grouping.title || 'Untitled gallery'}</h3>
+                          <p>{grouping.imageCount} creations · {grouping.favoriteCount} favorites</p>
+                        </div>
+                      </Link>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          <section id="creator-discovery-feed" className="creator-discovery-feed-section">
+            <div className="creator-section-heading">
+              <div>
+                <p className="creator-section-kicker">Latest works</p>
+                <h2>Latest from {profile.name}</h2>
+              </div>
+              <span className="creator-feed-count">{filteredFeedItems.length} shown</span>
+            </div>
+            <div className="gallery-discovery-grid" style={{ '--gallery-grid-columns': mediaColumns } as any}>
+              {filteredFeedItems.map((item, i) => renderArtistCard(item, i))}
+            </div>
+            {filteredFeedItems.length === 0 && <p className="small">No works match the current discovery preferences.</p>}
+            <AutoLoadSentinel enabled={Boolean(feedCursor)} loading={feedLoading} onLoadMore={() => loadFeed(true)} />
+          </section>
+        </>
+      )}
 
       {focusedOpen && (
         <div className="discovery-focus-modal-layer" onClick={closeFocusedViewer}>
@@ -7884,6 +8031,9 @@ export default function App() {
       }
     };
     void loadHeaderNav();
+    const handleCreatorProfileChanged = () => {
+      void loadHeaderNav();
+    };
     const handleStorage = (event: StorageEvent) => {
       if (event.key && event.key !== ROLE_NOTIFICATION_STORAGE_KEY) return;
       const storedCounts = readRoleNotificationCounts();
@@ -7893,9 +8043,11 @@ export default function App() {
       }));
     };
     window.addEventListener('storage', handleStorage);
+    window.addEventListener(CREATOR_PROFILE_CHANGED_EVENT, handleCreatorProfileChanged);
     return () => {
       cancelled = true;
       window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(CREATOR_PROFILE_CHANGED_EVENT, handleCreatorProfileChanged);
     };
   }, [user?.username]);
 
@@ -7918,7 +8070,8 @@ export default function App() {
         <Route path="/story" element={<HomePage viewerProfile={myProfile} mediaRoute="story" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/image" element={<HomePage viewerProfile={myProfile} mediaRoute="image" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/trending" element={<TrendingPage viewerProfile={myProfile} />} />
-        <Route path="/creators/:slug" element={<CreatorProfilePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/creators/:slug" element={<CreatorProfilePage viewerProfile={myProfile} managedArtists={managedArtists} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/u/:slug" element={<UserProfilePage viewerProfile={myProfile} />} />
         <Route path="/creators/:slug/works" element={<CreatorWorksPage />} />
         <Route path="/creators/:slug/works/:workSlug" element={<CreatorWorkPage />} />
         <Route path="/creators/:slug/collections" element={<CreatorCollectionsPage />} />
@@ -7932,7 +8085,7 @@ export default function App() {
         <Route path="/collections/:collectionId" element={<CollectionDetailPage />} />
         <Route path="/auth/callback" element={<AuthCallbackPage setUser={setUser} />} />
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
-        <Route path="/settings" element={<SettingsPage user={user} onProfileChanged={setMyProfile} />} />
+        <Route path="/settings" element={<ProfileSettingsPage user={user} onProfileChanged={(profile) => setMyProfile(profile)} />} />
         <Route path="/studio" element={user ? <StudioWorkspace /> : <Navigate to="/auth/signin" replace />} />
         <Route path="/studio/workspace" element={user ? <StudioWorkspace /> : <Navigate to="/auth/signin" replace />} />
         <Route path="/admin" element={<Navigate to="/studio" replace />} />

@@ -101,6 +101,58 @@ export interface Post {
   publishedAt?: string;
 }
 
+export interface ProfileBranding {
+  profileImage?: {
+    sourceKey: string;
+    thumbnailKeys?: {
+      square256?: string;
+      square512?: string;
+      square1024?: string;
+    };
+    squareCrop?: {
+      x: number;
+      y: number;
+      size: number;
+    };
+    altText?: string;
+    updatedAt: string;
+  };
+  coverImage?: {
+    sourceKey: string;
+    renditionKeys?: {
+      desktop?: string;
+      tablet?: string;
+      mobile?: string;
+    };
+    crops?: {
+      desktop?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      };
+      tablet?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      };
+      mobile?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      };
+    };
+    focalPoint?: {
+      x: number;
+      y: number;
+    };
+    altText?: string;
+    updatedAt: string;
+  };
+}
+
 export interface Creator {
   creatorId: string;
   name: string;
@@ -119,57 +171,7 @@ export interface Creator {
   followerCount?: number;
   imageCount?: number;
   groupingCount?: number;
-  branding?: {
-    profileImage?: {
-      sourceKey: string;
-      thumbnailKeys?: {
-        square256?: string;
-        square512?: string;
-        square1024?: string;
-      };
-      squareCrop?: {
-        x: number;
-        y: number;
-        size: number;
-      };
-      altText?: string;
-      updatedAt: string;
-    };
-    coverImage?: {
-      sourceKey: string;
-      renditionKeys?: {
-        desktop?: string;
-        tablet?: string;
-        mobile?: string;
-      };
-      crops?: {
-        desktop?: {
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-        };
-        tablet?: {
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-        };
-        mobile?: {
-          x: number;
-          y: number;
-          width: number;
-          height: number;
-        };
-      };
-      focalPoint?: {
-        x: number;
-        y: number;
-      };
-      altText?: string;
-      updatedAt: string;
-    };
-  };
+  branding?: ProfileBranding;
   space?: {
     bio?: string;
     externalLinks?: Array<{
@@ -177,6 +179,9 @@ export interface Creator {
       url: string;
     }>;
     theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+    coverPreset?: string;
+    /** Explicit consent to link this Creator from its owner's public member profile. */
+    showOnMemberProfile?: boolean;
     announcement?: {
       enabled: boolean;
       message: string;
@@ -385,8 +390,14 @@ export interface UserProfile {
   usernameHistory?: string[];
   displayName?: string;
   bio?: string;
+  externalLinks?: Array<{
+    label: string;
+    url: string;
+  }>;
   location?: string;
   website?: string;
+  branding?: ProfileBranding;
+  coverPreset?: string;
   matureContentEnabled?: boolean;
   maxAllowedContentRating?: ContentRating;
   aiFilter?: AiFilterPreference;
