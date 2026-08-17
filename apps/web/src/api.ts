@@ -3,6 +3,9 @@ import type { StudioExternalAsset, StudioExternalPublication, StudioSpacePublica
 
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 const usesLocalDeveloperApi = import.meta.env.DEV && /^(https?:\/\/)(localhost|127\.0\.0\.1|fanadmin\.top)(?::\d+)?(?:\/|$)/.test(configuredApiBase);
+const hasLocalCognitoConfiguration = Boolean(
+  import.meta.env.VITE_COGNITO_USER_POOL_ID && import.meta.env.VITE_COGNITO_CLIENT_ID
+);
 const API_BASE = usesLocalDeveloperApi ? '/local-api' : configuredApiBase;
 const preparedUploadUrl = (upload: { uploadUrl: string; requiresAuth?: boolean }): string => {
   if (!upload.requiresAuth || !usesLocalDeveloperApi) return upload.uploadUrl;
@@ -21,10 +24,10 @@ const withDevCacheBypass = (url: string): string => {
 };
 
 const authHeaders = async (): Promise<Record<string, string>> => {
-  // Keep local Studio independent of whichever Cognito session happens to be
-  // stored in the browser. Vite adds the explicit developer identity while
-  // proxying same-origin requests to the local API.
-  if (usesLocalDeveloperApi) {
+  // Offline local work can still use Vite's seeded developer identity. When
+  // Cognito is configured, however, preserving the bearer token is essential:
+  // each signed-in person must receive their own profile and handle.
+  if (usesLocalDeveloperApi && !hasLocalCognitoConfiguration) {
     return {};
   }
   const idToken = await getValidIdToken();
