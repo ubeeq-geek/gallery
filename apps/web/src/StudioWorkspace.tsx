@@ -64,7 +64,7 @@ function CreatorExportAction({ creatorId }: { creatorId: string }) {
   );
 }
 
-export function StudioWorkspace() {
+export function StudioWorkspace({ onCreatorCreated }: { onCreatorCreated?: () => Promise<void> }) {
   const location = useLocation();
   const section = useMemo(() => readStudioSection(location.search), [location.search]);
   const sectionMeta = studioSectionDefs.find((item) => item.key === section) || studioSectionDefs[0];
@@ -148,7 +148,12 @@ export function StudioWorkspace() {
       files={files}
       profileCreatorId={profileCreatorId}
       onCreateCreator={async (payload) => {
-        return api.studioCreateCreator(payload) as Promise<StudioCreator>;
+        const creator = await api.studioCreateCreator(payload) as StudioCreator;
+        // Refresh the application-level ownership context before the create
+        // flow opens the new public profile. Otherwise that first view has no
+        // way to recognise its owner and incorrectly renders visitor actions.
+        await onCreatorCreated?.();
+        return creator;
       }}
       onUpdateCreator={async (creatorId, payload) => {
         await api.studioUpdateCreator(creatorId, payload);

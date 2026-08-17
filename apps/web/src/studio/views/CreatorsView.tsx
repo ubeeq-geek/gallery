@@ -69,9 +69,8 @@ export function CreatorsView({
   const [externalLinks, setExternalLinks] = useState<ProfileExternalLink[]>([]);
   const [spaceTheme, setSpaceTheme] = useState<'default' | 'ubeeq' | 'sand' | 'forest' | 'slate'>('default');
   const [showOnMemberProfile, setShowOnMemberProfile] = useState(false);
-  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
-  const [announcementMessage, setAnnouncementMessage] = useState('');
-  const [announcementUrl, setAnnouncementUrl] = useState('');
+  const [spaceVisibility, setSpaceVisibility] = useState<'public-discoverable' | 'public-link' | 'private'>('private');
+  const [shareCode, setShareCode] = useState('');
   const [profileImage, setProfileImage] = useState<BrandingImageSelection>();
   const [coverImage, setCoverImage] = useState<BrandingImageSelection>();
   const [coverPreset, setCoverPreset] = useState('');
@@ -81,6 +80,10 @@ export function CreatorsView({
   const [savedCreatorId, setSavedCreatorId] = useState('');
   const [invalidExternalLinkIndexes, setInvalidExternalLinkIndexes] = useState<number[]>([]);
   const [invalidField, setInvalidField] = useState<'name' | 'slug' | 'external-links' | ''>('');
+  const [nameSuggestions, setNameSuggestions] = useState<string[]>([]);
+  const [slugSuggestions, setSlugSuggestions] = useState<string[]>([]);
+  const [activeNameSuggestion, setActiveNameSuggestion] = useState('');
+  const [activeSlugSuggestion, setActiveSlugSuggestion] = useState('');
   const formErrorRef = useRef<HTMLParagraphElement>(null);
 
   const filtered = useMemo(() => {
@@ -98,15 +101,18 @@ export function CreatorsView({
     setExternalLinks(creator?.space?.externalLinks || []);
     setSpaceTheme(creator?.space?.theme || 'default');
     setShowOnMemberProfile(creator?.space?.showOnMemberProfile === true);
-    setAnnouncementEnabled(creator?.space?.announcement?.enabled === true);
-    setAnnouncementMessage(creator?.space?.announcement?.message || '');
-    setAnnouncementUrl(creator?.space?.announcement?.url || '');
+    setSpaceVisibility(creator?.space?.visibility || (creator ? 'public-discoverable' : 'private'));
+    setShareCode(creator?.space?.shareCode || '');
     setProfileImage(undefined);
     setCoverImage(undefined);
     setCoverPreset(creator?.space?.coverPreset || '');
     setFormError('');
     setInvalidExternalLinkIndexes([]);
     setInvalidField('');
+    setNameSuggestions([]);
+    setSlugSuggestions([]);
+    setActiveNameSuggestion('');
+    setActiveSlugSuggestion('');
   };
 
   const showValidationError = (message: string, field: 'name' | 'slug' | 'external-links', linkIndexes: number[] = []) => {
@@ -120,6 +126,14 @@ export function CreatorsView({
         : document.querySelector<HTMLInputElement>(`[data-creator-field="${field}"]`);
       target?.focus();
     });
+  };
+
+  const applyCreatorConflictSuggestions = (error: unknown) => {
+    const details = (error as Error & { details?: { nameSuggestions?: unknown; slugSuggestions?: unknown } })?.details;
+    setNameSuggestions(Array.isArray(details?.nameSuggestions) ? details.nameSuggestions.filter((value): value is string => typeof value === 'string') : []);
+    setSlugSuggestions(Array.isArray(details?.slugSuggestions) ? details.slugSuggestions.filter((value): value is string => typeof value === 'string') : []);
+    setActiveNameSuggestion('');
+    setActiveSlugSuggestion('');
   };
 
   useEffect(() => {
@@ -153,6 +167,7 @@ export function CreatorsView({
 
   const openCreate = () => navigate('/studio/workspace?section=creators&create=1');
   const creatorProfileUrl = (creatorId: string) => `/studio/workspace?section=creator-profile&creatorId=${encodeURIComponent(creatorId)}`;
+  const publicCreatorProfileUrl = (creator: Pick<StudioCreator, 'slug'>) => `/creators/${encodeURIComponent(creator.slug)}${import.meta.env.DEV ? '?preview=1' : ''}`;
   const openEdit = (creator: StudioCreator) => navigate(creatorProfileUrl(creator.creatorId));
   const closeForm = (creatorId = '') => navigate(profileMode
     ? creatorProfileUrl(creatorId || profileCreatorId || '')
@@ -173,6 +188,12 @@ export function CreatorsView({
     } finally {
       setSaving(false);
     }
+  };
+
+  const generateShareCode = () => {
+    const bytes = new Uint8Array(18);
+    crypto.getRandomValues(bytes);
+    setShareCode(Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(''));
   };
 
   const deleteCreator = async (creator: StudioCreator) => {
@@ -226,8 +247,10 @@ export function CreatorsView({
     const trimmedSlug = slug.trim() || slugSuggestion(trimmedName);
     if (!trimmedName) return showValidationError(`${brand.creatorName} name is required.`, 'name');
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(trimmedSlug)) return showValidationError('Handle / slug can use lowercase letters, numbers, and single hyphens only.', 'slug');
-    const linkIssues = validateProfileExternalLinks(externalLinks);
-    if (linkIssues.length) return showValidationError(linkIssues[0].message, 'external-links', linkIssues.map((issue) => issue.index));
+    if (formMode !== 'create') {
+      const linkIssues = validateProfileExternalLinks(externalLinks);
+      if (linkIssues.length) return showValidationError(linkIssues[0].message, 'external-links', linkIssues.map((issue) => issue.index));
+    }
     const pendingProfileImage = profileImage;
     const pendingCoverImage = coverImage;
     setSaving(true);
@@ -235,24 +258,35 @@ export function CreatorsView({
     setFormSuccess('');
     setInvalidExternalLinkIndexes([]);
     setInvalidField('');
+    setNameSuggestions([]);
+    setSlugSuggestions([]);
+    setActiveNameSuggestion('');
+    setActiveSlugSuggestion('');
     try {
-      const payload: CreatorPayload = {
-        name: trimmedName,
-        slug: trimmedSlug,
-        status,
-        space: {
-          bio: bio.trim(),
-          externalLinks,
-          theme: spaceTheme,
-          coverPreset: coverPreset || defaultProfileCoverIdFor(`creator:${trimmedSlug}`),
-          showOnMemberProfile,
-          announcement: {
-            enabled: announcementEnabled,
-            message: announcementMessage.trim(),
-            url: announcementUrl.trim() || undefined
+      // Creation is intentionally a small first step: establish an identity,
+      // then let the Creator configure their full profile on its dedicated
+      // page. New Spaces are private until explicitly changed there.
+      const payload: CreatorPayload = formMode === 'create'
+        ? {
+            name: trimmedName,
+            slug: trimmedSlug,
+            status: 'active',
+            space: { visibility: 'private' }
           }
-        }
-      };
+        : {
+            name: trimmedName,
+            slug: trimmedSlug,
+            status,
+            space: {
+              bio: bio.trim(),
+              externalLinks,
+              theme: spaceTheme,
+              coverPreset: coverPreset || defaultProfileCoverIdFor(`creator:${trimmedSlug}`),
+              visibility: spaceVisibility,
+              shareCode: spaceVisibility === 'private' ? shareCode : '',
+              showOnMemberProfile,
+            }
+          };
       if (formMode === 'create') {
         const creator = await onCreateCreator(payload);
         if (pendingProfileImage) await onUploadProfileImage(creator.creatorId, pendingProfileImage);
@@ -260,7 +294,7 @@ export function CreatorsView({
         await onSaved();
         setFormSuccess(`${brand.creatorName} saved.`);
         setSavedCreatorId(creator.creatorId);
-        closeForm(creator.creatorId);
+        navigate(publicCreatorProfileUrl(creator));
       } else if (editingCreator) {
         await onUpdateCreator(editingCreator.creatorId, payload);
         if (pendingProfileImage) await onUploadProfileImage(editingCreator.creatorId, pendingProfileImage);
@@ -271,6 +305,7 @@ export function CreatorsView({
         closeForm(editingCreator.creatorId);
       }
     } catch (error) {
+      applyCreatorConflictSuggestions(error);
       setFormError(error instanceof Error ? error.message : `Unable to save this ${brand.creatorName.toLowerCase()}.`);
     } finally {
       setSaving(false);
@@ -298,18 +333,30 @@ export function CreatorsView({
     ) || assignedCover;
     return (
       <Card
-        title={isCreate ? `Create ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.creatorName}` : profileMode ? `Edit ${brand.creatorName} Profile` : `Edit ${editingCreator?.name || brand.creatorName.toLowerCase()}`}
+        title={isCreate ? `Create ${brand.creatorName}` : profileMode ? `Edit ${brand.creatorName} Profile` : `Edit ${editingCreator?.name || brand.creatorName.toLowerCase()}`}
         eyebrow={isCreate ? `${brand.creatorPlural} / Create` : `${brand.creatorPlural} / Edit`}
         actions={profileMode
           ? <button type="button" className="auth-secondary-btn" onClick={() => navigate('/studio/workspace?section=creators')}>Manage {brand.creatorPlural}</button>
           : <button type="button" className="auth-secondary-btn" onClick={() => closeForm()}>Cancel</button>}
         className="studio-creator-form-card"
       >
-        <p className="studio-creator-form-lede">{isCreate ? `Set up a new ${brand.creatorName.toLowerCase()} identity. You can connect integrations afterward.` : `Update this ${brand.creatorName.toLowerCase()} identity and its public profile details.`}</p>
+        <p className="studio-creator-form-lede">{isCreate ? `Choose a name and handle. Once it is created, you can finish its profile, branding, visibility, and integrations.` : `Update this ${brand.creatorName.toLowerCase()} identity and its public profile details.`}</p>
         <div className="studio-creator-form">
-          <label><span>{brand.creatorName} name</span><input data-creator-field="name" aria-invalid={invalidField === 'name' || undefined} value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Rex Studio" autoComplete="organization" /></label>
-          <label><span>Handle / slug</span><input data-creator-field="slug" aria-invalid={invalidField === 'slug' || undefined} value={slug} onChange={(event) => setSlug(event.target.value)} placeholder={slugSuggestion(name) || 'rex-studio'} autoCapitalize="none" autoCorrect="off" /></label>
-          <div className="studio-creator-form-wide studio-branding-editor">
+          <label><span>{brand.creatorName} name</span><input data-creator-field="name" aria-invalid={invalidField === 'name' || undefined} value={name} onChange={(event) => { setName(event.target.value); setActiveNameSuggestion(''); setActiveSlugSuggestion(''); }} placeholder="e.g. Rex Studio" autoComplete="organization" />
+            {nameSuggestions.length > 0 && <span className="studio-field-suggestions"><small>Try an available name:</small><span className="username-suggestions">{nameSuggestions.map((candidate) => {
+              const relatedSlug = slugSuggestion(candidate);
+              const isActive = activeNameSuggestion === candidate || (name.trim() === candidate && slug === relatedSlug);
+              return <button type="button" key={candidate} className={`username-suggestion-pill${isActive ? ' username-suggestion-pill-active' : ''}`} aria-pressed={isActive} onClick={() => { setName(candidate); setSlug(relatedSlug); setActiveNameSuggestion(candidate); setActiveSlugSuggestion(relatedSlug); }}>{candidate}</button>;
+            })}</span></span>}
+          </label>
+          <label><span>Handle / slug</span><input data-creator-field="slug" aria-invalid={invalidField === 'slug' || undefined} value={slug} onChange={(event) => { setSlug(event.target.value); setActiveSlugSuggestion(''); }} placeholder={slugSuggestion(name) || 'rex-studio'} autoCapitalize="none" autoCorrect="off" />
+            {slugSuggestions.length > 0 && <span className="studio-field-suggestions"><small>Try an available handle:</small><span className="username-suggestions">{slugSuggestions.map((candidate) => {
+              const selectedFromName = nameSuggestions.some((nameCandidate) => name.trim() === nameCandidate && slugSuggestion(nameCandidate) === candidate);
+              const isActive = activeSlugSuggestion === candidate || selectedFromName;
+              return <button type="button" key={candidate} className={`username-suggestion-pill${isActive ? ' username-suggestion-pill-active' : ''}`} aria-pressed={isActive} onClick={() => { setSlug(candidate); setActiveSlugSuggestion(candidate); }}>{candidate}</button>;
+            })}</span></span>}
+          </label>
+          {!isCreate && <div className="studio-creator-form-wide studio-branding-editor">
             {!isCreate && editingCreator && (
               <section className="studio-current-branding studio-current-branding-profile" aria-label="Current profile image">
                 <div className="studio-current-branding-heading">
@@ -326,8 +373,8 @@ export function CreatorsView({
               </section>
             )}
             <BrandingImageCropper kind="profile" disabled={saving} onChange={setProfileImage} />
-          </div>
-          <div className="studio-creator-form-wide studio-branding-editor">
+          </div>}
+          {!isCreate && <div className="studio-creator-form-wide studio-branding-editor">
             {!isCreate && editingCreator && (
               <section className="studio-current-branding studio-current-branding-cover" aria-label="Current cover image">
                 <div className="studio-current-branding-heading">
@@ -358,11 +405,10 @@ export function CreatorsView({
               onChange={setCoverPreset}
             />
             <BrandingImageCropper kind="cover" disabled={saving} onChange={setCoverImage} />
-          </div>
-          <div className="studio-creator-form-wide"><span className="studio-profile-field-label">Space bio</span><LimitedBioEditor value={bio} onChange={setBio} maxLength={5000} placeholder="Tell visitors about this creator and their work." /></div>
+          </div>}
+          {!isCreate && <><div className="studio-creator-form-wide"><span className="studio-profile-field-label">Space bio</span><LimitedBioEditor value={bio} onChange={setBio} maxLength={5000} placeholder="Tell visitors about this creator and their work." /></div>
           <div className="studio-creator-form-wide"><span className="studio-profile-field-label">External links</span><ProfileExternalLinksEditor value={externalLinks} onChange={setExternalLinks} invalidIndexes={invalidExternalLinkIndexes} /></div>
           <label><span>Space theme</span><select value={spaceTheme} onChange={(event) => setSpaceTheme(event.target.value as typeof spaceTheme)}><option value="default">Platform default</option><option value="ubeeq">Ubeeq</option><option value="sand">Sand</option><option value="forest">Forest</option><option value="slate">Slate</option></select></label>
-          <label><span>{brand.creatorName} status</span><select value={status} onChange={(event) => setStatus(event.target.value as 'active' | 'inactive')}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
           <fieldset className="studio-creator-form-wide studio-space-announcement">
             <legend>Member profile</legend>
             <label className="studio-work-metadata-option">
@@ -371,14 +417,16 @@ export function CreatorsView({
             </label>
             <p className="small">Off by default. When enabled, visitors can find this identity under “A Creator” on your member profile.</p>
           </fieldset>
-          <fieldset className="studio-creator-form-wide studio-space-announcement"><legend>Space announcement</legend><label className="studio-work-metadata-option"><input type="checkbox" checked={announcementEnabled} onChange={(event) => setAnnouncementEnabled(event.target.checked)} /><span>Show an announcement on public Space pages</span></label><label><span>Message</span><input value={announcementMessage} onChange={(event) => setAnnouncementMessage(event.target.value)} placeholder="New collection available now" /></label><label><span>Optional link</span><input type="url" value={announcementUrl} onChange={(event) => setAnnouncementUrl(event.target.value)} placeholder="https://example.com/news" /></label></fieldset>
+          <fieldset className="studio-creator-form-wide studio-space-announcement"><legend>Creator Space visibility</legend><label><span>Visibility</span><select value={spaceVisibility} onChange={(event) => setSpaceVisibility(event.target.value as typeof spaceVisibility)}><option value="public-discoverable">Public and discoverable</option><option value="public-link">Public — link only</option><option value="private">Private — share code required</option></select></label>{spaceVisibility === 'private' && <div className="studio-share-code"><p>Only people with this link can view your Creator profile, Works, and Collections. Replace or revoke the code any time to end access.</p><div className="studio-inline-actions"><input value={shareCode} readOnly placeholder="Generate a share code" aria-label="Creator Space share code" /><button type="button" className="auth-secondary-btn" onClick={generateShareCode}>Generate new code</button>{shareCode && <button type="button" className="auth-secondary-btn studio-danger-btn" onClick={() => setShareCode('')}>Revoke code</button>}{shareCode && <a className="auth-secondary-btn no-underline" target="_blank" rel="noreferrer" href={`/creators/${encodeURIComponent(editingCreator?.slug || slug)}?access=${encodeURIComponent(shareCode)}`}>Open shared Space</a>}</div></div>}</fieldset>
+          </>}
         </div>
         <div className="studio-inline-actions">
-          <button type="button" className="auth-primary-btn" disabled={!name.trim() || saving} onClick={() => void submit()}>{saving ? 'Saving…' : isCreate ? `Create ${brand.creatorName}` : `Save ${brand.creatorName}`}</button>
+          <button type="button" className="auth-primary-btn" disabled={!name.trim() || saving} onClick={() => void submit()}>{saving ? 'Saving…' : isCreate ? `Create ${brand.creatorName}` : 'Save Profile'}</button>
           {!profileMode && <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => closeForm()}>Cancel</button>}
           {formSuccess && savedCreatorId === editingCreator?.creatorId && <p className="success studio-inline-success" role="status">{formSuccess}</p>}
         </div>
         {formError && <p className="error" role="alert" tabIndex={-1} ref={formErrorRef}>{formError}</p>}
+        {!isCreate && editingCreator && editingCreator.status !== 'inactive' && <section className="studio-creator-danger-zone"><h2>Deactivate {brand.creatorName}</h2><p>Deactivating hides this Creator and its public Space. You can reactivate it later. Account deletion will require deactivation first.</p><button type="button" className="auth-secondary-btn studio-danger-btn" disabled={saving} onClick={() => void archiveCreator(editingCreator)}>Deactivate {brand.creatorName}</button></section>}
       </Card>
     );
   }
@@ -399,8 +447,7 @@ export function CreatorsView({
                 <Pill label={creator.status === 'inactive' ? 'Archived' : 'Active'} tone={creator.status === 'inactive' ? 'warning' : 'success'} />
                 <button type="button" className="auth-secondary-btn" onClick={() => workAsCreator(creator)}>Work as this {brand.creatorName}</button>
                 <button type="button" className="auth-secondary-btn" onClick={() => openEdit(creator)}>Edit {brand.creatorName}</button>
-                {creator.status !== 'inactive' && <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => void archiveCreator(creator)}>Archive {brand.creatorName}</button>}
-                {creator.status === 'inactive' && <button type="button" className="auth-secondary-btn studio-danger-btn" disabled={saving} onClick={() => void deleteCreator(creator)}>Delete permanently</button>}
+                {creator.status !== 'inactive' && <button type="button" className="auth-secondary-btn" onClick={() => openEdit(creator)}>Profile & lifecycle</button>}
               </div>
             </article>
           ))}

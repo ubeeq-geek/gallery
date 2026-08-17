@@ -36,6 +36,7 @@ import {
   confirmRegistration,
   forgotPassword,
   getCurrentUser,
+  resendRegistrationConfirmation,
   startEmailOtpSignIn,
   setInitialPassword,
   signIn,
@@ -567,7 +568,7 @@ type CreatorProfilePayload = {
     externalLinks?: Array<{ label: string; url: string }>;
     theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
     coverPreset?: string;
-    announcement?: { enabled: boolean; message: string; url?: string };
+    visibility?: 'public-discoverable' | 'public-link' | 'private';
   };
   branding?: {
     profileImage?: {
@@ -1370,6 +1371,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   const [keepSignedIn, setKeepSignedIn] = useState(() => localStorage.getItem(AUTH_PERSISTENCE_KEY) !== 'session');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [resendCooldownSeconds, setResendCooldownSeconds] = useState(0);
   const socialEnabled = isSocialSignInConfigured();
 
   useEffect(() => {
@@ -1396,6 +1398,14 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
       window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
     }
   }, [authMode]);
+
+  useEffect(() => {
+    if (resendCooldownSeconds <= 0) return;
+    const timer = window.setTimeout(() => {
+      setResendCooldownSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [resendCooldownSeconds]);
 
   const withFeedback = async (fn: () => Promise<void>) => {
     try {
@@ -1480,6 +1490,18 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
     const username = email || sessionStorage.getItem('auth.confirm.username') || '';
     await confirmRegistration(username, code);
     navigate('/auth/signin');
+  });
+
+  const doResendConfirmation = () => withFeedback(async () => {
+    const confirmationEmail = email.trim() || sessionStorage.getItem('auth.confirm.username') || '';
+    if (!confirmationEmail) {
+      throw new Error('Enter the email address used to create your account.');
+    }
+    await resendRegistrationConfirmation(confirmationEmail);
+    setEmail(confirmationEmail);
+    sessionStorage.setItem('auth.confirm.username', confirmationEmail);
+    setResendCooldownSeconds(30);
+    setMessage('A new confirmation code was sent. Use only the most recent code.');
   });
 
   const doForgot = () => withFeedback(async () => {
@@ -1674,7 +1696,18 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
           <input type="password" placeholder="Confirm password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
         )}
 
-        {authMode === 'confirm' && <button onClick={doConfirm}>Confirm Registration</button>}
+        {authMode === 'confirm' && (
+          <>
+            <button onClick={doConfirm}>Confirm Registration</button>
+            <button
+              className="auth-secondary-btn"
+              onClick={doResendConfirmation}
+              disabled={resendCooldownSeconds > 0}
+            >
+              {resendCooldownSeconds > 0 ? `Send a new code (${resendCooldownSeconds}s)` : 'Send a new code'}
+            </button>
+          </>
+        )}
         {authMode === 'forgot' && forgotStage === 'request' && <button onClick={doForgot}>Send Reset Code</button>}
         {authMode === 'forgot' && forgotStage === 'confirm' && <button onClick={doForgotConfirm}>Reset Password</button>}
         {authMode === 'initial' && <button onClick={doInitialPassword}>Set Initial Password</button>}
@@ -6464,6 +6497,20 @@ function CreatorProfilePage({
   onDiscoveryDockChange?: (state: DiscoveryDockSummary | null) => void;
 }) {
   const { slug = '' } = useParams();
+  const location = useLocation();
+  const shareCodeStorageKey = `ubeeq:creator-share:${slug}`;
+  const suppliedShareCode = new URLSearchParams(location.search).get('access') || undefined;
+  const requestedLocalPreview = new URLSearchParams(location.search).get('preview') === '1';
+  // Local development has no browser session for the seeded `local-user`.
+  // When this is one of that user's Creator profiles, explicitly mark the
+  // request as an owner preview. Public visitors (including Incognito) never
+  // receive this flag and therefore remain subject to Space visibility.
+  const localPreview = requestedLocalPreview || (
+    import.meta.env.DEV && Boolean((managedArtists || []).some((artist) => (
+      artist.slug === slug || artist.artistId === slug
+    )))
+  );
+  const activeShareCode = suppliedShareCode || (typeof window !== 'undefined' ? window.sessionStorage.getItem(shareCodeStorageKey) || undefined : undefined);
   const [profile, setProfile] = useState<CreatorProfilePayload | null>(null);
   const [creatorPosts, setCreatorPosts] = useState<CreatorPostSummary[]>([]);
   const [artistTab, setArtistTab] = useState<'works' | 'about'>('works');
@@ -6513,9 +6560,16 @@ function CreatorProfilePage({
   const compactSearchInputRef = useRef<HTMLInputElement | null>(null);
   const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
   const profileEditorId = profile?.creatorId || profile?.artistId;
-  const canEditProfile = Boolean(profile && profileEditorId && (managedArtists || []).some((artist) => (
-    artist.artistId === profileEditorId || artist.slug === profile.slug
-  )));
+  const canEditProfile = Boolean(profile && profileEditorId && (
+    // A local Studio creation intentionally opens its private Space with the
+    // explicit preview marker. Treat that preview as the owner view from the
+    // first render; the normal authenticated ownership list remains the only
+    // production path to editing controls.
+    (import.meta.env.DEV && localPreview) ||
+    (managedArtists || []).some((artist) => (
+      artist.artistId === profileEditorId || artist.slug === profile.slug
+    ))
+  ));
   const creatorPostByMediaId = creatorPosts.reduce<Record<string, { slug: string; title: string }>>((acc, post) => {
     const ids = [
       ...(post.discoveryMediaIds || []),
@@ -6593,7 +6647,7 @@ function CreatorProfilePage({
     try {
       setLoading(true);
       setError('');
-      const response = normalizeCreatorProfilePayload(await api.getCreatorProfile(slug) as CreatorProfilePayload);
+      const response = normalizeCreatorProfilePayload(await api.getCreatorProfile(slug, activeShareCode, localPreview) as CreatorProfilePayload);
       const creatorId = response.artistId || response.creatorId || '';
       setProfile(response);
       setArtistTab('works');
@@ -6601,15 +6655,37 @@ function CreatorProfilePage({
       setFeedItems(initialFeed);
       setFeedCursor(undefined);
     } catch (e) {
-      setError((e as Error).message);
+      const message = (e as Error).message || 'Creator not found';
+      setError(message);
+      if (/creator not found|not available|not found/i.test(message)) {
+        setProfile(null);
+        setFeedItems([]);
+        setCreatorPosts([]);
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    if (!suppliedShareCode || typeof window === 'undefined') return;
+    window.sessionStorage.setItem(shareCodeStorageKey, suppliedShareCode);
+    const query = new URLSearchParams(location.search);
+    query.delete('access');
+    window.history.replaceState(window.history.state, '', `${location.pathname}${query.size ? `?${query}` : ''}${location.hash}`);
+  }, [location.hash, location.pathname, location.search, shareCodeStorageKey, suppliedShareCode]);
+
+  useEffect(() => {
+    if (!activeShareCode) return;
+    const timer = window.setInterval(() => { void loadProfile(); }, 120_000);
+    return () => window.clearInterval(timer);
+  // Revalidation detects revoked share codes during an active recipient session.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeShareCode, slug]);
+
   const loadCreatorPosts = async () => {
     try {
-      const response = await api.getCreatorPosts(slug) as { items?: CreatorPostSummary[] };
+      const response = await api.getCreatorPosts(slug, activeShareCode, localPreview) as { items?: CreatorPostSummary[] };
       setCreatorPosts(response.items || []);
     } catch {
       setCreatorPosts([]);
@@ -6644,7 +6720,7 @@ function CreatorProfilePage({
       let mapped: TrendingImage[] = [];
       let nextCursor: string | undefined;
       if (artistFeedSort === 'trending') {
-        const response = await api.getCreatorTrendingImages(slug, 'daily', append ? feedCursor : undefined, 24) as {
+        const response = await api.getCreatorTrendingImages(slug, 'daily', append ? feedCursor : undefined, 24, 'combined', activeShareCode, localPreview) as {
           items: TrendingImage[];
           nextCursor?: string;
         };
@@ -6656,7 +6732,7 @@ function CreatorProfilePage({
         }));
         nextCursor = response.nextCursor;
       } else {
-        const response = await api.getCreatorFeed(slug, append ? feedCursor : undefined, 24) as {
+        const response = await api.getCreatorFeed(slug, append ? feedCursor : undefined, 24, activeShareCode, localPreview) as {
           artistId: string;
           artistSlug: string;
           items: any[];
@@ -6682,7 +6758,7 @@ function CreatorProfilePage({
     setFeedCursor(undefined);
     void loadProfile();
     void loadCreatorPosts();
-  }, [slug]);
+  }, [slug, location.search, localPreview]);
 
   useEffect(() => {
     if (!profile) return;
@@ -7034,7 +7110,7 @@ function CreatorProfilePage({
   }, [focusedOpen, focusedHasPrevious, focusedHasNext, focusedItems.length]);
 
   if (loading && !profile) return <div className="layout">Loading...</div>;
-  if (!profile) return <div className="layout">{error || 'Creator not found'}</div>;
+  if (!profile) return <main className="layout public-profile-not-found"><section className="panel"><h1>No creator found</h1><p>The Creator profile does not exist or is not available to you.</p></section></main>;
 
   const creatorGroupings = profile.galleries || [];
   const galleryCount = profile.galleryCount ?? profile.groupingCount ?? creatorGroupings.length;
@@ -7295,7 +7371,6 @@ function CreatorProfilePage({
 
   return (
     <div className="layout discovery-layout" data-theme={profile.space?.theme === 'default' ? undefined : profile.space?.theme}>
-      {profile.space?.announcement && <aside className="canonical-space-announcement">{profile.space.announcement.url ? <a href={profile.space.announcement.url}>{profile.space.announcement.message}</a> : profile.space.announcement.message}</aside>}
       <PublicProfileHero
         kind="creator"
         name={profile.name}
@@ -7371,6 +7446,19 @@ function CreatorProfilePage({
           </div>
         )}
       />
+
+      {canEditProfile && profile.space?.visibility === 'private' && (
+        <aside className="creator-space-visibility-notice is-private">
+          <strong>This Creator Space is private.</strong>
+          <span>It is visible only to you and people using its current share link. Generate or revoke that link in Edit profile.</span>
+        </aside>
+      )}
+      {canEditProfile && profile.space?.visibility === 'public-link' && (
+        <aside className="creator-space-visibility-notice">
+          <strong>This Creator Space is public, but not discoverable.</strong>
+          <span>Anyone with its link can view it, but it will not appear in Eversally discovery.</span>
+        </aside>
+      )}
 
       {artistTab === 'about' ? (
         <section id="profile-about" className="panel public-profile-about creator-profile-about-view">
@@ -7963,6 +8051,15 @@ export default function App() {
   const [settings, setSettings] = useState<SiteSettings>({ siteName: brand.productName, theme: 'ubeeq' });
   const [discoveryDock, setDiscoveryDock] = useState<DiscoveryDockSummary | null>(null);
 
+  const refreshManagedArtists = async () => {
+    if (!user) {
+      setManagedArtists([]);
+      return;
+    }
+    const myArtists = await api.getMyArtists() as ManagedArtist[];
+    setManagedArtists(myArtists || []);
+  };
+
   const handleSignOut = async () => {
     await signOut();
     setUser(null);
@@ -8086,8 +8183,8 @@ export default function App() {
         <Route path="/auth/callback" element={<AuthCallbackPage setUser={setUser} />} />
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
         <Route path="/settings" element={<ProfileSettingsPage user={user} onProfileChanged={(profile) => setMyProfile(profile)} />} />
-        <Route path="/studio" element={user ? <StudioWorkspace /> : <Navigate to="/auth/signin" replace />} />
-        <Route path="/studio/workspace" element={user ? <StudioWorkspace /> : <Navigate to="/auth/signin" replace />} />
+        <Route path="/studio" element={user ? <StudioWorkspace onCreatorCreated={refreshManagedArtists} /> : <Navigate to="/auth/signin" replace />} />
+        <Route path="/studio/workspace" element={user ? <StudioWorkspace onCreatorCreated={refreshManagedArtists} /> : <Navigate to="/auth/signin" replace />} />
         <Route path="/admin" element={<Navigate to="/studio" replace />} />
         <Route path="/artist-area" element={<LegacyArtistAreaRedirect />} />
         <Route path="/artist-area/admin" element={<LegacyArtistAreaWorkspaceRedirect />} />

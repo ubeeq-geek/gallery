@@ -291,6 +291,70 @@
   margin: 0;
 }
 
+.studio-creator-danger-zone,
+.settings-danger-zone {
+  margin-top: 28px;
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--danger, #b42318) 48%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--danger, #b42318) 5%, var(--surface));
+}
+
+.studio-creator-danger-zone h2,
+.settings-danger-zone h3 {
+  margin: 0;
+  color: var(--danger, #b42318);
+}
+
+.studio-creator-danger-zone p,
+.settings-danger-zone p {
+  margin: 8px 0 16px;
+}
+
+.studio-space-announcement .studio-work-metadata-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.studio-space-announcement .studio-work-metadata-option input {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--brand-primary);
+}
+
+.studio-share-code {
+  margin-top: 14px;
+}
+
+.creator-space-visibility-notice {
+  display: grid;
+  gap: 4px;
+  margin: 22px 0 0;
+  padding: 14px 18px;
+  border: 1px solid color-mix(in srgb, var(--brand-primary) 38%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--brand-primary) 7%, var(--surface));
+}
+
+.creator-space-visibility-notice.is-private {
+  border-color: color-mix(in srgb, var(--danger, #b42318) 48%, var(--line));
+  background: color-mix(in srgb, var(--danger, #b42318) 6%, var(--surface));
+}
+
+.public-profile-not-found {
+  min-height: 48vh;
+  display: grid;
+  place-items: center;
+}
+
+.public-profile-not-found .panel {
+  width: min(100%, 560px);
+  text-align: center;
+}
+
 .creator-profile-about-view {
   margin-top: 2.5rem;
 }
@@ -6417,6 +6481,11 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     @apply mt-2 flex flex-wrap gap-2;
   }
 
+  .studio-field-suggestions {
+    @apply mt-2 block;
+    color: var(--muted);
+  }
+
   .username-suggestion-pill {
     @apply rounded-full border px-3 py-1.5 text-sm font-semibold;
     border-color: var(--line);
@@ -6427,6 +6496,13 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
 
   .username-suggestion-pill:hover {
     background: color-mix(in oklab, var(--surface), var(--brand) 18%);
+  }
+
+  .username-suggestion-pill-active,
+  .username-suggestion-pill-active:hover {
+    border-color: var(--brand);
+    background: var(--brand);
+    color: #fff;
   }
 
   .settings-field {

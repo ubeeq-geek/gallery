@@ -180,13 +180,11 @@ export interface Creator {
     }>;
     theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
     coverPreset?: string;
+    visibility?: 'public-discoverable' | 'public-link' | 'private';
+    /** Revocable bearer code for a private Space. Never returned from public routes. */
+    shareCode?: string;
     /** Explicit consent to link this Creator from its owner's public member profile. */
     showOnMemberProfile?: boolean;
-    announcement?: {
-      enabled: boolean;
-      message: string;
-      url?: string;
-    };
   };
   createdAt: string;
 }
@@ -386,6 +384,7 @@ export interface BlockedUser {
 
 export interface UserProfile {
   userId: string;
+  status?: 'active' | 'inactive';
   username: string;
   usernameHistory?: string[];
   displayName?: string;

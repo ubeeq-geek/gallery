@@ -67,7 +67,7 @@ The API reads environment variables from the shell that starts it; it does **not
 | `EXTERNAL_CONTENT_MAX_BYTES` | `52428800` | Maximum downloaded external source-file size (50 MiB). |
 | `DEVIANTART_MIN_REQUEST_INTERVAL_MS` | `2000` | Minimum spacing between DeviantArt API requests. The conservative default caps a single worker at roughly 30 calls per minute before response time. |
 | `DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE` | `true` | Enables supported published-description updates through retained Sta.sh IDs. |
-| `COGNITO_USER_POOL_ID` / `COGNITO_CLIENT_ID` | unset | Leave unset for local-header auth. Set both only when testing Cognito token verification locally. |
+| `COGNITO_USER_POOL_ID` / `COGNITO_CLIENT_ID` | unset / read from `apps/web/.env.local` when present | Local-header auth remains enabled without a pool ID. The paired launcher copies the web's public `VITE_COGNITO_CLIENT_ID` to `COGNITO_CLIENT_ID` so local account registration can use the same Cognito client. Set both explicitly only when testing server-side Cognito token verification locally. |
 | `BLUESKY_OAUTH_CLIENT_METADATA_URL` / `BLUESKY_OAUTH_CALLBACK_URL` | unset | Public HTTPS URLs for the AT Protocol OAuth client metadata and API callback. These cannot use a plain local host. |
 | `BLUESKY_OAUTH_JWKS_JSON` | unset | Public JWKS JSON advertised to Bluesky. Never include private JWK fields here. |
 | `BLUESKY_OAUTH_PRIVATE_JWK` | unset | Confidential ES256 signing JWK. Load from managed secret storage in production; never commit it. |
@@ -344,9 +344,13 @@ VITE_COGNITO_REDIRECT_URI=https://app.example.com/auth/callback
 
 For local use, the redirect URI must match the active edition: `https://fanadmin.top:5174/auth/callback` for Eversally or `https://fanadmin.top:5175/auth/callback` for Ubeeq. The social sign-in flow uses OAuth authorization code + PKCE and completes the code exchange in the browser.
 
-### Branded verification email
+### Branded account emails
 
-The stack uses `PRODUCT_BRAND` to supply either the Eversally or Ubeeq subject, sender name, and HTML code template. Configure `SES_FROM_ADDRESS` with a verified SES identity to send from the selected product rather than Cognito's default sender. Cognito requires the `{####}` token in a code template. See [Cognito email settings](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-email.html) and [message template requirements](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pool-settings-message-customizations.html).
+The stack has separate Eversally and Ubeeq themes, subjects, and copy for account-confirmation emails. Set `PRODUCT_BRAND=eversally` or `PRODUCT_BRAND=ubeeq` before deployment.
+
+To brand **all** code emails — confirmation/resend, password reset, and authentication/MFA — configure `SES_FROM_ADDRESS` with a verified SES identity. The stack then attaches a Cognito Custom Message Lambda and uses the same product-specific visual system for every code email. Without SES, Cognito's managed sender still uses the branded confirmation template, but reset and authentication-code messages remain Cognito-managed; this avoids enabling a custom-message trigger that Cognito cannot deliver through its managed sender.
+
+Cognito requires the `{####}` token in code templates. See [Cognito email settings](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-email.html) and [message template requirements](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pool-settings-message-customizations.html).
 
 ### Google setup
 

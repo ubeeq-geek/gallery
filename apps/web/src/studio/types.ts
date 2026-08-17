@@ -25,8 +25,9 @@ export type StudioCreator = {
     externalLinks?: Array<{ label: string; url: string }>;
     theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
     coverPreset?: string;
+    visibility?: 'public-discoverable' | 'public-link' | 'private';
+    shareCode?: string;
     showOnMemberProfile?: boolean;
-    announcement?: { enabled: boolean; message: string; url?: string };
   };
   branding?: {
     profileImage?: {

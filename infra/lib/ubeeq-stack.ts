@@ -52,6 +52,10 @@ export class UbeeqStack extends Stack {
     const socialAppleEnabled = Boolean(appleServiceId && appleTeamId && appleKeyId && (isProduction || applePrivateKey));
     const cognitoDomainPrefix = process.env.COGNITO_DOMAIN_PREFIX?.trim();
     const sesFromAddress = process.env.SES_FROM_ADDRESS?.trim();
+    // A verified domain authorizes every sender at that domain. Prefer it to
+    // an individual mailbox identity so Cognito does not depend on a mailbox
+    // verification that may still be pending.
+    const sesVerifiedDomain = process.env.SES_VERIFIED_DOMAIN?.trim() || sesFromAddress?.split('@').at(-1);
     const webAppUrl = process.env.WEB_APP_URL?.trim().replace(/\/$/, '');
     const rootDomain = process.env.ROOT_DOMAIN?.trim().toLowerCase();
     const apiDomain = process.env.API_DOMAIN?.trim().toLowerCase();
@@ -70,6 +74,9 @@ export class UbeeqStack extends Stack {
     const mediaCorsOrigins = isProduction ? [webAppUrl!] : [...new Set([...(webAppUrl ? [webAppUrl] : []), ...developmentOrigins])];
     const productBrand = process.env.PRODUCT_BRAND === 'eversally' ? 'eversally' : 'ubeeq';
     const productName = productBrand === 'eversally' ? 'Eversally' : 'Ubeeq';
+    const emailTheme = productBrand === 'eversally'
+      ? { accent: '#7756a8', panel: '#f4effa', text: '#21182f', tagline: 'Creativity, everywhere.' }
+      : { accent: '#0f766e', panel: '#eaf6f4', text: '#102a2a', tagline: 'Your creative space, on your terms.' };
     const cognitoCallbackUrls = isProduction
       ? [`${webAppUrl}/auth/callback`]
       : ['http://localhost:5173/auth/callback', 'http://localhost:5174/auth/callback', ...(webAppUrl ? [`${webAppUrl}/auth/callback`] : [])];
@@ -289,13 +296,14 @@ export class UbeeqStack extends Stack {
         ? cognito.UserPoolEmail.withSES({
             fromEmail: sesFromAddress,
             fromName: productName,
-            replyTo: sesFromAddress
+            replyTo: sesFromAddress,
+            sesVerifiedDomain
           })
         : undefined,
       userVerification: {
         emailStyle: cognito.VerificationEmailStyle.CODE,
-        emailSubject: `Your ${productName} verification code`,
-        emailBody: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;color:#10221a"><h1 style="margin:0 0 12px;font-size:28px">Welcome to ${productName}</h1><p style="font-size:16px;line-height:1.5">Use this code to verify your email and finish setting up your ${productName} account.</p><p style="margin:28px 0;padding:16px;background:#edf7ef;border-radius:8px;font-size:28px;font-weight:700;letter-spacing:4px;text-align:center">{####}</p><p style="font-size:14px;line-height:1.5;color:#52615a">If you did not create an account, you can ignore this email.</p><p style="font-size:14px;color:#52615a">${productName}</p></div>`
+        emailSubject: `Confirm your ${productName} account`,
+        emailBody: `<div style="margin:0;padding:32px 16px;background:#f7f7f8;font-family:Arial,Helvetica,sans-serif;color:${emailTheme.text}"><div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e4e2e7;border-radius:16px;overflow:hidden"><div style="padding:28px 32px;background:${emailTheme.panel};border-bottom:4px solid ${emailTheme.accent}"><div style="font-size:24px;font-weight:700;color:${emailTheme.accent}">${productName}</div><div style="margin-top:6px;font-size:14px;color:${emailTheme.text}">${emailTheme.tagline}</div></div><div style="padding:32px"><h1 style="margin:0 0 12px;font-size:26px;line-height:1.2">Confirm your email</h1><p style="margin:0;font-size:16px;line-height:1.55">Use this code to verify your email and finish setting up your ${productName} account.</p><div style="margin:28px 0;padding:18px;background:${emailTheme.panel};border-radius:10px;font-size:28px;font-weight:700;letter-spacing:5px;text-align:center">{####}</div><p style="margin:0;font-size:13px;line-height:1.5;color:#625d69">If you did not create an account, you can safely ignore this email.</p></div></div></div>`
       }
     });
     const userPoolCfn = userPool.node.defaultChild as cognito.CfnUserPool;
@@ -414,6 +422,24 @@ export class UbeeqStack extends Stack {
       };
     };
 
+    // Cognito only permits custom messages when email is delivered through SES
+    // (the Developer email configuration). Without SES the managed sender still
+    // receives the branded sign-up template above, but reset/auth codes remain
+    // Cognito-managed rather than failing delivery.
+    if (sesFromAddress) {
+      const cognitoCustomMessageFn = new lambdaNodejs.NodejsFunction(this, 'CognitoCustomMessageFunction', {
+        runtime: lambda.Runtime.NODEJS_22_X,
+        entry: path.join(__dirname, '../../apps/api/src/cognitoCustomMessage.ts'),
+        handler: 'handler',
+        timeout: Duration.seconds(10),
+        depsLockFilePath: path.join(__dirname, '../../package-lock.json'),
+        bundling: { target: 'node22', externalModules: ['@aws-sdk/*'] },
+        ...productionFunctionOptions('CognitoCustomMessageFunctionLogs'),
+        environment: { PRODUCT_BRAND: productBrand }
+      });
+      userPool.addTrigger(cognito.UserPoolOperation.CUSTOM_MESSAGE, cognitoCustomMessageFn);
+    }
+
     const apiFn = new lambdaNodejs.NodejsFunction(this, 'UbeeqApiFunction', {
       runtime: lambda.Runtime.NODEJS_22_X,
       entry: path.join(__dirname, '../../apps/api/src/handler.ts'),
@@ -489,9 +515,10 @@ export class UbeeqStack extends Stack {
       handler: 'handler',
       timeout: Duration.minutes(15),
       memorySize: 1024,
-      // Keep provider work serialized until account-keyed FIFO processing is
-      // introduced. Adaptive DA rate limits punish concurrent request bursts.
-      reservedConcurrentExecutions: 1,
+      // Reserve a worker only when the account has spare Lambda capacity.
+      // Small/development accounts can require all unreserved capacity to stay
+      // available. Provider pacing still applies per request in the worker.
+      reservedConcurrentExecutions: process.env.EXTERNAL_SYNC_RESERVED_CONCURRENCY === '1' ? 1 : undefined,
       depsLockFilePath: path.join(__dirname, '../../package-lock.json'),
       bundling: {
         target: 'node22',

@@ -205,6 +205,203 @@ const creatorMatchesSlug = (creator: Creator, slug: string): boolean => {
   return (creator.slugHistory || []).some((item) => slugify(item) === normalized);
 };
 
+// Display names are public identity labels, not merely decorative metadata.
+// Normalizing whitespace and case prevents visually identical identities such
+// as “Rex Studio” and “rex   studio” from co-existing.
+const normalizeIdentityName = (value: string): string => value.trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+
+const creatorMatchesName = (creator: Creator, name: string): boolean => (
+  normalizeIdentityName(creator.name) === normalizeIdentityName(name)
+);
+
+const buildCreatorSlugSuggestions = (creators: Creator[], input: string, excludeCreatorId?: string): string[] => {
+  const base = slugify(input);
+  const candidates = [
+    `${base}-2`,
+    `${base}-studio`,
+    `${base}-works`,
+    `the-${base}`,
+    `${base}-creative`
+  ].map(slugify);
+  return [...new Set(candidates)]
+    .filter((candidate) => !creators.some((creator) => creator.creatorId !== excludeCreatorId && creatorMatchesSlug(creator, candidate)))
+    .slice(0, 4);
+};
+
+const userProfileMatchesName = (profile: UserProfile, name: string): boolean => (
+  normalizeIdentityName(profile.displayName || profile.username) === normalizeIdentityName(name)
+);
+
+type ProfileNameType = 'user' | 'creator';
+type ProfileNameExpansionOption = {
+  id: string;
+  profileType: ProfileNameType;
+  value: string;
+  kind: 'modifier' | 'suffix' | 'animal' | 'community';
+  weight: number;
+  enabled: boolean;
+  restricted: boolean;
+};
+
+const RESTRICTED_PROFILE_NAME_TERMS = [
+  'official', 'verified', 'certified', 'government', 'support',
+  'admin', 'staff', 'security', 'help', 'billing', 'legal',
+  'police', 'authority', 'trust', 'service'
+];
+
+// These curated pools intentionally remain distinct: member names emphasize
+// participation and community, while Creator names emphasize independent
+// making and publishing. Each list has exactly 100 entries, which produces a
+// 500-option expansion catalog (five forms per modifier).
+const USER_NAME_MODIFIERS = [
+  'Curious', 'Friendly', 'Creative', 'Local', 'Global', 'Open', 'Personal', 'Social', 'Quiet', 'Bright',
+  'Playful', 'Thoughtful', 'Adventurous', 'Independent', 'New', 'Emerging', 'Everyday', 'Casual', 'Active', 'Engaged',
+  'Welcoming', 'Kind', 'Clever', 'Wandering', 'Open-Minded', 'Good-Natured', 'Community-Minded', 'Neighbourly', 'Connected', 'Discovering',
+  'Exploring', 'Learning', 'Listening', 'Sharing', 'Participating', 'Gathering', 'Returning', 'Familiar', 'Newcomer', 'Regular',
+  'Helpful', 'Supportive', 'Expressive', 'Artistic', 'Musical', 'Bookish', 'Game-Loving', 'Film-Loving', 'Story-Loving', 'Nature-Loving',
+  'Travel-Loving', 'Passionate', 'Dedicated', 'Enthusiastic', 'Unscripted', 'Unusual', 'Uncommon', 'Distinctive', 'Unique', 'Vivid',
+  'Gentle', 'Bold', 'Restless', 'Reflective', 'Mysterious', 'Whimsical', 'Serious', 'Fun', 'Cheerful', 'Patient',
+  'Spirited', 'Free-Range', 'Self-Directed', 'Open-Hearted', 'Warm', 'Culture-Focused', 'Discovery-Focused', 'Conversation-Focused', 'Ever-Curious', 'Ever-Ready',
+  'Always-Exploring', 'Northern', 'Central', 'Urban', 'Rural', 'Social-Minded', 'Idea-Driven', 'Interest-Driven', 'Community-Focused', 'People-Powered',
+  'Community-Built', 'Friendly-Minded', 'Creative-Minded', 'Conversation-Ready', 'Experience-Seeking', 'Wonder-Filled', 'Curious-Hearted', 'Story-Seeking', 'Joyful', 'Free-Spirited'
+] as const;
+
+const CREATOR_NAME_MODIFIERS = [
+  'Original', 'Featured', 'Creative', 'Digital', 'Independent', 'Inspired', 'Experimental', 'Emerging', 'Established', 'Modern',
+  'Classic', 'Bold', 'Distinctive', 'Curated', 'Signature', 'Premier', 'Artistic', 'Expressive', 'Imaginative', 'Inventive',
+  'Playful', 'Thoughtful', 'Ambitious', 'Passionate', 'Dedicated', 'Rising', 'Fresh', 'Authentic', 'Unique', 'Select',
+  'Visual', 'Cultural', 'Story-Driven', 'Image-Driven', 'Music-Driven', 'Film-Driven', 'Design-Driven', 'Creator-Led', 'Artist-Led', 'Community-Driven',
+  'Creator-Focused', 'Artist-Focused', 'Self-Made', 'Multi-Talented', 'Unscripted', 'Uncharted', 'Unconventional', 'Alternative', 'Contemporary', 'Progressive',
+  'Future-Facing', 'New-Wave', 'All-Star', 'First-Class', 'One-of-a-Kind', 'Refined', 'Polished', 'Raw', 'Unfiltered', 'Vibrant',
+  'Whimsical', 'Serious', 'Mysterious', 'Secret', 'Hidden', 'Wild', 'Gentle', 'Clever', 'Quiet', 'Loud',
+  'Strange', 'Unusual', 'Fantastic', 'Legendary', 'Cosmic', 'Stellar', 'Lunar', 'Solar', 'Electric', 'Magnetic',
+  'Golden', 'Silver', 'Scarlet', 'Emerald', 'Midnight', 'Velvet', 'Wandering', 'Restless', 'Bright-Eyed', 'Creator-Owned',
+  'Open-Minded', 'Work-in-Progress', 'Detail-Oriented', 'Limited', 'Original-Minded', 'Limitless', 'Everlasting', 'Uncommon', 'Remarkable', 'Adventurous'
+] as const;
+
+const USER_NAME_SUFFIXES = [
+  'Circle', 'Community', 'Club', 'Commons', 'Corner', 'Group', 'Hub', 'House', 'Network', 'Space',
+  'Room', 'Place', 'Forum', 'Exchange', 'Society', 'Guild', 'Gathering', 'Neighbours', 'Connections', 'Collective',
+  'Circle Club', 'Circle Commons', 'Circle Corner', 'Circle Group', 'Circle Hub', 'Circle House', 'Circle Network', 'Circle Space', 'Circle Room', 'Circle Place',
+  'Community Club', 'Community Commons', 'Community Corner', 'Community Group', 'Community Hub', 'Community House', 'Community Network', 'Community Space', 'Community Room', 'Community Place',
+  'Open Circle', 'Open Community', 'Open Club', 'Open Commons', 'Open Corner', 'Open Group', 'Open Hub', 'Open House', 'Open Network', 'Open Space',
+  'Friendly Circle', 'Friendly Community', 'Friendly Club', 'Friendly Commons', 'Friendly Corner', 'Friendly Group', 'Friendly Hub', 'Friendly House', 'Friendly Network', 'Friendly Space',
+  'Shared Circle', 'Shared Community', 'Shared Club', 'Shared Commons', 'Shared Corner', 'Shared Group', 'Shared Hub', 'Shared House', 'Shared Network', 'Shared Space',
+  'Local Circle', 'Local Community', 'Local Club', 'Local Commons', 'Local Corner', 'Local Group', 'Local Hub', 'Local House', 'Local Network', 'Local Space',
+  'Creative Circle', 'Creative Community', 'Creative Club', 'Creative Commons', 'Creative Corner', 'Creative Group', 'Creative Hub', 'Creative House', 'Creative Network', 'Creative Space',
+  'Shared Room', 'Shared Place', 'Open Forum', 'Open Exchange', 'Friendly Society', 'Friendly Guild', 'Local Gathering', 'Local Neighbours', 'Creative Connections', 'Creative Collective'
+] as const;
+
+const CREATOR_NAME_SUFFIXES = [
+  'Collective', 'Experience', 'Studios', 'Studio', 'Works', 'Creative', 'Creations', 'Arts', 'Artworks', 'Productions',
+  'Projects', 'Media', 'Network', 'House', 'Hub', 'World', 'Space', 'Gallery', 'Showcase', 'Archive',
+  'Library', 'Workshop', 'Atelier', 'Laboratory', 'Lab', 'Society', 'Circle', 'Guild', 'Company', 'Exchange',
+  'Platform', 'Channel', 'Index', 'Collection', 'Portfolio', 'Press', 'Publishing', 'Books', 'Stories', 'Films',
+  'Videos', 'Sounds', 'Records', 'Music', 'Design', 'Illustration', 'Photography', 'Motion', 'Digital Works', 'Creative Works',
+  'Creator House', 'Artist House', 'Media House', 'Creator Lab', 'Creative Lab', 'Project Hub', 'Creator Hub', 'Open Studio', 'Story House', 'Story Works',
+  'Image House', 'Image Works', 'Video House', 'Sound House', 'Design House', 'Publishing House', 'Creator Space', 'Artist Space', 'Creative Space', 'Creator Network',
+  'Artist Network', 'Creative Network', 'Creator Archive', 'Artist Archive', 'Creator Showcase', 'Artist Showcase', 'Creator Portfolio', 'Artist Portfolio', 'Creator Projects', 'Artist Projects',
+  'Creator Productions', 'Artist Productions', 'Creator Originals', 'Artist Originals', 'Creator Stories', 'Artist Stories', 'Creator Works', 'Artist Works', 'Creator Arts', 'Artist Arts',
+  'Digital Arts', 'Independent Arts', 'Community Arts', 'Creator Media', 'Artist Media', 'Creative Media', 'Creator Publishing', 'Artist Publishing', 'Creator Workshop', 'Artist Workshop'
+] as const;
+
+const USER_NAME_ANIMALS = ['Fox', 'Owl', 'Hare', 'Bear', 'Raven', 'Otter', 'Badger', 'Deer', 'Lynx', 'Sparrow', 'Wolf', 'Falcon', 'Panther', 'Wren', 'Heron'];
+const CREATOR_NAME_ANIMALS = ['Fox', 'Raven', 'Owl', 'Lynx', 'Wolf', 'Hare', 'Otter', 'Bear', 'Badger', 'Deer', 'Falcon', 'Panther', 'Sparrow', 'Heron', 'Moth'];
+const USER_NAME_COMMUNITIES = ['Neighbor', 'Neighbour', 'Friend', 'Explorer', 'Listener', 'Storyteller', 'Gatherer', 'Maker', 'Regular', 'Newcomer'];
+const CREATOR_NAME_COMMUNITIES = ['Studio', 'Maker', 'Artist', 'Publisher', 'Storyteller', 'Designer', 'Illustrator', 'Photographer', 'Musician', 'Filmmaker'];
+
+if (USER_NAME_MODIFIERS.length !== 100 || CREATOR_NAME_MODIFIERS.length !== 100 || USER_NAME_SUFFIXES.length !== 100 || CREATOR_NAME_SUFFIXES.length !== 100) {
+  throw new Error('Profile name expansion pools must contain 100 curated entries.');
+}
+
+const profileNameContainsRestrictedTerm = (candidate: string): boolean => {
+  const normalized = candidate.toLocaleLowerCase().replace(/[-_/]+/g, ' ');
+  return RESTRICTED_PROFILE_NAME_TERMS.some((term) => new RegExp(`(^|\\s)${term}(?=\\s|$)`, 'i').test(normalized));
+};
+
+const insertProfileNameModifier = (name: string, modifier: string): string => {
+  const article = name.match(/^(A|An|The)\s+/i);
+  return article ? `${article[1]} ${modifier} ${name.slice(article[0].length)}` : `${modifier} ${name}`;
+};
+
+const buildProfileNameExpansionPool = (profileType: ProfileNameType, input: string): ProfileNameExpansionOption[] => {
+  const baseName = input.trim().replace(/\s+/g, ' ') || (profileType === 'creator' ? 'Creator' : 'Member');
+  const modifiers = profileType === 'creator' ? CREATOR_NAME_MODIFIERS : USER_NAME_MODIFIERS;
+  const suffixes = profileType === 'creator' ? CREATOR_NAME_SUFFIXES : USER_NAME_SUFFIXES;
+  const animals = profileType === 'creator' ? CREATOR_NAME_ANIMALS : USER_NAME_ANIMALS;
+  const communities = profileType === 'creator' ? CREATOR_NAME_COMMUNITIES : USER_NAME_COMMUNITIES;
+  const options: ProfileNameExpansionOption[] = [];
+  modifiers.forEach((modifier, index) => {
+    const suffix = suffixes[index];
+    const entries: Array<[ProfileNameExpansionOption['kind'], string, number]> = [
+      ['modifier', insertProfileNameModifier(baseName, modifier), 90],
+      ['suffix', `${insertProfileNameModifier(baseName, modifier)} ${suffix}`, 70],
+      ['suffix', `${baseName} ${suffix}`, 100],
+      ['animal', `${modifier} ${animals[index % animals.length]}`, 55],
+      ['community', `${modifier} ${communities[index % communities.length]}`, 45]
+    ];
+    entries.forEach(([kind, value, weight], formIndex) => options.push({
+      id: `${profileType}-${index}-${formIndex}`,
+      profileType,
+      value,
+      kind,
+      weight,
+      enabled: true,
+      restricted: profileNameContainsRestrictedTerm(value)
+    }));
+  });
+  const seen = new Set<string>();
+  return options.filter((option) => {
+    const normalized = normalizeIdentityName(option.value);
+    if (seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+};
+
+const buildProfileNameSuggestions = (
+  profileType: ProfileNameType,
+  input: string,
+  isAvailable: (candidate: string) => boolean
+): string[] => {
+  const pool = buildProfileNameExpansionPool(profileType, input);
+  const baseName = input.trim().replace(/\s+/g, ' ') || (profileType === 'creator' ? 'Creator' : 'Member');
+  const highPrioritySuffix = profileType === 'creator' ? 'Studio' : 'Circle';
+  const preferred = [
+    `${baseName} ${highPrioritySuffix}`,
+    ...pool.filter((option) => option.kind === 'modifier').map((option) => option.value),
+    ...pool.filter((option) => option.kind === 'suffix').map((option) => option.value),
+    ...pool.filter((option) => option.kind === 'animal' || option.kind === 'community').map((option) => option.value),
+    `${baseName} 2`
+  ];
+  const seen = new Set<string>();
+  const candidates = preferred.filter((candidate) => {
+    const normalized = normalizeIdentityName(candidate);
+    if (seen.has(normalized) || profileNameContainsRestrictedTerm(candidate) || !isAvailable(candidate)) return false;
+    seen.add(normalized);
+    return true;
+  });
+  // Keep the normal UI useful: the full 500-item catalog remains available
+  // internally, while the first eight are weighted toward readable choices.
+  return candidates.slice(0, 8);
+};
+
+const buildCreatorNameSuggestions = (creators: Creator[], input: string, excludeCreatorId?: string): string[] => (
+  buildProfileNameSuggestions('creator', input, (candidate) => {
+    const candidateSlug = slugify(candidate);
+    return !creators.some((creator) => creator.creatorId !== excludeCreatorId && (
+      creatorMatchesName(creator, candidate) || creatorMatchesSlug(creator, candidateSlug)
+    ));
+  })
+);
+
+const buildUserDisplayNameSuggestions = async (store: DataStore, input: string, excludeUserId?: string): Promise<string[]> => {
+  const profiles = await store.listUserProfiles?.() || [];
+  return buildProfileNameSuggestions('user', input, (candidate) => !profiles.some((profile) => (
+    profile.userId !== excludeUserId && userProfileMatchesName(profile, candidate)
+  )));
+};
+
 const parseSquareCrop = (input: unknown): SquareCropInput | undefined => {
   if (!input || typeof input !== 'object') return undefined;
   const obj = input as Record<string, unknown>;
@@ -378,6 +575,14 @@ const parseCreatorSpaceTheme = (value: unknown): NonNullable<NonNullable<Creator
 const parseCreatorCoverPreset = (value: unknown): string | undefined => {
   const preset = sanitizeOptional(value, 80);
   return preset && /^[a-z0-9][a-z0-9-]*$/.test(preset) ? preset : undefined;
+};
+
+const parseCreatorSpaceVisibility = (value: unknown): 'public-discoverable' | 'public-link' | 'private' =>
+  value === 'public-discoverable' || value === 'public-link' ? value : 'private';
+
+const parseCreatorShareCode = (value: unknown): string | undefined => {
+  const code = sanitizeOptional(value, 120);
+  return code && /^[A-Za-z0-9_-]{12,120}$/.test(code) ? code : undefined;
 };
 
 const parseOptionalContentRating = (value: unknown): ContentRating | undefined => {
@@ -648,15 +853,26 @@ const validateUsername = (value: string): { normalized: string; reasons: string[
   return { normalized, reasons };
 };
 
-const buildUsernameSuggestions = async (store: DataStore, input: string): Promise<string[]> => {
+const buildUsernameSuggestions = async (
+  store: DataStore,
+  input: string,
+  productBrand: 'ubeeq' | 'eversally'
+): Promise<string[]> => {
   const base = normalizeUsername(input).replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '') || 'user';
-  const trimmed = base.slice(0, 20);
+  const withPrefix = (prefix: string) => `${prefix}-${base}`.slice(0, 30).replace(/-+$/g, '');
+  const withSuffix = (suffix: string) => `${base.slice(0, Math.max(3, 29 - suffix.length))}-${suffix}`;
+  const communityTerm = productBrand === 'eversally' ? 'ever' : 'ubeeqer';
   const candidates = new Set<string>();
-  candidates.add(`${trimmed}-${Math.floor(100 + Math.random() * 900)}`);
-  candidates.add(`${trimmed}${new Date().getFullYear()}`);
-  candidates.add(`${trimmed}-grouping`);
-  candidates.add(`${trimmed}-art`);
-  candidates.add(`u${trimmed}-${Math.floor(10 + Math.random() * 89)}`);
+  // Prefer readable, brand-native alternatives over opaque numeric suffixes.
+  // They remain suggestions only: the member can always choose a different
+  // handle that fits their identity.
+  candidates.add(withSuffix(communityTerm));
+  candidates.add(withPrefix(communityTerm));
+  candidates.add(withSuffix(productBrand === 'eversally' ? 'space' : 'area'));
+  candidates.add(withPrefix('hello'));
+  candidates.add(withSuffix('makes'));
+  candidates.add(`${base.slice(0, 29)}2`);
+  candidates.add(`${base.slice(0, 28)}23`);
 
   const suggestions: string[] = [];
   for (const candidate of candidates) {
@@ -1165,6 +1381,15 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       attempt += 1;
     }
     created.username = resolvedUsername;
+    const profiles = await store.listUserProfiles?.() || [];
+    const baseDisplayName = created.displayName || created.username;
+    let resolvedDisplayName = baseDisplayName;
+    let nameAttempt = 2;
+    while (profiles.some((profile) => userProfileMatchesName(profile, resolvedDisplayName))) {
+      resolvedDisplayName = `${baseDisplayName} ${nameAttempt}`;
+      nameAttempt += 1;
+    }
+    created.displayName = resolvedDisplayName;
     await store.upsertUserProfile(created);
     return created;
   };
@@ -2356,14 +2581,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const requested = typeof req.query.username === 'string' ? req.query.username : '';
     const { normalized, reasons } = validateUsername(requested);
     if (reasons.length > 0) {
-      return res.json({ username: normalized, available: false, reasons, suggestions: await buildUsernameSuggestions(store, requested) });
+      return res.json({ username: normalized, available: false, reasons, suggestions: await buildUsernameSuggestions(store, requested, brand.id) });
     }
     const available = await store.isUsernameAvailable(normalized);
     return res.json({
       username: normalized,
       available,
       reasons: available ? [] : ['Username is already taken.'],
-      suggestions: available ? [] : await buildUsernameSuggestions(store, requested)
+      suggestions: available ? [] : await buildUsernameSuggestions(store, requested, brand.id)
     });
   });
 
@@ -2382,14 +2607,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const generatedUsername = `ubeeqer-${randomUUID().replace(/-/g, '').slice(0, 10)}`;
     const { normalized, reasons } = validateUsername(usernameInput.trim() || generatedUsername);
     if (reasons.length > 0) {
-      return res.status(400).json({ message: reasons[0], reasons, suggestions: await buildUsernameSuggestions(store, usernameInput) });
+      return res.status(400).json({ message: reasons[0], reasons, suggestions: await buildUsernameSuggestions(store, usernameInput, brand.id) });
     }
 
     const available = await store.isUsernameAvailable(normalized);
     if (!available) {
       return res.status(409).json({
         message: 'Username is already taken.',
-        suggestions: await buildUsernameSuggestions(store, normalized)
+        suggestions: await buildUsernameSuggestions(store, normalized, brand.id)
       });
     }
 
@@ -2398,7 +2623,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     } catch {
       return res.status(409).json({
         message: 'Username is already taken.',
-        suggestions: await buildUsernameSuggestions(store, normalized)
+        suggestions: await buildUsernameSuggestions(store, normalized, brand.id)
       });
     }
 
@@ -2427,13 +2652,21 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return creators.find((item) => item.slug === requestedSlug || (item.slugHistory || []).includes(requestedSlug)) || null;
   };
 
+  const canAccessCreatorSpace = async (req: express.Request, creator: Creator): Promise<boolean> => {
+    const visibility = creator.space?.visibility || 'public-discoverable';
+    if (visibility !== 'private') return true;
+    if (req.authUser?.userId && await store.hasCreatorAccess(req.authUser.userId, creator.creatorId)) return true;
+    const shareCode = creator.space?.shareCode;
+    return Boolean(shareCode) && String(req.query.access || '') === shareCode;
+  };
+
   app.get('/creators', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120');
     try {
       const result = await getDiscoveryCached(req, 'discovery:creators', async () => {
         const creators = await store.listCreators();
         const active = creators
-          .filter((creator) => creator.status === 'active')
+          .filter((creator) => creator.status === 'active' && (creator.space?.visibility || 'public-discoverable') === 'public-discoverable')
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         return Promise.all(active.map(async (creator) => {
           const creatorGroupings = (await store.listGroupingsByCreatorSlug(creator.slug))
@@ -2474,9 +2707,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     externalLinks: creator.space?.externalLinks || [],
     theme: creator.space?.theme || 'default',
     coverPreset: creator.space?.coverPreset,
-    announcement: creator.space?.announcement?.enabled && creator.space.announcement.message
-      ? creator.space.announcement
-      : undefined,
+    visibility: creator.space?.visibility || 'public-discoverable',
     profileImageUrl: await publicMediaUrl(
       creator.branding?.profileImage?.thumbnailKeys?.square1024
         || creator.branding?.profileImage?.thumbnailKeys?.square512
@@ -2552,7 +2783,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.get('/creators/:slug/works', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
     const creator = await resolveCreatorFromSlug(requestedSlug);
-    if (!creator || creator.status !== 'active') return res.status(404).json({ message: 'Creator not found' });
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) return res.status(404).json({ message: 'Creator not found' });
     if (creator.slug !== requestedSlug) return res.redirect(302, `/creators/${creator.slug}/works`);
     const works = await store.listWorksByCreator(config.tenantId, creator.creatorId);
     const visible = (await Promise.all(works.map(async (work) => ({
@@ -2565,7 +2796,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
 
   app.get('/creators/:slug/works/:workSlug', async (req, res) => {
     const creator = await resolveCreatorFromSlug(String(req.params.slug || '').trim().toLowerCase());
-    if (!creator || creator.status !== 'active') return res.status(404).json({ message: 'Creator not found' });
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) return res.status(404).json({ message: 'Creator not found' });
     const workSlug = String(req.params.workSlug || '').trim().toLowerCase();
     const work = (await store.listWorksByCreator(config.tenantId, creator.creatorId)).find((item) => item.slug === workSlug || item.slugHistory.includes(workSlug));
     if (!work || work.status === 'deleted') return res.status(404).json({ message: 'Work not found' });
@@ -2581,7 +2812,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.get('/creators/:slug/collections', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
     const creator = await resolveCreatorFromSlug(requestedSlug);
-    if (!creator || creator.status !== 'active') return res.status(404).json({ message: 'Creator not found' });
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) return res.status(404).json({ message: 'Creator not found' });
     if (creator.slug !== requestedSlug) return res.redirect(302, `/creators/${creator.slug}/collections`);
     const collections = (await store.listCreatorCollections(config.tenantId, creator.creatorId))
       .filter((collection) => collection.status === 'published' && collection.visibility === 'public');
@@ -2595,7 +2826,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.get('/creators/:slug/collections/:collectionSlug', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
     const creator = await resolveCreatorFromSlug(requestedSlug);
-    if (!creator || creator.status !== 'active') return res.status(404).json({ message: 'Creator not found' });
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) return res.status(404).json({ message: 'Creator not found' });
     const collectionSlug = String(req.params.collectionSlug || '').trim().toLowerCase();
     const collection = (await store.listCreatorCollections(config.tenantId, creator.creatorId)).find((item) => item.slug === collectionSlug || item.slugHistory.includes(collectionSlug));
     if (!collection || collection.status === 'deleted') return res.status(404).json({ message: 'Collection not found' });
@@ -2682,7 +2913,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.get('/creators/:slug/feed', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
     const creator = await resolveCreatorFromSlug(requestedSlug);
-    if (!creator || creator.status !== 'active') {
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) {
       return res.status(404).json({ message: 'Creator not found' });
     }
     if (creator.slug !== requestedSlug) {
@@ -2876,7 +3107,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.get('/creators/:slug/posts', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
     const creator = await resolveCreatorFromSlug(requestedSlug);
-    if (!creator || creator.status !== 'active') {
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) {
       return res.status(404).json({ message: 'Creator not found' });
     }
     if (creator.slug !== requestedSlug) {
@@ -2962,7 +3193,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
 
     const creator = (await store.listCreators()).find((item) => item.creatorId === post.creatorId);
-    if (!creator || creator.status !== 'active') {
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) {
       return res.status(404).json({ message: 'Post not found' });
     }
 
@@ -3298,7 +3529,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return res.status(400).json({ message: 'Invalid profile slug' });
     }
     const profile = await store.getUserProfileBySlug(slug);
-    if (!profile) {
+    if (!profile || profile.status === 'inactive') {
       return res.status(404).json({ message: 'Profile not found' });
     }
     if (profile.username !== slug) {
@@ -3312,7 +3543,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     ]);
     const publicCreators = (await Promise.all(
       managedCreators
-        .filter((creator) => creator.status === 'active' && creator.space?.showOnMemberProfile === true)
+        .filter((creator) => creator.status === 'active' && creator.space?.showOnMemberProfile === true && (creator.space?.visibility || 'public-discoverable') !== 'private')
         .map(async (creator) => ({
           creator,
           isOwner: (await store.listCreatorMembers(creator.creatorId)).some((member) => member.userId === profile.userId && member.role === 'owner')
@@ -3550,6 +3781,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!creator || creator.status !== 'active') {
       return res.status(404).json({ message: 'Creator not found' });
     }
+    const canManageSpace = Boolean(req.authUser?.userId && await store.hasCreatorAccess(req.authUser.userId, creator.creatorId));
+    const spaceVisibility = creator.space?.visibility || 'public-discoverable';
+    const submittedCode = String(req.query.access || '');
+    const shareCode = creator.space?.shareCode;
+    const hasShareCode = spaceVisibility === 'private' && Boolean(shareCode) && submittedCode === shareCode;
+    if (spaceVisibility === 'private' && !canManageSpace && !hasShareCode) {
+      return res.status(404).json({ message: 'Creator not found' });
+    }
     if (creator.slug !== requestedSlug) {
       return res.redirect(302, `/creators/${creator.slug}/profile`);
     }
@@ -3648,9 +3887,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         externalLinks: creator.space?.externalLinks || [],
         theme: creator.space?.theme || 'default',
         coverPreset: creator.space?.coverPreset,
-        announcement: creator.space?.announcement?.enabled && creator.space.announcement.message
-          ? creator.space.announcement
-          : undefined
+        visibility: spaceVisibility
       },
       defaultProfileTab: creator.defaultProfileTab === 'groupings' ? 'groupings' : 'feed',
       branding: {
@@ -4208,6 +4445,17 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
 
   app.put('/me/profile', requireAuth, async (req, res) => {
     const existing = await ensureUserProfile(req);
+    const requestedDisplayName = sanitizeOptional(req.body?.displayName, 80) || existing.displayName || existing.username;
+    const profileNameConflict = (await store.listUserProfiles?.() || []).find((profile) => (
+      profile.userId !== existing.userId && userProfileMatchesName(profile, requestedDisplayName)
+    ));
+    if (profileNameConflict) {
+      return res.status(409).json({
+        message: 'Display name is already taken.',
+        displayName: requestedDisplayName,
+        displayNameSuggestions: await buildUserDisplayNameSuggestions(store, requestedDisplayName, existing.userId)
+      });
+    }
     const matureContentEnabled = typeof req.body?.matureContentEnabled === 'boolean'
       ? req.body.matureContentEnabled
       : Boolean(existing.matureContentEnabled);
@@ -4231,7 +4479,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     });
     const updated: UserProfile = {
       ...existing,
-      displayName: sanitizeOptional(req.body?.displayName, 80),
+      displayName: requestedDisplayName,
       bio: sanitizeLimitedRichText(req.body?.bio, 600),
       externalLinks: req.body?.externalLinks !== undefined
         ? parseUserExternalLinks(req.body.externalLinks)
@@ -4252,6 +4500,12 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       ...updated,
       branding: await publicProfileBranding(updated.branding, `${req.protocol}://${req.get('host')}`)
     });
+  });
+
+  app.post('/me/profile/deactivate', requireAuth, async (req, res) => {
+    const existing = await ensureUserProfile(req);
+    await store.upsertUserProfile({ ...existing, status: 'inactive', updatedAt: new Date().toISOString() });
+    return res.json({ ok: true });
   });
 
   app.post('/me/profile/branding/upload-url', requireAuth, async (req, res) => {
@@ -4390,7 +4644,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const requested = typeof req.body?.username === 'string' ? req.body.username : '';
     const { normalized, reasons } = validateUsername(requested);
     if (reasons.length > 0) {
-      return res.status(400).json({ message: reasons[0], reasons, suggestions: await buildUsernameSuggestions(store, requested) });
+      return res.status(400).json({ message: reasons[0], reasons, suggestions: await buildUsernameSuggestions(store, requested, brand.id) });
     }
 
     const profile = await ensureUserProfile(req);
@@ -4411,7 +4665,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
 
     const available = await store.isUsernameAvailable(normalized);
     if (!available) {
-      return res.status(409).json({ message: 'Username is already taken.', suggestions: await buildUsernameSuggestions(store, normalized) });
+      return res.status(409).json({ message: 'Username is already taken.', suggestions: await buildUsernameSuggestions(store, normalized, brand.id) });
     }
 
     if (!config.cognitoUserPoolId || !req.authUser?.email) {
@@ -7355,9 +7609,28 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!name) return res.status(400).json({ message: `A ${brand.workspaceName} name is required.` });
     const slug = slugify(String(req.body?.slug || name || randomUUID().slice(0, 8)));
     const creators = await store.listCreators();
+    const conflictName = creators.find((item) => creatorMatchesName(item, name));
+    if (conflictName) {
+      const nameSuggestions = buildCreatorNameSuggestions(creators, name);
+      return res.status(409).json({
+        message: 'Creator name is already taken.',
+        name,
+        nameSuggestions,
+        // Keep the name and handle pills paired. A name alternative therefore
+        // selects an available derived handle before a creator edits either.
+        slugSuggestions: [...new Set([
+          ...nameSuggestions.map(slugify),
+          ...buildCreatorSlugSuggestions(creators, slug)
+        ])].slice(0, 8)
+      });
+    }
     const conflict = creators.find((item) => creatorMatchesSlug(item, slug));
     if (conflict) {
-      return res.status(409).json({ message: 'Creator slug is already taken.', slug });
+      return res.status(409).json({
+        message: 'Creator slug is already taken.',
+        slug,
+        slugSuggestions: buildCreatorSlugSuggestions(creators, slug)
+      });
     }
 
     const creator: Creator = {
@@ -7379,12 +7652,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         externalLinks: parseCreatorExternalLinks(req.body.space.externalLinks),
         theme: parseCreatorSpaceTheme(req.body.space.theme),
         coverPreset: parseCreatorCoverPreset(req.body.space.coverPreset),
+        visibility: parseCreatorSpaceVisibility(req.body.space.visibility),
+        shareCode: parseCreatorShareCode(req.body.space.shareCode),
         showOnMemberProfile: req.body.space.showOnMemberProfile === true,
-        announcement: req.body.space.announcement && typeof req.body.space.announcement === 'object' ? {
-          enabled: req.body.space.announcement.enabled === true,
-          message: sanitizeOptional(req.body.space.announcement.message, 500) || '',
-          url: sanitizePublicHttpUrl(req.body.space.announcement.url)
-        } : undefined
       } : undefined,
       status: req.body?.status === 'inactive' ? 'inactive' : 'active',
       sortOrder: Number(req.body?.sortOrder || 0),
@@ -7568,13 +7838,37 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return res.status(404).json({ message: 'Creator not found' });
     }
 
+    const nextName = req.body?.name !== undefined ? String(req.body.name).trim() : existing.name;
+    if (!nextName) {
+      return res.status(400).json({ message: 'Creator name is required.' });
+    }
+    const conflictName = creators.find((creator) => (
+      creator.creatorId !== existing.creatorId && creatorMatchesName(creator, nextName)
+    ));
+    if (conflictName) {
+      const nameSuggestions = buildCreatorNameSuggestions(creators, nextName, existing.creatorId);
+      return res.status(409).json({
+        message: 'Creator name is already taken.',
+        name: nextName,
+        nameSuggestions,
+        slugSuggestions: [...new Set([
+          ...nameSuggestions.map(slugify),
+          ...buildCreatorSlugSuggestions(creators, req.body?.slug ? String(req.body.slug) : existing.slug, existing.creatorId)
+        ])].slice(0, 8)
+      });
+    }
+
     const nextSlug = req.body?.slug ? slugify(String(req.body.slug)) : existing.slug;
     const nextSlugHistory = uniqueSlugs([...(existing.slugHistory || [existing.slug]), nextSlug]);
     const conflictSlug = nextSlugHistory.find((slug) =>
       creators.some((item) => item.creatorId !== existing.creatorId && creatorMatchesSlug(item, slug))
     );
     if (conflictSlug) {
-      return res.status(409).json({ message: 'Creator slug is already taken.', slug: conflictSlug });
+      return res.status(409).json({
+        message: 'Creator slug is already taken.',
+        slug: conflictSlug,
+        slugSuggestions: buildCreatorSlugSuggestions(creators, nextSlug, existing.creatorId)
+      });
     }
 
     const requestedFeaturedItemIds = req.body?.featuredItemIds !== undefined
@@ -7600,7 +7894,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
 
     const updated: Creator = {
       ...existing,
-      name: req.body?.name ? String(req.body.name) : existing.name,
+      name: nextName,
       slug: nextSlug,
       slugHistory: nextSlugHistory,
       defaultProfileTab: req.body?.defaultProfileTab === 'groupings'
@@ -7626,16 +7920,11 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         externalLinks: req.body.space.externalLinks !== undefined ? parseCreatorExternalLinks(req.body.space.externalLinks) : (existing.space?.externalLinks || []),
         theme: req.body.space.theme !== undefined ? parseCreatorSpaceTheme(req.body.space.theme) : (existing.space?.theme || 'default'),
         coverPreset: req.body.space.coverPreset !== undefined ? parseCreatorCoverPreset(req.body.space.coverPreset) : existing.space?.coverPreset,
+        visibility: req.body.space.visibility !== undefined ? parseCreatorSpaceVisibility(req.body.space.visibility) : (existing.space?.visibility || 'public-discoverable'),
+        shareCode: req.body.space.shareCode !== undefined ? parseCreatorShareCode(req.body.space.shareCode) : existing.space?.shareCode,
         showOnMemberProfile: req.body.space.showOnMemberProfile !== undefined
           ? req.body.space.showOnMemberProfile === true
           : existing.space?.showOnMemberProfile === true,
-        announcement: req.body.space.announcement !== undefined
-          ? (req.body.space.announcement && typeof req.body.space.announcement === 'object' ? {
-              enabled: req.body.space.announcement.enabled === true,
-              message: sanitizeOptional(req.body.space.announcement.message, 500) || '',
-              url: sanitizePublicHttpUrl(req.body.space.announcement.url)
-            } : undefined)
-          : existing.space?.announcement
       } : existing.space,
       status: req.body?.status === 'inactive' ? 'inactive' : (req.body?.status === 'active' ? 'active' : existing.status),
       sortOrder: req.body?.sortOrder !== undefined ? Number(req.body.sortOrder) : existing.sortOrder

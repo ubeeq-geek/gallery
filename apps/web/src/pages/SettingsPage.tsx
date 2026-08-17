@@ -38,6 +38,7 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
   const routeLocation = useLocation();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [displayName, setDisplayName] = useState('');
+  const [displayNameSuggestions, setDisplayNameSuggestions] = useState<string[]>([]);
   const [bio, setBio] = useState('');
   const [externalLinks, setExternalLinks] = useState<ProfileExternalLink[]>([]);
   const [location, setLocation] = useState('');
@@ -170,6 +171,7 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
       setError('');
       setMessage('');
       setInvalidExternalLinkIndexes([]);
+      setDisplayNameSuggestions([]);
       const updated = await api.updateMyProfile({
         displayName: displayName || undefined,
         bio: bio || undefined,
@@ -190,7 +192,24 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
       onProfileChanged?.(updated);
       setMessage('Profile updated');
     } catch (e) {
-      setError((e as Error).message);
+      const error = e as Error & { details?: { displayNameSuggestions?: unknown } };
+      setError(error.message);
+      setDisplayNameSuggestions(Array.isArray(error.details?.displayNameSuggestions)
+        ? error.details.displayNameSuggestions.filter((value): value is string => typeof value === 'string')
+        : []);
+    }
+  };
+
+  const deactivateMemberProfile = async () => {
+    if (!window.confirm('Deactivate your member account? Your public profile will be hidden and you will be signed out. You can reactivate it with account support.')) return;
+    try {
+      setError('');
+      setMessage('');
+      await api.deactivateMyProfile();
+      await signOut();
+      navigate('/');
+    } catch (reason) {
+      setError((reason as Error).message || 'Unable to deactivate your account.');
     }
   };
 
@@ -604,8 +623,20 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
           <div className="studio-creator-form settings-profile-editor settings-member-profile-editor">
             <div className="settings-field">
               <label htmlFor="settings-display-name" className="settings-field-label">Display name</label>
-              <input id="settings-display-name" placeholder="Creative display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+              <input id="settings-display-name" placeholder="Creative display name" value={displayName} onChange={(e) => { setDisplayName(e.target.value); setDisplayNameSuggestions([]); }} />
               <p className="small">The name shown on your public member profile.</p>
+              {displayNameSuggestions.length > 0 && (
+                <div className="studio-field-suggestions">
+                  <small>Try an available display name:</small>
+                  <span className="username-suggestions">
+                    {displayNameSuggestions.map((candidate) => (
+                      <button type="button" key={candidate} className="username-suggestion-pill" onClick={() => { setDisplayName(candidate); setDisplayNameSuggestions([]); }}>
+                        {candidate}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+              )}
             </div>
             <div className="settings-field">
               <label htmlFor="settings-profile-url" className="settings-field-label">Handle / slug</label>
@@ -706,6 +737,7 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
             <div className="settings-field settings-profile-bio"><label className="settings-field-label">Bio</label><LimitedBioEditor value={bio} onChange={setBio} maxLength={600} /></div>
             <div className="settings-field settings-profile-bio"><label className="settings-field-label">External links</label><ProfileExternalLinksEditor value={externalLinks} onChange={setExternalLinks} allowCustom={false} invalidIndexes={invalidExternalLinkIndexes} /></div>
             <div className="inline-form"><button onClick={saveProfile}>Save member profile</button>{profile?.username && <button className="auth-secondary-btn" onClick={() => navigate(`/u/${encodeURIComponent(profile.username)}`)}>View public profile</button>}</div>
+            <section className="settings-danger-zone"><h3>Deactivate account</h3><p>Deactivate hides your public member profile. Account deletion will be available only after deactivation.</p><button type="button" className="auth-secondary-btn studio-danger-btn" onClick={() => void deactivateMemberProfile()}>Deactivate account</button></section>
 
           </div>
 

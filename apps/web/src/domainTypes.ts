@@ -208,6 +208,7 @@ export type SiteSettings = { siteName: string; theme: 'ubeeq' | 'sand' | 'forest
 
 export type UserProfile = {
   userId: string;
+  status?: 'active' | 'inactive';
   username: string;
   displayName?: string;
   bio?: string;

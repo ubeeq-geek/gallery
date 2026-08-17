@@ -69,12 +69,16 @@ export default function UserProfilePage({ viewerProfile }: { viewerProfile?: Use
           { label: 'Public favourites', value: profile.publicFavoriteCount },
           ...(visibleCreatorCount ? [{ label: 'Creator identities', value: visibleCreatorCount }] : [])
         ]}
-        actions={<>
-          {isOwnProfile && <Link className="auth-primary-btn no-underline" to="/settings?section=profile">Edit profile</Link>}
-          <button type="button" className={`auth-secondary-btn${activeView === 'collections' ? ' is-active' : ''}`} aria-pressed={activeView === 'collections'} onClick={() => setActiveView('collections')}>Collections</button>
-          <button type="button" className={`auth-secondary-btn${activeView === 'about' ? ' is-active' : ''}`} aria-pressed={activeView === 'about'} onClick={() => setActiveView('about')}>About</button>
-          {visibleCreatorCount > 0 && <button type="button" className={`auth-secondary-btn${activeView === 'creator' ? ' is-active' : ''}`} aria-pressed={activeView === 'creator'} onClick={() => setActiveView('creator')}>A Creator</button>}
-        </>}
+        actions={(
+          <div className="public-profile-action-layout">
+            <div className="public-profile-action-buttons">
+              {isOwnProfile && <Link className="auth-primary-btn no-underline" to="/settings?section=profile">Edit profile</Link>}
+              <button type="button" className={`auth-secondary-btn${activeView === 'collections' ? ' is-active' : ''}`} aria-pressed={activeView === 'collections'} onClick={() => setActiveView('collections')}>Collections</button>
+              <button type="button" className={`auth-secondary-btn${activeView === 'about' ? ' is-active' : ''}`} aria-pressed={activeView === 'about'} onClick={() => setActiveView('about')}>About</button>
+              {visibleCreatorCount > 0 && <button type="button" className={`auth-secondary-btn${activeView === 'creator' ? ' is-active' : ''}`} aria-pressed={activeView === 'creator'} onClick={() => setActiveView('creator')}>A Creator</button>}
+            </div>
+          </div>
+        )}
       />
 
       {activeView === 'about' && (

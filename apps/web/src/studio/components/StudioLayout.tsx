@@ -65,7 +65,7 @@ export function StudioLayout({
               <small>{activeCreator?.slug ? `@${activeCreator.slug}` : `${brand.creatorName} identity`}</small>
             </label>
             <div className="studio-creator-actions">
-              {activeCreator?.slug && <Link className="auth-secondary-btn no-underline" to={`/creators/${encodeURIComponent(activeCreator.slug)}`}>View Public {brand.creatorName} Profile</Link>}
+        {activeCreator?.slug && <Link className="auth-secondary-btn no-underline" to={`/creators/${encodeURIComponent(activeCreator.slug)}?preview=1`}>View Public {brand.creatorName} Profile</Link>}
               <Link className="auth-primary-btn no-underline" to="/studio/workspace?section=creators&create=1">Add a New {brand.creatorName}</Link>
               <Link className="auth-secondary-btn no-underline" to={destination('creators')}>Manage {brand.creatorPlural}</Link>
             </div>

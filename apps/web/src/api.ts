@@ -53,7 +53,9 @@ const fetchAuthGetWithRetry = async (url: string, baseHeaders?: Record<string, s
 const handleJson = async (response: Response) => {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.message || 'Request failed');
+    const error = new Error(body.message || 'Request failed') as Error & { details?: unknown };
+    error.details = body;
+    throw error;
   }
   if (response.status === 204) {
     return null;
@@ -343,14 +345,20 @@ export const api = {
     const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-content?${qs.toString()}`));
     return handleJson(response);
   },
-  async getCreatorProfile(slug: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/profile`);
+  async getCreatorProfile(slug: string, shareCode?: string, preview = false) {
+    const query = new URLSearchParams();
+    if (shareCode) query.set('access', shareCode);
+    if (preview) query.set('preview', '1');
+    const suffix = query.size ? `?${query.toString()}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/profile${suffix}`);
     return handleJson(response);
   },
-  async getCreatorFeed(slug: string, cursor?: string, limit = 24) {
+  async getCreatorFeed(slug: string, cursor?: string, limit = 24, shareCode?: string, preview = false) {
     const qs = new URLSearchParams();
     qs.set('limit', String(limit));
     if (cursor) qs.set('cursor', cursor);
+    if (shareCode) qs.set('access', shareCode);
+    if (preview) qs.set('preview', '1');
     const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/feed?${qs.toString()}`);
     return handleJson(response);
   },
@@ -363,13 +371,17 @@ export const api = {
     period: 'hourly' | 'daily' = 'daily',
     cursor?: string,
     limit = 24,
-    source: 'combined' | 'media' | 'post' = 'combined'
+    source: 'combined' | 'media' | 'post' = 'combined',
+    shareCode?: string,
+    preview = false
   ) {
     const qs = new URLSearchParams();
     qs.set('period', period);
     qs.set('limit', String(limit));
     qs.set('source', source);
     if (cursor) qs.set('cursor', cursor);
+    if (shareCode) qs.set('access', shareCode);
+    if (preview) qs.set('preview', '1');
     const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/trending-content?${qs.toString()}`);
     return handleJson(response);
   },
@@ -598,6 +610,13 @@ export const api = {
     myProfileInFlight = null;
     return handleJson(response);
   },
+  async deactivateMyProfile() {
+    const response = await fetch(`${API_BASE}/me/profile/deactivate`, {
+      method: 'POST',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
   async createMyProfileBrandingUploadUrl(payload: { kind: 'profile' | 'cover'; contentType: string }) {
     const response = await fetch(`${API_BASE}/me/profile/branding/upload-url`, {
       method: 'POST',
@@ -660,8 +679,12 @@ export const api = {
   async getMyArtists() {
     return this.getMyCreators();
   },
-  async getCreatorPosts(creator: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${encodeURIComponent(creator)}/posts`);
+  async getCreatorPosts(creator: string, shareCode?: string, preview = false) {
+    const query = new URLSearchParams();
+    if (shareCode) query.set('access', shareCode);
+    if (preview) query.set('preview', '1');
+    const suffix = query.size ? `?${query.toString()}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${encodeURIComponent(creator)}/posts${suffix}`);
     return handleJson(response);
   },
   async getPostBySlug(slug: string) {
@@ -761,7 +784,8 @@ export const api = {
       externalLinks?: Array<{ label: string; url: string }>;
       theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
       coverPreset?: string;
-      announcement?: { enabled: boolean; message: string; url?: string };
+      visibility?: 'public-discoverable' | 'public-link' | 'private';
+      shareCode?: string;
     };
   }) {
     const response = await fetch(`${API_BASE}/studio/creators/${creator}`, {
