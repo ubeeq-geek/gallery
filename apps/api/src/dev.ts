@@ -7,12 +7,16 @@ import { InMemoryStore } from './inMemoryStore';
 import { processExternalSyncJob } from './externalSyncWorker';
 import { createInProcessExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 
-const config = { ...loadConfig(), localAuthUserId: process.env.LOCAL_AUTH_USER_ID || 'local-user' };
+// A local seed is useful for offline UI work, but it must not override real
+// Cognito identities when the paired web app has an auth configuration.
+const config = { ...loadConfig(), localAuthUserId: process.env.LOCAL_AUTH_USER_ID };
 const store = new InMemoryStore();
 
 const now = new Date().toISOString();
 store.creators.push({ creatorId: 'creator-1', name: 'Featured Creator', slug: 'featured-creator', status: 'active', sortOrder: 1, createdAt: now });
-store.creatorMembers.push({ creatorId: 'creator-1', userId: config.localAuthUserId, role: 'owner', createdAt: now });
+if (config.localAuthUserId) {
+  store.creatorMembers.push({ creatorId: 'creator-1', userId: config.localAuthUserId, role: 'owner', createdAt: now });
+}
 store.groupings.push({
   groupingId: 'grouping-1',
   creatorId: 'creator-1',

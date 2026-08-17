@@ -37,6 +37,7 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
   const navigate = useNavigate();
   const routeLocation = useLocation();
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [hasCreatorIdentity, setHasCreatorIdentity] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [displayNameSuggestions, setDisplayNameSuggestions] = useState<string[]>([]);
   const [bio, setBio] = useState('');
@@ -126,7 +127,11 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
   useEffect(() => {
     const load = async () => {
       try {
-        const loaded = await api.getMyProfile() as UserProfile;
+        const [loaded, creatorIdentities] = await Promise.all([
+          api.getMyProfile() as Promise<UserProfile>,
+          api.getMyCreators().catch(() => [])
+        ]);
+        setHasCreatorIdentity(Array.isArray(creatorIdentities) && creatorIdentities.length > 0);
         setProfile(loaded);
         onProfileChanged?.(loaded);
         setDisplayName(loaded.displayName || '');
@@ -321,6 +326,25 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
     }
   };
 
+  const saveDisplayName = async () => {
+    const requested = displayName.trim();
+    if (!requested) {
+      setError('Display name is required.');
+      return;
+    }
+    try {
+      setError('');
+      setMessage('');
+      const updated = await api.updateMyProfile({ displayName: requested }) as UserProfile;
+      setProfile(updated);
+      setDisplayName(updated.displayName || requested);
+      onProfileChanged?.(updated);
+      setMessage('Display name updated');
+    } catch (e) {
+      setError((e as Error).message || 'Unable to update display name.');
+    }
+  };
+
   const submitPasswordChange = async () => {
     try {
       setError('');
@@ -496,6 +520,11 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
               View public profile
             </Link>
           )}
+          {hasCreatorIdentity && (
+            <Link className="auth-secondary-btn no-underline member-open-studio-link" to="/studio">
+              Open Studio <span aria-hidden="true">↗</span>
+            </Link>
+          )}
         </div>
         <nav className="studio-sidebar-nav" aria-label="Member account navigation">
           {memberSettingsSections.map((item) => (
@@ -625,6 +654,9 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
               <label htmlFor="settings-display-name" className="settings-field-label">Display name</label>
               <input id="settings-display-name" placeholder="Creative display name" value={displayName} onChange={(e) => { setDisplayName(e.target.value); setDisplayNameSuggestions([]); }} />
               <p className="small">The name shown on your public member profile.</p>
+              <div className="inline-form">
+                <button type="button" onClick={() => void saveDisplayName()}>Save display name</button>
+              </div>
               {displayNameSuggestions.length > 0 && (
                 <div className="studio-field-suggestions">
                   <small>Try an available display name:</small>
@@ -660,6 +692,9 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
                 <button type="button" onClick={changeUsername}>Save profile URL</button>
                 {profile?.lastUsernameChangeAt && <span className="small">Last changed: {new Date(profile.lastUsernameChangeAt).toLocaleDateString()}</span>}
               </div>
+              {profile?.username?.startsWith('ubeeqer-') && (
+                <p className="small">This is an automatically assigned handle. Choose your own unique handle whenever you are ready.</p>
+              )}
               {usernameError && <p className="error">{usernameError}</p>}
               {usernameSuggestions.length > 0 && (
                 <div className="username-suggestions">

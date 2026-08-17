@@ -67,7 +67,7 @@ The API reads environment variables from the shell that starts it; it does **not
 | `EXTERNAL_CONTENT_MAX_BYTES` | `52428800` | Maximum downloaded external source-file size (50 MiB). |
 | `DEVIANTART_MIN_REQUEST_INTERVAL_MS` | `2000` | Minimum spacing between DeviantArt API requests. The conservative default caps a single worker at roughly 30 calls per minute before response time. |
 | `DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE` | `true` | Enables supported published-description updates through retained Sta.sh IDs. |
-| `COGNITO_USER_POOL_ID` / `COGNITO_CLIENT_ID` | unset / read from `apps/web/.env.local` when present | Local-header auth remains enabled without a pool ID. The paired launcher copies the web's public `VITE_COGNITO_CLIENT_ID` to `COGNITO_CLIENT_ID` so local account registration can use the same Cognito client. Set both explicitly only when testing server-side Cognito token verification locally. |
+| `COGNITO_USER_POOL_ID` / `COGNITO_CLIENT_ID` | unset / read from `apps/web/.env.local` when present | Local-header auth remains available without a pool ID. For real local account testing, set `VITE_COGNITO_USER_POOL_ID` and `VITE_COGNITO_CLIENT_ID`; the paired launcher copies both values to the API so each Cognito user receives their own local profile. |
 | `BLUESKY_OAUTH_CLIENT_METADATA_URL` / `BLUESKY_OAUTH_CALLBACK_URL` | unset | Public HTTPS URLs for the AT Protocol OAuth client metadata and API callback. These cannot use a plain local host. |
 | `BLUESKY_OAUTH_JWKS_JSON` | unset | Public JWKS JSON advertised to Bluesky. Never include private JWK fields here. |
 | `BLUESKY_OAUTH_PRIVATE_JWK` | unset | Confidential ES256 signing JWK. Load from managed secret storage in production; never commit it. |
