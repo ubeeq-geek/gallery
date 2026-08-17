@@ -897,6 +897,7 @@ function HeaderAuth({
   roleNotificationCounts?: RoleNotificationCounts;
 }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const headerRef = useRef<HTMLElement | null>(null);
   const closeUserMenus = () => {
     document.querySelectorAll('details.user-menu[open], details.profile-switcher[open]').forEach((item) => item.removeAttribute('open'));
@@ -904,6 +905,7 @@ function HeaderAuth({
   const handleSignOutClick = async () => {
     closeUserMenus();
     await onSignOut();
+    navigate('/', { replace: true });
   };
   const rawDisplay = (profile?.displayName || user?.displayName || '').trim();
   const fallbackIdentity = (user?.email || user?.username || profile?.username || '').trim();
@@ -1358,6 +1360,10 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
   const authMode = mode as AuthMode;
 
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
+  const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'unavailable'>('idle');
+  const [usernameReason, setUsernameReason] = useState('');
+  const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -1392,6 +1398,41 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
       setConfirmPassword('');
     }
   }, [authMode]);
+
+  useEffect(() => {
+    if (authMode !== 'register') return;
+    const requested = username.trim();
+    if (!requested) {
+      setUsernameStatus('idle');
+      setUsernameReason('');
+      setUsernameSuggestions([]);
+      return;
+    }
+    let active = true;
+    setUsernameStatus('checking');
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await api.checkUsername(requested) as {
+          available: boolean;
+          reasons?: string[];
+          suggestions?: string[];
+        };
+        if (!active) return;
+        setUsernameStatus(result.available ? 'available' : 'unavailable');
+        setUsernameReason(result.available ? '' : result.reasons?.[0] || 'This handle is unavailable.');
+        setUsernameSuggestions(result.available ? [] : result.suggestions || []);
+      } catch {
+        if (!active) return;
+        setUsernameStatus('idle');
+        setUsernameReason('');
+        setUsernameSuggestions([]);
+      }
+    }, 260);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [authMode, username]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -1480,7 +1521,23 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
     if (password !== confirmPassword) {
       throw new Error('Passwords do not match');
     }
-    await api.registerAccount(email, password);
+    const requestedHandle = username.trim();
+    if (!requestedHandle) {
+      throw new Error('Choose a unique profile handle.');
+    }
+    const handleCheck = await api.checkUsername(requestedHandle) as {
+      username?: string;
+      available: boolean;
+      reasons?: string[];
+      suggestions?: string[];
+    };
+    if (!handleCheck.available) {
+      setUsernameStatus('unavailable');
+      setUsernameReason(handleCheck.reasons?.[0] || 'This handle is unavailable.');
+      setUsernameSuggestions(handleCheck.suggestions || []);
+      throw new Error(handleCheck.reasons?.[0] || 'Choose a different profile handle.');
+    }
+    await api.registerAccount(email, password, handleCheck.username || requestedHandle);
     sessionStorage.setItem('auth.confirm.username', email);
     navigate('/auth/confirm');
     setMessage('Registration started. Check your email for the code.');
@@ -1577,6 +1634,39 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
+          {authMode === 'register' && (
+            <>
+              <div className="auth-inline-label">
+                <span>Profile handle</span>
+                <span className={usernameStatus === 'available' ? 'auth-handle-status is-available' : 'auth-handle-status'}>
+                  {usernameStatus === 'checking' ? 'Checking…' : usernameStatus === 'available' ? 'Available' : ''}
+                </span>
+              </div>
+              <input
+                name="preferred_username"
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="your-profile-handle"
+                data-lpignore="true"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                aria-invalid={usernameStatus === 'unavailable'}
+              />
+              <p className="small">Unique, lowercase letters, numbers, and hyphens only. This becomes your public profile URL.</p>
+              {usernameReason && <p className="error">{usernameReason}</p>}
+              {usernameSuggestions.length > 0 && (
+                <div className="username-suggestions" aria-label="Available handle suggestions">
+                  {usernameSuggestions.map((candidate) => (
+                    <button key={candidate} type="button" className="username-suggestion-pill" onClick={() => setUsername(candidate)}>
+                      {candidate}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
           {(authMode === 'register' || (authMode === 'signin' && signinMethod === 'password')) && (
             <>
               <div className="auth-inline-label">

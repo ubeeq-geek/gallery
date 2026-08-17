@@ -228,10 +228,6 @@ const buildCreatorSlugSuggestions = (creators: Creator[], input: string, exclude
     .slice(0, 4);
 };
 
-const userProfileMatchesName = (profile: UserProfile, name: string): boolean => (
-  normalizeIdentityName(profile.displayName || profile.username) === normalizeIdentityName(name)
-);
-
 type ProfileNameType = 'user' | 'creator';
 type ProfileNameExpansionOption = {
   id: string;
@@ -394,13 +390,6 @@ const buildCreatorNameSuggestions = (creators: Creator[], input: string, exclude
     ));
   })
 );
-
-const buildUserDisplayNameSuggestions = async (store: DataStore, input: string, excludeUserId?: string): Promise<string[]> => {
-  const profiles = await store.listUserProfiles?.() || [];
-  return buildProfileNameSuggestions('user', input, (candidate) => !profiles.some((profile) => (
-    profile.userId !== excludeUserId && userProfileMatchesName(profile, candidate)
-  )));
-};
 
 const parseSquareCrop = (input: unknown): SquareCropInput | undefined => {
   if (!input || typeof input !== 'object') return undefined;
@@ -1381,15 +1370,6 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       attempt += 1;
     }
     created.username = resolvedUsername;
-    const profiles = await store.listUserProfiles?.() || [];
-    const baseDisplayName = created.displayName || created.username;
-    let resolvedDisplayName = baseDisplayName;
-    let nameAttempt = 2;
-    while (profiles.some((profile) => userProfileMatchesName(profile, resolvedDisplayName))) {
-      resolvedDisplayName = `${baseDisplayName} ${nameAttempt}`;
-      nameAttempt += 1;
-    }
-    created.displayName = resolvedDisplayName;
     await store.upsertUserProfile(created);
     return created;
   };
@@ -4446,16 +4426,6 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.put('/me/profile', requireAuth, async (req, res) => {
     const existing = await ensureUserProfile(req);
     const requestedDisplayName = sanitizeOptional(req.body?.displayName, 80) || existing.displayName || existing.username;
-    const profileNameConflict = (await store.listUserProfiles?.() || []).find((profile) => (
-      profile.userId !== existing.userId && userProfileMatchesName(profile, requestedDisplayName)
-    ));
-    if (profileNameConflict) {
-      return res.status(409).json({
-        message: 'Display name is already taken.',
-        displayName: requestedDisplayName,
-        displayNameSuggestions: await buildUserDisplayNameSuggestions(store, requestedDisplayName, existing.userId)
-      });
-    }
     const matureContentEnabled = typeof req.body?.matureContentEnabled === 'boolean'
       ? req.body.matureContentEnabled
       : Boolean(existing.matureContentEnabled);

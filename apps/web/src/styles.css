@@ -797,9 +797,14 @@ textarea[aria-invalid="true"] {
   color: var(--brand-primary-strong);
 }
 
-.member-view-profile-link {
+.member-view-profile-link,
+.member-open-studio-link {
   justify-content: center;
   width: 100%;
+}
+
+.member-open-studio-link span {
+  margin-left: 0.2rem;
 }
 
 .member-settings-panel {
@@ -5916,6 +5921,17 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
 
   .auth-confirm-input {
     margin-top: 0.75rem;
+  }
+
+  .auth-handle-status {
+    min-height: 1em;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+
+  .auth-handle-status.is-available {
+    color: #167442;
   }
 
   .auth-submit-btn {
