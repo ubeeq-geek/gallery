@@ -940,6 +940,54 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/challenges`);
     return handleJson(response);
   },
+  async studioCreateChallenge(payload: { title: string; slug?: string; description?: string; status?: string; submissionWindow?: { opensAt?: string; closesAt?: string }; votingWindow?: { opensAt?: string; closesAt?: string }; recurrence?: 'none' | 'daily' | 'weekly' | 'monthly'; votingConfig?: { mode: 'none' | 'fan_love' | 'judged' | 'mixed' }; specificRules?: string }) {
+    const response = await fetch(`${API_BASE}/studio/contribution-contexts`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ type: 'challenge', ...payload }) });
+    return handleJson(response);
+  },
+  async studioUpdateChallenge(contextId: string, payload: Record<string, unknown>) {
+    const response = await fetch(`${API_BASE}/studio/challenges/${encodeURIComponent(contextId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async studioListChallengeEntries(contextId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/contribution-contexts/${encodeURIComponent(contextId)}/submissions`);
+    return handleJson(response);
+  },
+  async studioModerateChallengeEntry(submissionId: string, payload: { status?: 'approved' | 'rejected'; entryStatus?: 'active' | 'withdrawn' | 'removed' }) {
+    const response = await fetch(`${API_BASE}/studio/entries/${encodeURIComponent(submissionId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async studioCreateChallengeLaurel(contextId: string, payload: Record<string, unknown>) {
+    const response = await fetch(`${API_BASE}/studio/challenges/${encodeURIComponent(contextId)}/laurels`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async studioCreateChallengePrize(contextId: string, payload: Record<string, unknown>) {
+    const response = await fetch(`${API_BASE}/studio/challenges/${encodeURIComponent(contextId)}/prizes`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async studioAwardChallengeLaurel(contextId: string, payload: Record<string, unknown>) {
+    const response = await fetch(`${API_BASE}/studio/challenges/${encodeURIComponent(contextId)}/awards`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async listChallenges() {
+    const response = await fetch(`${API_BASE}/challenges`);
+    return handleJson(response);
+  },
+  async getChallenge(slug: string) {
+    const response = await fetch(`${API_BASE}/challenges/${encodeURIComponent(slug)}`);
+    return handleJson(response);
+  },
+  async submitChallengeEntry(contextId: string, payload: { workId?: string; title: string; notes?: string; externalUrl?: string }) {
+    const response = await fetch(`${API_BASE}/contribution-contexts/${encodeURIComponent(contextId)}/submissions`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async withdrawChallengeEntry(contextId: string, submissionId: string) {
+    const response = await fetch(`${API_BASE}/contribution-contexts/${encodeURIComponent(contextId)}/submissions/${encodeURIComponent(submissionId)}/withdraw`, { method: 'POST', headers: await authHeaders() });
+    return handleJson(response);
+  },
+  async voteChallengeEntry(contextId: string, submissionId: string) {
+    const response = await fetch(`${API_BASE}/contribution-contexts/${encodeURIComponent(contextId)}/submissions/${encodeURIComponent(submissionId)}/vote`, { method: 'POST', headers: await authHeaders() });
+    return handleJson(response);
+  },
   async studioListEntries() {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/entries`);
     return handleJson(response);

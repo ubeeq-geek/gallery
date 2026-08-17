@@ -29,6 +29,9 @@ import type {
   ContextUnlockThreshold,
   ChallengePrize,
   PrizeAward,
+  ChallengeVote,
+  ChallengeLaurelDefinition,
+  ChallengeLaurelAward,
   PlatformRole,
   UserCapabilities,
   ExternalAccount,
@@ -114,6 +117,9 @@ export class InMemoryStore implements DataStore {
   contextUnlockThresholds: ContextUnlockThreshold[] = [];
   challengePrizes: ChallengePrize[] = [];
   prizeAwards: PrizeAward[] = [];
+  challengeVotes: ChallengeVote[] = [];
+  challengeLaurels: ChallengeLaurelDefinition[] = [];
+  challengeLaurelAwards: ChallengeLaurelAward[] = [];
   externalAccounts: ExternalAccount[] = [];
   externalAccountProfiles: ExternalAccountProfile[] = [];
   externalAccountProfileSnapshots: ExternalAccountProfileSnapshot[] = [];
@@ -871,6 +877,37 @@ export class InMemoryStore implements DataStore {
   async updateContextSubmission(submission: ContextSubmission): Promise<void> {
     this.contextSubmissions = this.contextSubmissions.filter((item) => item.submissionId !== submission.submissionId);
     this.contextSubmissions.push(submission);
+  }
+
+  async listChallengeVotes(contextId: string): Promise<ChallengeVote[]> {
+    return this.challengeVotes.filter((vote) => vote.contextId === contextId);
+  }
+
+  async getChallengeVote(contextId: string, submissionId: string, userId: string): Promise<ChallengeVote | null> {
+    return this.challengeVotes.find((vote) => vote.contextId === contextId && vote.submissionId === submissionId && vote.userId === userId) || null;
+  }
+
+  async createChallengeVote(vote: ChallengeVote): Promise<void> {
+    this.challengeVotes = this.challengeVotes.filter((item) => item.voteId !== vote.voteId && !(item.contextId === vote.contextId && item.submissionId === vote.submissionId && item.userId === vote.userId));
+    this.challengeVotes.push(vote);
+  }
+
+  async listChallengeLaurels(contextId?: string): Promise<ChallengeLaurelDefinition[]> {
+    return this.challengeLaurels.filter((item) => !contextId || !item.contextId || item.contextId === contextId);
+  }
+
+  async createChallengeLaurel(laurel: ChallengeLaurelDefinition): Promise<void> {
+    this.challengeLaurels = this.challengeLaurels.filter((item) => item.laurelId !== laurel.laurelId);
+    this.challengeLaurels.push(laurel);
+  }
+
+  async listChallengeLaurelAwards(contextId: string): Promise<ChallengeLaurelAward[]> {
+    return this.challengeLaurelAwards.filter((item) => item.contextId === contextId);
+  }
+
+  async createChallengeLaurelAward(award: ChallengeLaurelAward): Promise<void> {
+    this.challengeLaurelAwards = this.challengeLaurelAwards.filter((item) => item.awardId !== award.awardId);
+    this.challengeLaurelAwards.push(award);
   }
 
   async listContextUnlockThresholds(contextId: string): Promise<ContextUnlockThreshold[]> {

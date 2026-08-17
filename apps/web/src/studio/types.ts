@@ -111,6 +111,12 @@ export type StudioChallenge = {
   slug: string;
   status: string;
   type: string;
+  description?: string;
+  submissionWindow?: { opensAt?: string; closesAt?: string };
+  votingWindow?: { opensAt?: string; closesAt?: string };
+  recurrence?: 'none' | 'daily' | 'weekly' | 'monthly';
+  specificRules?: string;
+  votingConfig?: { mode?: 'none' | 'fan_love' | 'judged' | 'mixed' };
 };
 
 export type StudioEntry = {
