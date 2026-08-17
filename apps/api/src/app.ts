@@ -20,6 +20,9 @@ import type {
   Creator,
   CreatorMember,
   ChallengePrize,
+  ChallengeVote,
+  ChallengeLaurelDefinition,
+  ChallengeLaurelAward,
   Comment,
   ContentRating,
   ContextSubmission,
@@ -2686,6 +2689,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     bio: creator.space?.bio,
     externalLinks: creator.space?.externalLinks || [],
     theme: creator.space?.theme || 'default',
+    announcement: creator.space?.announcement,
     coverPreset: creator.space?.coverPreset,
     visibility: creator.space?.visibility || 'public-discoverable',
     profileImageUrl: await publicMediaUrl(
@@ -3866,6 +3870,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         bio: creator.space?.bio,
         externalLinks: creator.space?.externalLinks || [],
         theme: creator.space?.theme || 'default',
+        announcement: creator.space?.announcement,
         coverPreset: creator.space?.coverPreset,
         visibility: spaceVisibility
       },
@@ -5010,18 +5015,37 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const context = await store.getContributionContextBySlug(req.params.slug);
     if (!context || context.status === 'draft') return res.status(404).json({ message: 'Context not found' });
     const submissions = await store.listContextSubmissions?.(context.contextId) || [];
-    const approvedSubmissions = submissions.filter((item) => item.status === 'approved').length;
+    const votes = await store.listChallengeVotes?.(context.contextId) || [];
+    const approvedSubmissions = submissions.filter((item) => item.status === 'approved' && item.entryStatus !== 'withdrawn' && item.entryStatus !== 'removed').length;
     const thresholds = await store.listContextUnlockThresholds?.(context.contextId) || [];
     const prizes = await store.listChallengePrizes?.(context.contextId) || [];
     return res.json({
       ...context,
       metrics: {
         submissionCount: submissions.length,
-        approvedSubmissionCount: approvedSubmissions
+        approvedSubmissionCount: approvedSubmissions,
+        voteCount: votes.length
       },
       unlockThresholds: thresholds,
-      prizes
+      prizes,
+      laurels: await store.listChallengeLaurels?.(context.contextId) || [],
+      awards: await store.listChallengeLaurelAwards?.(context.contextId) || [],
+      entries: submissions.filter((entry) => entry.status !== 'rejected' && entry.entryStatus !== 'withdrawn' && entry.entryStatus !== 'removed').map((entry) => ({ ...entry, voteCount: votes.filter((vote) => vote.submissionId === entry.submissionId).length }))
     });
+  });
+
+  app.get('/challenges', async (_req, res) => {
+    const contexts = await store.listContributionContexts?.() || [];
+    return res.json(contexts.filter((item) => item.type === 'challenge' && item.status !== 'draft' && item.status !== 'archived' && item.status !== 'cancelled'));
+  });
+
+  app.get('/challenges/:slug', async (req, res) => {
+    const context = await store.getContributionContextBySlug?.(req.params.slug);
+    if (!context || context.type !== 'challenge' || context.status === 'draft' || context.status === 'archived' || context.status === 'cancelled') return res.status(404).json({ message: 'Challenge not found' });
+    const submissions = await store.listContextSubmissions?.(context.contextId) || [];
+    const votes = await store.listChallengeVotes?.(context.contextId) || [];
+    const visibleSubmissions = submissions.filter((entry) => entry.status !== 'rejected' && entry.entryStatus !== 'withdrawn' && entry.entryStatus !== 'removed');
+    return res.json({ ...context, entries: visibleSubmissions.map((entry) => ({ ...entry, voteCount: votes.filter((vote) => vote.submissionId === entry.submissionId).length })), prizes: await store.listChallengePrizes?.(context.contextId) || [], laurels: await store.listChallengeLaurels?.(context.contextId) || [], awards: await store.listChallengeLaurelAwards?.(context.contextId) || [], metrics: { submissionCount: visibleSubmissions.length, voteCount: votes.length } });
   });
 
   app.post('/contribution-contexts/:contextId/submissions', requireAuth, async (req, res) => {
@@ -5039,6 +5063,15 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!canSubmit) return res.status(403).json({ message: 'Contributor permissions required' });
     const mediaIds = Array.isArray(req.body?.mediaIds) ? req.body.mediaIds.filter((id: unknown) => typeof id === 'string' && id.trim()) : [];
     const fileIds = Array.isArray(req.body?.fileIds) ? req.body.fileIds.filter((id: unknown) => typeof id === 'string' && id.trim()) : [];
+    const workId = typeof req.body?.workId === 'string' && req.body.workId.trim() ? req.body.workId.trim() : undefined;
+    if (!workId && !mediaIds.length && !fileIds.length && !req.body?.externalUrl) return res.status(400).json({ message: 'Choose a Work, media, file, or external URL.' });
+    if (workId) {
+      const work = await store.getWork?.(config.tenantId, workId);
+      if (!work || (!(await store.hasCreatorAccess(req.authUser!.userId, work.creatorId)) && work.creatorId !== 'community')) return res.status(404).json({ message: 'Work not found' });
+    }
+    const existingEntries = await store.listContextSubmissions?.(context.contextId) || [];
+    const maxEntries = context.entryConfig?.maxEntriesPerCreator || context.rules.maxEntriesPerUser || 3;
+    if (existingEntries.filter((entry) => entry.userId === req.authUser!.userId && entry.entryStatus !== 'withdrawn' && entry.entryStatus !== 'removed').length >= maxEntries) return res.status(409).json({ message: `This challenge allows at most ${maxEntries} entries per participant.` });
     const submission: ContextSubmission = {
       submissionId: randomUUID(),
       contextId: context.contextId,
@@ -5048,10 +5081,38 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       notes: sanitizeOptional(req.body?.notes, 4000),
       mediaIds,
       fileIds,
+      workId,
+      externalUrl: sanitizeOptional(req.body?.externalUrl, 2000),
+      entryStatus: 'active',
+      voteCount: 0,
       submittedAt: new Date().toISOString()
     };
     await store.createContextSubmission(submission);
     return res.status(201).json(submission);
+  });
+
+  app.post('/contribution-contexts/:contextId/submissions/:submissionId/withdraw', requireAuth, async (req, res) => {
+    const submission = await store.getContextSubmissionById?.(req.params.submissionId);
+    if (!submission || submission.contextId !== req.params.contextId) return res.status(404).json({ message: 'Entry not found' });
+    if (submission.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this entry.' });
+    const updated = { ...submission, entryStatus: 'withdrawn' as const };
+    await store.updateContextSubmission?.(updated);
+    return res.json(updated);
+  });
+
+  app.post('/contribution-contexts/:contextId/submissions/:submissionId/vote', requireAuth, async (req, res) => {
+    const context = await store.getContributionContextById?.(req.params.contextId);
+    const submission = await store.getContextSubmissionById?.(req.params.submissionId);
+    if (!context || !submission || submission.contextId !== context.contextId) return res.status(404).json({ message: 'Entry not found' });
+    if (!context.votingConfig || context.votingConfig.mode === 'none' || !['active', 'voting_open'].includes(context.status)) return res.status(409).json({ message: 'Voting is not open for this challenge.' });
+    if (submission.userId === req.authUser!.userId) return res.status(400).json({ message: 'You cannot vote for your own entry.' });
+    const existing = await store.getChallengeVote?.(context.contextId, submission.submissionId, req.authUser!.userId);
+    if (existing) return res.status(409).json({ message: 'You have already voted for this entry.', vote: existing });
+    const vote: ChallengeVote = { voteId: randomUUID(), contextId: context.contextId, submissionId: submission.submissionId, userId: req.authUser!.userId, createdAt: new Date().toISOString() };
+    await store.createChallengeVote?.(vote);
+    const count = (await store.listChallengeVotes?.(context.contextId) || []).filter((item) => item.submissionId === submission.submissionId).length;
+    await store.updateContextSubmission?.({ ...submission, voteCount: count });
+    return res.status(201).json({ vote, voteCount: count });
   });
 
   app.get('/studio/contribution-contexts', requireAdmin, async (_req, res) => {
@@ -5064,14 +5125,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     if (!title) return res.status(400).json({ message: 'title is required' });
     const now = new Date().toISOString();
+    const allowedStatuses: ContributionContext['status'][] = ['draft', 'scheduled', 'active', 'entries_closed', 'voting_open', 'voting_closed', 'awaiting_awards', 'awarded', 'closed', 'archived', 'cancelled'];
+    const requestedStatus = req.body?.status;
     const context: ContributionContext = {
       contextId: randomUUID(),
       type: req.body?.type === 'event' ? 'event' : 'challenge',
       title,
       slug: slugify(typeof req.body?.slug === 'string' && req.body.slug.trim() ? req.body.slug : title),
-      status: req.body?.status === 'active' || req.body?.status === 'closed' || req.body?.status === 'archived'
-        ? req.body.status
-        : 'draft',
+      status: allowedStatuses.includes(requestedStatus) ? requestedStatus : 'draft',
       description: sanitizeOptional(req.body?.description, 5000),
       rules: {
         maxEntriesPerUser: Number.isFinite(Number(req.body?.rules?.maxEntriesPerUser)) ? Math.max(1, Math.floor(Number(req.body.rules.maxEntriesPerUser))) : 3,
@@ -5081,13 +5142,57 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         opensAt: sanitizeOptional(req.body?.submissionWindow?.opensAt, 64),
         closesAt: sanitizeOptional(req.body?.submissionWindow?.closesAt, 64)
       },
+      votingWindow: {
+        opensAt: sanitizeOptional(req.body?.votingWindow?.opensAt, 64),
+        closesAt: sanitizeOptional(req.body?.votingWindow?.closesAt, 64)
+      },
+      recurrence: req.body?.recurrence === 'daily' || req.body?.recurrence === 'weekly' || req.body?.recurrence === 'monthly' ? req.body.recurrence : 'none',
+      entryConfig: {
+        allowExistingWorks: req.body?.entryConfig?.allowExistingWorks !== false,
+        allowExternalUrls: req.body?.entryConfig?.allowExternalUrls === true,
+        maxEntriesPerCreator: Number.isFinite(Number(req.body?.entryConfig?.maxEntriesPerCreator)) ? Math.max(1, Math.floor(Number(req.body.entryConfig.maxEntriesPerCreator))) : 3,
+        allowedKinds: Array.isArray(req.body?.entryConfig?.allowedKinds) ? req.body.entryConfig.allowedKinds.filter((kind: unknown) => typeof kind === 'string') : ['image', 'video', 'audio', 'literature', 'article', 'animation', 'mixed']
+      },
+      votingConfig: {
+        mode: req.body?.votingConfig?.mode === 'judged' || req.body?.votingConfig?.mode === 'mixed' || req.body?.votingConfig?.mode === 'fan_love' ? req.body.votingConfig.mode : 'none',
+        oneVotePerEntry: true
+      },
+      standardRulesVersion: sanitizeOptional(req.body?.standardRulesVersion, 64) || 'v1',
+      specificRules: sanitizeOptional(req.body?.specificRules, 10000),
+      laurelConfig: { guaranteed: [], possible: [] },
       rewardConfig: { manual: true },
       createdByUserId: req.authUser!.userId,
       createdAt: now,
       updatedAt: now
     };
     await store.createContributionContext(context);
+    if (context.type === 'challenge' && store.createChallengeLaurel) {
+      const standardLaurels: Array<Pick<ChallengeLaurelDefinition, 'name' | 'shortDescription' | 'category'>> = [
+        { name: 'Fan Love', shortDescription: 'Most valid community votes.', category: 'fan_love' },
+        { name: "Judge's Panel", shortDescription: 'Selected by the challenge judging panel.', category: 'judges_panel' },
+        { name: "Curator's Choice", shortDescription: 'Selected by the Eversally curator.', category: 'curators_choice' }
+      ];
+      await Promise.all(standardLaurels.map((item) => store.createChallengeLaurel!({ laurelId: randomUUID(), contextId: context.contextId, ...item, guaranteed: false, active: true, createdAt: now, updatedAt: now })));
+    }
     return res.status(201).json(context);
+  });
+
+  app.patch('/studio/challenges/:contextId', requireAdmin, async (req, res) => {
+    const existing = await store.getContributionContextById?.(req.params.contextId);
+    if (!existing || existing.type !== 'challenge') return res.status(404).json({ message: 'Challenge not found' });
+    const allowedStatuses: ContributionContext['status'][] = ['draft', 'scheduled', 'active', 'entries_closed', 'voting_open', 'voting_closed', 'awaiting_awards', 'awarded', 'closed', 'archived', 'cancelled'];
+    const updated: ContributionContext = {
+      ...existing,
+      title: typeof req.body?.title === 'string' && req.body.title.trim() ? req.body.title.trim() : existing.title,
+      description: req.body?.description === undefined ? existing.description : sanitizeOptional(req.body.description, 5000),
+      status: allowedStatuses.includes(req.body?.status) ? req.body.status : existing.status,
+      submissionWindow: req.body?.submissionWindow ? { opensAt: sanitizeOptional(req.body.submissionWindow.opensAt, 64), closesAt: sanitizeOptional(req.body.submissionWindow.closesAt, 64) } : existing.submissionWindow,
+      votingWindow: req.body?.votingWindow ? { opensAt: sanitizeOptional(req.body.votingWindow.opensAt, 64), closesAt: sanitizeOptional(req.body.votingWindow.closesAt, 64) } : existing.votingWindow,
+      specificRules: req.body?.specificRules === undefined ? existing.specificRules : sanitizeOptional(req.body.specificRules, 10000),
+      updatedAt: new Date().toISOString()
+    };
+    await store.updateContributionContext?.(updated);
+    return res.json(updated);
   });
 
   app.get('/studio/contribution-contexts/:contextId/submissions', requireAdmin, async (req, res) => {
@@ -5102,16 +5207,16 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const submission = await store.getContextSubmissionById(req.params.submissionId);
     if (!submission) return res.status(404).json({ message: 'Submission not found' });
     const nextStatus = req.body?.status === 'approved' || req.body?.status === 'rejected' ? req.body.status : undefined;
-    if (!nextStatus) return res.status(400).json({ message: 'status must be approved or rejected' });
+    const nextEntryStatus = req.body?.entryStatus === 'active' || req.body?.entryStatus === 'withdrawn' || req.body?.entryStatus === 'removed' ? req.body.entryStatus : undefined;
+    if (!nextStatus && !nextEntryStatus) return res.status(400).json({ message: 'status or entryStatus is required' });
     const now = new Date().toISOString();
     const updated: ContextSubmission = {
       ...submission,
-      status: nextStatus,
-      reviewedAt: now,
-      reviewedByUserId: req.authUser!.userId
+      ...(nextStatus ? { status: nextStatus, reviewedAt: now, reviewedByUserId: req.authUser!.userId } : {}),
+      ...(nextEntryStatus ? { entryStatus: nextEntryStatus } : {})
     };
 
-    if (nextStatus === 'approved' && !submission.convertedPostId) {
+    if (nextStatus === 'approved' && !submission.convertedPostId && nextEntryStatus !== 'removed') {
       const mediaRef = (submission.mediaIds || []).slice(0, 8).map((mediaId, index) => ({ mediaId, discoverable: true, sortOrder: index }));
       const post: Post = {
         postId: randomUUID(),
@@ -5155,7 +5260,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       contextId: req.params.contextId,
       title,
       description,
-      category: req.body?.category === 'digital' || req.body?.category === 'physical' || req.body?.category === 'draw' ? req.body.category : 'platform',
+      category: req.body?.category === 'digital' || req.body?.category === 'physical' || req.body?.category === 'signal' || req.body?.category === 'custom' || req.body?.category === 'draw' ? req.body.category : 'platform',
+      visibility: req.body?.visibility === 'hidden' ? 'hidden' : 'visible',
+      signal: req.body?.signal && typeof req.body.signal === 'object' ? { provider: sanitizeOptional(req.body.signal.provider, 120), amount: Number.isFinite(Number(req.body.signal.amount)) ? Number(req.body.signal.amount) : undefined, unit: sanitizeOptional(req.body.signal.unit, 64) } : undefined,
       placement: req.body?.placement === 'runner_up' || req.body?.placement === 'top_n' || req.body?.placement === 'random_supporter' ? req.body.placement : 'winner',
       quantity: Number.isFinite(Number(req.body?.quantity)) ? Math.max(1, Math.floor(Number(req.body.quantity))) : 1,
       status: req.body?.status === 'active' || req.body?.status === 'awarded' ? req.body.status : 'draft',
@@ -5164,6 +5271,33 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     };
     await store.createChallengePrize(prize);
     return res.status(201).json(prize);
+  });
+
+  app.get('/studio/challenges/:contextId/laurels', requireAdmin, async (req, res) => {
+    return res.json(await store.listChallengeLaurels?.(req.params.contextId) || []);
+  });
+
+  app.post('/studio/challenges/:contextId/laurels', requireAdmin, async (req, res) => {
+    if (!store.createChallengeLaurel) return res.status(503).json({ message: 'Laurel service unavailable' });
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const shortDescription = typeof req.body?.shortDescription === 'string' ? req.body.shortDescription.trim() : '';
+    if (!name || !shortDescription) return res.status(400).json({ message: 'name and shortDescription are required' });
+    const now = new Date().toISOString();
+    const laurel: ChallengeLaurelDefinition = { laurelId: randomUUID(), contextId: req.params.contextId, name, shortDescription, category: req.body?.category === 'judges_panel' || req.body?.category === 'curators_choice' || req.body?.category === 'custom' ? req.body.category : 'fan_love', placement: Number.isFinite(Number(req.body?.placement)) ? Math.max(1, Math.min(10, Math.floor(Number(req.body.placement)))) : undefined, guaranteed: req.body?.guaranteed !== false, artworkUrl: sanitizeOptional(req.body?.artworkUrl, 2000), active: req.body?.active !== false, createdAt: now, updatedAt: now };
+    await store.createChallengeLaurel(laurel);
+    return res.status(201).json(laurel);
+  });
+
+  app.post('/studio/challenges/:contextId/awards', requireAdmin, async (req, res) => {
+    if (!store.createChallengeLaurelAward) return res.status(503).json({ message: 'Award service unavailable' });
+    const laurelId = typeof req.body?.laurelId === 'string' ? req.body.laurelId.trim() : '';
+    const submissionId = typeof req.body?.submissionId === 'string' ? req.body.submissionId.trim() : '';
+    if (!laurelId || !submissionId) return res.status(400).json({ message: 'laurelId and submissionId are required' });
+    const submission = await store.getContextSubmissionById?.(submissionId);
+    if (!submission || submission.contextId !== req.params.contextId) return res.status(404).json({ message: 'Entry not found' });
+    const award: ChallengeLaurelAward = { awardId: randomUUID(), contextId: req.params.contextId, laurelId, submissionId, placement: Number.isFinite(Number(req.body?.placement)) ? Math.max(1, Math.min(10, Math.floor(Number(req.body.placement)))) : undefined, awardedAt: new Date().toISOString(), awardedByUserId: req.authUser!.userId };
+    await store.createChallengeLaurelAward(award);
+    return res.status(201).json(award);
   });
 
   app.get('/studio/metrics', requireAuth, async (req, res) => {
@@ -7889,6 +8023,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         bio: req.body.space.bio !== undefined ? sanitizeLimitedRichText(req.body.space.bio, 5000) : existing.space?.bio,
         externalLinks: req.body.space.externalLinks !== undefined ? parseCreatorExternalLinks(req.body.space.externalLinks) : (existing.space?.externalLinks || []),
         theme: req.body.space.theme !== undefined ? parseCreatorSpaceTheme(req.body.space.theme) : (existing.space?.theme || 'default'),
+        announcement: req.body.space.announcement !== undefined ? req.body.space.announcement : existing.space?.announcement,
         coverPreset: req.body.space.coverPreset !== undefined ? parseCreatorCoverPreset(req.body.space.coverPreset) : existing.space?.coverPreset,
         visibility: req.body.space.visibility !== undefined ? parseCreatorSpaceVisibility(req.body.space.visibility) : (existing.space?.visibility || 'public-discoverable'),
         shareCode: req.body.space.shareCode !== undefined ? parseCreatorShareCode(req.body.space.shareCode) : existing.space?.shareCode,

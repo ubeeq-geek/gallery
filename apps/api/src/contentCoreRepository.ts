@@ -5,6 +5,9 @@ import type {
   CreatorMember,
   AuditEvent,
   ChallengePrize,
+  ChallengeVote,
+  ChallengeLaurelDefinition,
+  ChallengeLaurelAward,
   Collection,
   ContextSubmission,
   ContextUnlockThreshold,
@@ -1770,6 +1773,75 @@ export class ContentCoreRepository {
 
   async updateContextSubmission(submission: ContextSubmission): Promise<void> {
     await this.createContextSubmission(submission);
+  }
+
+  async listChallengeVotes(contextId: string): Promise<ChallengeVote[]> {
+    const response = await this.client.send(new QueryCommand({
+      TableName: this.tableName,
+      IndexName: 'GSI2',
+      KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+      ExpressionAttributeValues: { ':pk': `CONTEXT#${contextId}`, ':prefix': 'VOTE#' }
+    }));
+    return (response.Items || []).filter((item) => item.entityType === 'CHALLENGE_VOTE').map((item) => stripEntityFields<ChallengeVote>(item));
+  }
+
+  async getChallengeVote(contextId: string, submissionId: string, userId: string): Promise<ChallengeVote | null> {
+    const response = await this.client.send(new GetCommand({
+      TableName: this.tableName,
+      Key: { PK: `CONTEXT#${contextId}`, SK: `VOTE#${submissionId}#${userId}` }
+    }));
+    return response.Item ? stripEntityFields<ChallengeVote>(response.Item) : null;
+  }
+
+  async createChallengeVote(vote: ChallengeVote): Promise<void> {
+    await this.client.send(new PutCommand({
+      TableName: this.tableName,
+      Item: {
+        PK: `CONTEXT#${vote.contextId}`,
+        SK: `VOTE#${vote.submissionId}#${vote.userId}`,
+        GSI2PK: `CONTEXT#${vote.contextId}`,
+        GSI2SK: `VOTE#${vote.createdAt}#${vote.voteId}`,
+        entityType: 'CHALLENGE_VOTE',
+        ...vote
+      }
+    }));
+  }
+
+  async listChallengeLaurels(contextId?: string): Promise<ChallengeLaurelDefinition[]> {
+    const response = await this.client.send(new ScanCommand({
+      TableName: this.tableName,
+      FilterExpression: contextId
+        ? 'entityType = :entityType AND (attribute_not_exists(contextId) OR contextId = :contextId)'
+        : 'entityType = :entityType',
+      ExpressionAttributeValues: contextId
+        ? { ':entityType': 'CHALLENGE_LAUREL', ':contextId': contextId }
+        : { ':entityType': 'CHALLENGE_LAUREL' }
+    }));
+    return (response.Items || []).map((item) => stripEntityFields<ChallengeLaurelDefinition>(item));
+  }
+
+  async createChallengeLaurel(laurel: ChallengeLaurelDefinition): Promise<void> {
+    await this.client.send(new PutCommand({
+      TableName: this.tableName,
+      Item: { PK: `LAUREL#${laurel.laurelId}`, SK: 'PROFILE', GSI2PK: 'ENTITY#CHALLENGE_LAUREL', GSI2SK: `LAUREL#${laurel.createdAt}#${laurel.laurelId}`, entityType: 'CHALLENGE_LAUREL', ...laurel }
+    }));
+  }
+
+  async listChallengeLaurelAwards(contextId: string): Promise<ChallengeLaurelAward[]> {
+    const response = await this.client.send(new QueryCommand({
+      TableName: this.tableName,
+      IndexName: 'GSI2',
+      KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :prefix)',
+      ExpressionAttributeValues: { ':pk': `CONTEXT#${contextId}`, ':prefix': 'AWARD#' }
+    }));
+    return (response.Items || []).filter((item) => item.entityType === 'CHALLENGE_LAUREL_AWARD').map((item) => stripEntityFields<ChallengeLaurelAward>(item));
+  }
+
+  async createChallengeLaurelAward(award: ChallengeLaurelAward): Promise<void> {
+    await this.client.send(new PutCommand({
+      TableName: this.tableName,
+      Item: { PK: `CONTEXT#${award.contextId}`, SK: `AWARD#${award.awardId}`, GSI2PK: `CONTEXT#${award.contextId}`, GSI2SK: `AWARD#${award.awardedAt}#${award.awardId}`, entityType: 'CHALLENGE_LAUREL_AWARD', ...award }
+    }));
   }
 
   async listContextUnlockThresholds(contextId: string): Promise<ContextUnlockThreshold[]> {

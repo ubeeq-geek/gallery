@@ -18,6 +18,7 @@ import { CreatorOnboardingView } from './studio/views/CreatorOnboardingView';
 import { CreatorLaunchChecklist } from './studio/views/CreatorLaunchChecklist';
 import { PostsView } from './studio/views/PostsView';
 import { ResourceView } from './studio/views/ResourceView';
+import { ChallengesView } from './studio/views/ChallengesView';
 import type {
   StudioChallenge,
   StudioCreator,
@@ -270,25 +271,7 @@ export function StudioWorkspace({ onCreatorCreated }: { onCreatorCreated?: () =>
           />
         );
       case 'challenges':
-        return (
-          <ResourceView
-            title="Challenges"
-            eyebrow="Challenge management"
-            searchPlaceholder="Search challenges..."
-            emptyMessage="No challenges are available in Studio yet."
-            items={challenges.map((challenge) => ({
-              id: challenge.contextId,
-              title: challenge.title,
-              subtitle: `slug: ${challenge.slug}`,
-              meta: challenge.type,
-              status: challenge.status,
-              detail: [
-                { label: 'Type', value: challenge.type },
-                { label: 'Status', value: challenge.status }
-              ]
-            }))}
-          />
-        );
+        return <ChallengesView challenges={challenges} onChanged={load} />;
       case 'entries':
         return (
           <ResourceView

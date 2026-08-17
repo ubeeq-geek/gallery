@@ -17,6 +17,8 @@ import { LandingPage } from './pages/LandingPage';
 import { CreatorCollectionPage, CreatorCollectionsPage, CreatorWorkPage, CreatorWorksPage } from './pages/CanonicalSpacePages';
 import UserProfilePage from './pages/UserProfilePage';
 import ProfileSettingsPage from './pages/SettingsPage';
+import ChallengePage from './pages/ChallengePage';
+import ChallengesPage from './pages/ChallengesPage';
 import { PublicProfileHero } from './components/PublicProfileHero';
 import { ProfileAvatar } from './components/ProfileAvatar';
 import { sanitizeProfileBio } from './profileBio';
@@ -8252,6 +8254,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/discover" element={<HomePage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/challenges" element={<ChallengesPage />} />
+        <Route path="/challenges/:slug" element={<ChallengePage />} />
         <Route path="/audio" element={<HomePage viewerProfile={myProfile} mediaRoute="audio" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/video" element={<HomePage viewerProfile={myProfile} mediaRoute="video" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/story" element={<HomePage viewerProfile={myProfile} mediaRoute="story" onDiscoveryDockChange={setDiscoveryDock} />} />

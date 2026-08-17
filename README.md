@@ -533,3 +533,23 @@ Optional flags:
 - Use external store as checkout source.
 - Fulfill access manually by sharing per-grouping premium password.
 - API/DB model is ready for future webhook-based entitlement automation.
+
+## First administrator bootstrap
+
+The API can provision the first administrator when it starts. Set
+`ADMIN_EMAIL` and `ADMIN_PASSWORD` in the local API environment or deployment
+environment. The hosted Eversally default email is `admin@eversally.com`; the
+Ubeeq default is `admin@ubeeq.site`. The password must satisfy the Cognito user
+pool policy.
+
+The bootstrap is idempotent: a missing user is created, marked as having a
+verified email, and added to the `Admins` group. Existing users are never
+assigned a new password. In production, put `adminPassword` in the JSON secret
+referenced by `APP_SECRETS_NAME` rather than putting the password in a shell
+history or committed environment file. The CDK API role includes only the
+Cognito admin actions required for this bootstrap.
+
+When running locally without Cognito, providing both values makes the local
+simulated identity an administrator so the full admin UI can be exercised. The
+local password is not persisted or used for authentication in that mode. If
+the values are omitted, local development keeps its normal non-admin identity.

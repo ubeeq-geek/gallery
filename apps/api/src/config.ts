@@ -53,6 +53,14 @@ export interface AppConfig {
   /** Public JWKS used to verify one-time connection proofs issued by the OAuth broker. */
   blueskyOAuthServiceJwksUrl?: string;
   localAuthUserId?: string;
+  /** Email used for the optional first-admin bootstrap. */
+  adminEmail?: string;
+  /** Password used only when creating the first Cognito admin. Never log this. */
+  adminPassword?: string;
+  /** Local-only simulated identity settings when Cognito is not configured. */
+  localAuthRole?: 'user' | 'contributor' | 'creator' | 'admin';
+  localAuthEmail?: string;
+  localAuthDisplayName?: string;
 }
 
 export const loadConfig = (): AppConfig => {
@@ -111,7 +119,14 @@ export const loadConfig = (): AppConfig => {
   blueskyOAuthPrivateJwk: process.env.BLUESKY_OAUTH_PRIVATE_JWK,
   blueskyOAuthServiceUrl: process.env.BLUESKY_OAUTH_SERVICE_URL,
   blueskyOAuthServiceJwksUrl: process.env.BLUESKY_OAUTH_SERVICE_JWKS_URL,
-  localAuthUserId: process.env.LOCAL_AUTH_USER_ID
+  localAuthUserId: process.env.LOCAL_AUTH_USER_ID,
+  adminEmail: process.env.ADMIN_EMAIL || (
+    process.env.PRODUCT_BRAND === 'eversally' ? 'admin@eversally.com' : 'admin@ubeeq.site'
+  ),
+  adminPassword: process.env.ADMIN_PASSWORD,
+  localAuthRole: (process.env.LOCAL_AUTH_ROLE as AppConfig['localAuthRole']) || undefined,
+  localAuthEmail: process.env.LOCAL_AUTH_EMAIL,
+  localAuthDisplayName: process.env.LOCAL_AUTH_DISPLAY_NAME
   };
   if (deploymentStage === 'production' || deploymentStage === 'prod') {
     const missing = [
