@@ -180,6 +180,7 @@ export interface Creator {
     }>;
     theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
     coverPreset?: string;
+    announcement?: { enabled: boolean; message: string; url?: string };
     visibility?: 'public-discoverable' | 'public-link' | 'private';
     /** Revocable bearer code for a private Space. Never returned from public routes. */
     shareCode?: string;
@@ -479,7 +480,7 @@ export interface UserBadge {
 }
 
 export type ContributionContextType = 'challenge' | 'event' | 'prompt' | 'open_call' | 'editorial_call' | 'contest';
-export type ContributionContextStatus = 'draft' | 'active' | 'closed' | 'archived';
+export type ContributionContextStatus = 'draft' | 'scheduled' | 'active' | 'entries_closed' | 'voting_open' | 'voting_closed' | 'awaiting_awards' | 'awarded' | 'closed' | 'archived' | 'cancelled';
 
 export interface ContributionContext {
   contextId: string;
@@ -495,6 +496,27 @@ export interface ContributionContext {
   submissionWindow?: {
     opensAt?: string;
     closesAt?: string;
+  };
+  votingWindow?: {
+    opensAt?: string;
+    closesAt?: string;
+  };
+  recurrence?: 'none' | 'daily' | 'weekly' | 'monthly';
+  entryConfig?: {
+    allowExistingWorks: boolean;
+    allowExternalUrls: boolean;
+    maxEntriesPerCreator?: number;
+    allowedKinds?: string[];
+  };
+  votingConfig?: {
+    mode: 'none' | 'fan_love' | 'judged' | 'mixed';
+    oneVotePerEntry: boolean;
+  };
+  standardRulesVersion?: string;
+  specificRules?: string;
+  laurelConfig?: {
+    guaranteed: string[];
+    possible: string[];
   };
   rewardConfig?: {
     manual: boolean;
@@ -519,6 +541,45 @@ export interface ContextSubmission {
   reviewedAt?: string;
   reviewedByUserId?: string;
   convertedPostId?: string;
+  workId?: string;
+  externalUrl?: string;
+  entryStatus?: 'active' | 'withdrawn' | 'removed';
+  voteCount?: number;
+  favouriteCount?: number;
+}
+
+export interface ChallengeVote {
+  voteId: string;
+  contextId: string;
+  submissionId: string;
+  userId: string;
+  createdAt: string;
+}
+
+export type ChallengeLaurelCategory = 'fan_love' | 'judges_panel' | 'curators_choice' | 'custom';
+
+export interface ChallengeLaurelDefinition {
+  laurelId: string;
+  contextId?: string;
+  name: string;
+  shortDescription: string;
+  category: ChallengeLaurelCategory;
+  placement?: number;
+  guaranteed: boolean;
+  artworkUrl?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChallengeLaurelAward {
+  awardId: string;
+  contextId: string;
+  laurelId: string;
+  submissionId: string;
+  placement?: number;
+  awardedAt: string;
+  awardedByUserId: string;
 }
 
 export interface ContextUnlockThreshold {
@@ -538,7 +599,9 @@ export interface ChallengePrize {
   contextId: string;
   title: string;
   description: string;
-  category: 'platform' | 'digital' | 'physical' | 'draw';
+  category: 'platform' | 'digital' | 'physical' | 'signal' | 'custom' | 'draw';
+  visibility?: 'visible' | 'hidden';
+  signal?: { provider?: string; amount?: number; unit?: string };
   placement: 'winner' | 'runner_up' | 'top_n' | 'random_supporter';
   quantity: number;
   status: 'draft' | 'active' | 'awarded';

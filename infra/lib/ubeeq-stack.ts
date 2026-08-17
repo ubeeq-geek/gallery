@@ -74,6 +74,8 @@ export class UbeeqStack extends Stack {
     const mediaCorsOrigins = isProduction ? [webAppUrl!] : [...new Set([...(webAppUrl ? [webAppUrl] : []), ...developmentOrigins])];
     const productBrand = process.env.PRODUCT_BRAND === 'eversally' ? 'eversally' : 'ubeeq';
     const productName = productBrand === 'eversally' ? 'Eversally' : 'Ubeeq';
+    const adminEmail = process.env.ADMIN_EMAIL?.trim()
+      || (productBrand === 'eversally' ? 'admin@eversally.com' : 'admin@ubeeq.site');
     const emailTheme = productBrand === 'eversally'
       ? { accent: '#7756a8', panel: '#f4effa', text: '#21182f', tagline: 'Creativity, everywhere.' }
       : { accent: '#0f766e', panel: '#eaf6f4', text: '#102a2a', tagline: 'Your creative space, on your terms.' };
@@ -405,6 +407,12 @@ export class UbeeqStack extends Stack {
     const unlockJwtSecret = isProduction
       ? appSecrets!.secretValueFromJson('unlockJwtSecret').unsafeUnwrap()
       : (process.env.UNLOCK_JWT_SECRET || 'dev-secret');
+    // Keep the bootstrap password out of source control and plain-text CDK
+    // configuration in production. Local/development deployments may provide
+    // ADMIN_PASSWORD directly; production reads adminPassword from the
+    // existing application secret JSON document.
+    const adminPassword = process.env.ADMIN_PASSWORD?.trim()
+      || (isProduction ? appSecrets!.secretValueFromJson('adminPassword').unsafeUnwrap() : '');
     const productionFunctionLogGroups = new Map<string, logs.LogGroup>();
     const productionFunctionOptions = (logGroupId: string) => {
       if (!isProduction) return {};
@@ -462,6 +470,8 @@ export class UbeeqStack extends Stack {
         COGNITO_USER_POOL_ID: userPool.userPoolId,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
         COGNITO_TOKEN_USE: 'id',
+        ADMIN_EMAIL: adminEmail,
+        ADMIN_PASSWORD: adminPassword,
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
@@ -608,7 +618,13 @@ export class UbeeqStack extends Stack {
     );
     apiFn.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ['cognito-idp:AdminUpdateUserAttributes'],
+        actions: [
+          'cognito-idp:AdminGetUser',
+          'cognito-idp:AdminCreateUser',
+          'cognito-idp:AdminSetUserPassword',
+          'cognito-idp:AdminAddUserToGroup',
+          'cognito-idp:AdminUpdateUserAttributes'
+        ],
         resources: [userPool.userPoolArn]
       })
     );

@@ -69,10 +69,19 @@ export const createOptionalAuthMiddleware = (config: AppConfig) => {
 
     if (!verifier) {
       if (config.localAuthUserId) {
+        const localRole = config.localAuthRole || 'creator';
+        const localGroups = localRole === 'admin'
+          ? [ADMIN_GROUP, CREATOR_GROUP, CREATOR]
+          : localRole === 'creator'
+            ? [CREATOR_GROUP, CREATOR]
+            : localRole === 'contributor'
+              ? [CONTRIBUTOR_GROUP]
+              : [];
         req.authUser = {
           userId: config.localAuthUserId,
-          displayName: 'Local Developer',
-          groups: [CREATOR_GROUP, CREATOR]
+          displayName: config.localAuthDisplayName || 'Local Developer',
+          email: config.localAuthEmail,
+          groups: localGroups
         };
       }
       return next();

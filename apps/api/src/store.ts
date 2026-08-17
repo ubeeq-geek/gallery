@@ -26,6 +26,9 @@ import type {
   ContextUnlockThreshold,
   ChallengePrize,
   PrizeAward,
+  ChallengeVote,
+  ChallengeLaurelDefinition,
+  ChallengeLaurelAward,
   PlatformRole,
   ExternalAccount,
   ExternalAccountProfile,
@@ -206,6 +209,13 @@ export interface DataStore extends CanonicalStore {
   getContextSubmissionById?(submissionId: string): Promise<ContextSubmission | null>;
   createContextSubmission?(submission: ContextSubmission): Promise<void>;
   updateContextSubmission?(submission: ContextSubmission): Promise<void>;
+  listChallengeVotes?(contextId: string): Promise<ChallengeVote[]>;
+  getChallengeVote?(contextId: string, submissionId: string, userId: string): Promise<ChallengeVote | null>;
+  createChallengeVote?(vote: ChallengeVote): Promise<void>;
+  listChallengeLaurels?(contextId?: string): Promise<ChallengeLaurelDefinition[]>;
+  createChallengeLaurel?(laurel: ChallengeLaurelDefinition): Promise<void>;
+  listChallengeLaurelAwards?(contextId: string): Promise<ChallengeLaurelAward[]>;
+  createChallengeLaurelAward?(award: ChallengeLaurelAward): Promise<void>;
   listContextUnlockThresholds?(contextId: string): Promise<ContextUnlockThreshold[]>;
   createContextUnlockThreshold?(threshold: ContextUnlockThreshold): Promise<void>;
   updateContextUnlockThreshold?(threshold: ContextUnlockThreshold): Promise<void>;

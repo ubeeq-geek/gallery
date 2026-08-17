@@ -6,10 +6,20 @@ import { loadConfig } from './config';
 import { InMemoryStore } from './inMemoryStore';
 import { processExternalSyncJob } from './externalSyncWorker';
 import { createInProcessExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
+import { runAdminBootstrap } from './adminBootstrap';
 
 // A local seed is useful for offline UI work, but it must not override real
 // Cognito identities when the paired web app has an auth configuration.
-const config = { ...loadConfig(), localAuthUserId: process.env.LOCAL_AUTH_USER_ID };
+const loadedConfig = loadConfig();
+const localAdminMode = !loadedConfig.cognitoUserPoolId && Boolean(loadedConfig.adminEmail && loadedConfig.adminPassword);
+const config = {
+  ...loadedConfig,
+  localAuthUserId: process.env.LOCAL_AUTH_USER_ID || (localAdminMode ? 'local-admin' : undefined),
+  localAuthRole: localAdminMode ? 'admin' as const : loadedConfig.localAuthRole,
+  localAuthEmail: localAdminMode ? loadedConfig.adminEmail : loadedConfig.localAuthEmail,
+  localAuthDisplayName: localAdminMode ? 'Local Administrator' : loadedConfig.localAuthDisplayName
+};
+void runAdminBootstrap(config);
 const store = new InMemoryStore();
 
 const now = new Date().toISOString();

@@ -38,6 +38,9 @@ import type {
   ContextUnlockThreshold,
   ChallengePrize,
   PrizeAward,
+  ChallengeVote,
+  ChallengeLaurelDefinition,
+  ChallengeLaurelAward,
   PlatformRole,
   ExternalAccount,
   ExternalAccountProfile,
@@ -1466,6 +1469,34 @@ export class DynamoStore implements DataStore {
       await this.coreRepo.updateContextSubmission(submission);
       return;
     }
+  }
+
+  async listChallengeVotes(contextId: string): Promise<ChallengeVote[]> {
+    return this.coreRepo ? this.coreRepo.listChallengeVotes(contextId) : [];
+  }
+
+  async getChallengeVote(contextId: string, submissionId: string, userId: string): Promise<ChallengeVote | null> {
+    return this.coreRepo ? this.coreRepo.getChallengeVote(contextId, submissionId, userId) : null;
+  }
+
+  async createChallengeVote(vote: ChallengeVote): Promise<void> {
+    if (this.coreRepo) await this.coreRepo.createChallengeVote(vote);
+  }
+
+  async listChallengeLaurels(contextId?: string): Promise<ChallengeLaurelDefinition[]> {
+    return this.coreRepo ? this.coreRepo.listChallengeLaurels(contextId) : [];
+  }
+
+  async createChallengeLaurel(laurel: ChallengeLaurelDefinition): Promise<void> {
+    if (this.coreRepo) await this.coreRepo.createChallengeLaurel(laurel);
+  }
+
+  async listChallengeLaurelAwards(contextId: string): Promise<ChallengeLaurelAward[]> {
+    return this.coreRepo ? this.coreRepo.listChallengeLaurelAwards(contextId) : [];
+  }
+
+  async createChallengeLaurelAward(award: ChallengeLaurelAward): Promise<void> {
+    if (this.coreRepo) await this.coreRepo.createChallengeLaurelAward(award);
   }
 
   async listContextUnlockThresholds(contextId: string): Promise<ContextUnlockThreshold[]> {
