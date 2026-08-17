@@ -2,6 +2,9 @@ import request from 'supertest';
 import { createApp } from '../src/app';
 import { InMemoryStore } from '../src/inMemoryStore';
 import type { AppConfig } from '../src/config';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const buildConfig = (): AppConfig => ({
   tenantId: 'test',
@@ -35,6 +38,214 @@ const buildConfig = (): AppConfig => ({
 });
 
 describe('API contract', () => {
+  it('serves and updates distinct public member and Creator profiles', async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ config: buildConfig(), store });
+    const now = new Date().toISOString();
+    await store.upsertUserProfile({
+      userId: 'profile-owner',
+      username: 'profile-owner',
+      usernameHistory: ['profile-owner'],
+      displayName: 'Profile Owner',
+      bio: 'Member biography.',
+      externalLinks: [{ label: 'Bluesky', url: 'https://bsky.app/profile/profile-owner.bsky.social' }],
+      location: 'Winnipeg',
+      website: 'https://example.test',
+      createdAt: now,
+      updatedAt: now
+    });
+    await store.createCreator({
+      creatorId: 'profile-creator',
+      name: 'Creator Identity',
+      slug: 'creator-identity',
+      status: 'active',
+      sortOrder: 0,
+      createdAt: now
+    });
+    await store.addCreatorMember({ creatorId: 'profile-creator', userId: 'profile-owner', role: 'owner', createdAt: now });
+
+    const collection = await request(app)
+      .post('/me/collections')
+      .set('x-user-id', 'profile-owner')
+      .send({ title: 'Public Picks', visibility: 'public' });
+    expect(collection.status).toBe(201);
+
+    const publicProfile = await request(app).get('/u/profile-owner');
+    expect(publicProfile.status).toBe(200);
+    expect(publicProfile.body).toMatchObject({
+      username: 'profile-owner',
+      displayName: 'Profile Owner',
+      bio: 'Member biography.',
+      externalLinks: [{ label: 'Bluesky', url: 'https://bsky.app/profile/profile-owner.bsky.social' }],
+      publicCollectionCount: 1,
+      creators: []
+    });
+    expect(publicProfile.body).not.toHaveProperty('userId');
+
+    const creatorProfileOptIn = await request(app)
+      .patch('/studio/creators/profile-creator')
+      .set('x-user-id', 'profile-owner')
+      .send({ space: { showOnMemberProfile: true } });
+    expect(creatorProfileOptIn.status).toBe(200);
+    expect(creatorProfileOptIn.body.space.showOnMemberProfile).toBe(true);
+
+    const publicProfileWithCreator = await request(app).get('/u/profile-owner');
+    expect(publicProfileWithCreator.body.creators).toEqual([
+      { creatorId: 'profile-creator', name: 'Creator Identity', slug: 'creator-identity' }
+    ]);
+
+    const updated = await request(app)
+      .put('/me/profile')
+      .set('x-user-id', 'profile-owner')
+      .send({
+        displayName: 'Updated Member',
+        bio: '<strong>Updated</strong> <a href="https://unsafe.test">biography</a>.',
+        externalLinks: [
+          { label: 'Bluesky', url: 'https://bsky.app/profile/example.test' },
+          { label: 'Instagram', url: 'https://example.test/not-instagram' },
+          { label: 'Unsafe', url: 'javascript:alert(1)' }
+        ]
+      });
+    expect(updated.status).toBe(200);
+    expect(updated.body).toMatchObject({
+      displayName: 'Updated Member',
+      bio: '<strong>Updated</strong> biography.',
+      externalLinks: [{ label: 'Bluesky', url: 'https://bsky.app/profile/example.test' }]
+    });
+
+    const invalidMedia = await request(app)
+      .post('/me/profile/branding/upload-url')
+      .set('x-user-id', 'profile-owner')
+      .send({ kind: 'profile', contentType: 'application/pdf' });
+    expect(invalidMedia.status).toBe(400);
+  });
+
+  it('stores and serves member profile imagery in local development', async () => {
+    const localMediaDirectory = await mkdtemp(join(tmpdir(), 'ubeeq-profile-contract-'));
+    try {
+      const store = new InMemoryStore();
+      const app = createApp({ config: { ...buildConfig(), localMediaDirectory, appOrigin: 'https://profiles.test' }, store });
+      const prepared = await request(app)
+        .post('/me/profile/branding/upload-url')
+        .set('x-user-id', 'local-profile-owner')
+        .send({ kind: 'profile', contentType: 'image/png' });
+      expect(prepared.status).toBe(201);
+      expect(prepared.body.requiresAuth).toBe(true);
+
+      const sharp = (await import('sharp')).default;
+      const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#7c3aed' } }).png().toBuffer();
+      const uploaded = await request(app)
+        .put('/me/profile/branding/local-upload?kind=profile')
+        .set('x-user-id', 'local-profile-owner')
+        .set('content-type', 'image/png')
+        .send(png);
+      expect(uploaded.status).toBe(201);
+
+      const finalized = await request(app)
+        .post('/me/profile/branding/profile-image')
+        .set('x-user-id', 'local-profile-owner')
+        .send({ sourceKey: prepared.body.key });
+      expect(finalized.status).toBe(201);
+
+      const memberMetadataSave = await request(app)
+        .put('/me/profile')
+        .set('x-user-id', 'local-profile-owner')
+        .send({ displayName: 'Local Profile Owner', coverPreset: 'eversally-cover-9' });
+      expect(memberMetadataSave.status).toBe(200);
+      expect(memberMetadataSave.body.branding.profileImage.thumbnailUrls.square512).toContain('https://profiles.test/local-api/media/local/');
+      expect(memberMetadataSave.body.branding.profileImage).not.toHaveProperty('sourceKey');
+      expect(memberMetadataSave.body.coverPreset).toBe('eversally-cover-9');
+
+      const publicProfile = await request(app).get(`/u/${finalized.body.username}`);
+      expect(publicProfile.status).toBe(200);
+      expect(publicProfile.body.branding.profileImage.thumbnailUrls.square512).toContain('https://profiles.test/local-api/media/local/');
+      expect(publicProfile.body.branding.profileImage).not.toHaveProperty('sourceKey');
+      expect(publicProfile.body.coverPreset).toBe('eversally-cover-9');
+
+      const now = new Date().toISOString();
+      await store.createCreator({
+        creatorId: 'local-profile-creator',
+        name: 'Local Creator',
+        slug: 'local-creator',
+        status: 'active',
+        sortOrder: 0,
+        createdAt: now
+      });
+      await store.addCreatorMember({ creatorId: 'local-profile-creator', userId: 'local-profile-owner', role: 'owner', createdAt: now });
+      const creatorPrepared = await request(app)
+        .post('/studio/creators/local-profile-creator/branding/upload-url')
+        .set('x-user-id', 'local-profile-owner')
+        .send({ kind: 'profile', contentType: 'image/png' });
+      expect(creatorPrepared.status).toBe(201);
+      const creatorUploaded = await request(app)
+        .put('/studio/creators/local-profile-creator/branding/local-upload?kind=profile')
+        .set('x-user-id', 'local-profile-owner')
+        .set('content-type', 'image/png')
+        .send(png);
+      expect(creatorUploaded.status).toBe(201);
+      const creatorFinalized = await request(app)
+        .post('/studio/creators/local-profile-creator/branding/profile-image')
+        .set('x-user-id', 'local-profile-owner')
+        .send({ sourceKey: creatorPrepared.body.key, squareCrop: { x: 1, y: 1, size: 6 } });
+      expect(creatorFinalized.status).toBe(201);
+
+      const metadataSave = await request(app)
+        .patch('/studio/creators/local-profile-creator')
+        .set('x-user-id', 'local-profile-owner')
+        .send({ name: 'Local Creator Updated', space: { coverPreset: 'eversally-cover-4' } });
+      expect(metadataSave.status).toBe(200);
+      expect(metadataSave.body.branding.profileImage.sourceKey).toBe(creatorPrepared.body.key);
+      expect(metadataSave.body.space.coverPreset).toBe('eversally-cover-4');
+
+      const studioCreators = await request(app)
+        .get('/studio/creators')
+        .set('x-user-id', 'local-profile-owner');
+      expect(studioCreators.status).toBe(200);
+      expect(studioCreators.body[0].branding.profileImage.thumbnailUrls.square512).toContain('https://profiles.test/local-api/media/local/');
+      expect(studioCreators.body[0].branding.profileImage.sourceKey).toBe(creatorPrepared.body.key);
+
+      const managedCreators = await request(app)
+        .get('/me/creators')
+        .set('x-user-id', 'local-profile-owner');
+      expect(managedCreators.status).toBe(200);
+      expect(managedCreators.body[0].artistId).toBe('local-profile-creator');
+      expect(managedCreators.body[0].creatorThumbnailUrl).toContain('https://profiles.test/local-api/media/local/');
+      expect(managedCreators.body[0].branding.profileImage.thumbnailUrls.square256).toBe(managedCreators.body[0].creatorThumbnailUrl);
+      expect(managedCreators.body[0].branding.profileImage).not.toHaveProperty('sourceKey');
+
+      const storedCreator = (await store.listCreators()).find((creator) => creator.creatorId === 'local-profile-creator')!;
+      await store.updateCreator({
+        ...storedCreator,
+        branding: {
+          ...storedCreator.branding,
+          coverImage: {
+            sourceKey: 'creators/local-profile-creator/branding/cover/source.jpg',
+            renditionKeys: {
+              desktop: 'creators/local-profile-creator/branding/cover/renditions/desktop.jpg',
+              mobile: 'creators/local-profile-creator/branding/cover/renditions/mobile.jpg'
+            },
+            updatedAt: now
+          }
+        }
+      });
+      const removedProfile = await request(app)
+        .delete('/studio/creators/local-profile-creator/branding/profile-image')
+        .set('x-user-id', 'local-profile-owner');
+      const removedCover = await request(app)
+        .delete('/studio/creators/local-profile-creator/branding/cover-image')
+        .set('x-user-id', 'local-profile-owner');
+      expect(removedProfile.status).toBe(204);
+      expect(removedCover.status).toBe(204);
+      const creatorsAfterRemoval = await request(app)
+        .get('/studio/creators')
+        .set('x-user-id', 'local-profile-owner');
+      expect(creatorsAfterRemoval.body[0].branding.profileImage).toBeUndefined();
+      expect(creatorsAfterRemoval.body[0].branding.coverImage).toBeUndefined();
+    } finally {
+      await rm(localMediaDirectory, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   it('publishes one canonical Work through Space, discovery, and Collection contracts', async () => {
     const store = new InMemoryStore();
     const app = createApp({ config: buildConfig(), store });
@@ -260,13 +471,14 @@ describe('API contract', () => {
     const response = await request(app)
       .post('/studio/creators')
       .set('x-user-id', 'u-ubeeqer')
-      .send({ name: 'Open Studio', slug: 'open-studio' });
+      .send({ name: 'Open Studio', slug: 'open-studio', space: { coverPreset: 'eversally-cover-7' } });
 
     expect(response.status).toBe(201);
     expect(response.body.spaceTier).toBe('free');
     const creators = await store.listCreatorsByUserId('u-ubeeqer');
     expect(creators).toHaveLength(1);
     expect(creators[0].slug).toBe('open-studio');
+    expect(creators[0].space?.coverPreset).toBe('eversally-cover-7');
   });
 
   it('deletes a DeviantArt application only after its connected accounts are removed', async () => {

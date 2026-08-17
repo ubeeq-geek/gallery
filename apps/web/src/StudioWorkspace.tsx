@@ -4,6 +4,7 @@ import { api } from './api';
 import { brand } from './brand';
 import { readStudioSection, studioSectionDefs } from './studio/config';
 import { roleDisplayLabel } from './studio/rolePresentation';
+import { notifyCreatorProfileChanged } from './profileEvents';
 import { StudioLayout } from './studio/components/StudioLayout';
 import { Card } from './studio/components/Card';
 import { DashboardView } from './studio/views/DashboardView';
@@ -63,7 +64,7 @@ function CreatorExportAction({ creatorId }: { creatorId: string }) {
   );
 }
 
-export function StudioWorkspace() {
+export function StudioWorkspace({ onCreatorCreated }: { onCreatorCreated?: () => Promise<void> }) {
   const location = useLocation();
   const section = useMemo(() => readStudioSection(location.search), [location.search]);
   const sectionMeta = studioSectionDefs.find((item) => item.key === section) || studioSectionDefs[0];
@@ -140,6 +141,45 @@ export function StudioWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const renderCreatorsView = (profileCreatorId?: string) => (
+    <CreatorsView
+      creators={creators}
+      posts={posts}
+      files={files}
+      profileCreatorId={profileCreatorId}
+      onCreateCreator={async (payload) => {
+        const creator = await api.studioCreateCreator(payload) as StudioCreator;
+        // Refresh the application-level ownership context before the create
+        // flow opens the new public profile. Otherwise that first view has no
+        // way to recognise its owner and incorrectly renders visitor actions.
+        await onCreatorCreated?.();
+        return creator;
+      }}
+      onUpdateCreator={async (creatorId, payload) => {
+        await api.studioUpdateCreator(creatorId, payload);
+      }}
+      onDeleteCreator={async (creatorId) => {
+        await api.studioDeleteCreator(creatorId);
+      }}
+      onUploadProfileImage={async (creatorId, selection) => {
+        const upload = await api.studioCreateCreatorBrandingUploadUrl(creatorId, { kind: 'profile', contentType: selection.file.type || 'image/jpeg' });
+        await api.uploadPreparedFile(upload, selection.file);
+        await api.studioUploadCreatorProfileImage(creatorId, { sourceKey: upload.key, squareCrop: selection.squareCrop });
+        notifyCreatorProfileChanged();
+      }}
+      onUploadCoverImage={async (creatorId, selection) => {
+        const upload = await api.studioCreateCreatorBrandingUploadUrl(creatorId, { kind: 'cover', contentType: selection.file.type || 'image/jpeg' });
+        await api.uploadPreparedFile(upload, selection.file);
+        await api.studioUploadCreatorCoverImage(creatorId, { sourceKey: upload.key, focalPoint: selection.focalPoint });
+      }}
+      onRemoveProfileImage={(creatorId) => api.studioDeleteCreatorProfileImage(creatorId).then(() => {
+        notifyCreatorProfileChanged();
+      })}
+      onRemoveCoverImage={(creatorId) => api.studioDeleteCreatorCoverImage(creatorId).then(() => undefined)}
+      onSaved={load}
+    />
+  );
+
   const renderSection = () => {
     if (!creators.length) {
       return <CreatorOnboardingView onCreated={async () => { await load(); }} />;
@@ -182,7 +222,7 @@ export function StudioWorkspace() {
                 <Link className="studio-task-link no-underline" to={`/studio/workspace?section=creators&creatorId=${encodeURIComponent(activeCreatorId)}`}>
                   <strong>Manage {brand.creatorPlural}</strong><span>Update {brand.creatorName.toLowerCase()} identities, branding, and ownership.</span>
                 </Link>
-                <Link className="studio-task-link no-underline" to="/settings">
+                <Link className="studio-task-link no-underline" to="/settings?section=preferences">
                   <strong>Account settings</strong><span>Manage account-wide preferences and sign-in settings.</span>
                 </Link>
               </div>
@@ -193,37 +233,10 @@ export function StudioWorkspace() {
             </Card>
           </>
         );
+      case 'creator-profile':
+        return renderCreatorsView(activeCreatorId);
       case 'creators':
-        return (
-          <CreatorsView
-            creators={creators}
-            posts={posts}
-            files={files}
-            onCreateCreator={async (payload) => {
-              const creator = await api.studioCreateCreator(payload) as StudioCreator;
-              await load();
-              return creator;
-            }}
-            onUpdateCreator={async (creatorId, payload) => {
-              await api.studioUpdateCreator(creatorId, payload);
-              await load();
-            }}
-            onUploadProfileImage={async (creatorId, file) => {
-              const upload = await api.studioCreateCreatorBrandingUploadUrl(creatorId, { kind: 'profile', contentType: file.type || 'image/jpeg' });
-              await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': upload.contentType }, body: file });
-              await api.studioUploadCreatorProfileImage(creatorId, { sourceKey: upload.key });
-              await load();
-            }}
-            onUploadCoverImage={async (creatorId, file) => {
-              const upload = await api.studioCreateCreatorBrandingUploadUrl(creatorId, { kind: 'cover', contentType: file.type || 'image/jpeg' });
-              await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': upload.contentType }, body: file });
-              await api.studioUploadCreatorCoverImage(creatorId, { sourceKey: upload.key });
-              await load();
-            }}
-            onRemoveProfileImage={(creatorId) => api.studioDeleteCreatorProfileImage(creatorId).then(() => load())}
-            onRemoveCoverImage={(creatorId) => api.studioDeleteCreatorCoverImage(creatorId).then(() => load())}
-          />
-        );
+        return renderCreatorsView();
       case 'integrations':
         return <DeviantArtView creators={creators} />;
       case 'files-media':

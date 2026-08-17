@@ -6,6 +6,7 @@ import {
   confirmForgotPassword,
   confirmRegistration,
   forgotPassword,
+  resendRegistrationConfirmation,
   setInitialPassword,
   signIn,
   type CurrentUser
@@ -30,6 +31,7 @@ export default function AuthPage({ user, setUser }: { user: CurrentUser; setUser
   const [keepSignedIn, setKeepSignedIn] = useState(() => localStorage.getItem(AUTH_PERSISTENCE_KEY) !== 'session');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [resendCooldownSeconds, setResendCooldownSeconds] = useState(0);
   const [usernameSuggestions, setUsernameSuggestions] = useState<string[]>([]);
   const [usernameReason, setUsernameReason] = useState<string>('');
   const socialEnabled = Boolean(
@@ -55,6 +57,14 @@ export default function AuthPage({ user, setUser }: { user: CurrentUser; setUser
       window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
     }
   }, [authMode]);
+
+  useEffect(() => {
+    if (resendCooldownSeconds <= 0) return;
+    const timer = window.setTimeout(() => {
+      setResendCooldownSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [resendCooldownSeconds]);
 
   useEffect(() => {
     if (authMode !== 'register') return;
@@ -124,6 +134,18 @@ export default function AuthPage({ user, setUser }: { user: CurrentUser; setUser
     const username = email || sessionStorage.getItem('auth.confirm.username') || '';
     await confirmRegistration(username, code);
     navigate('/auth/signin');
+  });
+
+  const doResendConfirmation = () => withFeedback(async () => {
+    const confirmationEmail = email.trim() || sessionStorage.getItem('auth.confirm.username') || '';
+    if (!confirmationEmail) {
+      throw new Error('Enter the email address used to create your account.');
+    }
+    await resendRegistrationConfirmation(confirmationEmail);
+    setEmail(confirmationEmail);
+    sessionStorage.setItem('auth.confirm.username', confirmationEmail);
+    setResendCooldownSeconds(30);
+    setMessage('A new confirmation code was sent. Use only the most recent code.');
   });
 
   const doForgot = () => withFeedback(async () => {
@@ -293,7 +315,18 @@ export default function AuthPage({ user, setUser }: { user: CurrentUser; setUser
           <input type="password" placeholder="Confirm password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
         )}
 
-        {authMode === 'confirm' && <button onClick={doConfirm}>Confirm Registration</button>}
+        {authMode === 'confirm' && (
+          <>
+            <button onClick={doConfirm}>Confirm Registration</button>
+            <button
+              className="auth-secondary-btn"
+              onClick={doResendConfirmation}
+              disabled={resendCooldownSeconds > 0}
+            >
+              {resendCooldownSeconds > 0 ? `Send a new code (${resendCooldownSeconds}s)` : 'Send a new code'}
+            </button>
+          </>
+        )}
         {authMode === 'forgot' && forgotStage === 'request' && <button onClick={doForgot}>Send Reset Code</button>}
         {authMode === 'forgot' && forgotStage === 'confirm' && <button onClick={doForgotConfirm}>Reset Password</button>}
         {authMode === 'initial' && <button onClick={doInitialPassword}>Set Initial Password</button>}

@@ -2,6 +2,7 @@ import { brand } from '../brand';
 
 export type StudioSection =
   | 'dashboard'
+  | 'creator-profile'
   | 'activity'
   | 'publishing'
   | 'settings'
@@ -19,6 +20,7 @@ export type StudioSection =
 
 export const studioSectionDefs: Array<{ key: StudioSection; label: string; description: string }> = [
   { key: 'dashboard', label: 'Home', description: 'Your creator catalogue and publishing activity.' },
+  { key: 'creator-profile', label: 'Creator Profile', description: 'Edit this Creator’s public profile, handle, branding, and Space details.' },
   { key: 'activity', label: 'Activity', description: 'Comments, favourites, and other activity from connected platforms.' },
   { key: 'works', label: 'Works', description: 'Find, organize, and prepare work from your local catalogue.' },
   { key: 'collections', label: 'Collections', description: `Organize work into ${brand.productName} collections, galleries, and series.` },
@@ -45,6 +47,7 @@ export const readStudioSection = (search: string): StudioSection => {
 
 export const studioPrimaryNavSections: StudioSection[] = [
   'dashboard',
+  'creator-profile',
   'activity',
   'works',
   'collections',

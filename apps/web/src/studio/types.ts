@@ -24,12 +24,20 @@ export type StudioCreator = {
     bio?: string;
     externalLinks?: Array<{ label: string; url: string }>;
     theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
-    announcement?: { enabled: boolean; message: string; url?: string };
+    coverPreset?: string;
+    visibility?: 'public-discoverable' | 'public-link' | 'private';
+    shareCode?: string;
+    showOnMemberProfile?: boolean;
   };
   branding?: {
     profileImage?: {
       sourceKey: string;
       thumbnailKeys?: {
+        square256?: string;
+        square512?: string;
+        square1024?: string;
+      };
+      thumbnailUrls?: {
         square256?: string;
         square512?: string;
         square1024?: string;
@@ -40,6 +48,11 @@ export type StudioCreator = {
     coverImage?: {
       sourceKey: string;
       renditionKeys?: {
+        desktop?: string;
+        tablet?: string;
+        mobile?: string;
+      };
+      renditionUrls?: {
         desktop?: string;
         tablet?: string;
         mobile?: string;

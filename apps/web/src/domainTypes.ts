@@ -208,11 +208,15 @@ export type SiteSettings = { siteName: string; theme: 'ubeeq' | 'sand' | 'forest
 
 export type UserProfile = {
   userId: string;
+  status?: 'active' | 'inactive';
   username: string;
   displayName?: string;
   bio?: string;
+  externalLinks?: Array<{ label: string; url: string }>;
   location?: string;
   website?: string;
+  branding?: ProfileBrandingPayload;
+  coverPreset?: string;
   matureContentEnabled?: boolean;
   maxAllowedContentRating?: ContentRating;
   aiFilter?: AiFilterPreference;
@@ -222,6 +226,43 @@ export type UserProfile = {
   createdAt: string;
   updatedAt: string;
   lastUsernameChangeAt?: string;
+};
+
+export type ProfileBrandingPayload = {
+  profileImage?: {
+    sourceKey?: string;
+    thumbnailUrls?: { square256?: string; square512?: string; square1024?: string };
+    altText?: string;
+    updatedAt: string;
+  };
+  coverImage?: {
+    sourceKey?: string;
+    renditionUrls?: { desktop?: string; tablet?: string; mobile?: string };
+    altText?: string;
+    updatedAt: string;
+  };
+};
+
+export type PublicUserProfile = {
+  username: string;
+  displayName: string;
+  bio?: string;
+  externalLinks?: Array<{ label: string; url: string }>;
+  location?: string;
+  website?: string;
+  createdAt: string;
+  branding?: ProfileBrandingPayload;
+  coverPreset?: string;
+  publicCollectionCount: number;
+  publicFavoriteCount: number;
+  publicCollections: Array<{
+    collectionId: string;
+    title: string;
+    description?: string;
+    imageCount: number;
+    updatedDate: string;
+  }>;
+  creators: Array<{ creatorId: string; name: string; slug: string }>;
 };
 
 export type ManagedFavorite = {

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import {
   APPEARANCE_CHANGE_EVENT,
@@ -9,17 +9,38 @@ import {
 } from '../appearance';
 import { brand } from '../brand';
 import { changePassword, signOut, type CurrentUser } from '../cognitoAuth';
-import type { AiFilterPreference, ContentRating, ManagedCreator, ManagedCollection, ManagedFavorite, UserProfile } from '../domainTypes';
+import type { AiFilterPreference, ContentRating, ManagedCollection, ManagedFavorite, UserProfile } from '../domainTypes';
 import { aiFilterOptions, contentRatingOptions, heavyTopicLabels } from '../discoveryUtils';
 import AutoLoadSentinel from '../components/AutoLoadSentinel';
+import { BrandingImageCropper, type BrandingImageSelection } from '../components/BrandingImageCropper';
+import { ProfileAvatar } from '../components/ProfileAvatar';
+import { ProfileCoverPicker } from '../components/ProfileCoverPicker';
+import { LimitedBioEditor } from '../components/LimitedBioEditor';
+import { ProfileExternalLinksEditor, type ProfileExternalLink, validateProfileExternalLinks } from '../components/ProfileExternalLinksEditor';
+import { defaultProfileCoverFor, defaultProfileCoverIdFor } from '../profileDefaults';
+
+const versionedMediaUrl = (url?: string, updatedAt?: string): string | undefined => {
+  if (!url || !updatedAt) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(updatedAt)}`;
+};
+
+type MemberSettingsSection = 'profile' | 'curation' | 'preferences' | 'security';
+
+const memberSettingsSections: Array<{ key: MemberSettingsSection; label: string; description: string }> = [
+  { key: 'profile', label: 'Profile', description: 'Manage your public member identity, profile imagery, and profile address.' },
+  { key: 'curation', label: 'Collections & favourites', description: 'Organize the collections and favourites owned by your selected profile.' },
+  { key: 'preferences', label: 'Preferences', description: 'Choose appearance, content, and discovery preferences for your account.' },
+  { key: 'security', label: 'Security', description: 'Manage sign-in and account security settings.' }
+];
 
 export default function SettingsPage({ user, onProfileChanged }: { user: CurrentUser; onProfileChanged?: (profile: UserProfile) => void }) {
   const navigate = useNavigate();
+  const routeLocation = useLocation();
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [managedArtists, setManagedArtists] = useState<ManagedCreator[]>([]);
-  const [selectedProfileKey, setSelectedProfileKey] = useState<string>('user');
   const [displayName, setDisplayName] = useState('');
+  const [displayNameSuggestions, setDisplayNameSuggestions] = useState<string[]>([]);
   const [bio, setBio] = useState('');
+  const [externalLinks, setExternalLinks] = useState<ProfileExternalLink[]>([]);
   const [location, setLocation] = useState('');
   const [website, setWebsite] = useState('');
   const [matureContentEnabled, setMatureContentEnabled] = useState(false);
@@ -49,12 +70,36 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [appearance, setAppearance] = useState<AppearancePreference>(() => readAppearancePreference());
-  const selectedArtistId = selectedProfileKey.startsWith('creator:') ? selectedProfileKey.slice('creator:'.length) : '';
-  const selectedArtist = managedArtists.find((creator) => creator.creatorId === selectedArtistId) || null;
-  const profileUrlPreview = `${window.location.origin.replace(/\/$/, '')}/${selectedArtist ? 'creators' : 'u'}/${(usernameInput || '').trim() || 'your-profile-url'}`;
-  const selectedOwnerContext = selectedArtist
-    ? { ownerProfileType: 'creator' as const, ownerProfileId: selectedArtist.creatorId }
-    : { ownerProfileType: 'user' as const };
+  const [profileImageSelection, setProfileImageSelection] = useState<BrandingImageSelection>();
+  const [coverImageSelection, setCoverImageSelection] = useState<BrandingImageSelection>();
+  const [coverPreset, setCoverPreset] = useState('');
+  const [mediaSaving, setMediaSaving] = useState(false);
+  const [invalidExternalLinkIndexes, setInvalidExternalLinkIndexes] = useState<number[]>([]);
+  const errorNoticeRef = useRef<HTMLParagraphElement>(null);
+  const profileUrlPreview = `${window.location.origin.replace(/\/$/, '')}/u/${(usernameInput || '').trim() || 'your-profile-url'}`;
+  const selectedOwnerContext = { ownerProfileType: 'user' as const };
+  const profileAvatarUrl = profile?.branding?.profileImage?.thumbnailUrls?.square512
+    || profile?.branding?.profileImage?.thumbnailUrls?.square256;
+  const profileCoverUrl = profile?.branding?.coverImage?.renditionUrls?.desktop
+    || profile?.branding?.coverImage?.renditionUrls?.tablet
+    || profile?.branding?.coverImage?.renditionUrls?.mobile;
+  const profileCoverMobileUrl = profile?.branding?.coverImage?.renditionUrls?.mobile
+    || profile?.branding?.coverImage?.renditionUrls?.tablet
+    || profile?.branding?.coverImage?.renditionUrls?.desktop;
+  const memberIdentity = `member:${profile?.username || user?.username || 'member'}`;
+  const selectedCoverPreset = coverPreset || defaultProfileCoverIdFor(memberIdentity);
+  const defaultProfileCoverUrl = defaultProfileCoverFor(memberIdentity, selectedCoverPreset);
+  const currentProfileAvatarUrl = versionedMediaUrl(profileAvatarUrl, profile?.branding?.profileImage?.updatedAt);
+  const currentDesktopCoverUrl = versionedMediaUrl(profileCoverUrl, profile?.branding?.coverImage?.updatedAt) || defaultProfileCoverUrl;
+  const currentMobileCoverUrl = versionedMediaUrl(profileCoverMobileUrl, profile?.branding?.coverImage?.updatedAt) || defaultProfileCoverUrl;
+  const requestedSection = new URLSearchParams(routeLocation.search).get('section');
+  const activeSection = memberSettingsSections.some((item) => item.key === requestedSection)
+    ? requestedSection as MemberSettingsSection
+    : 'profile';
+  const sectionMeta = memberSettingsSections.find((item) => item.key === activeSection) || memberSettingsSections[0];
+  const memberDisplayName = profile?.displayName || user?.displayName || profile?.username || user?.username || brand.memberName;
+  const memberHandle = profile?.username || user?.username || 'member';
+  const memberSectionHref = (section: MemberSettingsSection) => `/settings?section=${section}`;
 
   const reloadCuration = async () => {
     const [favoritesPage, collectionsPage] = await Promise.all([
@@ -82,14 +127,14 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
     const load = async () => {
       try {
         const loaded = await api.getMyProfile() as UserProfile;
-        const myArtists = await api.getMyCreators() as ManagedCreator[];
         setProfile(loaded);
-        setManagedArtists(myArtists);
         onProfileChanged?.(loaded);
         setDisplayName(loaded.displayName || '');
         setBio(loaded.bio || '');
+        setExternalLinks(loaded.externalLinks || []);
         setLocation(loaded.location || '');
         setWebsite(loaded.website || '');
+        setCoverPreset(loaded.coverPreset || '');
         setMatureContentEnabled(Boolean(loaded.matureContentEnabled));
         setMaxAllowedContentRating(loaded.maxAllowedContentRating || 'graphic');
         setAiFilter(loaded.aiFilter || 'show-all');
@@ -111,22 +156,29 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
   }, [navigate, onProfileChanged]);
 
   const saveProfile = async () => {
+    const linkIssues = validateProfileExternalLinks(externalLinks, false);
+    if (linkIssues.length) {
+      setMessage('');
+      setError(linkIssues[0].message);
+      setInvalidExternalLinkIndexes(linkIssues.map((issue) => issue.index));
+      requestAnimationFrame(() => {
+        errorNoticeRef.current?.focus();
+        document.querySelector<HTMLInputElement>('[aria-label="External link 1 URL"][aria-invalid="true"], input[aria-invalid="true"]')?.focus();
+      });
+      return;
+    }
     try {
       setError('');
       setMessage('');
-      if (selectedArtist) {
-        const updatedArtist = await api.studioUpdateCreator(selectedArtist.creatorId, {
-          name: displayName || selectedArtist.name
-        }) as ManagedCreator;
-        setManagedArtists((prev) => prev.map((item) => (item.creatorId === updatedArtist.creatorId ? { ...item, ...updatedArtist } : item)));
-        setMessage(`${brand.creatorName} profile updated`);
-        return;
-      }
+      setInvalidExternalLinkIndexes([]);
+      setDisplayNameSuggestions([]);
       const updated = await api.updateMyProfile({
         displayName: displayName || undefined,
         bio: bio || undefined,
+        externalLinks,
         location: location || undefined,
         website: website || undefined,
+        coverPreset: coverPreset || defaultProfileCoverIdFor(memberIdentity),
         matureContentEnabled,
         maxAllowedContentRating,
         aiFilter,
@@ -135,23 +187,95 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
         hideCrimeDisastersTragedy
       }) as UserProfile;
       setProfile(updated);
+      setBio(updated.bio || '');
+      setExternalLinks(updated.externalLinks || []);
       onProfileChanged?.(updated);
       setMessage('Profile updated');
     } catch (e) {
-      setError((e as Error).message);
+      const error = e as Error & { details?: { displayNameSuggestions?: unknown } };
+      setError(error.message);
+      setDisplayNameSuggestions(Array.isArray(error.details?.displayNameSuggestions)
+        ? error.details.displayNameSuggestions.filter((value): value is string => typeof value === 'string')
+        : []);
+    }
+  };
+
+  const deactivateMemberProfile = async () => {
+    if (!window.confirm('Deactivate your member account? Your public profile will be hidden and you will be signed out. You can reactivate it with account support.')) return;
+    try {
+      setError('');
+      setMessage('');
+      await api.deactivateMyProfile();
+      await signOut();
+      navigate('/');
+    } catch (reason) {
+      setError((reason as Error).message || 'Unable to deactivate your account.');
+    }
+  };
+
+  const reloadProfile = async () => {
+    const loaded = await api.getMyProfile() as UserProfile;
+    setProfile(loaded);
+    onProfileChanged?.(loaded);
+    return loaded;
+  };
+
+  const uploadProfileMedia = async (kind: 'profile' | 'cover', selection?: BrandingImageSelection) => {
+    if (!selection) return;
+    const { file } = selection;
+    setMediaSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      const upload = await api.createMyProfileBrandingUploadUrl({ kind, contentType: file.type || 'image/jpeg' });
+      await api.uploadPreparedFile(upload, file);
+      if (kind === 'cover') await api.setMyProfileCover({
+        sourceKey: upload.key,
+        altText: `${displayName || profile?.username || 'Member'} cover image`,
+        focalPoint: selection.focalPoint
+      });
+      else await api.setMyProfileImage({
+        sourceKey: upload.key,
+        altText: `${displayName || profile?.username || 'Member'} profile image`,
+        squareCrop: selection.squareCrop
+      });
+      await reloadProfile();
+      if (kind === 'cover') setCoverImageSelection(undefined);
+      else setProfileImageSelection(undefined);
+      setMessage(`${kind === 'cover' ? 'Cover' : 'Profile'} image updated`);
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setMediaSaving(false);
+    }
+  };
+
+  const removeProfileMedia = async (kind: 'profile-image' | 'cover-image') => {
+    const label = kind === 'cover-image' ? 'cover image' : 'profile image';
+    if (!window.confirm(`Remove your custom ${label}? Your assigned default will be shown instead.`)) return;
+    setMediaSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await api.deleteMyProfileBranding(kind);
+      await reloadProfile();
+      setMessage(`${kind === 'cover-image' ? 'Cover' : 'Profile'} image removed`);
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setMediaSaving(false);
     }
   };
 
   useEffect(() => {
-    if (selectedArtist) {
-      setDisplayName(selectedArtist.name || '');
-      setUsernameInput(selectedArtist.slug || '');
-      setUsernameError('');
-      return;
-    }
     if (profile) {
       setDisplayName(profile.displayName || '');
       setUsernameInput(profile.username || '');
+      setBio(profile.bio || '');
+      setExternalLinks(profile.externalLinks || []);
+      setLocation(profile.location || '');
+      setWebsite(profile.website || '');
+      setCoverPreset(profile.coverPreset || '');
       setMatureContentEnabled(Boolean(profile.matureContentEnabled));
       setMaxAllowedContentRating(profile.maxAllowedContentRating || 'graphic');
       setAiFilter(profile.aiFilter || 'show-all');
@@ -159,7 +283,7 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
       setHidePoliticsPublicAffairs(Boolean(profile.hidePoliticsPublicAffairs));
       setHideCrimeDisastersTragedy(Boolean(profile.hideCrimeDisastersTragedy));
     }
-  }, [selectedArtistId, profile?.userId]);
+  }, [profile?.userId]);
 
   useEffect(() => {
     const loadProfileCuration = async () => {
@@ -172,23 +296,13 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
     };
     if (!user) return;
     void loadProfileCuration();
-  }, [selectedProfileKey, user?.username]);
+  }, [user?.username]);
 
   const changeUsername = async () => {
     try {
       setError('');
       setMessage('');
       setUsernameError('');
-      if (selectedArtist) {
-        const updatedArtist = await api.studioUpdateCreator(selectedArtist.creatorId, {
-          slug: usernameInput
-        }) as ManagedCreator;
-        setManagedArtists((prev) => prev.map((item) => (item.creatorId === updatedArtist.creatorId ? { ...item, ...updatedArtist } : item)));
-        setUsernameInput(updatedArtist.slug);
-        setUsernameSuggestions([]);
-        setMessage(`${brand.creatorName} profile URL updated`);
-        return;
-      }
       const updated = await api.updateMyUsername(usernameInput) as UserProfile;
       setProfile(updated);
       onProfileChanged?.(updated);
@@ -198,13 +312,11 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
     } catch (e) {
       const err = e as Error;
       setUsernameError(err.message);
-      if (!selectedArtist) {
-        try {
-          const result = await api.checkUsername(usernameInput) as { suggestions?: string[] };
-          setUsernameSuggestions(result.suggestions || []);
-        } catch {
-          setUsernameSuggestions([]);
-        }
+      try {
+        const result = await api.checkUsername(usernameInput) as { suggestions?: string[] };
+        setUsernameSuggestions(result.suggestions || []);
+      } catch {
+        setUsernameSuggestions([]);
       }
     }
   };
@@ -361,9 +473,57 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
   };
 
   return (
-    <div className="layout">
-      <div className="panel max-w-6xl">
-        <h1>Settings</h1>
+    <div className="layout studio-dashboard-shell member-dashboard-shell">
+      <aside className="studio-sidebar member-sidebar">
+        <div className="studio-brand-card">
+          <strong>{brand.productName}</strong>
+          <span>ACCOUNT</span>
+          {brand.attribution && <small>{brand.attribution}</small>}
+        </div>
+        <div className="studio-creator-controls">
+          <div className="studio-creator-switcher member-profile-context">
+            <span>{brand.memberName}</span>
+            <div className="member-profile-context-identity">
+              <ProfileAvatar className="member-profile-context-avatar" src={currentProfileAvatarUrl} identity={memberIdentity} alt={`${memberDisplayName} profile`} />
+              <div>
+                <strong>{memberDisplayName}</strong>
+                <small>@{memberHandle}</small>
+              </div>
+            </div>
+          </div>
+          {profile?.username && (
+            <Link className="auth-secondary-btn no-underline member-view-profile-link" to={`/u/${encodeURIComponent(profile.username)}`}>
+              View public profile
+            </Link>
+          )}
+        </div>
+        <nav className="studio-sidebar-nav" aria-label="Member account navigation">
+          {memberSettingsSections.map((item) => (
+            <Link
+              key={item.key}
+              className={`studio-nav-item no-underline${item.key === activeSection ? ' studio-nav-item-active' : ''}`}
+              to={memberSectionHref(item.key)}
+            >
+              <span>{item.label}</span>
+            </Link>
+          ))}
+        </nav>
+        <p className="studio-account-note">You are {brand.id === 'eversally' ? 'an' : 'a'} {brand.memberName}.</p>
+      </aside>
+
+      <section className="studio-main member-settings-main">
+        <header className="studio-section-header">
+          <div>
+            <p className="studio-page-eyebrow">{memberDisplayName}</p>
+            <h1>{sectionMeta.label}</h1>
+            <p>{sectionMeta.description}</p>
+          </div>
+          <span className="studio-context-chip">Your member account</span>
+        </header>
+        {message && <p className="success panel member-settings-notice">{message}</p>}
+        {error && <p className="error panel member-settings-notice" role="alert" tabIndex={-1} ref={errorNoticeRef}>{error}</p>}
+        <div className="panel settings-admin-panel member-settings-panel">
+        {activeSection === 'preferences' && <section id="member-preferences" className="settings-admin-section">
         <h2>Appearance</h2>
         <div className="grid">
           <div className="settings-field settings-appearance-field">
@@ -381,176 +541,223 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
             <p className="small">System preference follows this device and updates automatically.</p>
           </div>
         </div>
-        <h2>Profile Context</h2>
-        <div className="grid">
+        <h2 className="mt-6">Content preferences</h2>
+        <div className="studio-creator-form settings-profile-editor settings-member-profile-editor">
+          <label className="inline-form">
+            <input
+              type="checkbox"
+              checked={matureContentEnabled}
+              onChange={(e) => setMatureContentEnabled(e.target.checked)}
+            />
+            <span>Enable mature content viewing</span>
+          </label>
           <div className="settings-field">
-            <label htmlFor="settings-profile-context" className="settings-field-label">Edit profile as</label>
+            <label htmlFor="settings-max-content-rating" className="settings-field-label">Maximum feed rating</label>
             <select
-              id="settings-profile-context"
+              id="settings-max-content-rating"
               className="settings-select"
-              value={selectedProfileKey}
-              onChange={(e) => setSelectedProfileKey(e.target.value)}
+              value={maxAllowedContentRating}
+              onChange={(e) => setMaxAllowedContentRating(e.target.value as ContentRating)}
             >
-              <option value="user">{brand.memberName} profile</option>
-              {managedArtists.map((creator) => (
-                <option key={creator.creatorId} value={`creator:${creator.creatorId}`}>
-                  {brand.creatorName}: {creator.name} ({creator.memberRole || 'editor'})
-                </option>
-              ))}
+              {contentRatingOptions.map((option) => <option key={`max-rating-${option.value}`} value={option.value}>{option.label}</option>)}
             </select>
           </div>
+          <div className="settings-field">
+            <label htmlFor="settings-ai-filter" className="settings-field-label">AI content</label>
+            <select
+              id="settings-ai-filter"
+              className="settings-select"
+              value={aiFilter}
+              onChange={(e) => setAiFilter(e.target.value as AiFilterPreference)}
+            >
+              {aiFilterOptions.map((option) => <option key={`ai-filter-${option.value}`} value={option.value}>{option.label}</option>)}
+            </select>
+          </div>
+          <div className="settings-field settings-profile-bio">
+            <label className="settings-field-label">Heavy topics</label>
+            <label className="inline-form">
+              <input
+                type="checkbox"
+                checked={hideHeavyTopics}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setHideHeavyTopics(checked);
+                  if (checked) {
+                    setHidePoliticsPublicAffairs(true);
+                    setHideCrimeDisastersTragedy(true);
+                  }
+                }}
+              />
+              <span>Hide all heavy topics</span>
+            </label>
+            <label className="inline-form">
+              <input
+                type="checkbox"
+                checked={hidePoliticsPublicAffairs}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setHidePoliticsPublicAffairs(checked);
+                  if (!checked) setHideHeavyTopics(false);
+                }}
+              />
+              <span>{heavyTopicLabels['politics-public-affairs']}</span>
+            </label>
+            <label className="inline-form">
+              <input
+                type="checkbox"
+                checked={hideCrimeDisastersTragedy}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setHideCrimeDisastersTragedy(checked);
+                  if (!checked) setHideHeavyTopics(false);
+                }}
+              />
+              <span>{heavyTopicLabels['crime-disasters-tragedy']}</span>
+            </label>
+          </div>
+          <div className="inline-form settings-profile-bio"><button onClick={saveProfile}>Save preferences</button></div>
         </div>
+        </section>}
+        {activeSection === 'profile' && <section id="member-profile" className="settings-admin-section">
         <h2>Profile</h2>
-        <div className="grid">
-          <div className="settings-field">
-            <label htmlFor="settings-display-name" className="settings-field-label">Display Name</label>
-            <input
-              id="settings-display-name"
-              placeholder="Creative display name"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-            />
-            <p className="small">{selectedArtist ? `The name shown on this ${brand.creatorName.toLowerCase()} profile` : 'The name shown on your profile'}</p>
-          </div>
-          <button onClick={saveProfile}>{selectedArtist ? `Save ${brand.creatorName} Name` : 'Save Display Name'}</button>
-          {!selectedArtist && (
-            <>
-              <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
-              <input placeholder="Website" value={website} onChange={(e) => setWebsite(e.target.value)} />
-              <textarea className="rounded-xl border px-3 py-2 text-sm" rows={4} placeholder="Bio" value={bio} onChange={(e) => setBio(e.target.value)} />
-              <label className="inline-form">
-                <input
-                  type="checkbox"
-                  checked={matureContentEnabled}
-                  onChange={(e) => setMatureContentEnabled(e.target.checked)}
-                />
-                <span>Enable mature content viewing</span>
-              </label>
-              <div className="settings-field">
-                <label htmlFor="settings-max-content-rating" className="settings-field-label">Maximum feed rating</label>
-                <select
-                  id="settings-max-content-rating"
-                  className="settings-select"
-                  value={maxAllowedContentRating}
-                  onChange={(e) => setMaxAllowedContentRating(e.target.value as ContentRating)}
-                >
-                  {contentRatingOptions.map((option) => (
-                    <option key={`max-rating-${option.value}`} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="settings-field">
-                <label htmlFor="settings-ai-filter" className="settings-field-label">AI Content</label>
-                <select
-                  id="settings-ai-filter"
-                  className="settings-select"
-                  value={aiFilter}
-                  onChange={(e) => setAiFilter(e.target.value as AiFilterPreference)}
-                >
-                  {aiFilterOptions.map((option) => (
-                    <option key={`ai-filter-${option.value}`} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="settings-field">
-                <label className="settings-field-label">Heavy Topics</label>
-                <label className="inline-form">
-                  <input
-                    type="checkbox"
-                    checked={hideHeavyTopics}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setHideHeavyTopics(checked);
-                      if (checked) {
-                        setHidePoliticsPublicAffairs(true);
-                        setHideCrimeDisastersTragedy(true);
-                      }
-                    }}
-                  />
-                  <span>Hide Heavy Topics</span>
-                </label>
-                <label className="inline-form">
-                  <input
-                    type="checkbox"
-                    checked={hidePoliticsPublicAffairs}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setHidePoliticsPublicAffairs(checked);
-                      if (!checked) setHideHeavyTopics(false);
-                    }}
-                  />
-                  <span>{heavyTopicLabels['politics-public-affairs']}</span>
-                </label>
-                <label className="inline-form">
-                  <input
-                    type="checkbox"
-                    checked={hideCrimeDisastersTragedy}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setHideCrimeDisastersTragedy(checked);
-                      if (!checked) setHideHeavyTopics(false);
-                    }}
-                  />
-                  <span>{heavyTopicLabels['crime-disasters-tragedy']}</span>
-                </label>
-              </div>
-            </>
-          )}
-        </div>
-
-        <h2 className="mt-6">Profile URL</h2>
-        <div className="grid">
-          <div className="settings-field">
-            <label htmlFor="settings-profile-url" className="settings-field-label">Profile URL</label>
-            <input
-              id="settings-profile-url"
-              name="preferred_username"
-              autoComplete="new-password"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              placeholder="your-profile"
-              data-lpignore="true"
-              value={usernameInput}
-              onChange={(e) => setUsernameInput(e.target.value)}
-            />
-            <p className="small">{selectedArtist ? `This ${brand.creatorName.toLowerCase()} profile will be available at:` : 'Your profile will be available at:'}</p>
-            <p className="small settings-profile-url-preview">{profileUrlPreview}</p>
-          </div>
-          <button onClick={changeUsername}>{selectedArtist ? `Save ${brand.creatorName} URL` : 'Save Profile URL'}</button>
-          {!selectedArtist && profile?.lastUsernameChangeAt && (
-            <p className="small">Last changed: {new Date(profile.lastUsernameChangeAt).toLocaleDateString()}</p>
-          )}
-          {usernameError && <p className="error">{usernameError}</p>}
-          {!selectedArtist && usernameSuggestions.length > 0 && (
-            <div className="username-suggestions">
-              {usernameSuggestions.map((candidate) => (
-                <button key={candidate} className="username-suggestion-pill" onClick={() => setUsernameInput(candidate)}>
-                  {candidate}
-                </button>
-              ))}
+          <div className="studio-creator-form settings-profile-editor settings-member-profile-editor">
+            <div className="settings-field">
+              <label htmlFor="settings-display-name" className="settings-field-label">Display name</label>
+              <input id="settings-display-name" placeholder="Creative display name" value={displayName} onChange={(e) => { setDisplayName(e.target.value); setDisplayNameSuggestions([]); }} />
+              <p className="small">The name shown on your public member profile.</p>
+              {displayNameSuggestions.length > 0 && (
+                <div className="studio-field-suggestions">
+                  <small>Try an available display name:</small>
+                  <span className="username-suggestions">
+                    {displayNameSuggestions.map((candidate) => (
+                      <button type="button" key={candidate} className="username-suggestion-pill" onClick={() => { setDisplayName(candidate); setDisplayNameSuggestions([]); }}>
+                        {candidate}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+            <div className="settings-field">
+              <label htmlFor="settings-profile-url" className="settings-field-label">Handle / slug</label>
+              <input
+                id="settings-profile-url"
+                name="preferred_username"
+                autoComplete="new-password"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="your-profile"
+                data-lpignore="true"
+                value={usernameInput}
+                onChange={(e) => setUsernameInput(e.target.value)}
+              />
+              <p className="small">Your public profile address:</p>
+              {profile?.username === usernameInput.trim()
+                ? <Link className="small settings-profile-url-preview" to={`/u/${encodeURIComponent(profile.username)}`}>{profileUrlPreview}</Link>
+                : <p className="small settings-profile-url-preview">{profileUrlPreview}</p>}
+              <div className="inline-form">
+                <button type="button" onClick={changeUsername}>Save profile URL</button>
+                {profile?.lastUsernameChangeAt && <span className="small">Last changed: {new Date(profile.lastUsernameChangeAt).toLocaleDateString()}</span>}
+              </div>
+              {usernameError && <p className="error">{usernameError}</p>}
+              {usernameSuggestions.length > 0 && (
+                <div className="username-suggestions">
+                  {usernameSuggestions.map((candidate) => (
+                    <button type="button" key={candidate} className="username-suggestion-pill" onClick={() => setUsernameInput(candidate)}>
+                      {candidate}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="settings-profile-media">
+              <div className="settings-profile-media-actions">
+                <div className="studio-branding-editor">
+                  <section className="studio-current-branding studio-current-branding-profile" aria-label="Current profile image">
+                    <div className="studio-current-branding-heading">
+                      <div>
+                        <strong>Current profile image</strong>
+                        <span>{profile?.branding?.profileImage ? 'Custom image' : 'Assigned default icon'}</span>
+                      </div>
+                      {profile?.branding?.profileImage && <button type="button" className="auth-secondary-btn studio-branding-remove-btn" disabled={mediaSaving} onClick={() => void removeProfileMedia('profile-image')}>Remove image</button>}
+                    </div>
+                    <div className="studio-current-profile-preview">
+                      <ProfileAvatar
+                        src={currentProfileAvatarUrl}
+                        identity={memberIdentity}
+                        alt="Current member profile"
+                      />
+                    </div>
+                    <p>{profile?.branding?.profileImage ? 'This is the image currently shown anywhere your member avatar appears.' : 'No custom profile image is set. Your assigned Ubeeq icon is shown across the app.'}</p>
+                  </section>
+                  <BrandingImageCropper kind="profile" disabled={mediaSaving} onChange={setProfileImageSelection} />
+                  <div className="studio-inline-actions">
+                    <button type="button" disabled={!profileImageSelection || mediaSaving} onClick={() => void uploadProfileMedia('profile', profileImageSelection)}>{mediaSaving ? 'Saving…' : 'Save profile image'}</button>
+                  </div>
+                </div>
 
-        {!selectedArtist && (
-          <>
+                <div className="studio-branding-editor">
+                  <section className="studio-current-branding studio-current-branding-cover" aria-label="Current cover image">
+                    <div className="studio-current-branding-heading">
+                      <div>
+                        <strong>Current cover image</strong>
+                        <span>{profile?.branding?.coverImage ? 'Custom responsive cover' : defaultProfileCoverUrl ? 'Assigned default cover' : 'No cover set'}</span>
+                      </div>
+                      {profile?.branding?.coverImage && <button type="button" className="auth-secondary-btn studio-branding-remove-btn" disabled={mediaSaving} onClick={() => void removeProfileMedia('cover-image')}>Remove image</button>}
+                    </div>
+                    <div className="studio-current-cover-previews">
+                      <figure className="studio-current-cover-desktop">
+                        {currentDesktopCoverUrl ? <img src={currentDesktopCoverUrl} alt="Current desktop cover crop" /> : <span>No cover image</span>}
+                        <figcaption>Desktop</figcaption>
+                      </figure>
+                      <figure className="studio-current-cover-mobile">
+                        {currentMobileCoverUrl ? <img src={currentMobileCoverUrl} alt="Current mobile cover crop" /> : <span>No cover image</span>}
+                        <figcaption>Mobile</figcaption>
+                      </figure>
+                    </div>
+                    <p>{profile?.branding?.coverImage ? 'These are the responsive crops currently shown on your public member profile.' : defaultProfileCoverUrl ? 'No custom cover is set. This assigned Eversally cover is currently shown.' : 'No custom or platform cover is currently shown.'}</p>
+                  </section>
+                  <ProfileCoverPicker
+                    identity={memberIdentity}
+                    selectedPreset={selectedCoverPreset}
+                    customCoverSet={Boolean(profile?.branding?.coverImage)}
+                    disabled={mediaSaving}
+                    onChange={setCoverPreset}
+                  />
+                  <BrandingImageCropper kind="cover" disabled={mediaSaving} onChange={setCoverImageSelection} />
+                  <div className="studio-inline-actions">
+                    <button type="button" disabled={!coverImageSelection || mediaSaving} onClick={() => void uploadProfileMedia('cover', coverImageSelection)}>{mediaSaving ? 'Saving…' : 'Save cover image'}</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="settings-field"><label className="settings-field-label">Location</label><input placeholder="City, region, or country" value={location} onChange={(e) => setLocation(e.target.value)} /></div>
+            <div className="settings-field"><label className="settings-field-label">Website</label><input type="url" placeholder="https://example.com" value={website} onChange={(e) => setWebsite(e.target.value)} /></div>
+            <div className="settings-field settings-profile-bio"><label className="settings-field-label">Bio</label><LimitedBioEditor value={bio} onChange={setBio} maxLength={600} /></div>
+            <div className="settings-field settings-profile-bio"><label className="settings-field-label">External links</label><ProfileExternalLinksEditor value={externalLinks} onChange={setExternalLinks} allowCustom={false} invalidIndexes={invalidExternalLinkIndexes} /></div>
+            <div className="inline-form"><button onClick={saveProfile}>Save member profile</button>{profile?.username && <button className="auth-secondary-btn" onClick={() => navigate(`/u/${encodeURIComponent(profile.username)}`)}>View public profile</button>}</div>
+            <section className="settings-danger-zone"><h3>Deactivate account</h3><p>Deactivate hides your public member profile. Account deletion will be available only after deactivation.</p><button type="button" className="auth-secondary-btn studio-danger-btn" onClick={() => void deactivateMemberProfile()}>Deactivate account</button></section>
+
+          </div>
+
+        </section>}
+
+        {activeSection === 'security' && (
+          <section id="member-security" className="settings-admin-section">
             <h2 className="mt-6">Security</h2>
             <div className="inline-form">
               <button onClick={() => setPasswordOpen(true)}>Change Password</button>
             </div>
-          </>
+          </section>
         )}
 
+        {activeSection === 'curation' && <section id="member-curation" className="settings-admin-section">
         <h2 className="mt-6">Curation</h2>
         <div className="grid">
           <div className="inline-form">
             <input
-              placeholder={selectedArtist ? `New collection for ${selectedArtist.name}` : 'New collection title'}
+              placeholder="New collection title"
               value={newCollectionTitle}
               onChange={(e) => setNewCollectionTitle(e.target.value)}
             />
@@ -636,9 +843,9 @@ export default function SettingsPage({ user, onProfileChanged }: { user: Current
             <AutoLoadSentinel enabled={Boolean(favoritesCursor)} loading={favoritesLoading} onLoadMore={() => loadMoreFavorites()} />
           </div>
         </div>
-        {message && <p className="success">{message}</p>}
-        {error && <p className="error">{error}</p>}
-      </div>
+        </section>}
+        </div>
+      </section>
 
       {passwordOpen && (
         <div className="settings-drawer-overlay" onClick={() => setPasswordOpen(false)}>

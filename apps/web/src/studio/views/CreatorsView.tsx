@@ -1,12 +1,24 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { DataToolbar } from '../components/DataToolbar';
 import { Pill } from '../components/Pill';
 import type { StudioCreator, StudioFile, StudioPost } from '../types';
+import { BrandingImageCropper, type BrandingImageSelection } from '../../components/BrandingImageCropper';
+import { ProfileAvatar } from '../../components/ProfileAvatar';
+import { defaultProfileCoverFor, defaultProfileCoverIdFor } from '../../profileDefaults';
+import { ProfileCoverPicker } from '../../components/ProfileCoverPicker';
+import { LimitedBioEditor } from '../../components/LimitedBioEditor';
+import { ProfileExternalLinksEditor, type ProfileExternalLink, validateProfileExternalLinks } from '../../components/ProfileExternalLinksEditor';
 
 const slugSuggestion = (name: string): string => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+const versionedMediaUrl = (url?: string, updatedAt?: string): string | undefined => {
+  if (!url) return undefined;
+  if (!updatedAt) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(updatedAt)}`;
+};
 
 type CreatorPayload = {
   name: string;
@@ -15,42 +27,38 @@ type CreatorPayload = {
   space?: StudioCreator['space'];
 };
 
-const parseExternalLinks = (value: string): Array<{ label: string; url: string }> => value
-  .split('\n')
-  .map((line) => line.trim())
-  .filter(Boolean)
-  .flatMap((line) => {
-    const [first, ...rest] = line.split('|').map((part) => part.trim());
-    const url = rest.length ? rest.join('|') : first;
-    if (!url) return [];
-    return [{ label: rest.length ? first : '', url }];
-  });
-
 export function CreatorsView({
   creators,
   posts,
   files,
   onCreateCreator,
   onUpdateCreator,
+  onDeleteCreator,
   onUploadProfileImage,
   onUploadCoverImage,
   onRemoveProfileImage,
-  onRemoveCoverImage
+  onRemoveCoverImage,
+  onSaved,
+  profileCreatorId
 }: {
   creators: StudioCreator[];
   posts: StudioPost[];
   files: StudioFile[];
   onCreateCreator: (payload: CreatorPayload) => Promise<StudioCreator>;
   onUpdateCreator: (creatorId: string, payload: CreatorPayload) => Promise<void>;
-  onUploadProfileImage: (creatorId: string, file: File) => Promise<void>;
-  onUploadCoverImage: (creatorId: string, file: File) => Promise<void>;
+  onDeleteCreator: (creatorId: string) => Promise<void>;
+  onUploadProfileImage: (creatorId: string, selection: BrandingImageSelection) => Promise<void>;
+  onUploadCoverImage: (creatorId: string, selection: BrandingImageSelection) => Promise<void>;
   onRemoveProfileImage: (creatorId: string) => Promise<void>;
   onRemoveCoverImage: (creatorId: string) => Promise<void>;
+  onSaved: () => Promise<void>;
+  profileCreatorId?: string;
 }) {
   const location = useLocation();
   const navigate = useNavigate();
   const requestedCreate = new URLSearchParams(location.search).get('create') === '1';
   const requestedEditId = new URLSearchParams(location.search).get('edit') || '';
+  const profileMode = Boolean(profileCreatorId);
   const [search, setSearch] = useState('');
   const [formMode, setFormMode] = useState<'list' | 'create' | 'edit'>('list');
   const [editingCreatorId, setEditingCreatorId] = useState('');
@@ -58,15 +66,25 @@ export function CreatorsView({
   const [slug, setSlug] = useState('');
   const [status, setStatus] = useState<'active' | 'inactive'>('active');
   const [bio, setBio] = useState('');
-  const [externalLinks, setExternalLinks] = useState('');
+  const [externalLinks, setExternalLinks] = useState<ProfileExternalLink[]>([]);
   const [spaceTheme, setSpaceTheme] = useState<'default' | 'ubeeq' | 'sand' | 'forest' | 'slate'>('default');
-  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
-  const [announcementMessage, setAnnouncementMessage] = useState('');
-  const [announcementUrl, setAnnouncementUrl] = useState('');
-  const [profileImage, setProfileImage] = useState<File>();
-  const [coverImage, setCoverImage] = useState<File>();
+  const [showOnMemberProfile, setShowOnMemberProfile] = useState(false);
+  const [spaceVisibility, setSpaceVisibility] = useState<'public-discoverable' | 'public-link' | 'private'>('private');
+  const [shareCode, setShareCode] = useState('');
+  const [profileImage, setProfileImage] = useState<BrandingImageSelection>();
+  const [coverImage, setCoverImage] = useState<BrandingImageSelection>();
+  const [coverPreset, setCoverPreset] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [formSuccess, setFormSuccess] = useState('');
+  const [savedCreatorId, setSavedCreatorId] = useState('');
+  const [invalidExternalLinkIndexes, setInvalidExternalLinkIndexes] = useState<number[]>([]);
+  const [invalidField, setInvalidField] = useState<'name' | 'slug' | 'external-links' | ''>('');
+  const [nameSuggestions, setNameSuggestions] = useState<string[]>([]);
+  const [slugSuggestions, setSlugSuggestions] = useState<string[]>([]);
+  const [activeNameSuggestion, setActiveNameSuggestion] = useState('');
+  const [activeSlugSuggestion, setActiveSlugSuggestion] = useState('');
+  const formErrorRef = useRef<HTMLParagraphElement>(null);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -80,17 +98,54 @@ export function CreatorsView({
     setSlug(creator?.slug || '');
     setStatus(creator?.status === 'inactive' ? 'inactive' : 'active');
     setBio(creator?.space?.bio || '');
-    setExternalLinks((creator?.space?.externalLinks || []).map((link) => `${link.label} | ${link.url}`).join('\n'));
+    setExternalLinks(creator?.space?.externalLinks || []);
     setSpaceTheme(creator?.space?.theme || 'default');
-    setAnnouncementEnabled(creator?.space?.announcement?.enabled === true);
-    setAnnouncementMessage(creator?.space?.announcement?.message || '');
-    setAnnouncementUrl(creator?.space?.announcement?.url || '');
+    setShowOnMemberProfile(creator?.space?.showOnMemberProfile === true);
+    setSpaceVisibility(creator?.space?.visibility || (creator ? 'public-discoverable' : 'private'));
+    setShareCode(creator?.space?.shareCode || '');
     setProfileImage(undefined);
     setCoverImage(undefined);
+    setCoverPreset(creator?.space?.coverPreset || '');
     setFormError('');
+    setInvalidExternalLinkIndexes([]);
+    setInvalidField('');
+    setNameSuggestions([]);
+    setSlugSuggestions([]);
+    setActiveNameSuggestion('');
+    setActiveSlugSuggestion('');
+  };
+
+  const showValidationError = (message: string, field: 'name' | 'slug' | 'external-links', linkIndexes: number[] = []) => {
+    setFormError(message);
+    setInvalidField(field);
+    setInvalidExternalLinkIndexes(linkIndexes);
+    requestAnimationFrame(() => {
+      formErrorRef.current?.focus();
+      const target = field === 'external-links'
+        ? document.querySelector<HTMLInputElement>('[aria-label="External link 1 URL"][aria-invalid="true"], input[aria-invalid="true"]')
+        : document.querySelector<HTMLInputElement>(`[data-creator-field="${field}"]`);
+      target?.focus();
+    });
+  };
+
+  const applyCreatorConflictSuggestions = (error: unknown) => {
+    const details = (error as Error & { details?: { nameSuggestions?: unknown; slugSuggestions?: unknown } })?.details;
+    setNameSuggestions(Array.isArray(details?.nameSuggestions) ? details.nameSuggestions.filter((value): value is string => typeof value === 'string') : []);
+    setSlugSuggestions(Array.isArray(details?.slugSuggestions) ? details.slugSuggestions.filter((value): value is string => typeof value === 'string') : []);
+    setActiveNameSuggestion('');
+    setActiveSlugSuggestion('');
   };
 
   useEffect(() => {
+    if (profileCreatorId) {
+      const profileCreator = creators.find((creator) => creator.creatorId === profileCreatorId);
+      if (profileCreator) {
+        setFormMode('edit');
+        setEditingCreatorId(profileCreator.creatorId);
+        populateForm(profileCreator);
+        return;
+      }
+    }
     if (requestedCreate) {
       setFormMode('create');
       setEditingCreatorId('');
@@ -108,21 +163,80 @@ export function CreatorsView({
     setEditingCreatorId('');
   // The route is the source of truth for this screen's mode.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestedCreate, requestedEditId, creators]);
+  }, [profileCreatorId, requestedCreate, requestedEditId, creators]);
 
   const openCreate = () => navigate('/studio/workspace?section=creators&create=1');
-  const openEdit = (creator: StudioCreator) => navigate(`/studio/workspace?section=creators&creatorId=${encodeURIComponent(creator.creatorId)}&edit=${encodeURIComponent(creator.creatorId)}`);
-  const closeForm = (creatorId = '') => navigate(`/studio/workspace?section=creators${creatorId ? `&creatorId=${encodeURIComponent(creatorId)}` : ''}`);
+  const creatorProfileUrl = (creatorId: string) => `/studio/workspace?section=creator-profile&creatorId=${encodeURIComponent(creatorId)}`;
+  const publicCreatorProfileUrl = (creator: Pick<StudioCreator, 'slug'>) => `/creators/${encodeURIComponent(creator.slug)}${import.meta.env.DEV ? '?preview=1' : ''}`;
+  const openEdit = (creator: StudioCreator) => navigate(creatorProfileUrl(creator.creatorId));
+  const closeForm = (creatorId = '') => navigate(profileMode
+    ? creatorProfileUrl(creatorId || profileCreatorId || '')
+    : `/studio/workspace?section=creators${creatorId ? `&creatorId=${encodeURIComponent(creatorId)}` : ''}`);
   const workAsCreator = (creator: StudioCreator) => navigate(`/studio/workspace?section=dashboard&creatorId=${encodeURIComponent(creator.creatorId)}`);
 
   const archiveCreator = async (creator: StudioCreator) => {
     if (!window.confirm(`Archive “${creator.name}”? This ${brand.creatorName.toLowerCase()} will no longer be active, but its existing work and settings will be retained.`)) return;
     setSaving(true);
     setFormError('');
+    setFormSuccess('');
+    setSavedCreatorId('');
     try {
       await onUpdateCreator(creator.creatorId, { name: creator.name, slug: creator.slug, status: 'inactive' });
+      await onSaved();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : `Unable to archive this ${brand.creatorName.toLowerCase()}.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const generateShareCode = () => {
+    const bytes = new Uint8Array(18);
+    crypto.getRandomValues(bytes);
+    setShareCode(Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(''));
+  };
+
+  const deleteCreator = async (creator: StudioCreator) => {
+    if (!window.confirm(`Permanently delete “${creator.name}”? This cannot be undone. Only use this for an empty or unwanted ${brand.creatorName.toLowerCase()} identity.`)) return;
+    setSaving(true);
+    setFormError('');
+    try {
+      await onDeleteCreator(creator.creatorId);
+      await onSaved();
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : `Unable to delete this ${brand.creatorName.toLowerCase()}.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeProfileImage = async () => {
+    if (!editingCreator) return;
+    if (!window.confirm('Remove this custom profile image? The assigned default icon will be shown instead.')) return;
+    setSaving(true);
+    setFormError('');
+    try {
+      await onRemoveProfileImage(editingCreator.creatorId);
+      await onSaved();
+      setProfileImage(undefined);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Unable to remove the profile image.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeCoverImage = async () => {
+    if (!editingCreator) return;
+    if (!window.confirm('Remove this custom cover image? The assigned default cover will be shown instead.')) return;
+    setSaving(true);
+    setFormError('');
+    try {
+      await onRemoveCoverImage(editingCreator.creatorId);
+      await onSaved();
+      setCoverImage(undefined);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Unable to remove the cover image.');
     } finally {
       setSaving(false);
     }
@@ -131,37 +245,67 @@ export function CreatorsView({
   const submit = async () => {
     const trimmedName = name.trim();
     const trimmedSlug = slug.trim() || slugSuggestion(trimmedName);
-    if (!trimmedName || !trimmedSlug) return;
+    if (!trimmedName) return showValidationError(`${brand.creatorName} name is required.`, 'name');
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(trimmedSlug)) return showValidationError('Handle / slug can use lowercase letters, numbers, and single hyphens only.', 'slug');
+    if (formMode !== 'create') {
+      const linkIssues = validateProfileExternalLinks(externalLinks);
+      if (linkIssues.length) return showValidationError(linkIssues[0].message, 'external-links', linkIssues.map((issue) => issue.index));
+    }
+    const pendingProfileImage = profileImage;
+    const pendingCoverImage = coverImage;
     setSaving(true);
     setFormError('');
+    setFormSuccess('');
+    setInvalidExternalLinkIndexes([]);
+    setInvalidField('');
+    setNameSuggestions([]);
+    setSlugSuggestions([]);
+    setActiveNameSuggestion('');
+    setActiveSlugSuggestion('');
     try {
-      const payload: CreatorPayload = {
-        name: trimmedName,
-        slug: trimmedSlug,
-        status,
-        space: {
-          bio: bio.trim(),
-          externalLinks: parseExternalLinks(externalLinks),
-          theme: spaceTheme,
-          announcement: {
-            enabled: announcementEnabled,
-            message: announcementMessage.trim(),
-            url: announcementUrl.trim() || undefined
+      // Creation is intentionally a small first step: establish an identity,
+      // then let the Creator configure their full profile on its dedicated
+      // page. New Spaces are private until explicitly changed there.
+      const payload: CreatorPayload = formMode === 'create'
+        ? {
+            name: trimmedName,
+            slug: trimmedSlug,
+            status: 'active',
+            space: { visibility: 'private' }
           }
-        }
-      };
+        : {
+            name: trimmedName,
+            slug: trimmedSlug,
+            status,
+            space: {
+              bio: bio.trim(),
+              externalLinks,
+              theme: spaceTheme,
+              coverPreset: coverPreset || defaultProfileCoverIdFor(`creator:${trimmedSlug}`),
+              visibility: spaceVisibility,
+              shareCode: spaceVisibility === 'private' ? shareCode : '',
+              showOnMemberProfile,
+            }
+          };
       if (formMode === 'create') {
         const creator = await onCreateCreator(payload);
-        if (profileImage) await onUploadProfileImage(creator.creatorId, profileImage);
-        if (coverImage) await onUploadCoverImage(creator.creatorId, coverImage);
-        closeForm(creator.creatorId);
+        if (pendingProfileImage) await onUploadProfileImage(creator.creatorId, pendingProfileImage);
+        if (pendingCoverImage) await onUploadCoverImage(creator.creatorId, pendingCoverImage);
+        await onSaved();
+        setFormSuccess(`${brand.creatorName} saved.`);
+        setSavedCreatorId(creator.creatorId);
+        navigate(publicCreatorProfileUrl(creator));
       } else if (editingCreator) {
         await onUpdateCreator(editingCreator.creatorId, payload);
-        if (profileImage) await onUploadProfileImage(editingCreator.creatorId, profileImage);
-        if (coverImage) await onUploadCoverImage(editingCreator.creatorId, coverImage);
+        if (pendingProfileImage) await onUploadProfileImage(editingCreator.creatorId, pendingProfileImage);
+        if (pendingCoverImage) await onUploadCoverImage(editingCreator.creatorId, pendingCoverImage);
+        await onSaved();
+        setFormSuccess(`${brand.creatorName} saved.`);
+        setSavedCreatorId(editingCreator.creatorId);
         closeForm(editingCreator.creatorId);
       }
     } catch (error) {
+      applyCreatorConflictSuggestions(error);
       setFormError(error instanceof Error ? error.message : `Unable to save this ${brand.creatorName.toLowerCase()}.`);
     } finally {
       setSaving(false);
@@ -170,32 +314,119 @@ export function CreatorsView({
 
   if (formMode !== 'list') {
     const isCreate = formMode === 'create';
+    const currentIdentity = `creator:${editingCreator?.slug || slug || slugSuggestion(name) || 'new-creator'}`;
+    const selectedCoverPreset = coverPreset || defaultProfileCoverIdFor(currentIdentity);
+    const currentProfile = editingCreator?.branding?.profileImage;
+    const currentProfileUrl = versionedMediaUrl(
+      currentProfile?.thumbnailUrls?.square512 || currentProfile?.thumbnailUrls?.square256,
+      currentProfile?.updatedAt
+    );
+    const currentCover = editingCreator?.branding?.coverImage;
+    const assignedCover = defaultProfileCoverFor(currentIdentity, selectedCoverPreset);
+    const currentDesktopCoverUrl = versionedMediaUrl(
+      currentCover?.renditionUrls?.desktop || currentCover?.renditionUrls?.tablet || currentCover?.renditionUrls?.mobile,
+      currentCover?.updatedAt
+    ) || assignedCover;
+    const currentMobileCoverUrl = versionedMediaUrl(
+      currentCover?.renditionUrls?.mobile || currentCover?.renditionUrls?.tablet || currentCover?.renditionUrls?.desktop,
+      currentCover?.updatedAt
+    ) || assignedCover;
     return (
       <Card
-        title={isCreate ? `Create ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.creatorName}` : `Edit ${editingCreator?.name || brand.creatorName.toLowerCase()}`}
+        title={isCreate ? `Create ${brand.creatorName}` : profileMode ? `Edit ${brand.creatorName} Profile` : `Edit ${editingCreator?.name || brand.creatorName.toLowerCase()}`}
         eyebrow={isCreate ? `${brand.creatorPlural} / Create` : `${brand.creatorPlural} / Edit`}
-        actions={<button type="button" className="auth-secondary-btn" onClick={() => closeForm()}>Cancel</button>}
+        actions={profileMode
+          ? <button type="button" className="auth-secondary-btn" onClick={() => navigate('/studio/workspace?section=creators')}>Manage {brand.creatorPlural}</button>
+          : <button type="button" className="auth-secondary-btn" onClick={() => closeForm()}>Cancel</button>}
         className="studio-creator-form-card"
       >
-        <p className="studio-creator-form-lede">{isCreate ? `Set up a new ${brand.creatorName.toLowerCase()} identity. You can connect integrations afterward.` : `Update this ${brand.creatorName.toLowerCase()} identity and its public profile details.`}</p>
+        <p className="studio-creator-form-lede">{isCreate ? `Choose a name and handle. Once it is created, you can finish its profile, branding, visibility, and integrations.` : `Update this ${brand.creatorName.toLowerCase()} identity and its public profile details.`}</p>
         <div className="studio-creator-form">
-          <label><span>{brand.creatorName} name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Rex Studio" autoComplete="organization" /></label>
-          <label><span>Handle / slug</span><input value={slug} onChange={(event) => setSlug(event.target.value)} placeholder={slugSuggestion(name) || 'rex-studio'} autoCapitalize="none" autoCorrect="off" /></label>
-          <label><span>Profile image</span><input type="file" accept="image/*" onChange={(event) => setProfileImage(event.target.files?.[0])} /></label>
-          <label><span>Cover image</span><input type="file" accept="image/*" onChange={(event) => setCoverImage(event.target.files?.[0])} /></label>
-          <label className="studio-creator-form-wide"><span>Space bio</span><textarea value={bio} onChange={(event) => setBio(event.target.value)} rows={5} placeholder="Tell visitors about this creator and their work." /></label>
-          <label className="studio-creator-form-wide"><span>External links</span><textarea value={externalLinks} onChange={(event) => setExternalLinks(event.target.value)} rows={4} placeholder={'Portfolio | https://example.com\nBluesky | https://bsky.app/profile/example.com'} /><small>One link per line. Use “Label | URL”.</small></label>
+          <label><span>{brand.creatorName} name</span><input data-creator-field="name" aria-invalid={invalidField === 'name' || undefined} value={name} onChange={(event) => { setName(event.target.value); setActiveNameSuggestion(''); setActiveSlugSuggestion(''); }} placeholder="e.g. Rex Studio" autoComplete="organization" />
+            {nameSuggestions.length > 0 && <span className="studio-field-suggestions"><small>Try an available name:</small><span className="username-suggestions">{nameSuggestions.map((candidate) => {
+              const relatedSlug = slugSuggestion(candidate);
+              const isActive = activeNameSuggestion === candidate || (name.trim() === candidate && slug === relatedSlug);
+              return <button type="button" key={candidate} className={`username-suggestion-pill${isActive ? ' username-suggestion-pill-active' : ''}`} aria-pressed={isActive} onClick={() => { setName(candidate); setSlug(relatedSlug); setActiveNameSuggestion(candidate); setActiveSlugSuggestion(relatedSlug); }}>{candidate}</button>;
+            })}</span></span>}
+          </label>
+          <label><span>Handle / slug</span><input data-creator-field="slug" aria-invalid={invalidField === 'slug' || undefined} value={slug} onChange={(event) => { setSlug(event.target.value); setActiveSlugSuggestion(''); }} placeholder={slugSuggestion(name) || 'rex-studio'} autoCapitalize="none" autoCorrect="off" />
+            {slugSuggestions.length > 0 && <span className="studio-field-suggestions"><small>Try an available handle:</small><span className="username-suggestions">{slugSuggestions.map((candidate) => {
+              const selectedFromName = nameSuggestions.some((nameCandidate) => name.trim() === nameCandidate && slugSuggestion(nameCandidate) === candidate);
+              const isActive = activeSlugSuggestion === candidate || selectedFromName;
+              return <button type="button" key={candidate} className={`username-suggestion-pill${isActive ? ' username-suggestion-pill-active' : ''}`} aria-pressed={isActive} onClick={() => { setSlug(candidate); setActiveSlugSuggestion(candidate); }}>{candidate}</button>;
+            })}</span></span>}
+          </label>
+          {!isCreate && <div className="studio-creator-form-wide studio-branding-editor">
+            {!isCreate && editingCreator && (
+              <section className="studio-current-branding studio-current-branding-profile" aria-label="Current profile image">
+                <div className="studio-current-branding-heading">
+                  <div>
+                    <strong>Current profile image</strong>
+                    <span>{currentProfile ? 'Custom image' : 'Assigned default icon'}</span>
+                  </div>
+                  {currentProfile && <button type="button" className="auth-secondary-btn studio-branding-remove-btn" disabled={saving} onClick={() => void removeProfileImage()}>Remove image</button>}
+                </div>
+                <div className="studio-current-profile-preview">
+                  <ProfileAvatar src={currentProfileUrl} identity={currentIdentity} alt={`${editingCreator.name} profile`} />
+                </div>
+                <p>{currentProfile ? 'This is the image currently shown anywhere this Creator’s avatar appears.' : 'No custom profile image is set. The assigned Ubeeq icon is shown across the app.'}</p>
+              </section>
+            )}
+            <BrandingImageCropper kind="profile" disabled={saving} onChange={setProfileImage} />
+          </div>}
+          {!isCreate && <div className="studio-creator-form-wide studio-branding-editor">
+            {!isCreate && editingCreator && (
+              <section className="studio-current-branding studio-current-branding-cover" aria-label="Current cover image">
+                <div className="studio-current-branding-heading">
+                  <div>
+                    <strong>Current cover image</strong>
+                    <span>{currentCover ? 'Custom responsive cover' : assignedCover ? 'Assigned default cover' : 'No cover set'}</span>
+                  </div>
+                  {currentCover && <button type="button" className="auth-secondary-btn studio-branding-remove-btn" disabled={saving} onClick={() => void removeCoverImage()}>Remove image</button>}
+                </div>
+                <div className="studio-current-cover-previews">
+                  <figure className="studio-current-cover-desktop">
+                    {currentDesktopCoverUrl ? <img src={currentDesktopCoverUrl} alt="Current desktop cover crop" /> : <span>No cover image</span>}
+                    <figcaption>Desktop</figcaption>
+                  </figure>
+                  <figure className="studio-current-cover-mobile">
+                    {currentMobileCoverUrl ? <img src={currentMobileCoverUrl} alt="Current mobile cover crop" /> : <span>No cover image</span>}
+                    <figcaption>Mobile</figcaption>
+                  </figure>
+                </div>
+                <p>{currentCover ? 'These are the responsive crops currently shown on this Creator’s public profile.' : assignedCover ? 'No custom cover is set. This assigned Eversally cover is currently shown.' : 'No custom or platform cover is currently shown.'}</p>
+              </section>
+            )}
+            <ProfileCoverPicker
+              identity={currentIdentity}
+              selectedPreset={selectedCoverPreset}
+              customCoverSet={Boolean(currentCover)}
+              disabled={saving}
+              onChange={setCoverPreset}
+            />
+            <BrandingImageCropper kind="cover" disabled={saving} onChange={setCoverImage} />
+          </div>}
+          {!isCreate && <><div className="studio-creator-form-wide"><span className="studio-profile-field-label">Space bio</span><LimitedBioEditor value={bio} onChange={setBio} maxLength={5000} placeholder="Tell visitors about this creator and their work." /></div>
+          <div className="studio-creator-form-wide"><span className="studio-profile-field-label">External links</span><ProfileExternalLinksEditor value={externalLinks} onChange={setExternalLinks} invalidIndexes={invalidExternalLinkIndexes} /></div>
           <label><span>Space theme</span><select value={spaceTheme} onChange={(event) => setSpaceTheme(event.target.value as typeof spaceTheme)}><option value="default">Platform default</option><option value="ubeeq">Ubeeq</option><option value="sand">Sand</option><option value="forest">Forest</option><option value="slate">Slate</option></select></label>
-          <label><span>{brand.creatorName} status</span><select value={status} onChange={(event) => setStatus(event.target.value as 'active' | 'inactive')}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
-          <fieldset className="studio-creator-form-wide studio-space-announcement"><legend>Space announcement</legend><label className="studio-work-metadata-option"><input type="checkbox" checked={announcementEnabled} onChange={(event) => setAnnouncementEnabled(event.target.checked)} /><span>Show an announcement on public Space pages</span></label><label><span>Message</span><input value={announcementMessage} onChange={(event) => setAnnouncementMessage(event.target.value)} placeholder="New collection available now" /></label><label><span>Optional link</span><input type="url" value={announcementUrl} onChange={(event) => setAnnouncementUrl(event.target.value)} placeholder="https://example.com/news" /></label></fieldset>
+          <fieldset className="studio-creator-form-wide studio-space-announcement">
+            <legend>Member profile</legend>
+            <label className="studio-work-metadata-option">
+              <input type="checkbox" checked={showOnMemberProfile} onChange={(event) => setShowOnMemberProfile(event.target.checked)} />
+              <span>Show this {brand.creatorName} on my public member profile</span>
+            </label>
+            <p className="small">Off by default. When enabled, visitors can find this identity under “A Creator” on your member profile.</p>
+          </fieldset>
+          <fieldset className="studio-creator-form-wide studio-space-announcement"><legend>Creator Space visibility</legend><label><span>Visibility</span><select value={spaceVisibility} onChange={(event) => setSpaceVisibility(event.target.value as typeof spaceVisibility)}><option value="public-discoverable">Public and discoverable</option><option value="public-link">Public — link only</option><option value="private">Private — share code required</option></select></label>{spaceVisibility === 'private' && <div className="studio-share-code"><p>Only people with this link can view your Creator profile, Works, and Collections. Replace or revoke the code any time to end access.</p><div className="studio-inline-actions"><input value={shareCode} readOnly placeholder="Generate a share code" aria-label="Creator Space share code" /><button type="button" className="auth-secondary-btn" onClick={generateShareCode}>Generate new code</button>{shareCode && <button type="button" className="auth-secondary-btn studio-danger-btn" onClick={() => setShareCode('')}>Revoke code</button>}{shareCode && <a className="auth-secondary-btn no-underline" target="_blank" rel="noreferrer" href={`/creators/${encodeURIComponent(editingCreator?.slug || slug)}?access=${encodeURIComponent(shareCode)}`}>Open shared Space</a>}</div></div>}</fieldset>
+          </>}
         </div>
         <div className="studio-inline-actions">
-          <button type="button" className="auth-primary-btn" disabled={!name.trim() || saving} onClick={() => void submit()}>{saving ? 'Saving…' : isCreate ? `Create ${brand.creatorName}` : `Save ${brand.creatorName}`}</button>
-          {!isCreate && editingCreator?.branding?.profileImage && <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => void onRemoveProfileImage(editingCreator.creatorId)}>Remove profile image</button>}
-          {!isCreate && editingCreator?.branding?.coverImage && <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => void onRemoveCoverImage(editingCreator.creatorId)}>Remove cover image</button>}
-          <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => closeForm()}>Cancel</button>
+          <button type="button" className="auth-primary-btn" disabled={!name.trim() || saving} onClick={() => void submit()}>{saving ? 'Saving…' : isCreate ? `Create ${brand.creatorName}` : 'Save Profile'}</button>
+          {!profileMode && <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => closeForm()}>Cancel</button>}
+          {formSuccess && savedCreatorId === editingCreator?.creatorId && <p className="success studio-inline-success" role="status">{formSuccess}</p>}
         </div>
-        {formError && <p className="error">{formError}</p>}
+        {formError && <p className="error" role="alert" tabIndex={-1} ref={formErrorRef}>{formError}</p>}
+        {!isCreate && editingCreator && editingCreator.status !== 'inactive' && <section className="studio-creator-danger-zone"><h2>Deactivate {brand.creatorName}</h2><p>Deactivating hides this Creator and its public Space. You can reactivate it later. Account deletion will require deactivation first.</p><button type="button" className="auth-secondary-btn studio-danger-btn" disabled={saving} onClick={() => void archiveCreator(editingCreator)}>Deactivate {brand.creatorName}</button></section>}
       </Card>
     );
   }
@@ -216,7 +447,7 @@ export function CreatorsView({
                 <Pill label={creator.status === 'inactive' ? 'Archived' : 'Active'} tone={creator.status === 'inactive' ? 'warning' : 'success'} />
                 <button type="button" className="auth-secondary-btn" onClick={() => workAsCreator(creator)}>Work as this {brand.creatorName}</button>
                 <button type="button" className="auth-secondary-btn" onClick={() => openEdit(creator)}>Edit {brand.creatorName}</button>
-                {creator.status !== 'inactive' && <button type="button" className="auth-secondary-btn" disabled={saving} onClick={() => void archiveCreator(creator)}>Archive {brand.creatorName}</button>}
+                {creator.status !== 'inactive' && <button type="button" className="auth-secondary-btn" onClick={() => openEdit(creator)}>Profile & lifecycle</button>}
               </div>
             </article>
           ))}

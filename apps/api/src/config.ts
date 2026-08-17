@@ -85,7 +85,10 @@ export const loadConfig = (): AppConfig => {
   trendingFeedMaxItems: Number(process.env.TRENDING_FEED_MAX_ITEMS || 600),
   trendingCandidateLimit: Number(process.env.TRENDING_CANDIDATE_LIMIT || 1500),
   cognitoUserPoolId: process.env.COGNITO_USER_POOL_ID,
-  cognitoClientId: process.env.COGNITO_CLIENT_ID,
+  // The browser-facing client id is public. Accept its Vite spelling for the
+  // paired local web/API launcher, while deployed environments use the normal
+  // server-side variable supplied by CDK.
+  cognitoClientId: process.env.COGNITO_CLIENT_ID || process.env.VITE_COGNITO_CLIENT_ID,
   cognitoTokenUse: (process.env.COGNITO_TOKEN_USE as 'id' | 'access') || 'id',
   externalOAuthRedirectUri: process.env.EXTERNAL_OAUTH_REDIRECT_URI,
   externalTokenEncryptionKey: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY,

@@ -4,6 +4,15 @@ import type { StudioExternalAsset, StudioExternalPublication, StudioSpacePublica
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 const usesLocalDeveloperApi = import.meta.env.DEV && /^(https?:\/\/)(localhost|127\.0\.0\.1|fanadmin\.top)(?::\d+)?(?:\/|$)/.test(configuredApiBase);
 const API_BASE = usesLocalDeveloperApi ? '/local-api' : configuredApiBase;
+const preparedUploadUrl = (upload: { uploadUrl: string; requiresAuth?: boolean }): string => {
+  if (!upload.requiresAuth || !usesLocalDeveloperApi) return upload.uploadUrl;
+  try {
+    const url = new URL(upload.uploadUrl, window.location.origin);
+    return `${API_BASE}${url.pathname}${url.search}`;
+  } catch {
+    return upload.uploadUrl;
+  }
+};
 let myProfileInFlight: Promise<unknown> | null = null;
 const withDevCacheBypass = (url: string): string => {
   if (!import.meta.env.DEV) return url;
@@ -44,7 +53,9 @@ const fetchAuthGetWithRetry = async (url: string, baseHeaders?: Record<string, s
 const handleJson = async (response: Response) => {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.message || 'Request failed');
+    const error = new Error(body.message || 'Request failed') as Error & { details?: unknown };
+    error.details = body;
+    throw error;
   }
   if (response.status === 204) {
     return null;
@@ -334,14 +345,20 @@ export const api = {
     const response = await fetch(withDevCacheBypass(`${API_BASE}/discovery/trending-content?${qs.toString()}`));
     return handleJson(response);
   },
-  async getCreatorProfile(slug: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/profile`);
+  async getCreatorProfile(slug: string, shareCode?: string, preview = false) {
+    const query = new URLSearchParams();
+    if (shareCode) query.set('access', shareCode);
+    if (preview) query.set('preview', '1');
+    const suffix = query.size ? `?${query.toString()}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/profile${suffix}`);
     return handleJson(response);
   },
-  async getCreatorFeed(slug: string, cursor?: string, limit = 24) {
+  async getCreatorFeed(slug: string, cursor?: string, limit = 24, shareCode?: string, preview = false) {
     const qs = new URLSearchParams();
     qs.set('limit', String(limit));
     if (cursor) qs.set('cursor', cursor);
+    if (shareCode) qs.set('access', shareCode);
+    if (preview) qs.set('preview', '1');
     const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/feed?${qs.toString()}`);
     return handleJson(response);
   },
@@ -354,13 +371,17 @@ export const api = {
     period: 'hourly' | 'daily' = 'daily',
     cursor?: string,
     limit = 24,
-    source: 'combined' | 'media' | 'post' = 'combined'
+    source: 'combined' | 'media' | 'post' = 'combined',
+    shareCode?: string,
+    preview = false
   ) {
     const qs = new URLSearchParams();
     qs.set('period', period);
     qs.set('limit', String(limit));
     qs.set('source', source);
     if (cursor) qs.set('cursor', cursor);
+    if (shareCode) qs.set('access', shareCode);
+    if (preview) qs.set('preview', '1');
     const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${slug}/trending-content?${qs.toString()}`);
     return handleJson(response);
   },
@@ -563,11 +584,17 @@ export const api = {
     }
     return myProfileInFlight;
   },
+  async getUserProfile(username: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/u/${encodeURIComponent(username)}`);
+    return handleJson(response);
+  },
   async updateMyProfile(payload: {
     displayName?: string;
     bio?: string;
+    externalLinks?: Array<{ label: string; url: string }>;
     location?: string;
     website?: string;
+    coverPreset?: string;
     matureContentEnabled?: boolean;
     maxAllowedContentRating?: 'general' | 'suggestive' | 'mature' | 'sexual' | 'fetish' | 'graphic';
     aiFilter?: 'show-all' | 'hide-ai-generated' | 'hide-all-ai';
@@ -579,6 +606,59 @@ export const api = {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
+    });
+    myProfileInFlight = null;
+    return handleJson(response);
+  },
+  async deactivateMyProfile() {
+    const response = await fetch(`${API_BASE}/me/profile/deactivate`, {
+      method: 'POST',
+      headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async createMyProfileBrandingUploadUrl(payload: { kind: 'profile' | 'cover'; contentType: string }) {
+    const response = await fetch(`${API_BASE}/me/profile/branding/upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response) as Promise<{ key: string; uploadUrl: string; contentType: string; requiresAuth?: boolean }>;
+  },
+  async uploadPreparedFile(upload: { uploadUrl: string; contentType: string; requiresAuth?: boolean }, file: File) {
+    const response = await fetch(preparedUploadUrl(upload), {
+      method: 'PUT',
+      headers: { 'Content-Type': upload.contentType, ...(upload.requiresAuth ? await authHeaders() : {}) },
+      body: file
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.message || 'Unable to upload image.');
+    }
+    return response.status === 204 ? null : response.json().catch(() => null);
+  },
+  async setMyProfileImage(payload: { sourceKey: string; altText?: string; squareCrop?: { x: number; y: number; size: number } }) {
+    const response = await fetch(`${API_BASE}/me/profile/branding/profile-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    myProfileInFlight = null;
+    return handleJson(response);
+  },
+  async setMyProfileCover(payload: { sourceKey: string; altText?: string; focalPoint?: { x: number; y: number } }) {
+    const response = await fetch(`${API_BASE}/me/profile/branding/cover-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    myProfileInFlight = null;
+    return handleJson(response);
+  },
+  async deleteMyProfileBranding(kind: 'profile-image' | 'cover-image') {
+    const response = await fetch(`${API_BASE}/me/profile/branding/${kind}`, {
+      method: 'DELETE',
+      headers: await authHeaders()
     });
     myProfileInFlight = null;
     return handleJson(response);
@@ -599,8 +679,12 @@ export const api = {
   async getMyArtists() {
     return this.getMyCreators();
   },
-  async getCreatorPosts(creator: string) {
-    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${encodeURIComponent(creator)}/posts`);
+  async getCreatorPosts(creator: string, shareCode?: string, preview = false) {
+    const query = new URLSearchParams();
+    if (shareCode) query.set('access', shareCode);
+    if (preview) query.set('preview', '1');
+    const suffix = query.size ? `?${query.toString()}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${encodeURIComponent(creator)}/posts${suffix}`);
     return handleJson(response);
   },
   async getPostBySlug(slug: string) {
@@ -699,7 +783,9 @@ export const api = {
       bio?: string;
       externalLinks?: Array<{ label: string; url: string }>;
       theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
-      announcement?: { enabled: boolean; message: string; url?: string };
+      coverPreset?: string;
+      visibility?: 'public-discoverable' | 'public-link' | 'private';
+      shareCode?: string;
     };
   }) {
     const response = await fetch(`${API_BASE}/studio/creators/${creator}`, {
@@ -727,7 +813,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
-    return handleJson(response) as Promise<{ key: string; uploadUrl: string; contentType: string }>;
+    return handleJson(response) as Promise<{ key: string; uploadUrl: string; contentType: string; requiresAuth?: boolean }>;
   },
   async studioUploadCreatorCoverImage(creator: string, payload: {
     sourceKey: string;
@@ -829,6 +915,7 @@ export const api = {
       bio?: string;
       externalLinks?: Array<{ label: string; url: string }>;
       theme?: 'default' | 'ubeeq' | 'sand' | 'forest' | 'slate';
+      coverPreset?: string;
       announcement?: { enabled: boolean; message: string; url?: string };
     };
   }) {

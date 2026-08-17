@@ -6,6 +6,7 @@ import {
   ForgotPasswordCommand,
   GlobalSignOutCommand,
   InitiateAuthCommand,
+  ResendConfirmationCodeCommand,
   RespondToAuthChallengeCommand,
   SignUpCommand
 } from '@aws-sdk/client-cognito-identity-provider';
@@ -321,6 +322,11 @@ export const register = async (email: string, password: string): Promise<void> =
 export const confirmRegistration = async (email: string, code: string): Promise<void> => {
   requireClientId();
   await client.send(new ConfirmSignUpCommand({ ClientId: COGNITO_CLIENT_ID, Username: email, ConfirmationCode: code }));
+};
+
+export const resendRegistrationConfirmation = async (email: string): Promise<void> => {
+  requireClientId();
+  await client.send(new ResendConfirmationCodeCommand({ ClientId: COGNITO_CLIENT_ID, Username: email }));
 };
 
 export const forgotPassword = async (email: string): Promise<void> => {
