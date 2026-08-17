@@ -87,7 +87,13 @@ import {
 } from './disclosures';
 import { capabilitiesForRole, normalizePlatformRoleValue } from './roleHelpers';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
-import { createExternalPlatformProvider, ExternalProviderError } from './externalPlatformProvider';
+import {
+  createExternalPlatformProvider,
+  ExternalProviderError,
+  type ExternalJournalPublish,
+  type ExternalLiteraturePublish,
+  type ExternalStatusPublish
+} from './externalPlatformProvider';
 import { storeUbeeqWorkImage } from './externalContentStorage';
 import { externalOAuthPkce, issueBlueskyOAuthState, issueExternalOAuthState, resolveExternalOAuthReturnUrl, verifyBlueskyOAuthState, verifyExternalOAuthState } from './externalOAuth';
 import { createExternalSyncQueue } from './externalSyncQueue';
@@ -1122,6 +1128,43 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     redirectUri: credential.redirectUri,
     minimumRequestIntervalMs: config.deviantArtMinimumRequestIntervalMs
   });
+
+  /** Resolve and refresh a connected DeviantArt account for a one-shot native
+   * publication. The background worker has equivalent refresh logic; keeping
+   * this small helper here makes direct literature/journal/status publishing
+   * safe without exposing encrypted credentials to callers. */
+  const withDeviantArtAccess = async <T>(
+    account: ExternalAccount,
+    callback: (provider: ReturnType<typeof providerForCredential>, accessToken: string, currentAccount: ExternalAccount) => Promise<T>
+  ): Promise<T> => {
+    const credential = await store.getExternalPlatformCredential(account.externalPlatformCredentialId);
+    if (!credential || credential.platform !== 'deviantart' || credential.userId !== account.userId) {
+      throw new ExternalProviderError('The DeviantArt application credentials are unavailable.', 'unsupported');
+    }
+    const provider = providerForCredential(credential);
+    let currentAccount = account;
+    let accessToken = decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey);
+    const expiresAt = account.tokenExpiresAt ? Date.parse(account.tokenExpiresAt) : NaN;
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now() + 60_000) {
+      if (!account.refreshTokenEncrypted) {
+        throw new ExternalProviderError('Your DeviantArt connection has expired. Reconnect it before publishing.', 'authentication_required');
+      }
+      const tokens = await provider.refreshAuthentication(decryptExternalCredential(account.refreshTokenEncrypted, config.externalTokenEncryptionKey));
+      currentAccount = {
+        ...account,
+        accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
+        refreshTokenEncrypted: tokens.refreshToken
+          ? encryptExternalCredential(tokens.refreshToken, config.externalTokenEncryptionKey)
+          : account.refreshTokenEncrypted,
+        tokenExpiresAt: tokens.expiresAt,
+        connectionStatus: 'connected',
+        updatedAt: new Date().toISOString()
+      };
+      await store.updateExternalAccount(currentAccount);
+      accessToken = tokens.accessToken;
+    }
+    return callback(provider, accessToken, currentAccount);
+  };
 
   const enqueueExternalSyncJob = async (
     externalAccountId: string,
@@ -5654,6 +5697,205 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       return res.status(400).json({ message });
     }
   });
+
+  const persistNativeDeviantArtPublication = async (
+    work: Work,
+    account: ExternalAccount,
+    remote: { externalContentId: string; externalUrl?: string; rawMetadata: Record<string, unknown> },
+    contentType: 'literature' | 'journal' | 'status',
+    title: string,
+    description: string | undefined
+  ) => {
+    const now = new Date().toISOString();
+    const remoteId = contentType === 'status' ? `status:${remote.externalContentId}` : remote.externalContentId;
+    const existing = (await store.listExternalPublications(account.externalAccountId)).find((item) => item.externalContentId === remoteId);
+    const externalPublication: ExternalPublication = {
+      externalPublicationId: existing?.externalPublicationId || randomUUID(),
+      assetId: work.workId,
+      externalAccountId: account.externalAccountId,
+      platform: 'deviantart',
+      externalContentId: remoteId,
+      externalUrl: remote.externalUrl,
+      externalTitle: title,
+      externalDescription: description,
+      publishedAt: existing?.publishedAt || now,
+      lastSyncedAt: now,
+      lastSeenAt: now,
+      syncStatus: 'active',
+      metadataSyncStatus: 'in_sync',
+      rawMetadataJson: { ...remote.rawMetadata, nativeContentType: contentType, providerExternalId: remote.externalContentId },
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    if (existing) await store.updateExternalPublication(externalPublication);
+    else await store.createExternalPublication(externalPublication);
+    await store.upsertPublication({
+      publicationId: externalPublication.externalPublicationId,
+      tenantId: config.tenantId,
+      creatorId: work.creatorId,
+      workId: work.workId,
+      destination: 'deviantart',
+      integrationAccountId: account.externalAccountId,
+      status: 'live',
+      visibility: 'private',
+      remoteId: remote.externalContentId,
+      remoteUrl: remote.externalUrl,
+      metadataOverrides: { title, description, fields: { nativeContentType: contentType } },
+      sync: { status: 'in_sync', lastAttemptAt: now, lastSuccessfulAt: now, localRevision: work.revision },
+      providerData: remote.rawMetadata,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      publishedAt: existing?.publishedAt || now
+    });
+    return externalPublication;
+  };
+
+  const resolveNativeDeviantArtContext = async (req: express.Request, res: express.Response) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) {
+      res.status(404).json({ message: 'Work not found' });
+      return null;
+    }
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return null;
+    const externalAccountId = typeof req.body?.externalAccountId === 'string' ? req.body.externalAccountId.trim() : '';
+    const account = externalAccountId ? await store.getExternalAccount(externalAccountId) : null;
+    if (!account || account.platform !== 'deviantart' || account.userId !== req.authUser!.userId) {
+      res.status(400).json({ message: 'Choose a DeviantArt account connected to this user.' });
+      return null;
+    }
+    if (!['connected', 'rate_limited', 'temporarily_unavailable'].includes(account.connectionStatus)) {
+      res.status(409).json({ message: 'Reconnect this DeviantArt account before publishing.' });
+      return null;
+    }
+    const assignedCreatorIds = (await store.listExternalAccountCreatorAssignments(account.externalAccountId)).map((assignment) => assignment.creatorIdentityId);
+    if (!assignedCreatorIds.includes(work.creatorId) && account.primaryCreatorIdentityId !== work.creatorId && account.creatorIdentityId !== work.creatorId) {
+      res.status(403).json({ message: 'This DeviantArt account is not connected to the work’s creator.' });
+      return null;
+    }
+    return { work, account };
+  };
+
+  app.post('/studio/works/:workId/destinations/deviantart/literature', requireAuth, async (req, res) => {
+    const context = await resolveNativeDeviantArtContext(req, res);
+    if (!context) return;
+    const content: ExternalLiteraturePublish = {
+      title: sanitizeOptional(req.body?.title, 300) || context.work.title,
+      body: sanitizeOptional(req.body?.body, 200_000) || context.work.description || '',
+      description: sanitizeOptional(req.body?.description, 20_000) || context.work.description,
+      tags: parseStringArray(req.body?.tags).slice(0, 100),
+      collectionExternalIds: parseStringArray(req.body?.collectionExternalIds).slice(0, 100),
+      isMature: req.body?.isMature === true,
+      matureLevel: req.body?.matureLevel === 'moderate' ? 'moderate' : 'strict',
+      matureClassification: parseStringArray(req.body?.matureClassification) as ExternalLiteraturePublish['matureClassification'],
+      allowComments: req.body?.allowComments !== false,
+      license: sanitizeOptional(req.body?.license, 100)
+    };
+    try {
+      const result = await withIdempotency(req, async () => {
+        const publication = await withDeviantArtAccess(context.account, async (provider, accessToken, currentAccount) => {
+          const remote = await provider.createLiterature(accessToken, content);
+          return persistNativeDeviantArtPublication(context.work, currentAccount, remote, 'literature', content.title, content.description);
+        });
+        return { status: 201, body: { publication } };
+      });
+      auditLog(req, 'deviantart.literature.created', { workId: context.work.workId, externalAccountId: context.account.externalAccountId });
+      return res.status(result.status).json(result.body);
+    } catch (error) {
+      logServerError('deviantart.literature.create', error);
+      return res.status(error instanceof ExternalProviderError && error.code === 'authentication_required' ? 401 : 400).json({ message: error instanceof Error ? error.message : 'Unable to publish DeviantArt literature.' });
+    }
+  });
+
+  app.patch('/studio/works/:workId/destinations/deviantart/literature/:externalContentId', requireAuth, async (req, res) => {
+    const context = await resolveNativeDeviantArtContext(req, res);
+    if (!context) return;
+    const content: ExternalLiteraturePublish = {
+      title: sanitizeOptional(req.body?.title, 300) || context.work.title,
+      body: sanitizeOptional(req.body?.body, 200_000) || context.work.description || '',
+      description: sanitizeOptional(req.body?.description, 20_000) || context.work.description,
+      tags: parseStringArray(req.body?.tags).slice(0, 100),
+      collectionExternalIds: parseStringArray(req.body?.collectionExternalIds).slice(0, 100),
+      isMature: req.body?.isMature === true,
+      matureLevel: req.body?.matureLevel === 'moderate' ? 'moderate' : 'strict',
+      matureClassification: parseStringArray(req.body?.matureClassification) as ExternalLiteraturePublish['matureClassification'],
+      allowComments: req.body?.allowComments !== false,
+      license: sanitizeOptional(req.body?.license, 100)
+    };
+    try {
+      const result = await withIdempotency(req, async () => {
+        const publication = await withDeviantArtAccess(context.account, async (provider, accessToken, currentAccount) => {
+          const remote = await provider.updateLiterature(accessToken, req.params.externalContentId, content);
+          return persistNativeDeviantArtPublication(context.work, currentAccount, remote, 'literature', content.title, content.description);
+        });
+        return { status: 200, body: { publication } };
+      });
+      return res.status(result.status).json(result.body);
+    } catch (error) {
+      logServerError('deviantart.literature.update', error);
+      return res.status(error instanceof ExternalProviderError && error.code === 'authentication_required' ? 401 : 400).json({ message: error instanceof Error ? error.message : 'Unable to update DeviantArt literature.' });
+    }
+  });
+
+  app.post('/studio/works/:workId/destinations/deviantart/journal', requireAuth, async (req, res) => {
+    const context = await resolveNativeDeviantArtContext(req, res);
+    if (!context) return;
+    const content: ExternalJournalPublish = {
+      title: sanitizeOptional(req.body?.title, 300) || context.work.title,
+      body: sanitizeOptional(req.body?.body, 200_000) || context.work.description || '',
+      tags: parseStringArray(req.body?.tags).slice(0, 100),
+      coverUrl: sanitizeOptional(req.body?.coverUrl, 2_000),
+      embeddedImageUrl: sanitizeOptional(req.body?.embeddedImageUrl, 2_000),
+      isMature: req.body?.isMature === true,
+      matureLevel: req.body?.matureLevel === 'moderate' ? 'moderate' : 'strict',
+      matureClassification: parseStringArray(req.body?.matureClassification) as ExternalJournalPublish['matureClassification'],
+      allowComments: req.body?.allowComments !== false
+    };
+    try {
+      const result = await withIdempotency(req, async () => {
+        const publication = await withDeviantArtAccess(context.account, async (provider, accessToken, currentAccount) => {
+          const remote = await provider.createJournal(accessToken, content);
+          return persistNativeDeviantArtPublication(context.work, currentAccount, remote, 'journal', content.title, content.body);
+        });
+        return { status: 201, body: { publication } };
+      });
+      auditLog(req, 'deviantart.journal.created', { workId: context.work.workId, externalAccountId: context.account.externalAccountId });
+      return res.status(result.status).json(result.body);
+    } catch (error) {
+      logServerError('deviantart.journal.create', error);
+      return res.status(error instanceof ExternalProviderError && error.code === 'authentication_required' ? 401 : 400).json({ message: error instanceof Error ? error.message : 'Unable to publish DeviantArt journal.' });
+    }
+  });
+
+  app.post('/studio/works/:workId/destinations/deviantart/status', requireAuth, async (req, res) => {
+    const context = await resolveNativeDeviantArtContext(req, res);
+    if (!context) return;
+    const content: ExternalStatusPublish = {
+      body: sanitizeOptional(req.body?.body, 10_000) || '',
+      parentExternalId: sanitizeOptional(req.body?.parentExternalId, 100),
+      stashExternalId: sanitizeOptional(req.body?.stashExternalId, 100)
+    };
+    try {
+      const result = await withIdempotency(req, async () => {
+        const body = await withDeviantArtAccess(context.account, async (provider, accessToken, currentAccount) => {
+          const remote = await provider.postStatus(accessToken, content);
+          const publication = await persistNativeDeviantArtPublication(context.work, currentAccount, { ...remote, externalContentId: remote.externalPostId }, 'status', context.work.title, content.body);
+          return { remote, publication };
+        });
+        return { status: 201, body };
+      });
+      auditLog(req, 'deviantart.status.created', { workId: context.work.workId, externalAccountId: context.account.externalAccountId });
+      return res.status(result.status).json(result.body);
+    } catch (error) {
+      logServerError('deviantart.status.create', error);
+      return res.status(error instanceof ExternalProviderError && error.code === 'authentication_required' ? 401 : 400).json({ message: error instanceof Error ? error.message : 'Unable to publish DeviantArt status.' });
+    }
+  });
+
+  app.post('/studio/works/:workId/destinations/deviantart/poll', requireAuth, async (_req, res) => (
+    res.status(501).json({
+      message: 'DeviantArt poll creation is not available through the current public API reference. Polls can be imported when exposed by a remote deviation, but cannot be created here yet.'
+    })
+  ));
 
   app.get('/studio/integrations/deviantart/accounts/:externalAccountId/profile', requireAuth, async (req, res) => {
     const account = await store.getExternalAccount(req.params.externalAccountId);

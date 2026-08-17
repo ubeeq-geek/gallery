@@ -34,6 +34,13 @@ const authHeaders = async (): Promise<Record<string, string>> => {
   return idToken ? { Authorization: `Bearer ${idToken}` } : {};
 };
 
+const createIdempotencyKey = (): string => {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `native-da-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const fetchAuthGetWithRetry = async (url: string, baseHeaders?: Record<string, string>): Promise<Response> => {
   const attempt = async (): Promise<Response> => fetch(url, { headers: { ...(baseHeaders || {}), ...(await authHeaders()) } });
@@ -1376,6 +1383,70 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ externalAccountId, ...(targetStatus ? { targetStatus } : {}), ...(options || {}) })
+    });
+    return handleJson(response);
+  },
+  async studioPublishDeviantArtLiterature(workId: string, externalAccountId: string, payload: {
+    title: string;
+    body: string;
+    description?: string;
+    tags?: string[];
+    collectionExternalIds?: string[];
+    isMature?: boolean;
+    matureLevel?: 'strict' | 'moderate';
+    matureClassification?: string[];
+    allowComments?: boolean;
+    license?: string;
+  }, idempotencyKey?: string) {
+    const requestIdempotencyKey = idempotencyKey || createIdempotencyKey();
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/destinations/deviantart/literature`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-idempotency-key': requestIdempotencyKey, ...(await authHeaders()) },
+      body: JSON.stringify({ externalAccountId, ...payload })
+    });
+    return handleJson(response);
+  },
+  async studioUpdateDeviantArtLiterature(workId: string, externalAccountId: string, externalContentId: string, payload: {
+    title: string;
+    body: string;
+    description?: string;
+    tags?: string[];
+    collectionExternalIds?: string[];
+    isMature?: boolean;
+    matureLevel?: 'strict' | 'moderate';
+    matureClassification?: string[];
+    allowComments?: boolean;
+    license?: string;
+  }, idempotencyKey?: string) {
+    const requestIdempotencyKey = idempotencyKey || createIdempotencyKey();
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/destinations/deviantart/literature/${encodeURIComponent(externalContentId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', 'x-idempotency-key': requestIdempotencyKey, ...(await authHeaders()) },
+      body: JSON.stringify({ externalAccountId, ...payload })
+    });
+    return handleJson(response);
+  },
+  async studioPublishDeviantArtJournal(workId: string, externalAccountId: string, payload: {
+    title: string;
+    body: string;
+    tags?: string[];
+    coverUrl?: string;
+    embeddedImageUrl?: string;
+    isMature?: boolean;
+    matureLevel?: 'strict' | 'moderate';
+    matureClassification?: string[];
+    allowComments?: boolean;
+  }, idempotencyKey?: string) {
+    const requestIdempotencyKey = idempotencyKey || createIdempotencyKey();
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/destinations/deviantart/journal`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-idempotency-key': requestIdempotencyKey, ...(await authHeaders()) },
+      body: JSON.stringify({ externalAccountId, ...payload })
+    });
+    return handleJson(response);
+  },
+  async studioPublishDeviantArtStatus(workId: string, externalAccountId: string, payload: { body: string; parentExternalId?: string; stashExternalId?: string }, idempotencyKey?: string) {
+    const requestIdempotencyKey = idempotencyKey || createIdempotencyKey();
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/destinations/deviantart/status`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-idempotency-key': requestIdempotencyKey, ...(await authHeaders()) },
+      body: JSON.stringify({ externalAccountId, ...payload })
     });
     return handleJson(response);
   },

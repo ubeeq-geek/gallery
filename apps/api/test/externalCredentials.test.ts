@@ -189,6 +189,34 @@ describe('external credentials', () => {
     fetchSpy.mockRestore();
   });
 
+  it('publishes native literature, journal, and status payloads without Sta.sh multipart uploads', async () => {
+    const provider = new DeviantArtProvider({
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      redirectUri: 'https://fanadmin.top:4000/integrations/deviantart/callback'
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ deviationid: 'lit-1', url: 'https://www.deviantart.com/owner/art/lit-1' }), headers: { get: () => null } } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ deviationid: 'lit-1', url: 'https://www.deviantart.com/owner/art/lit-1-updated' }), headers: { get: () => null } } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'journal-1', url: 'https://www.deviantart.com/owner/journal/journal-1' }), headers: { get: () => null } } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: { id: 'status-1' } }), headers: { get: () => null } } as unknown as Response);
+
+    await expect(provider.createLiterature('token', { title: 'Story', body: '<p>Text</p>', tags: ['one'], isMature: false })).resolves.toMatchObject({ externalContentId: 'lit-1' });
+    await expect(provider.updateLiterature('token', 'lit-1', { title: 'Story 2', body: '<p>Updated</p>' })).resolves.toMatchObject({ externalContentId: 'lit-1' });
+    await expect(provider.createJournal('token', { title: 'News', body: '<p>Journal</p>' })).resolves.toMatchObject({ externalContentId: 'journal-1' });
+    await expect(provider.postStatus('token', { body: 'Hello world' })).resolves.toMatchObject({ externalPostId: 'status-1' });
+
+    expect(fetchSpy.mock.calls.map(([url]) => String(url))).toEqual([
+      'https://www.deviantart.com/api/v1/oauth2/deviation/literature/create',
+      'https://www.deviantart.com/api/v1/oauth2/deviation/literature/update/lit-1',
+      'https://www.deviantart.com/api/v1/oauth2/deviation/journal/create',
+      'https://www.deviantart.com/api/v1/oauth2/user/statuses/post'
+    ]);
+    expect(String(fetchSpy.mock.calls[0][1]?.body)).toContain('title=Story');
+    expect(String(fetchSpy.mock.calls[3][1]?.body)).toContain('body=Hello+world');
+    fetchSpy.mockRestore();
+  });
+
   it('uses extended DeviantArt metadata for imported image descriptions', async () => {
     const provider = new DeviantArtProvider({
       clientId: 'client-id',
