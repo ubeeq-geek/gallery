@@ -218,6 +218,14 @@ export class UbeeqStack extends Stack {
         queue: externalSyncDlq
       }
     });
+    const discordCommunityDeliveryDlq = new sqs.Queue(this, 'DiscordCommunityDeliveryDlq', {
+      retentionPeriod: Duration.days(isProduction ? 14 : 1)
+    });
+    const discordCommunityDeliveryQueue = new sqs.Queue(this, 'DiscordCommunityDeliveryQueue', {
+      visibilityTimeout: Duration.minutes(2),
+      receiveMessageWaitTime: Duration.seconds(20),
+      deadLetterQueue: { maxReceiveCount: 5, queue: discordCommunityDeliveryDlq }
+    });
     mediaBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
       new s3n.SqsDestination(videoPosterIngestQueue)
@@ -407,6 +415,28 @@ export class UbeeqStack extends Stack {
     const unlockJwtSecret = isProduction
       ? appSecrets!.secretValueFromJson('unlockJwtSecret').unsafeUnwrap()
       : (process.env.UNLOCK_JWT_SECRET || 'dev-secret');
+    const discordClientId = process.env.DISCORD_CLIENT_ID?.trim() || '';
+    const discordOAuthRedirectUri = process.env.DISCORD_OAUTH_REDIRECT_URI?.trim() || '';
+    // A shared development Discord app is still a confidential OAuth client:
+    // let any deployment use a dedicated secret rather than putting its bot
+    // token or client secret in CDK configuration. Production defaults to the
+    // application secret, while development opts in with DISCORD_SECRETS_NAME.
+    const discordSecretsName = process.env.DISCORD_SECRETS_NAME?.trim()
+      || (isProduction ? appSecretsName : undefined);
+    const discordSecrets = discordSecretsName
+      ? secretsmanager.Secret.fromSecretNameV2(this, 'DiscordIntegrationSecrets', discordSecretsName)
+      : undefined;
+    const discordEnabled = Boolean(
+      discordClientId
+      && discordOAuthRedirectUri
+      && (discordSecrets || (process.env.DISCORD_CLIENT_SECRET && process.env.DISCORD_BOT_TOKEN))
+    );
+    const discordClientSecret = discordEnabled && discordSecrets
+      ? discordSecrets.secretValueFromJson('discordClientSecret').unsafeUnwrap()
+      : (process.env.DISCORD_CLIENT_SECRET?.trim() || '');
+    const discordBotToken = discordEnabled && discordSecrets
+      ? discordSecrets.secretValueFromJson('discordBotToken').unsafeUnwrap()
+      : (process.env.DISCORD_BOT_TOKEN?.trim() || '');
     // Keep the bootstrap password out of source control and plain-text CDK
     // configuration in production. Local/development deployments may provide
     // ADMIN_PASSWORD directly; production reads adminPassword from the
@@ -473,6 +503,11 @@ export class UbeeqStack extends Stack {
         ADMIN_EMAIL: adminEmail,
         ADMIN_PASSWORD: adminPassword,
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
+        DISCORD_COMMUNITY_QUEUE_URL: discordCommunityDeliveryQueue.queueUrl,
+        DISCORD_CLIENT_ID: discordClientId,
+        DISCORD_CLIENT_SECRET: discordClientSecret,
+        DISCORD_BOT_TOKEN: discordBotToken,
+        DISCORD_OAUTH_REDIRECT_URI: discordOAuthRedirectUri,
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
         DEVIANTART_MIN_REQUEST_INTERVAL_MS: process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || '2000',
@@ -584,6 +619,26 @@ export class UbeeqStack extends Stack {
         APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || '')
       }
     });
+    const discordCommunityDeliveryFn = new lambdaNodejs.NodejsFunction(this, 'DiscordCommunityDeliveryFunction', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      entry: path.join(__dirname, '../../apps/api/src/communityDeliveryHandler.ts'),
+      handler: 'handler',
+      timeout: Duration.minutes(2),
+      memorySize: 512,
+      depsLockFilePath: path.join(__dirname, '../../package-lock.json'),
+      bundling: { target: 'node22', externalModules: ['@aws-sdk/*'] },
+      ...productionFunctionOptions('DiscordCommunityDeliveryFunctionLogs'),
+      environment: {
+        DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
+        CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        USE_CONTENT_CORE_TABLE: 'true',
+        DISCORD_COMMUNITY_QUEUE_URL: discordCommunityDeliveryQueue.queueUrl,
+        DISCORD_BOT_TOKEN: discordBotToken,
+        DISCORD_API_BASE_URL: process.env.DISCORD_API_BASE_URL || 'https://discord.com/api/v10',
+        PRODUCT_BRAND: productBrand,
+        TENANT_ID: process.env.TENANT_ID || productBrand
+      }
+    });
     const ffmpegLayerArn = process.env.FFMPEG_LAYER_ARN;
     const videoPosterIngestFn = new lambdaNodejs.NodejsFunction(this, 'VideoPosterIngestFunction', {
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -635,6 +690,7 @@ export class UbeeqStack extends Stack {
     contentCoreTable.grantReadWriteData(apiFn);
     contentCoreTable.grantReadWriteData(externalSyncFn);
     contentCoreTable.grantReadWriteData(externalSyncSchedulerFn);
+    contentCoreTable.grantReadWriteData(discordCommunityDeliveryFn);
     const externalPublicationTransactionPolicy = new iam.PolicyStatement({
       actions: ['dynamodb:TransactWriteItems'],
       resources: [contentCoreTable.tableArn]
@@ -650,10 +706,17 @@ export class UbeeqStack extends Stack {
     mediaBucket.grantReadWrite(videoPosterIngestFn);
     videoPosterIngestQueue.grantConsumeMessages(videoPosterIngestFn);
     externalSyncQueue.grantSendMessages(apiFn);
+    discordCommunityDeliveryQueue.grantSendMessages(apiFn);
     externalSyncQueue.grantConsumeMessages(externalSyncFn);
     externalSyncQueue.grantSendMessages(externalSyncSchedulerFn);
+    discordCommunityDeliveryQueue.grantConsumeMessages(discordCommunityDeliveryFn);
+    discordCommunityDeliveryQueue.grantSendMessages(discordCommunityDeliveryFn);
     externalSyncFn.addEventSource(new lambdaEventSources.SqsEventSource(externalSyncQueue, {
       batchSize: 1,
+      reportBatchItemFailures: true
+    }));
+    discordCommunityDeliveryFn.addEventSource(new lambdaEventSources.SqsEventSource(discordCommunityDeliveryQueue, {
+      batchSize: 5,
       reportBatchItemFailures: true
     }));
 
@@ -831,6 +894,13 @@ export class UbeeqStack extends Stack {
         threshold: 1,
         comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
       });
+      alarm('DiscordCommunityDeliveryDeadLetterAlarm', {
+        ...alarmDefaults,
+        alarmDescription: 'At least one Discord community delivery exhausted its retries.',
+        metric: discordCommunityDeliveryDlq.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(1), statistic: 'Maximum' }),
+        threshold: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
+      });
       const externalSyncFailureFilter = new logs.MetricFilter(this, 'ExternalSyncJobFailureMetric', {
         logGroup: productionFunctionLogGroups.get('ExternalSyncFunctionLogs')!,
         filterPattern: logs.FilterPattern.literal('"job failed"'),
@@ -866,6 +936,7 @@ export class UbeeqStack extends Stack {
         ['TrendingRankerLambdaErrorsAlarm', trendingRankerFn],
         ['ExternalSyncLambdaErrorsAlarm', externalSyncFn],
         ['ExternalSyncSchedulerLambdaErrorsAlarm', externalSyncSchedulerFn],
+        ['DiscordCommunityDeliveryLambdaErrorsAlarm', discordCommunityDeliveryFn],
         ['VideoPosterLambdaErrorsAlarm', videoPosterIngestFn]
       ].forEach(([alarmId, fn]) => {
         alarm(alarmId as string, {
@@ -898,7 +969,8 @@ export class UbeeqStack extends Stack {
         widgets: [
           [new cloudwatch.GraphWidget({ title: 'API requests and 5xx responses', left: [apiRequests, apiServerErrors] })],
           [new cloudwatch.GraphWidget({ title: 'External sync queue', left: [externalSyncQueue.metricApproximateNumberOfMessagesVisible(), externalSyncDlq.metricApproximateNumberOfMessagesVisible()], right: [externalSyncQueue.metricApproximateAgeOfOldestMessage()] })],
-          [new cloudwatch.GraphWidget({ title: 'Lambda errors', left: [apiFn.metricErrors(), externalSyncFn.metricErrors(), externalSyncSchedulerFn.metricErrors(), trendingRankerFn.metricErrors(), videoPosterIngestFn.metricErrors()] })]
+          [new cloudwatch.GraphWidget({ title: 'Discord community delivery', left: [discordCommunityDeliveryQueue.metricApproximateNumberOfMessagesVisible(), discordCommunityDeliveryDlq.metricApproximateNumberOfMessagesVisible()], right: [discordCommunityDeliveryQueue.metricApproximateAgeOfOldestMessage()] })],
+          [new cloudwatch.GraphWidget({ title: 'Lambda errors', left: [apiFn.metricErrors(), externalSyncFn.metricErrors(), externalSyncSchedulerFn.metricErrors(), discordCommunityDeliveryFn.metricErrors(), trendingRankerFn.metricErrors(), videoPosterIngestFn.metricErrors()] })]
         ]
       });
     }
@@ -913,6 +985,8 @@ export class UbeeqStack extends Stack {
     new CfnOutput(this, 'VideoPosterIngestDlqUrl', { value: videoPosterIngestDlq.queueUrl });
     new CfnOutput(this, 'ExternalSyncQueueUrl', { value: externalSyncQueue.queueUrl });
     new CfnOutput(this, 'ExternalSyncDlqUrl', { value: externalSyncDlq.queueUrl });
+    new CfnOutput(this, 'DiscordCommunityDeliveryQueueUrl', { value: discordCommunityDeliveryQueue.queueUrl });
+    new CfnOutput(this, 'DiscordCommunityDeliveryDlqUrl', { value: discordCommunityDeliveryDlq.queueUrl });
     new CfnOutput(this, 'DeploymentStage', { value: isProduction ? 'production' : deploymentStage });
     if (productionBackupPlan && productionBackupVault) {
       new CfnOutput(this, 'BackupPlanId', { value: productionBackupPlan.backupPlanId });

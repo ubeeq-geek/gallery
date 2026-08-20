@@ -47,6 +47,7 @@ import type {
   ExternalCollectionMapping,
   ExternalEngagementCurrent,
   ExternalSyncJob,
+  CommunityEventType,
   UbeeqCollection,
   UbeeqCollectionAsset
 } from './domain';
@@ -98,15 +99,19 @@ import {
   type ExternalStatusPublish
 } from './externalPlatformProvider';
 import { storeUbeeqWorkImage } from './externalContentStorage';
-import { externalOAuthPkce, issueBlueskyOAuthState, issueExternalOAuthState, resolveExternalOAuthReturnUrl, verifyBlueskyOAuthState, verifyExternalOAuthState } from './externalOAuth';
+import { externalOAuthPkce, issueBlueskyOAuthState, issueDiscordOAuthState, issueExternalOAuthState, resolveExternalOAuthReturnUrl, verifyBlueskyOAuthState, verifyDiscordOAuthState, verifyExternalOAuthState } from './externalOAuth';
 import { createExternalSyncQueue } from './externalSyncQueue';
 import type { ExternalSyncQueue } from './externalSyncQueue';
 import { dismissExternalActivity, replyToExternalComment } from './externalSyncWorker';
+import { createCommunityDeliveryQueue } from './communityDeliveryQueue';
+import type { CommunityDeliveryQueue } from './communityDeliveryQueue';
+import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getDiscordGuild, listDiscordChannels, sendDiscordMessage, queueDiscordWorkPublished, queueDiscordWorksPublished } from './discordCommunity';
 
 interface CreateAppOptions {
   config: AppConfig;
   store: DataStore;
   externalSyncQueue?: ExternalSyncQueue;
+  communityDeliveryQueue?: CommunityDeliveryQueue;
 }
 
 let hasHandledInvocation = false;
@@ -937,12 +942,13 @@ const parsePassthroughCursor = (token?: string): string | undefined => {
 const encodePassthroughCursor = (value: string): string =>
   encodeCursorToken({ v: 1, type: 'passthrough', value });
 
-export const createApp = ({ config, store, externalSyncQueue: injectedExternalSyncQueue }: CreateAppOptions) => {
+export const createApp = ({ config, store, externalSyncQueue: injectedExternalSyncQueue, communityDeliveryQueue: injectedCommunityDeliveryQueue }: CreateAppOptions) => {
   const brand = brandForConfig(config);
   const app = express();
   const s3Client = new S3Client({ region: config.awsRegion });
   const cognitoClient = new CognitoIdentityProviderClient({ region: config.awsRegion });
   const externalSyncQueue = injectedExternalSyncQueue || createExternalSyncQueue(config);
+  const communityDeliveryQueue = injectedCommunityDeliveryQueue || createCommunityDeliveryQueue(config);
   const mediaCdnDomain = (config.mediaCdnDomain || '')
     .trim()
     .replace(/^https?:\/\//i, '')
@@ -5672,6 +5678,208 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       .map(toExternalAccountResponse));
   });
 
+  // Discord is a native community delivery integration.  It deliberately does
+  // not create ExternalPublication records: a message announcement is not a
+  // second copy of a Work and cannot become its canonical publication state.
+  app.get('/studio/integrations/discord/configuration', requireAuth, async (_req, res) => {
+    return res.json({
+      platform: 'discord',
+      configured: discordConfigured(config),
+      requiredConfiguration: ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET', 'DISCORD_BOT_TOKEN', 'DISCORD_OAUTH_REDIRECT_URI'],
+      installations: await store.listCommunityInstallationsByUser(_req.authUser!.userId)
+    });
+  });
+
+  app.post('/studio/integrations/discord/connect', requireAuth, async (req, res) => {
+    if (!discordConfigured(config)) {
+      return res.status(503).json({ message: 'Discord is not yet configured for this deployment.' });
+    }
+    const requestedReturnPath = typeof req.body?.returnPath === 'string' ? req.body.returnPath : '';
+    const returnPath = requestedReturnPath.startsWith('/studio/')
+      ? requestedReturnPath
+      : '/studio/workspace?section=integrations';
+    const issued = issueDiscordOAuthState(config, { userId: req.authUser!.userId, platform: 'discord', returnPath });
+    return res.json({ authorizationUrl: createDiscordAuthorizeUrl(config, issued.state) });
+  });
+
+  app.get('/integrations/discord/callback', async (req, res) => {
+    const stateValue = typeof req.query.state === 'string' ? req.query.state : '';
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    try {
+      if (!stateValue || !code) throw new Error('Discord did not return a complete connection response.');
+      const state = verifyDiscordOAuthState(config, stateValue);
+      const token = await exchangeDiscordCode(config, code);
+      const guildId = typeof req.query.guild_id === 'string'
+        ? req.query.guild_id
+        : (typeof token.guild_id === 'string' ? token.guild_id : token.guild?.id);
+      if (!guildId) throw new Error('Choose a Discord server when installing the Eversally bot, then try again.');
+      const guild = await getDiscordGuild(config, guildId);
+      const existing = (await store.listCommunityInstallationsByUser(state.userId))
+        .find((item) => item.provider === 'discord' && item.remoteInstallationId === guild.id);
+      const now = new Date().toISOString();
+      await store.upsertCommunityInstallation({
+        communityInstallationId: existing?.communityInstallationId || randomUUID(),
+        userId: state.userId,
+        provider: 'discord',
+        remoteInstallationId: guild.id,
+        displayName: guild.name,
+        iconUrl: guild.icon ? `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.png` : undefined,
+        status: 'connected',
+        lastCheckedAt: now,
+        lastError: undefined,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now
+      });
+      return res.redirect(302, resolveExternalOAuthReturnUrl(config, state.returnPath, { discord: 'connected' }));
+    } catch (error) {
+      const returnPath = (() => {
+        try { return stateValue ? verifyDiscordOAuthState(config, stateValue).returnPath : '/studio/workspace?section=integrations'; }
+        catch { return '/studio/workspace?section=integrations'; }
+      })();
+      return res.redirect(302, resolveExternalOAuthReturnUrl(config, returnPath, {
+        discord: 'error',
+        message: error instanceof Error ? error.message.slice(0, 200) : 'Discord connection could not be completed.'
+      }));
+    }
+  });
+
+  app.get('/studio/integrations/discord/destinations', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (!creatorIdentityId || !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const destinations = await store.listCommunityDestinationsByCreator(creatorIdentityId);
+    const installedByUser = new Set((await store.listCommunityInstallationsByUser(req.authUser!.userId)).map((item) => item.communityInstallationId));
+    const owned = destinations.filter((item) => item.provider === 'discord' && installedByUser.has(item.communityInstallationId));
+    const deliveries = await store.listCommunityDeliveriesByCreator(creatorIdentityId, 100);
+    return res.json(await Promise.all(owned.map(async (destination) => ({
+      ...destination,
+      installation: await store.getCommunityInstallation(destination.communityInstallationId),
+      deliveries: deliveries.filter((delivery) => delivery.communityDestinationId === destination.communityDestinationId).slice(0, 10)
+    }))));
+  });
+
+  app.get('/studio/integrations/discord/installations/:installationId/channels', requireAuth, async (req, res) => {
+    const installation = await store.getCommunityInstallation(req.params.installationId);
+    if (!installation || installation.userId !== req.authUser!.userId || installation.provider !== 'discord') {
+      return res.status(404).json({ message: 'Discord server not found.' });
+    }
+    try {
+      const channels = await listDiscordChannels(config, installation.remoteInstallationId);
+      await store.upsertCommunityInstallation({ ...installation, status: 'connected', lastCheckedAt: new Date().toISOString(), lastError: undefined, updatedAt: new Date().toISOString() });
+      return res.json({ installation, channels });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Discord channels could not be loaded.';
+      await store.upsertCommunityInstallation({ ...installation, status: 'needs_attention', lastError: message, updatedAt: new Date().toISOString() });
+      return res.status(502).json({ message });
+    }
+  });
+
+  app.post('/studio/integrations/discord/destinations', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    const installationId = typeof req.body?.installationId === 'string' ? req.body.installationId.trim() : '';
+    const channelId = typeof req.body?.channelId === 'string' ? req.body.channelId.trim() : '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const installation = await store.getCommunityInstallation(installationId);
+    if (!installation || installation.userId !== req.authUser!.userId || installation.provider !== 'discord') {
+      return res.status(400).json({ message: 'Choose a Discord server from this account.' });
+    }
+    const channels = await listDiscordChannels(config, installation.remoteInstallationId);
+    const channel = channels.find((item) => item.id === channelId);
+    if (!channel) return res.status(400).json({ message: 'Choose a text or announcement channel from the selected Discord server.' });
+    const existing = (await store.listCommunityDestinationsByCreator(creatorIdentityId))
+      .find((item) => item.provider === 'discord' && item.communityInstallationId === installationId && item.remoteChannelId === channelId);
+    const now = new Date().toISOString();
+    const destination = {
+      communityDestinationId: existing?.communityDestinationId || randomUUID(),
+      userId: req.authUser!.userId,
+      creatorIdentityId,
+      provider: 'discord' as const,
+      communityInstallationId: installationId,
+      remoteChannelId: channel.id,
+      displayName: `#${channel.name}`,
+      status: 'active' as const,
+      eventTypes: ['work_published', 'works_published'] as CommunityEventType[],
+      defaultAnnouncementPreset: ['recommended', 'image_showcase', 'writing_release', 'video_premiere', 'audio_release', 'compact_link', 'text_only', 'collection_digest', 'series_digest'].includes(req.body?.defaultAnnouncementPreset)
+        ? req.body.defaultAnnouncementPreset
+        : 'recommended',
+      defaultIncludePrimaryMedia: req.body?.defaultIncludePrimaryMedia !== false,
+      template: sanitizeOptional(req.body?.template, 2000),
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    await store.upsertCommunityDestination(destination);
+    auditLog(req, 'discord.destination.created', { creatorIdentityId, communityDestinationId: destination.communityDestinationId, installationId, channelId });
+    return res.status(existing ? 200 : 201).json(destination);
+  });
+
+  app.patch('/studio/integrations/discord/destinations/:destinationId', requireAuth, async (req, res) => {
+    const destination = await store.getCommunityDestination(req.params.destinationId);
+    if (!destination || destination.userId !== req.authUser!.userId || destination.provider !== 'discord') return res.status(404).json({ message: 'Discord destination not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, destination.creatorIdentityId))) return;
+    const status = ['active', 'needs_attention', 'disabled'].includes(req.body?.status) ? req.body.status as 'active' | 'needs_attention' | 'disabled' : destination.status;
+    const eventTypes: CommunityEventType[] = Array.isArray(req.body?.eventTypes) && req.body.eventTypes.includes('work_published') ? ['work_published', 'works_published'] : destination.eventTypes;
+    const preset = ['recommended', 'image_showcase', 'writing_release', 'video_premiere', 'audio_release', 'compact_link', 'text_only', 'collection_digest', 'series_digest'].includes(req.body?.defaultAnnouncementPreset)
+      ? req.body.defaultAnnouncementPreset
+      : destination.defaultAnnouncementPreset;
+    const updated = { ...destination, status, eventTypes, defaultAnnouncementPreset: preset, defaultIncludePrimaryMedia: typeof req.body?.defaultIncludePrimaryMedia === 'boolean' ? req.body.defaultIncludePrimaryMedia : destination.defaultIncludePrimaryMedia, template: req.body?.template === undefined ? destination.template : sanitizeOptional(req.body.template, 2000), updatedAt: new Date().toISOString() };
+    await store.upsertCommunityDestination(updated);
+    return res.json(updated);
+  });
+
+  app.delete('/studio/integrations/discord/destinations/:destinationId', requireAuth, async (req, res) => {
+    const destination = await store.getCommunityDestination(req.params.destinationId);
+    if (!destination || destination.userId !== req.authUser!.userId || destination.provider !== 'discord') return res.status(404).json({ message: 'Discord destination not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, destination.creatorIdentityId))) return;
+    await store.deleteCommunityDestination(destination.communityDestinationId);
+    auditLog(req, 'discord.destination.deleted', { creatorIdentityId: destination.creatorIdentityId, communityDestinationId: destination.communityDestinationId });
+    return res.status(204).end();
+  });
+
+  app.post('/studio/integrations/discord/announcements/bulk', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    const workIds: string[] = Array.isArray(req.body?.workIds) ? req.body.workIds.filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0) : [];
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    if (!workIds.length) return res.status(400).json({ message: 'Choose one or more Works to announce.' });
+    const creator = (await store.listCreators()).find((item) => item.creatorId === creatorIdentityId);
+    if (!creator) return res.status(404).json({ message: 'Creator not found.' });
+    const works = (await Promise.all(workIds.map((workId: string) => store.getWork(config.tenantId, workId))))
+      .filter((work): work is Work => Boolean(work && work.creatorId === creatorIdentityId));
+    if (!works.length) return res.status(400).json({ message: 'No selected Works belong to this Creator.' });
+    const publicWorks = await Promise.all(works.map(async (work) => {
+      const publication = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'eversally');
+      if (!publication || publication.status !== 'live' || publication.visibility !== 'public') return undefined;
+      return { workId: work.workId, title: publication.metadataOverrides?.title || work.title, description: publication.metadataOverrides?.description || work.description, url: `${canonicalSpaceBaseUrl(creator)}/works/${encodeURIComponent(work.slug)}` };
+    }));
+    const items = publicWorks.filter((item): item is NonNullable<typeof item> => Boolean(item));
+    if (!items.length) return res.status(409).json({ message: 'Only public Space Works can be announced.' });
+    const preset = ['recommended', 'collection_digest', 'series_digest', 'compact_link', 'text_only'].includes(req.body?.preset) ? req.body.preset : 'collection_digest';
+    await queueDiscordWorksPublished(store, config, {
+      userId: req.authUser!.userId, creatorIdentityId, creatorName: creator.name, works: items,
+      preset, includePrimaryMedia: req.body?.includePrimaryMedia !== false,
+      idempotencyKey: `discord:space-bulk:${creatorIdentityId}:${items.map((item) => item.workId).sort().join(':')}`
+    }, communityDeliveryQueue.enqueue.bind(communityDeliveryQueue));
+    return res.status(202).json({ queued: true, workCount: items.length });
+  });
+
+  app.post('/studio/integrations/discord/destinations/:destinationId/test', requireAuth, async (req, res) => {
+    const destination = await store.getCommunityDestination(req.params.destinationId);
+    if (!destination || destination.userId !== req.authUser!.userId || destination.provider !== 'discord') return res.status(404).json({ message: 'Discord destination not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, destination.creatorIdentityId))) return;
+    try {
+      const sent = await sendDiscordMessage(config, destination.remoteChannelId, 'This is a test announcement from Ubeeq.', { title: 'Discord connection verified' });
+      return res.json({ ok: true, messageId: sent.id });
+    } catch (error) {
+      return res.status(502).json({ message: error instanceof Error ? error.message : 'Discord test message could not be sent.' });
+    }
+  });
+
+  app.delete('/studio/integrations/discord/installations/:installationId', requireAuth, async (req, res) => {
+    const installation = await store.getCommunityInstallation(req.params.installationId);
+    if (!installation || installation.userId !== req.authUser!.userId || installation.provider !== 'discord') return res.status(404).json({ message: 'Discord server not found.' });
+    await store.deleteCommunityInstallation(installation.communityInstallationId);
+    auditLog(req, 'discord.installation.deleted', { communityInstallationId: installation.communityInstallationId });
+    return res.status(204).end();
+  });
+
   app.get('/studio/integrations/deviantart/configuration', requireAuth, async (req, res) => {
     const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
     if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
@@ -7448,6 +7656,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const existing = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'eversally');
     const shouldPublish = req.body?.published !== false;
     const visibility = req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' ? req.body.visibility : 'private';
+    const newlyPublicInSpace = shouldPublish && visibility === 'public' && !(existing?.status === 'live' && existing.visibility === 'public');
     const now = new Date().toISOString();
     const publication: Publication = {
       publicationId: existing?.publicationId || randomUUID(),
@@ -7562,6 +7771,37 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         withdrawnAt: now,
         updatedAt: now
       });
+    }
+    const announcementMode = ['default', 'per_work', 'digest', 'none'].includes(req.body?.announcement?.mode)
+      ? req.body.announcement.mode
+      : 'default';
+    const announcementPreset = ['recommended', 'image_showcase', 'writing_release', 'video_premiere', 'audio_release', 'compact_link', 'text_only', 'collection_digest', 'series_digest'].includes(req.body?.announcement?.preset)
+      ? req.body.announcement.preset
+      : undefined;
+    const includePrimaryMedia = req.body?.announcement?.includePrimaryMedia !== false;
+    if (newlyPublicInSpace && !['digest', 'none'].includes(announcementMode)) {
+      const creator = (await store.listCreators()).find((item) => item.creatorId === work.creatorId);
+      if (creator) {
+        const title = publication.metadataOverrides?.title || work.title;
+        const description = publication.metadataOverrides?.description || work.description;
+        const workUrl = `${canonicalSpaceBaseUrl(creator)}/works/${encodeURIComponent(work.slug)}`;
+        void queueDiscordWorkPublished(store, config, {
+          userId: req.authUser!.userId,
+          creatorIdentityId: work.creatorId,
+          workId: work.workId,
+          title,
+          description,
+          url: workUrl,
+          creatorName: creator.name,
+          kind: work.kind,
+          // "Use channel default" must leave these undefined: the Discord
+          // destination owns its recommended layout and media preference.
+          ...(announcementMode === 'per_work'
+            ? { preset: announcementPreset, includePrimaryMedia }
+            : {}),
+          idempotencyKey: `discord:space-live:${publication.publicationId}`
+        }, communityDeliveryQueue.enqueue.bind(communityDeliveryQueue)).catch((error) => logServerError('discord.work-published.enqueue', error));
+      }
     }
     return res.json({ ...publication, spaceContentSyncJob, spacePublication: spacePublicationForResponse });
   });

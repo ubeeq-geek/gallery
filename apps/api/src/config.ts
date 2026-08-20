@@ -52,6 +52,14 @@ export interface AppConfig {
   blueskyOAuthServiceUrl?: string;
   /** Public JWKS used to verify one-time connection proofs issued by the OAuth broker. */
   blueskyOAuthServiceJwksUrl?: string;
+  /** Discord application credentials for the native community integration. */
+  discordClientId?: string;
+  discordClientSecret?: string;
+  /** Bot token is held only by the API/worker and is never returned to Studio. */
+  discordBotToken?: string;
+  discordOAuthRedirectUri?: string;
+  discordCommunityQueueUrl?: string;
+  discordApiBaseUrl: string;
   localAuthUserId?: string;
   /** Email used for the optional first-admin bootstrap. */
   adminEmail?: string;
@@ -119,6 +127,12 @@ export const loadConfig = (): AppConfig => {
   blueskyOAuthPrivateJwk: process.env.BLUESKY_OAUTH_PRIVATE_JWK,
   blueskyOAuthServiceUrl: process.env.BLUESKY_OAUTH_SERVICE_URL,
   blueskyOAuthServiceJwksUrl: process.env.BLUESKY_OAUTH_SERVICE_JWKS_URL,
+  discordClientId: process.env.DISCORD_CLIENT_ID,
+  discordClientSecret: process.env.DISCORD_CLIENT_SECRET,
+  discordBotToken: process.env.DISCORD_BOT_TOKEN,
+  discordOAuthRedirectUri: process.env.DISCORD_OAUTH_REDIRECT_URI,
+  discordCommunityQueueUrl: process.env.DISCORD_COMMUNITY_QUEUE_URL,
+  discordApiBaseUrl: process.env.DISCORD_API_BASE_URL || 'https://discord.com/api/v10',
   localAuthUserId: process.env.LOCAL_AUTH_USER_ID,
   adminEmail: process.env.ADMIN_EMAIL || (
     process.env.PRODUCT_BRAND === 'eversally' ? 'admin@eversally.com' : 'admin@ubeeq.site'

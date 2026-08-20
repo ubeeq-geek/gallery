@@ -6,6 +6,8 @@ import { loadConfig } from './config';
 import { InMemoryStore } from './inMemoryStore';
 import { processExternalSyncJob } from './externalSyncWorker';
 import { createInProcessExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
+import { createInProcessCommunityDeliveryQueue, type CommunityDeliveryQueue } from './communityDeliveryQueue';
+import { processDiscordDelivery } from './discordCommunity';
 import { runAdminBootstrap } from './adminBootstrap';
 
 // A local seed is useful for offline UI work, but it must not override real
@@ -40,6 +42,8 @@ store.groupings.push({
 
 let externalSyncQueue: ExternalSyncQueue;
 externalSyncQueue = createInProcessExternalSyncQueue((externalSyncJobId) => processExternalSyncJob(store, config, externalSyncJobId, externalSyncQueue));
+let communityDeliveryQueue: CommunityDeliveryQueue;
+communityDeliveryQueue = createInProcessCommunityDeliveryQueue((communityDeliveryId) => processDiscordDelivery(store, config, communityDeliveryId, communityDeliveryQueue.enqueue.bind(communityDeliveryQueue)));
 
 let retrySweepRunning = false;
 const retrySweep = async () => {
@@ -67,7 +71,8 @@ retryTimer.unref();
 const app = createApp({
   config,
   store,
-  externalSyncQueue
+  externalSyncQueue,
+  communityDeliveryQueue
 });
 const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || '127.0.0.1';

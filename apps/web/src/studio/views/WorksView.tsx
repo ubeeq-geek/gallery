@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { api } from '../../api';
+import { api, type AnnouncementPresetId } from '../../api';
 import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { WorkMetadataView } from './WorkMetadataView';
@@ -37,6 +37,18 @@ const matureClassificationOptions: Array<{ value: MatureClassification; label: s
   { value: 'gore', label: 'Gore' },
   { value: 'language', label: 'Strong language' },
   { value: 'ideology', label: 'Ideology' }
+];
+
+const announcementPresetOptions: Array<{ id: AnnouncementPresetId; label: string }> = [
+  { id: 'recommended', label: 'Recommended — match the Work type' },
+  { id: 'image_showcase', label: 'Image showcase' },
+  { id: 'writing_release', label: 'Post or story' },
+  { id: 'video_premiere', label: 'Video premiere' },
+  { id: 'audio_release', label: 'Audio release' },
+  { id: 'compact_link', label: 'Compact link' },
+  { id: 'text_only', label: 'Text only' },
+  { id: 'collection_digest', label: 'Collection digest' },
+  { id: 'series_digest', label: 'Series digest' }
 ];
 
 const destinationStatusLabel = (status: StudioExternalAsset['destinationPublications'][number]['status']): string => ({
@@ -165,7 +177,10 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   const [bulkDestinationUpdating, setBulkDestinationUpdating] = useState(false);
   const [bulkDestinationMessage, setBulkDestinationMessage] = useState('');
   const [bulkReviewOpen, setBulkReviewOpen] = useState(false);
-  const [bulkReviewPlatform, setBulkReviewPlatform] = useState<'eversally' | 'deviantart' | 'bluesky'>('deviantart');
+  const [bulkReviewPlatform, setBulkReviewPlatform] = useState<'eversally' | 'deviantart' | 'bluesky' | 'discord'>('deviantart');
+  const [bulkDiscordAnnouncementMode, setBulkDiscordAnnouncementMode] = useState<'default' | 'per_work' | 'digest' | 'none'>('default');
+  const [bulkDiscordAnnouncementPreset, setBulkDiscordAnnouncementPreset] = useState<AnnouncementPresetId>('recommended');
+  const [bulkDiscordIncludePrimaryMedia, setBulkDiscordIncludePrimaryMedia] = useState(true);
   const [bulkPublishing, setBulkPublishing] = useState(false);
   const [bulkPublishMessage, setBulkPublishMessage] = useState('');
   const appliedRouteCollectionFilter = useRef('');
@@ -566,11 +581,22 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     setBulkPublishMessage('');
     setError('');
     const results: Array<{ title: string; error?: string }> = [];
+    const publishedSpaceWorkIds: string[] = [];
     for (const asset of selectedAssets) {
       const title = asset.canonicalTitle || asset.publications[0]?.externalTitle || 'Untitled work';
       try {
         if (bulkSpaceIntent) {
-          await api.studioUpdateSpacePublication(asset.assetId, { published: true, hostingMode: 'hosted', visibility: bulkSpaceVisibility });
+          await api.studioUpdateSpacePublication(asset.assetId, {
+            published: true,
+            hostingMode: 'hosted',
+            visibility: bulkSpaceVisibility,
+            announcement: {
+              mode: bulkDiscordAnnouncementMode,
+              preset: bulkDiscordAnnouncementPreset,
+              includePrimaryMedia: bulkDiscordIncludePrimaryMedia
+            }
+          });
+          publishedSpaceWorkIds.push(asset.assetId);
         }
         if (bulkDeviantArtIntent) {
           const result = await api.studioAddDeviantArtWorkDestination(asset.assetId, externalAccountId, bulkDestinationStatus, deviantArtOptions) as { publication?: { syncStatus?: string } };
@@ -581,6 +607,18 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
         results.push({ title });
       } catch (publishError) {
         results.push({ title, error: publishError instanceof Error ? publishError.message : 'Unable to publish.' });
+      }
+    }
+    if (bulkSpaceIntent && bulkSpaceVisibility === 'public' && bulkDiscordAnnouncementMode === 'digest' && publishedSpaceWorkIds.length) {
+      try {
+        await api.studioQueueDiscordBulkAnnouncement({
+          creatorId,
+          workIds: publishedSpaceWorkIds,
+          preset: bulkDiscordAnnouncementPreset,
+          includePrimaryMedia: bulkDiscordIncludePrimaryMedia
+        });
+      } catch (announcementError) {
+        results.push({ title: 'Discord digest', error: announcementError instanceof Error ? announcementError.message : 'Unable to queue the Discord digest.' });
       }
     }
     const failed = results.filter((result) => result.error);
@@ -862,6 +900,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
               {([
                 ['eversally', brand.workspaceFullName],
                 ['deviantart', 'DeviantArt'],
+                ['discord', 'Discord'],
                 ['bluesky', 'Bluesky']
               ] as const).map(([platform, label]) => <button
                 key={platform}
@@ -872,13 +911,14 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                 onClick={() => setBulkReviewPlatform(platform)}
               >{label}</button>)}
             </div>
-            {bulkReviewPlatform === 'bluesky' && <p className="studio-works-review-note">Bluesky announcements use the Work link and preview when that account is connected. Select another tab to configure publishing destinations.</p>}
+            {bulkReviewPlatform === 'bluesky' && <p className="studio-works-review-note">Bluesky announcements will use this same release-format contract when a Bluesky account is connected. No announcement is sent for Private or Unlisted Space Works.</p>}
             <span>Bulk publishing review</span>
             {!bulkSpaceIntent && !bulkDeviantArtIntent && <p className="studio-work-metadata-warning">Choose at least one publish destination below.</p>}
             {bulkDeviantArtIntent && !bulkDestinationAccountId && <p className="studio-work-metadata-warning">Choose a DeviantArt account below.</p>}
             {(bulkSpaceIntent || bulkDeviantArtIntent) && <p className="small">{selectedDisplayedAssetIds.length} selected work{selectedDisplayedAssetIds.length === 1 ? '' : 's'} will be sent to:</p>}
             <ul className="small">
               {bulkSpaceIntent && <li>{brand.workspaceFullName} — {bulkSpaceVisibility === 'public' ? 'Space-visible' : bulkSpaceVisibility}</li>}
+              {bulkSpaceIntent && bulkDiscordAnnouncementMode !== 'none' && <li>Discord — {bulkDiscordAnnouncementMode === 'digest' ? 'one digest for this release' : bulkDiscordAnnouncementMode === 'per_work' ? 'one announcement per Work' : 'channel default'} · {announcementPresetOptions.find((option) => option.id === bulkDiscordAnnouncementPreset)?.label || 'Recommended'}</li>}
               {bulkDeviantArtIntent && <li>DeviantArt · {accounts.find((account) => account.externalAccountId === (bulkDestinationAccountId || (accounts.length === 1 ? accounts[0].externalAccountId : '')))?.externalUsername || 'account'} — {bulkDestinationStatus === 'draft' ? 'save as Sta.sh draft' : 'publish'} · {bulkDaDisplayResolution ? `${bulkDaDisplayResolution}px display rendition` : 'original display'} · free download {bulkDaAllowFreeDownload ? 'enabled' : 'disabled'}{bulkDaAddWatermark && bulkDaDisplayResolution ? ' · watermark enabled' : ''} · {bulkDaIsMature ? `mature (${bulkDaMatureLevel})` : 'not mature'} · {bulkDaIsAiGenerated ? 'made with AI' : 'not marked AI-generated'} · AI training {bulkDaNoAi ? 'disallowed' : 'allowed'}</li>}
             </ul>
             <p className="small">Queued in the current Works order:</p>
@@ -888,7 +928,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
             {selectedDisplayedAssetIds.length > 8 && <p className="small">…and {selectedDisplayedAssetIds.length - 8} more.</p>}
             <div className="studio-works-review-dialog-actions">
               <button type="button" className="auth-secondary-btn" disabled={bulkPublishing} onClick={() => setBulkReviewOpen(false)}>Cancel</button>
-              <button type="button" className="auth-primary-btn" disabled={bulkPublishing || bulkReviewPlatform === 'bluesky' || !bulkDestinationCount || (bulkDeviantArtIntent && !bulkDestinationAccountId)} onClick={() => void publishSelectedWorks()}>{bulkPublishing ? 'Publishing…' : `Publish to ${bulkDestinationCount} destination${bulkDestinationCount === 1 ? '' : 's'}`}</button>
+              <button type="button" className="auth-primary-btn" disabled={bulkPublishing || !bulkDestinationCount || (bulkDeviantArtIntent && !bulkDestinationAccountId)} onClick={() => void publishSelectedWorks()}>{bulkPublishing ? 'Publishing…' : `Publish to ${bulkDestinationCount} destination${bulkDestinationCount === 1 ? '' : 's'}`}</button>
             </div>
           </div>
           <div className="studio-works-bulk-destination studio-works-review-panel">
@@ -905,6 +945,19 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
             {bulkReviewPlatform === 'bluesky' && <>
               <span>Bluesky announcements</span>
               <p className="studio-works-review-note">Bluesky publishing will be available when a Bluesky account is connected for this Creator. No announcement will be sent for Private or Unlisted Works.</p>
+            </>}
+            {bulkReviewPlatform === 'discord' && <>
+              <span>Discord announcement</span>
+              <p className="studio-works-review-note">Use the channel default, tailor this release, combine the selected Works into one digest, or publish without a Discord announcement.</p>
+              <label className="studio-works-bulk-da-option"><span>Announcement delivery</span><select value={bulkDiscordAnnouncementMode} onChange={(event) => setBulkDiscordAnnouncementMode(event.target.value as 'default' | 'per_work' | 'digest' | 'none')}>
+                <option value="default">Use each channel’s default</option>
+                <option value="per_work">One announcement per Work</option>
+                <option value="digest">One digest for this release</option>
+                <option value="none">Do not announce this release</option>
+              </select></label>
+              {bulkDiscordAnnouncementMode !== 'none' && <label className="studio-works-bulk-da-option"><span>Recommended format</span><select value={bulkDiscordAnnouncementPreset} onChange={(event) => setBulkDiscordAnnouncementPreset(event.target.value as AnnouncementPresetId)}>{announcementPresetOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>}
+              {bulkDiscordAnnouncementMode !== 'none' && <label><input type="checkbox" checked={bulkDiscordIncludePrimaryMedia} onChange={(event) => setBulkDiscordIncludePrimaryMedia(event.target.checked)} /> Include the primary image or media in supported rich previews</label>}
+              <small className="studio-work-destination-message">Discord delivery is only available for Space-visible Works. A digest is queued once this entire release has been published.</small>
             </>}
             {bulkReviewPlatform === 'deviantart' && <>
             <span>Publish destinations</span>

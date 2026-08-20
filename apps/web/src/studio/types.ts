@@ -2,7 +2,8 @@ import type { PostBlock } from '../domainTypes';
 
 export const studioIntegrationPlatforms = [
   { id: 'deviantart', label: 'DeviantArt' },
-  { id: 'bluesky', label: 'Bluesky' }
+  { id: 'bluesky', label: 'Bluesky' },
+  { id: 'discord', label: 'Discord' }
 ] as const;
 
 export type StudioIntegrationPlatform = typeof studioIntegrationPlatforms[number]['id'];

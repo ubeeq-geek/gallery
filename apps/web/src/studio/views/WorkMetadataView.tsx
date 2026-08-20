@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { api } from '../../api';
+import { api, type AnnouncementPresetId } from '../../api';
 import { brand } from '../../brand';
 import {
   clonePostBlocks,
@@ -24,6 +24,18 @@ const isMetadataLinked = (asset: StudioExternalAsset): boolean => (
 ) || (
   asset.descriptionSyncPolicy === 'mirrored' || asset.descriptionSyncPolicy === 'initially_mirrored'
 );
+
+const announcementPresetOptions: Array<{ id: AnnouncementPresetId; label: string }> = [
+  { id: 'recommended', label: 'Recommended — match this Work type' },
+  { id: 'image_showcase', label: 'Image showcase' },
+  { id: 'writing_release', label: 'Post or story' },
+  { id: 'video_premiere', label: 'Video premiere' },
+  { id: 'audio_release', label: 'Audio release' },
+  { id: 'compact_link', label: 'Compact link' },
+  { id: 'text_only', label: 'Text only' },
+  { id: 'collection_digest', label: 'Collection digest' },
+  { id: 'series_digest', label: 'Series digest' }
+];
 
 export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const location = useLocation();
@@ -64,6 +76,9 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const [nativeDaBody, setNativeDaBody] = useState('');
   const [nativeDaBusy, setNativeDaBusy] = useState(false);
   const [nativeDaMessage, setNativeDaMessage] = useState('');
+  const [discordAnnouncementMode, setDiscordAnnouncementMode] = useState<'default' | 'per_work' | 'none'>('default');
+  const [discordAnnouncementPreset, setDiscordAnnouncementPreset] = useState<AnnouncementPresetId>('recommended');
+  const [discordIncludePrimaryMedia, setDiscordIncludePrimaryMedia] = useState(true);
 
   const backToWorks = () => {
     navigate(worksWorkspacePath(location.search));
@@ -359,7 +374,12 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     setSpaceBusy(true);
     setError('');
     try {
-      const spacePublication = await api.studioUpdateSpacePublication(asset.assetId, { published, hostingMode: 'hosted', visibility });
+      const spacePublication = await api.studioUpdateSpacePublication(asset.assetId, {
+        published,
+        hostingMode: 'hosted',
+        visibility,
+        announcement: { mode: discordAnnouncementMode, preset: discordAnnouncementPreset, includePrimaryMedia: discordIncludePrimaryMedia }
+      });
       const withdrewDiscovery = !published || visibility !== 'public';
       setAsset((current) => current ? {
         ...current,
@@ -735,6 +755,18 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
               </select>
               <small>Publishing publicly to your Space never opts this work into discovery automatically.</small>
             </label>
+            <fieldset className="studio-work-metadata-options">
+              <legend>Discord announcement</legend>
+              <p className="small">Choose how this public Space release is announced in any configured Discord channels.</p>
+              <label><span>Delivery</span><select value={discordAnnouncementMode} disabled={spaceBusy} onChange={(event) => setDiscordAnnouncementMode(event.target.value as 'default' | 'per_work' | 'none')}>
+                <option value="default">Use each channel’s default</option>
+                <option value="per_work">Announce this Work</option>
+                <option value="none">Do not announce this Work</option>
+              </select></label>
+              {discordAnnouncementMode !== 'none' && <label><span>Recommended format</span><select value={discordAnnouncementPreset} disabled={spaceBusy} onChange={(event) => setDiscordAnnouncementPreset(event.target.value as AnnouncementPresetId)}>{announcementPresetOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>}
+              {discordAnnouncementMode !== 'none' && <label className="studio-work-metadata-option"><input type="checkbox" checked={discordIncludePrimaryMedia} disabled={spaceBusy} onChange={(event) => setDiscordIncludePrimaryMedia(event.target.checked)} /><span>Include primary image or media in supported rich previews</span></label>}
+              <small>Discord announcements are only delivered after this Work becomes Space-visible.</small>
+            </fieldset>
           </section>
 
           {canLink && <label className="studio-work-metadata-link">

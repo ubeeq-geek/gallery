@@ -50,7 +50,11 @@ import type {
   ExternalActivity,
   ExternalSyncCheckpoint,
   ExternalSyncJob,
-  ExternalSyncLog
+  ExternalSyncLog,
+  CommunityInstallation,
+  CommunityDestination,
+  CommunityEvent,
+  CommunityDelivery
 } from './domain';
 import type { CanonicalStore } from './canonicalStore';
 
@@ -288,6 +292,21 @@ export interface DataStore extends CanonicalStore {
   updateExternalSyncJob(job: ExternalSyncJob): Promise<void>;
   listExternalSyncLogs(externalSyncJobId: string, limit?: number): Promise<ExternalSyncLog[]>;
   appendExternalSyncLog(log: ExternalSyncLog): Promise<void>;
+
+  listCommunityInstallationsByUser(userId: string): Promise<CommunityInstallation[]>;
+  getCommunityInstallation(communityInstallationId: string): Promise<CommunityInstallation | null>;
+  upsertCommunityInstallation(installation: CommunityInstallation): Promise<void>;
+  deleteCommunityInstallation(communityInstallationId: string): Promise<void>;
+  listCommunityDestinationsByCreator(creatorIdentityId: string): Promise<CommunityDestination[]>;
+  getCommunityDestination(communityDestinationId: string): Promise<CommunityDestination | null>;
+  upsertCommunityDestination(destination: CommunityDestination): Promise<void>;
+  deleteCommunityDestination(communityDestinationId: string): Promise<void>;
+  getCommunityEventByIdempotency(tenantId: string, idempotencyKey: string): Promise<CommunityEvent | null>;
+  getCommunityEvent(communityEventId: string): Promise<CommunityEvent | null>;
+  createCommunityEvent(event: CommunityEvent): Promise<void>;
+  getCommunityDelivery(communityDeliveryId: string): Promise<CommunityDelivery | null>;
+  listCommunityDeliveriesByCreator(creatorIdentityId: string, limit?: number): Promise<CommunityDelivery[]>;
+  upsertCommunityDelivery(delivery: CommunityDelivery): Promise<void>;
 
   getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null>;
   putIdempotencyRecord(record: IdempotencyRecord): Promise<void>;

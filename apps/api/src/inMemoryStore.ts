@@ -54,7 +54,11 @@ import type {
   ExternalActivity,
   ExternalSyncCheckpoint,
   ExternalSyncJob,
-  ExternalSyncLog
+  ExternalSyncLog,
+  CommunityInstallation,
+  CommunityDestination,
+  CommunityEvent,
+  CommunityDelivery
 } from './domain';
 import type { DataStore, TrendingFeedQueryOptions } from './store';
 import { capabilitiesForRole } from './roleHelpers';
@@ -141,6 +145,10 @@ export class InMemoryStore implements DataStore {
   externalSyncCheckpoints: ExternalSyncCheckpoint[] = [];
   externalSyncJobs: ExternalSyncJob[] = [];
   externalSyncLogs: ExternalSyncLog[] = [];
+  communityInstallations: CommunityInstallation[] = [];
+  communityDestinations: CommunityDestination[] = [];
+  communityEvents: CommunityEvent[] = [];
+  communityDeliveries: CommunityDelivery[] = [];
   idempotency: IdempotencyRecord[] = [];
   auditEvents: AuditEvent[] = [];
   works: Work[] = [];
@@ -1297,6 +1305,68 @@ export class InMemoryStore implements DataStore {
 
   async appendExternalSyncLog(log: ExternalSyncLog): Promise<void> {
     this.externalSyncLogs.push(log);
+  }
+
+  async listCommunityInstallationsByUser(userId: string): Promise<CommunityInstallation[]> {
+    return this.communityInstallations.filter((item) => item.userId === userId).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  async getCommunityInstallation(communityInstallationId: string): Promise<CommunityInstallation | null> {
+    return this.communityInstallations.find((item) => item.communityInstallationId === communityInstallationId) || null;
+  }
+
+  async upsertCommunityInstallation(installation: CommunityInstallation): Promise<void> {
+    this.communityInstallations = this.communityInstallations.filter((item) => item.communityInstallationId !== installation.communityInstallationId);
+    this.communityInstallations.push(installation);
+  }
+
+  async deleteCommunityInstallation(communityInstallationId: string): Promise<void> {
+    this.communityInstallations = this.communityInstallations.filter((item) => item.communityInstallationId !== communityInstallationId);
+    this.communityDestinations = this.communityDestinations.filter((item) => item.communityInstallationId !== communityInstallationId);
+  }
+
+  async listCommunityDestinationsByCreator(creatorIdentityId: string): Promise<CommunityDestination[]> {
+    return this.communityDestinations.filter((item) => item.creatorIdentityId === creatorIdentityId).sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  async getCommunityDestination(communityDestinationId: string): Promise<CommunityDestination | null> {
+    return this.communityDestinations.find((item) => item.communityDestinationId === communityDestinationId) || null;
+  }
+
+  async upsertCommunityDestination(destination: CommunityDestination): Promise<void> {
+    this.communityDestinations = this.communityDestinations.filter((item) => item.communityDestinationId !== destination.communityDestinationId);
+    this.communityDestinations.push(destination);
+  }
+
+  async deleteCommunityDestination(communityDestinationId: string): Promise<void> {
+    this.communityDestinations = this.communityDestinations.filter((item) => item.communityDestinationId !== communityDestinationId);
+  }
+
+  async getCommunityEventByIdempotency(tenantId: string, idempotencyKey: string): Promise<CommunityEvent | null> {
+    return this.communityEvents.find((item) => item.tenantId === tenantId && item.idempotencyKey === idempotencyKey) || null;
+  }
+
+  async getCommunityEvent(communityEventId: string): Promise<CommunityEvent | null> {
+    return this.communityEvents.find((item) => item.communityEventId === communityEventId) || null;
+  }
+
+  async createCommunityEvent(event: CommunityEvent): Promise<void> {
+    this.communityEvents = this.communityEvents.filter((item) => item.communityEventId !== event.communityEventId);
+    this.communityEvents.push(event);
+  }
+
+  async getCommunityDelivery(communityDeliveryId: string): Promise<CommunityDelivery | null> {
+    return this.communityDeliveries.find((item) => item.communityDeliveryId === communityDeliveryId) || null;
+  }
+
+  async listCommunityDeliveriesByCreator(creatorIdentityId: string, limit = 100): Promise<CommunityDelivery[]> {
+    return this.communityDeliveries.filter((item) => item.creatorIdentityId === creatorIdentityId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);
+  }
+
+  async upsertCommunityDelivery(delivery: CommunityDelivery): Promise<void> {
+    this.communityDeliveries = this.communityDeliveries.filter((item) => item.communityDeliveryId !== delivery.communityDeliveryId);
+    this.communityDeliveries.push(delivery);
   }
 
   async getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null> {

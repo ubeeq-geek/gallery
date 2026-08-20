@@ -34,7 +34,8 @@ const buildConfig = (): AppConfig => ({
   deviantArtPublishedDescriptionUpdate: false,
   externalContentMaxBytes: 50 * 1024 * 1024,
   externalTokenEncryptionKey: 'test-external-encryption-key',
-  externalOAuthRedirectUri: 'http://localhost:4000/integrations/deviantart/callback'
+  externalOAuthRedirectUri: 'http://localhost:4000/integrations/deviantart/callback',
+  discordApiBaseUrl: 'https://discord.com/api/v10'
 });
 
 describe('API contract', () => {
