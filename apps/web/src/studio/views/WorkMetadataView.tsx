@@ -111,7 +111,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       setSelectedPublicationId(selected?.externalPublicationId || '');
       setLinked(selected ? isMetadataLinked(found) : false);
       setTitle(found.canonicalTitle || selected?.externalTitle || '');
-      setDescriptionBlocks(parseDescriptionBlocks(found.canonicalDescription || selected?.externalDescription || ''));
+      setDescriptionBlocks(found.body?.length ? clonePostBlocks(found.body) : parseDescriptionBlocks(found.canonicalDescription || selected?.externalDescription || ''));
       setIntegrationTitle(selected?.externalTitle || '');
       setIntegrationDescriptionBlocks(parseDescriptionBlocks(selected?.externalDescription || ''));
       setTags(selected?.externalTags || []);
@@ -423,10 +423,11 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       const updated = await api.studioUpdateExternalAsset(asset.assetId, {
         canonicalTitle: title,
         canonicalDescription,
+        body: descriptionBlocks,
         titleSyncPolicy: linked && canLink ? 'mirrored' : 'independent',
         descriptionSyncPolicy: linked && canLink && canUpdatePublishedDescription ? 'mirrored' : 'independent',
         integrationMetadata
-      }) as Pick<StudioExternalAsset, 'canonicalTitle' | 'canonicalDescription' | 'titleSyncPolicy' | 'descriptionSyncPolicy' | 'updatedAt'> & {
+      }) as Pick<StudioExternalAsset, 'canonicalTitle' | 'canonicalDescription' | 'body' | 'titleSyncPolicy' | 'descriptionSyncPolicy' | 'updatedAt'> & {
         remoteUpdateJobs?: StudioExternalSyncJob[];
         remoteUpdateWarnings?: string[];
       };
@@ -453,7 +454,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         } : publication)
       } : current);
       setTitle(updated.canonicalTitle || '');
-      setDescriptionBlocks(parseDescriptionBlocks(updated.canonicalDescription || ''));
+      setDescriptionBlocks(updated.body?.length ? clonePostBlocks(updated.body) : parseDescriptionBlocks(updated.canonicalDescription || ''));
       setIntegrationTitle(nextIntegrationTitle);
       setIntegrationDescriptionBlocks(parseDescriptionBlocks(canUpdatePublishedDescription ? nextIntegrationDescription : sourceDescription));
       setTags(normalizedTags);

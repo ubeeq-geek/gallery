@@ -11,7 +11,7 @@ export function LandingPage() {
         ? 'Eversally gives creators a public Space, portable catalogue, and calm control over where every Work is shared.'
         : 'Ubeeq is the open-source foundation for creator-owned Spaces, publishing, and portable content.'}</p>
       <div className="product-landing-actions">
-        <Link className="auth-primary-btn no-underline" to="/auth/signup">{hosted ? 'Create your Space' : 'Explore Ubeeq'}</Link>
+        <Link className="auth-primary-btn no-underline" to="/auth/signup">{hosted ? 'Become a Creator' : 'Explore Ubeeq'}</Link>
         <Link className="auth-secondary-btn no-underline" to="/discover">Discover creators</Link>
       </div>
     </section>

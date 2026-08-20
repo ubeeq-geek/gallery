@@ -130,6 +130,7 @@ export class DynamoStore implements DataStore {
   async attachAssetToWork(tenantId: string, attachment: WorkAsset): Promise<void> { await this.canonicalContent().attachAssetToWork(tenantId, attachment); }
   async detachAssetFromWork(tenantId: string, workId: string, assetId: string): Promise<void> { await this.canonicalContent().detachAssetFromWork(tenantId, workId, assetId); }
   async listPublicationsByWork(tenantId: string, workId: string): Promise<Publication[]> { return this.canonicalContent().listPublicationsByWork(tenantId, workId); }
+  async listPublicationsByDestination(tenantId: string, destination: Publication['destination']): Promise<Publication[]> { return this.canonicalContent().listPublicationsByDestination(tenantId, destination); }
   async getPublication(tenantId: string, publicationId: string): Promise<Publication | null> { return this.canonicalContent().getPublication(tenantId, publicationId); }
   async upsertPublication(publication: Publication): Promise<void> { await this.canonicalContent().upsertPublication(publication); }
   async listPublicationIntentsByWork(tenantId: string, workId: string): Promise<PublicationIntent[]> { return this.canonicalContent().listPublicationIntentsByWork(tenantId, workId); }

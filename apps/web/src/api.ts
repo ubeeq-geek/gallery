@@ -1,4 +1,5 @@
 import { getValidIdToken } from './cognitoAuth';
+import type { PostBlock } from './domainTypes';
 import type { StudioExternalAsset, StudioExternalPublication, StudioSpacePublication, StudioUbeeqCollection } from './studio/types';
 
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
@@ -110,6 +111,7 @@ type CanonicalWorkResponse = {
   title: string;
   slug: string;
   description?: string;
+  body?: PostBlock[];
   updatedAt: string;
   status: 'draft' | 'ready' | 'archived' | 'deleted';
   contentAvailability: 'metadata_only' | 'external_reference' | 'display_copy' | 'original_hosted';
@@ -147,6 +149,7 @@ const canonicalWorkToStudioAsset = (work: CanonicalWorkResponse): StudioExternal
     assetType: work.kind === 'literature' ? 'literature' : work.kind === 'video' ? 'video' : work.kind === 'animation' ? 'animation' : work.kind === 'image' ? 'image' : 'other',
     canonicalTitle: work.title,
     canonicalDescription: work.description,
+    body: work.body,
     canonicalSlug: work.slug,
     discoveryState: work.discovery?.state || 'none',
     visibility: space?.visibility || 'private',
@@ -230,8 +233,12 @@ export const api = {
     const response = await fetch(withDevCacheBypass(`${API_BASE}/creators`));
     return handleJson(response);
   },
-  async getCreatorWorks(slug: string) {
-    const response = await fetch(`${API_BASE}/creators/${encodeURIComponent(slug)}/works`);
+  async getCreatorWorks(slug: string, shareCode?: string, preview = false) {
+    const query = new URLSearchParams();
+    if (shareCode) query.set('access', shareCode);
+    if (preview) query.set('preview', '1');
+    const suffix = query.size ? `?${query.toString()}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/creators/${encodeURIComponent(slug)}/works${suffix}`);
     return handleJson(response);
   },
   async getCreatorWork(slug: string, workSlug: string) {
@@ -784,6 +791,7 @@ export const api = {
   async studioUpdateCreator(creator: string, payload: {
     name?: string;
     slug?: string;
+    visibleIntegrations?: string[];
     status?: 'active' | 'inactive';
     sortOrder?: number;
     discoverSquareCropEnabled?: boolean;
@@ -916,6 +924,7 @@ export const api = {
   async studioCreateCreator(payload: {
     name: string;
     slug: string;
+    visibleIntegrations?: string[];
     status?: 'active' | 'inactive';
     sortOrder?: number;
     discoverSquareCropEnabled?: boolean;
@@ -1398,7 +1407,7 @@ export const api = {
     const result = await handleJson(response) as { items?: CanonicalWorkResponse[]; total?: number };
     return { ...result, items: (result.items || []).map(canonicalWorkToStudioAsset) };
   },
-  async studioCreateWork(payload: { creatorId: string; originalFilename: string; title?: string; description?: string }) {
+  async studioCreateWork(payload: { creatorId: string; originalFilename?: string; title?: string; description?: string; kind?: 'image' | 'literature' | 'article'; body?: PostBlock[]; tags?: string[] }) {
     const response = await fetch(`${API_BASE}/studio/works`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
@@ -1545,6 +1554,7 @@ export const api = {
   async studioUpdateExternalAsset(assetId: string, payload: {
     canonicalTitle?: string;
     canonicalDescription?: string;
+    body?: PostBlock[];
     visibility?: 'private' | 'unlisted' | 'public';
     titleSyncPolicy?: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
     descriptionSyncPolicy?: 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
@@ -1570,7 +1580,8 @@ export const api = {
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({
         title: payload.canonicalTitle,
-        description: payload.canonicalDescription
+        description: payload.canonicalDescription,
+        ...(payload.body ? { body: payload.body } : {})
       })
     });
     const work = await handleJson(response) as CanonicalWorkResponse;
@@ -1616,14 +1627,20 @@ export const api = {
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify(payload)
     });
-    const publication = await handleJson(response) as CanonicalPublication;
+    const publication = await handleJson(response) as CanonicalPublication & { spacePublication?: StudioSpacePublication };
+    const spacePublication = publication.spacePublication;
     return {
       assetId,
       published: publication.status === 'live',
-      hostingMode: payload.hostingMode || 'hosted',
-      contentSyncStatus: 'hosted',
-      publishedAt: publication.publishedAt,
-      visibility: publication.visibility
+      hostingMode: spacePublication?.hostingMode || payload.hostingMode || 'hosted',
+      contentSyncStatus: spacePublication?.contentSyncStatus || (publication.status === 'live' ? 'not_requested' : undefined),
+      sourceCopyQuality: spacePublication?.sourceCopyQuality,
+      originalDownloadStatus: spacePublication?.originalDownloadStatus,
+      hostedByteSize: spacePublication?.hostedByteSize,
+      lastContentSyncAt: spacePublication?.lastContentSyncAt,
+      contentSyncError: spacePublication?.contentSyncError,
+      publishedAt: spacePublication?.publishedAt || publication.publishedAt,
+      visibility: spacePublication?.visibility || publication.visibility
     } satisfies StudioSpacePublication;
   },
   async studioUpdateWorkDiscovery(workId: string, state: 'none' | 'eligible' | 'opted_in') {

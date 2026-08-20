@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { brand } from '../brand';
+import { serializeDescriptionBlocks } from '../blockContent';
+import type { PostBlock } from '../domainTypes';
 
 type PublicAsset = {
   assetId: string;
@@ -19,6 +21,7 @@ type PublicWork = {
   title: string;
   slug: string;
   description?: string;
+  body?: PostBlock[];
   tags: string[];
   kind: string;
   publishedAt?: string;
@@ -141,7 +144,9 @@ export function CreatorWorkPage() {
       <section className="canonical-work-assets">
         {work.assets.map((asset) => <WorkAsset key={asset.assetId} asset={asset} title={work.title} />)}
       </section>
-      {work.description && <div className="canonical-work-description">{work.description}</div>}
+      {work.body?.length
+        ? <div className="canonical-work-description" dangerouslySetInnerHTML={{ __html: serializeDescriptionBlocks(work.body) }} />
+        : work.description && <div className="canonical-work-description">{work.description}</div>}
       {!!work.tags.length && <div className="canonical-work-tags">{work.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
       {!!work.destinations.length && <nav className="canonical-work-destinations">{work.destinations.map((destination) => <a key={`${destination.destination}:${destination.url}`} href={destination.url} rel="noreferrer">Open on {destination.destination}</a>)}</nav>}
     </>}

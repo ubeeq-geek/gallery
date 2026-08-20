@@ -23,6 +23,7 @@ export interface CanonicalStore {
   detachAssetFromWork(tenantId: string, workId: string, assetId: string): Promise<void>;
 
   listPublicationsByWork(tenantId: string, workId: string): Promise<Publication[]>;
+  listPublicationsByDestination(tenantId: string, destination: Publication['destination']): Promise<Publication[]>;
   getPublication(tenantId: string, publicationId: string): Promise<Publication | null>;
   upsertPublication(publication: Publication): Promise<void>;
   listPublicationIntentsByWork(tenantId: string, workId: string): Promise<PublicationIntent[]>;

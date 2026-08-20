@@ -1,5 +1,12 @@
 import type { PostBlock } from '../domainTypes';
 
+export const studioIntegrationPlatforms = [
+  { id: 'deviantart', label: 'DeviantArt' },
+  { id: 'bluesky', label: 'Bluesky' }
+] as const;
+
+export type StudioIntegrationPlatform = typeof studioIntegrationPlatforms[number]['id'];
+
 export type StudioMetrics = {
   totalUsers: number;
   creators: number;
@@ -16,6 +23,7 @@ export type StudioCreator = {
   creatorId: string;
   name: string;
   slug: string;
+  visibleIntegrations?: StudioIntegrationPlatform[];
   status?: 'active' | 'inactive';
   spaceTier?: 'free' | 'approved';
   approvedCreatorAt?: string;
@@ -176,6 +184,7 @@ export type StudioExternalSyncJob = {
   externalAccountId: string;
   type: string;
   status: string;
+  payload?: Record<string, unknown>;
   attemptCount?: number;
   nextAttemptAt?: string;
   errorCode?: string;
@@ -317,6 +326,8 @@ export type StudioExternalAsset = {
   assetType: 'image' | 'literature' | 'video' | 'animation' | 'other';
   canonicalTitle?: string;
   canonicalDescription?: string;
+  /** Structured block content for literature/article Works. */
+  body?: PostBlock[];
   canonicalSlug?: string;
   discoveryState?: 'none' | 'eligible' | 'opted_in' | 'removed';
   visibility: 'private' | 'unlisted' | 'public';

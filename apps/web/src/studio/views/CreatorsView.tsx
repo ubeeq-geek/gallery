@@ -4,7 +4,7 @@ import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { DataToolbar } from '../components/DataToolbar';
 import { Pill } from '../components/Pill';
-import type { StudioCreator, StudioFile, StudioPost } from '../types';
+import { studioIntegrationPlatforms, type StudioCreator, type StudioFile, type StudioPost, type StudioIntegrationPlatform } from '../types';
 import { BrandingImageCropper, type BrandingImageSelection } from '../../components/BrandingImageCropper';
 import { ProfileAvatar } from '../../components/ProfileAvatar';
 import { defaultProfileCoverFor, defaultProfileCoverIdFor } from '../../profileDefaults';
@@ -24,6 +24,7 @@ type CreatorPayload = {
   name: string;
   slug: string;
   status: 'active' | 'inactive';
+  visibleIntegrations?: StudioIntegrationPlatform[];
   space?: StudioCreator['space'];
 };
 
@@ -84,6 +85,7 @@ export function CreatorsView({
   const [slugSuggestions, setSlugSuggestions] = useState<string[]>([]);
   const [activeNameSuggestion, setActiveNameSuggestion] = useState('');
   const [activeSlugSuggestion, setActiveSlugSuggestion] = useState('');
+  const [visibleIntegrations, setVisibleIntegrations] = useState<StudioIntegrationPlatform[]>(['deviantart', 'bluesky']);
   const formErrorRef = useRef<HTMLParagraphElement>(null);
 
   const filtered = useMemo(() => {
@@ -113,6 +115,7 @@ export function CreatorsView({
     setSlugSuggestions([]);
     setActiveNameSuggestion('');
     setActiveSlugSuggestion('');
+    setVisibleIntegrations(creator?.visibleIntegrations ?? ['deviantart', 'bluesky']);
   };
 
   const showValidationError = (message: string, field: 'name' | 'slug' | 'external-links', linkIndexes: number[] = []) => {
@@ -167,7 +170,11 @@ export function CreatorsView({
 
   const openCreate = () => navigate('/studio/workspace?section=creators&create=1');
   const creatorProfileUrl = (creatorId: string) => `/studio/workspace?section=creator-profile&creatorId=${encodeURIComponent(creatorId)}`;
-  const publicCreatorProfileUrl = (creator: Pick<StudioCreator, 'slug'>) => `/creators/${encodeURIComponent(creator.slug)}${import.meta.env.DEV ? '?preview=1' : ''}`;
+  // This link is only rendered from the signed-in Studio context. Keep the
+  // explicit preview marker in every environment so the first profile view
+  // after creation stays in owner-preview mode instead of briefly rendering
+  // the anonymous public header while auth state is settling.
+  const publicCreatorProfileUrl = (creator: Pick<StudioCreator, 'slug'>) => `/creators/${encodeURIComponent(creator.slug)}?preview=1`;
   const openEdit = (creator: StudioCreator) => navigate(creatorProfileUrl(creator.creatorId));
   const closeForm = (creatorId = '') => navigate(profileMode
     ? creatorProfileUrl(creatorId || profileCreatorId || '')
@@ -271,6 +278,7 @@ export function CreatorsView({
             name: trimmedName,
             slug: trimmedSlug,
             status: 'active',
+            visibleIntegrations,
             space: { visibility: 'private' }
           }
         : {
@@ -356,6 +364,22 @@ export function CreatorsView({
               return <button type="button" key={candidate} className={`username-suggestion-pill${isActive ? ' username-suggestion-pill-active' : ''}`} aria-pressed={isActive} onClick={() => { setSlug(candidate); setActiveSlugSuggestion(candidate); }}>{candidate}</button>;
             })}</span></span>}
           </label>
+          {isCreate && <fieldset className="studio-creator-form-wide studio-integration-choice">
+            <legend>Platforms you work with</legend>
+            <p className="small">Choose the platforms you currently use. You can connect more later.</p>
+            <div className="studio-integration-choice-grid">
+              {studioIntegrationPlatforms.map((platform) => <label className="studio-work-metadata-option" key={platform.id}>
+                <input
+                  type="checkbox"
+                  checked={visibleIntegrations.includes(platform.id)}
+                  onChange={(event) => setVisibleIntegrations((current) => event.target.checked
+                    ? [...new Set([...current, platform.id])]
+                    : current.filter((item) => item !== platform.id))}
+                />
+                <span>{platform.label}</span>
+              </label>)}
+            </div>
+          </fieldset>}
           {!isCreate && <div className="studio-creator-form-wide studio-branding-editor">
             {!isCreate && editingCreator && (
               <section className="studio-current-branding studio-current-branding-profile" aria-label="Current profile image">

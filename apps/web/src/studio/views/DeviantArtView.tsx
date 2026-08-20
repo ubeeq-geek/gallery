@@ -4,13 +4,15 @@ import { api } from '../../api';
 import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { Pill } from '../components/Pill';
+import { studioIntegrationPlatforms } from '../types';
 import type {
   StudioCreator,
   StudioDeviantArtAccount,
   StudioExternalCollection,
   StudioExternalCollectionMapping,
   StudioExternalSyncJob,
-  StudioUbeeqCollection
+  StudioUbeeqCollection,
+  StudioIntegrationPlatform
 } from '../types';
 
 const deviantArtDisplayWidths = [400, 600, 800, 900, 1024, 1280, 1600, 1920];
@@ -22,6 +24,15 @@ const matureClassificationOptions: Array<{ value: MatureClassification; label: s
   { value: 'language', label: 'Strong language' },
   { value: 'ideology', label: 'Ideology' }
 ];
+
+const defaultVisibleIntegrationPlatforms: StudioIntegrationPlatform[] = ['deviantart', 'bluesky'];
+
+const normalizeVisibleIntegrationPlatforms = (values?: readonly string[]): StudioIntegrationPlatform[] => {
+  if (!values) return [...defaultVisibleIntegrationPlatforms];
+  return studioIntegrationPlatforms
+    .map((platform) => platform.id)
+    .filter((platform) => values.includes(platform)) as StudioIntegrationPlatform[];
+};
 
 type CollectionResponse = {
   ubeeqCollections: StudioUbeeqCollection[];
@@ -76,13 +87,34 @@ const accountTone = (status: StudioDeviantArtAccount['connectionStatus']): 'succ
 
 const copySyncSummary = (jobs: StudioExternalSyncJob[], catalogueJob?: StudioExternalSyncJob) => {
   const startedAt = catalogueJob?.createdAt || '';
-  const copyJobs = jobs.filter((job) => job.type === 'content_sync' && (!startedAt || job.createdAt >= startedAt));
+  const parentJobId = catalogueJob?.externalSyncJobId;
+  const copyJobs = jobs.filter((job) => job.type === 'content_sync' && (
+    (parentJobId && job.payload?.parentJobId === parentJobId)
+    || (!parentJobId || job.createdAt >= startedAt)
+  ));
   if (!copyJobs.length) return null;
-  const stored = copyJobs.filter((job) => job.status === 'successful').length;
-  const unavailable = copyJobs.filter((job) => ['failed', 'cancelled', 'authentication_required'].includes(job.status)).length;
+  // A content-sync job can complete successfully without storing anything when
+  // DeviantArt does not expose a downloadable source. Use the job progress to
+  // distinguish that case from an actually stored copy.
+  const stored = copyJobs.filter((job) => job.status === 'successful' && (job.progress?.synchronized || 0) > 0).length;
+  const unavailable = copyJobs.filter((job) => (
+    ['failed', 'cancelled', 'authentication_required'].includes(job.status)
+    || (job.status === 'successful' && (job.progress?.synchronized || 0) === 0)
+  )).length;
   const inProgress = copyJobs.length - stored - unavailable;
   return { requested: copyJobs.length, stored, unavailable, inProgress };
 };
+
+const syncJobStatusLabel = (status: string): string => ({
+  queued: 'Queued',
+  processing: 'In progress',
+  retry_scheduled: 'Retry scheduled',
+  rate_limited: 'Paused for rate limit',
+  successful: 'Complete',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  authentication_required: 'Needs reconnect'
+}[status] || status.replace(/_/g, ' '));
 
 export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const location = useLocation();
@@ -101,8 +133,6 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [accounts, setAccounts] = useState<StudioDeviantArtAccount[]>([]);
   const [jobsByAccount, setJobsByAccount] = useState<Record<string, StudioExternalSyncJob[]>>({});
   const [collections, setCollections] = useState<CollectionResponse>({ ubeeqCollections: [], externalCollections: [], mappings: [] });
-  const [collectionName, setCollectionName] = useState('');
-  const [workingExternalCollectionId, setWorkingExternalCollectionId] = useState('');
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [applicationLabel, setApplicationLabel] = useState('');
@@ -120,6 +150,8 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [rateLimitClock, setRateLimitClock] = useState(() => Date.now());
   const [queuedSyncAccountId, setQueuedSyncAccountId] = useState('');
   const [destinationCreatorByAccount, setDestinationCreatorByAccount] = useState<Record<string, string>>({});
+  const [movingAccountId, setMovingAccountId] = useState('');
+  const [moveCreatorId, setMoveCreatorId] = useState('');
   const [presetAccountId, setPresetAccountId] = useState('');
   const [presetTags, setPresetTags] = useState('');
   const [presetGalleryIds, setPresetGalleryIds] = useState<string[]>([]);
@@ -137,11 +169,48 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [connectionError, setConnectionError] = useState('');
+  const [visibleIntegrationPlatforms, setVisibleIntegrationPlatforms] = useState<StudioIntegrationPlatform[]>(defaultVisibleIntegrationPlatforms);
+  const [visibleIntegrationPlatformsByCreator, setVisibleIntegrationPlatformsByCreator] = useState<Record<string, StudioIntegrationPlatform[]>>({});
+  const [savingIntegrationVisibility, setSavingIntegrationVisibility] = useState(false);
 
   useEffect(() => {
-    if (creatorId || !creators.length) return;
-    setCreatorId(creators.some((creator) => creator.creatorId === requestedCreatorId) ? requestedCreatorId : creators[0].creatorId);
-  }, [creatorId, creators, requestedCreatorId]);
+    if (!creators.length) return;
+    const nextCreatorId = creators.some((creator) => creator.creatorId === requestedCreatorId)
+      ? requestedCreatorId
+      : creators[0].creatorId;
+    setCreatorId((current) => current === nextCreatorId ? current : nextCreatorId);
+  }, [creators, requestedCreatorId]);
+
+  useEffect(() => {
+    if (!creatorId) return;
+    const currentCreator = creators.find((creator) => creator.creatorId === creatorId);
+    if (!currentCreator) return;
+    const configuredPlatforms = Object.prototype.hasOwnProperty.call(visibleIntegrationPlatformsByCreator, creatorId)
+      ? visibleIntegrationPlatformsByCreator[creatorId]
+      : currentCreator.visibleIntegrations;
+    setVisibleIntegrationPlatforms(normalizeVisibleIntegrationPlatforms(configuredPlatforms));
+  }, [creatorId, creators, visibleIntegrationPlatformsByCreator]);
+
+  const toggleIntegrationVisibility = async (platform: StudioIntegrationPlatform) => {
+    if (!creatorId) return;
+    const next = visibleIntegrationPlatforms.includes(platform)
+      ? visibleIntegrationPlatforms.filter((item) => item !== platform)
+      : [...visibleIntegrationPlatforms, platform];
+    const previous = visibleIntegrationPlatforms;
+    setVisibleIntegrationPlatforms(next);
+    setVisibleIntegrationPlatformsByCreator((current) => ({ ...current, [creatorId]: next }));
+    setSavingIntegrationVisibility(true);
+    setError('');
+    try {
+      await api.studioUpdateCreator(creatorId, { visibleIntegrations: next });
+    } catch (visibilityError) {
+      setVisibleIntegrationPlatforms(previous);
+      setVisibleIntegrationPlatformsByCreator((current) => ({ ...current, [creatorId]: previous }));
+      setError(visibilityError instanceof Error ? visibilityError.message : 'Unable to save integration visibility.');
+    } finally {
+      setSavingIntegrationVisibility(false);
+    }
+  };
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -210,14 +279,16 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     setLoading(true);
     setError('');
     try {
-      const [nextConfiguration, nextAccounts, nextCollections, nextBlueskyConfiguration, nextBlueskyAccounts] = await Promise.all([
+      const [nextConfiguration, nextAccounts, nextBlueskyConfiguration, nextBlueskyAccounts] = await Promise.all([
         api.studioGetDeviantArtConfiguration(),
         api.studioListDeviantArtAccounts(),
-        api.studioListDeviantArtCollections(nextCreatorId),
         api.studioGetBlueskyConfiguration(),
         api.studioListBlueskyAccounts(nextCreatorId)
       ]);
       const typedAccounts = (nextAccounts || []) as StudioDeviantArtAccount[];
+      const nextCollections = typedAccounts.length
+        ? await api.studioListDeviantArtCollections(nextCreatorId)
+        : { ubeeqCollections: [], externalCollections: [], mappings: [] };
       setConfiguration(nextConfiguration);
       setAccounts(typedAccounts);
       setIncludeSourceFilesByAccount(Object.fromEntries(typedAccounts.map((account) => [
@@ -226,7 +297,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       ])));
       setDestinationCreatorByAccount(Object.fromEntries(typedAccounts.map((account) => [
         account.externalAccountId,
-        account.primaryCreatorIdentityId || account.creatorIdentityId || (creators.length === 1 ? creators[0].creatorId : '')
+        account.primaryCreatorIdentityId || account.creatorIdentityId || nextCreatorId
       ])));
       setCollections(nextCollections as CollectionResponse);
       setBlueskyConfiguration(nextBlueskyConfiguration);
@@ -424,8 +495,21 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     setWorkingAccountId(externalAccountId);
     setError('');
     try {
+      const account = accounts.find((candidate) => candidate.externalAccountId === externalAccountId);
+      const defaultDestinationCreatorId = account && (
+        destinationCreatorByAccount[externalAccountId]
+        || account.primaryCreatorIdentityId
+        || account.creatorIdentityId
+        || creatorId
+      );
+      if (account && defaultDestinationCreatorId && !account.primaryCreatorIdentityId && !account.creatorIdentityId) {
+        await api.studioAssignDeviantArtAccountCreators(externalAccountId, {
+          creatorIdentityIds: [defaultDestinationCreatorId],
+          primaryCreatorIdentityId: defaultDestinationCreatorId
+        });
+      }
       await api.studioSyncDeviantArtAccount(externalAccountId, includeSourceFilesByAccount[externalAccountId] === true);
-      setMessage('Synchronization queued. Progress will update as the worker imports this account.');
+      setMessage('');
       setQueuedSyncAccountId(externalAccountId);
       await load(creatorId, externalAccountId);
     } catch (syncError) {
@@ -468,8 +552,14 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     }
   };
 
-  const saveAccountDestination = async (account: StudioDeviantArtAccount, disconnect = false) => {
-    const destinationCreatorId = disconnect ? '' : (destinationCreatorByAccount[account.externalAccountId] || '');
+  const saveAccountDestination = async (account: StudioDeviantArtAccount, disconnect = false, requestedCreatorId?: string) => {
+    const destinationCreatorId = disconnect
+      ? ''
+      : (requestedCreatorId
+        || destinationCreatorByAccount[account.externalAccountId]
+        || account.primaryCreatorIdentityId
+        || account.creatorIdentityId
+        || creatorId);
     setWorkingAccountId(account.externalAccountId);
     setError('');
     try {
@@ -481,11 +571,33 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
         ? 'Sync destination saved. You can start the first synchronization when you are ready.'
         : `This ${brand.creatorName.toLowerCase()} has been disconnected. The DeviantArt account remains connected, but future synchronization is stopped.`);
       await load();
+      return true;
     } catch (assignmentError) {
       setError(assignmentError instanceof Error ? assignmentError.message : `Unable to save ${brand.creatorName.toLowerCase()} assignments.`);
+      return false;
     } finally {
       setWorkingAccountId('');
     }
+  };
+
+  const beginMoveAccount = (account: StudioDeviantArtAccount) => {
+    setMovingAccountId(account.externalAccountId);
+    setMoveCreatorId(
+      destinationCreatorByAccount[account.externalAccountId]
+      || account.primaryCreatorIdentityId
+      || account.creatorIdentityId
+      || creatorId
+    );
+    setError('');
+  };
+
+  const moveAccount = async () => {
+    const account = accounts.find((candidate) => candidate.externalAccountId === movingAccountId);
+    if (!account || !moveCreatorId) return;
+    const moved = await saveAccountDestination(account, false, moveCreatorId);
+    if (!moved) return;
+    setMovingAccountId('');
+    setMoveCreatorId('');
   };
 
   const removeAccount = async (account: StudioDeviantArtAccount) => {
@@ -568,20 +680,6 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     }
   };
 
-  const createCollection = async () => {
-    const name = collectionName.trim();
-    if (!creatorId || !name) return;
-    setError('');
-    try {
-      await api.studioCreateIntegrationCollection({ creatorIdentityId: creatorId, name });
-      setCollectionName('');
-      setMessage(`Independent ${brand.productName} collection created.`);
-      await load();
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Unable to create collection.');
-    }
-  };
-
   const saveMapping = async (externalCollection: StudioExternalCollection, ubeeqCollectionId: string) => {
     if (!ubeeqCollectionId) return;
     setError('');
@@ -619,35 +717,35 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     }
   };
 
-  const createCollectionForGallery = async (externalCollection: StudioExternalCollection) => {
-    if (!creatorId) return;
-    setWorkingExternalCollectionId(externalCollection.externalCollectionId);
-    setError('');
-    try {
-      const collection = await api.studioCreateIntegrationCollection({
-        creatorIdentityId: creatorId,
-        name: externalCollection.name,
-        collectionType: 'gallery'
-      }) as StudioUbeeqCollection;
-      await api.studioSaveDeviantArtCollectionMapping(externalCollection.externalCollectionId, {
-        externalAccountId: externalCollection.externalAccountId,
-        ubeeqCollectionId: collection.ubeeqCollectionId,
-        syncMode: 'initial_only'
-      });
-      setMessage(`Created the ${brand.productName} collection “${collection.name}” and mapped this DeviantArt gallery to it.`);
-      await load();
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : `Unable to create and map this ${brand.productName} collection.`);
-    } finally {
-      setWorkingExternalCollectionId('');
-    }
-  };
-
   return (
     <section className="studio-integration-grid">
-      <Card
+      <div className="studio-integration-platform-filter" aria-label="Integrations shown">
+        <div>
+          <p className="auth-eyebrow">Integrations shown</p>
+          <p className="small">Choose which connected-platform tools appear here. You can add more platforms later.</p>
+        </div>
+        <div className="studio-integration-platform-filter__options">
+          {studioIntegrationPlatforms.map((platform) => {
+            const selected = visibleIntegrationPlatforms.includes(platform.id);
+            return <button
+              type="button"
+              key={platform.id}
+              className="studio-integration-platform-toggle"
+              aria-pressed={selected}
+              aria-label={`${platform.label}: ${selected ? 'shown' : 'hidden'}`}
+              data-selected={selected ? 'true' : 'false'}
+              disabled={savingIntegrationVisibility}
+              onClick={() => void toggleIntegrationVisibility(platform.id)}
+            >
+              <span className="studio-integration-platform-toggle__dot" aria-hidden="true" />
+              {platform.label}
+            </button>;
+          })}
+        </div>
+      </div>
+      {visibleIntegrationPlatforms.includes('bluesky') && <Card
         title="Bluesky announcements"
-        eyebrow="Optional distribution destination"
+        eyebrow="Platform integration"
         className="studio-integration-accounts"
       >
         <p className="small">Connect the account that can announce eligible Space publications. The secure DPoP session stays in the OAuth service and is never stored in your browser or creator records.</p>
@@ -666,7 +764,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
             Connect Bluesky
           </button>
         </div>
-        {blueskyConfiguration && !blueskyConfiguration.configured && <p className="error">Bluesky is not configured. Missing server settings: {blueskyConfiguration.requiredConfiguration.join(', ')}.</p>}
+        {blueskyConfiguration && !blueskyConfiguration.configured && <p className="studio-integration-setup-notice">Bluesky is not yet configured. Complete the integration setup to connect an account.</p>}
         {blueskyAccounts.length ? (
           <div className="studio-integration-account-list">
             {blueskyAccounts.map((account) => <div key={account.externalAccountId} className="studio-integration-account">
@@ -674,29 +772,26 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
               <Pill tone="success" label="Connected" />
             </div>)}
           </div>
-        ) : <p className="small">No Bluesky account is connected to this {brand.creatorName} yet.</p>}
-      </Card>
-      <Card
+        ) : <span></span>}
+      </Card>}
+      {visibleIntegrationPlatforms.includes('deviantart') && <Card
         title="DeviantArt integration"
-        eyebrow="Your connected publishing accounts"
+        eyebrow="Platform integration"
         className="studio-integration-accounts"
+        actions={<span className="studio-integration-account-count">{accounts.length} connected account{accounts.length === 1 ? '' : 's'}</span>}
       >
-        <div className="studio-integration-toolbar">
-          <label>
-            <span>Browse {brand.creatorName} catalogue</span>
-            <select value={creatorId} onChange={(event) => setCreatorId(event.target.value)}>
-              {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
-            </select>
-          </label>
-          {(configuration?.credentials || []).length > 1 && <label>
-            <span>Filter connected accounts</span>
-            <select value={accountApplicationFilterId} onChange={(event) => setAccountApplicationFilterId(event.target.value)}>
-              <option value="">All applications</option>
-              {(configuration?.credentials || []).map((credential) => <option key={credential.externalPlatformCredentialId} value={credential.externalPlatformCredentialId}>{credential.applicationLabel || `DeviantArt app ${credential.clientId}`}</option>)}
-            </select>
-          </label>}
-          <p className="small">{accountApplicationFilterId ? `${visibleAccounts.length} of ${accounts.length}` : accounts.length} connected account{accounts.length === 1 ? '' : 's'}</p>
-        </div>
+        <p className="small studio-integration-account-availability">DeviantArt applications and connected accounts are available for use with all creator accounts belonging to your user account.</p>
+        {(configuration?.credentials || []).length > 1 && (
+          <div className="studio-integration-toolbar">
+            <label>
+              <span>Filter connected accounts</span>
+              <select value={accountApplicationFilterId} onChange={(event) => setAccountApplicationFilterId(event.target.value)}>
+                <option value="">All applications</option>
+                {(configuration?.credentials || []).map((credential) => <option key={credential.externalPlatformCredentialId} value={credential.externalPlatformCredentialId}>{credential.applicationLabel || `DeviantArt app ${credential.clientId}`}</option>)}
+              </select>
+            </label>
+          </div>
+        )}
         <section className="studio-da-setup-wizard" aria-label="Connect DeviantArt tutorial">
             <div className="studio-da-setup-heading">
               <div>
@@ -729,7 +824,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                 const credentialAccounts = accounts.filter((account) => account.externalPlatformCredentialId === credential.externalPlatformCredentialId);
                 return <section className="studio-da-application-summary" aria-label={`Saved DeviantArt application ${credential.applicationLabel || credential.clientId}`} key={credential.externalPlatformCredentialId}>
                   <div>
-                    <p className="auth-eyebrow">OAuth application</p>
+                    <p className="auth-eyebrow">DeviantArt Application (OAuth)</p>
                     <h3>{credential.applicationLabel || 'DeviantArt application'}</h3>
                     <p className="small">Client ID {credential.clientId} · {credentialAccounts.length} connected account{credentialAccounts.length === 1 ? '' : 's'}</p>
                   </div>
@@ -757,9 +852,8 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
           </div>
         )}
         {configuration && !configuration.configured && (
-          <p className="error">Connection is not configured. Missing server settings: {configuration.requiredConfiguration.join(', ')}.</p>
+          <p className="studio-integration-setup-notice">DeviantArt is not yet configured. Complete the integration setup to connect an account.</p>
         )}
-        {loading && <p className="small">Loading integration and creator catalogue…</p>}
         {message && <p className="studio-integration-message">{message}</p>}
         {connectionError && <p className="error">{connectionError}</p>}
         {error && <p className="error">{error}</p>}
@@ -790,20 +884,62 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                       : 'cooldown elapsed · ready to retry'
                 : account.connectionStatus.replace(/_/g, ' ');
               const copySummary = copySyncSummary(accountJobs, catalogueJob);
-              const savedDestinationCreatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
-              const destinationCreatorId = destinationCreatorByAccount[account.externalAccountId] || '';
+              const ancillarySyncJobs = [
+                { type: 'activity_sync', label: 'Activity', description: 'Notifications and watchers' },
+                { type: 'engagement_sync', label: 'Engagement', description: 'Comments, favourites, and metrics' },
+                { type: 'comment_sync', label: 'Comments', description: 'Comments and replies' }
+              ].map((definition) => ({
+                ...definition,
+                job: accountJobs
+                  .filter((candidate) => candidate.type === definition.type)
+                  .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
+              })).filter((item) => Boolean(item.job) || (Boolean(activeCatalogueJob) && item.type !== 'comment_sync'));
+              const ancillarySyncActive = ancillarySyncJobs.some((item) => Boolean(item.job && ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(item.job.status)));
+              const metadataDiscovered = catalogueJob?.progress?.discovered ?? 0;
+              const metadataSynchronized = catalogueJob?.progress?.synchronized ?? 0;
+              const metadataRemaining = catalogueJob?.progress?.remaining ?? Math.max(0, metadataDiscovered - metadataSynchronized);
+              const metadataPercent = metadataDiscovered ? Math.min(100, Math.round((metadataSynchronized / metadataDiscovered) * 100)) : 0;
+              const sourceRequested = copySummary?.requested ?? 0;
+              const sourceStored = copySummary?.stored ?? 0;
+              const sourceUnavailable = copySummary?.unavailable ?? 0;
+              const sourcePercent = sourceRequested ? Math.min(100, Math.round((sourceStored / sourceRequested) * 100)) : 0;
+              const sourceCopiesIncluded = includeSourceFilesByAccount[account.externalAccountId] === true;
+              const sourceCopiesChecked = catalogueJob?.status === 'successful';
+              const sourceCopiesNeedNoNewWork = sourceCopiesIncluded
+                && sourceCopiesChecked
+                && (!copySummary || sourceRequested === 0);
+              const sourceCopyTitle = !sourceCopiesIncluded
+                ? 'Not requested'
+                : sourceCopiesNeedNoNewWork
+                  ? 'Up to date'
+                  : copySummary
+                    ? `${sourceStored}/${sourceRequested}`
+                    : 'Not checked';
+              const sourceCopyDetail = !sourceCopiesIncluded
+                ? 'Source files were excluded from this sync'
+                : sourceCopiesNeedNoNewWork
+                  ? 'No new source copies needed'
+                  : copySummary
+                    ? `${sourceUnavailable} unavailable`
+                    : 'Waiting for catalogue sync';
+              const sourceCopyPercent = sourceCopiesNeedNoNewWork ? 100 : sourcePercent;
+              const savedDestinationCreatorId = destinationCreatorByAccount[account.externalAccountId]
+                || account.primaryCreatorIdentityId
+                || account.creatorIdentityId
+                || creatorId;
               const destinationCreator = creators.find((creator) => creator.creatorId === savedDestinationCreatorId);
               const accountGalleries = collections.externalCollections.filter((collection) => collection.externalAccountId === account.externalAccountId && collection.syncStatus !== 'missing');
               const editingPreset = presetAccountId === account.externalAccountId;
               return (
-                <div className="studio-integration-account-row" key={account.externalAccountId}>
-                  <div>
+                <div className="studio-integration-account-row studio-integration-account-panel" key={account.externalAccountId}>
+                  <div className="studio-integration-account-summary">
+                    <p className="auth-eyebrow">DeviantArt Account</p>
                     <strong>{account.externalUsername}</strong>
                     <span>Connected through {(configuration?.credentials || []).find((credential) => credential.externalPlatformCredentialId === account.externalPlatformCredentialId)?.applicationLabel || 'DeviantArt application'}</span>
-                    <span>Last successful sync: {formatDate(account.lastSuccessfulSyncAt)}</span>
-                    <span className={destinationCreator ? undefined : 'studio-integration-assignment-needed'}>{destinationCreator ? `Sync destination: ${destinationCreator.name}` : `${brand.creatorName} assignment required before synchronization.`}</span>
-                    {catalogueJob?.progress && <span>Metadata: {catalogueJob.progress.discovered} discovered · {catalogueJob.progress.synchronized} synchronized · {catalogueJob.progress.remaining} remaining</span>}
-                    {copySummary && <span>Source copies: {copySummary.requested} requested · {copySummary.stored} stored · {copySummary.unavailable} unavailable{copySummary.inProgress ? ` · ${copySummary.inProgress} in progress` : ''}</span>}
+                    <div className="studio-integration-account-destination">
+                      <span className={destinationCreator ? undefined : 'studio-integration-assignment-needed'}>{destinationCreator ? `Sync destination: ${destinationCreator.name}` : `${brand.creatorName} assignment required before synchronization.`}</span>
+                      {creators.length > 1 && <button type="button" className="studio-integration-move-account" onClick={() => beginMoveAccount(account)}>Move to Another {brand.creatorName}</button>}
+                    </div>
                     {catalogueJob?.status === 'cancelled' && <span>Last synchronization was cancelled.</span>}
                     {catalogueJob?.status !== 'cancelled' && catalogueJob?.errorMessage && <span className="error">{catalogueJob.errorMessage}</span>}
                     {(account.connectionStatus === 'rate_limited' || rateLimitedJob || cooldownActive) && <span className="studio-work-metadata-warning">
@@ -817,13 +953,40 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                       {rateLimitedJob?.attemptCount ? ` Attempt ${rateLimitedJob.attemptCount}.` : ''}
                     </span>}
                   </div>
+                  <div className="studio-integration-account-status-column">
+                    <div className="studio-integration-sync-stat studio-integration-account-last-sync studio-integration-account-last-sync-desktop">
+                      <span>Last sync</span>
+                      <strong>{formatDate(account.lastSuccessfulSyncAt)}</strong>
+                      <small>→ {destinationCreator?.name || 'No destination'}</small>
+                    </div>
+                    <div className="studio-integration-account-status-pills studio-integration-account-status-pills-desktop">
+                      <Pill label={connectionStatusLabel} tone={accountTone(account.connectionStatus)} />
+                      {!savedDestinationCreatorId && <Pill label={`Needs ${brand.creatorName}`} tone="warning" />}
+                    </div>
+                  </div>
+                  {activeCatalogueJob && activeCatalogueJob.status !== 'queued' && <div className="studio-integration-account-banner studio-integration-account-banner-info">
+                    {activeCatalogueJob.status === 'processing'
+                        ? 'Synchronization in progress. Metadata and source-copy counts will update as work completes.'
+                        : activeCatalogueJob.status === 'rate_limited'
+                          ? 'Synchronization is paused by DeviantArt rate limits and will resume automatically.'
+                          : `Synchronization is paused and scheduled to retry${activeCatalogueJob.nextAttemptAt ? ` at ${formatDate(activeCatalogueJob.nextAttemptAt)}` : ''}.`}
+                  </div>}
+                  {!activeCatalogueJob && catalogueJob?.status === 'successful' && ancillarySyncActive && <div className="studio-integration-account-banner studio-integration-account-banner-info">
+                    Synchronization in progress. Activity and engagement counts will update as the remaining sync phases complete.
+                  </div>}
+                  {!activeCatalogueJob && catalogueJob?.status === 'successful' && !ancillarySyncActive && <div className="studio-integration-account-banner studio-integration-account-banner-success">
+                    Synchronization complete.
+                  </div>}
+                  {catalogueJob?.status === 'failed' && <div className="studio-integration-account-banner studio-integration-account-banner-error">Sync failed. Review the status above, then retry when ready.</div>}
+                  {savedDestinationCreatorId && <label className="studio-da-account-source-files">
+                    <input type="checkbox" checked={includeSourceFilesByAccount[account.externalAccountId] === true} onChange={(event) => setIncludeSourceFilesByAccount((current) => ({ ...current, [account.externalAccountId]: event.target.checked }))} />
+                    <span><strong>Include source files in this sync</strong><small>Copies available DeviantArt source files into private {brand.workspaceFullName} storage.</small></span>
+                  </label>}
                   <div className="studio-integration-row-actions">
-                    <Pill label={connectionStatusLabel} tone={accountTone(account.connectionStatus)} />
-                    {!savedDestinationCreatorId && <Pill label={`Needs ${brand.creatorName}`} tone="warning" />}
                     {account.connectionStatus === 'authentication_required' && <button type="button" className="auth-primary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void reconnect(account)}>
                       Reconnect & repair permissions
                     </button>}
-                    {savedDestinationCreatorId && <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId || Boolean(activeCatalogueJob) || Boolean(rateLimitedJob) || cooldownActive || recoveryInFlight} onClick={() => void sync(account.externalAccountId)}>
+                    {savedDestinationCreatorId && <button type="button" className="auth-primary-btn" disabled={workingAccountId === account.externalAccountId || Boolean(activeCatalogueJob) || Boolean(rateLimitedJob) || cooldownActive || recoveryInFlight} onClick={() => void sync(account.externalAccountId)}>
                       {workingAccountId === account.externalAccountId
                         ? 'Queueing…'
                         : cooldownActive
@@ -852,18 +1015,50 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                       Publishing preset
                     </button>
                   </div>
-                  {account.connectionStatus === 'authentication_required' && <p className="studio-work-metadata-warning">DeviantArt needs authorization or an updated permission grant. Reconnect this same account to repair it without changing its creator assignment.</p>}
-                  {savedDestinationCreatorId && <label className="studio-da-account-source-files">
-                    <input type="checkbox" checked={includeSourceFilesByAccount[account.externalAccountId] === true} onChange={(event) => setIncludeSourceFilesByAccount((current) => ({ ...current, [account.externalAccountId]: event.target.checked }))} />
-                    <span><strong>Include source files in this sync</strong><small>Copies available DeviantArt source files into private {brand.workspaceFullName} storage.</small></span>
-                  </label>}
-                  <div className="studio-integration-assignment-form">
-                    <label><span>Destination {brand.creatorName}</span><select value={destinationCreatorId} onChange={(event) => setDestinationCreatorByAccount((current) => ({ ...current, [account.externalAccountId]: event.target.value }))}><option value="">Choose {brand.id === 'eversally' ? 'an' : 'a'} {brand.creatorName}…</option>{creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}</select></label>
-                    <div className="studio-inline-actions">
-                      <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId || !destinationCreatorId} onClick={() => void saveAccountDestination(account)}>Save destination {brand.creatorName}</button>
-                      {savedDestinationCreatorId && <button type="button" className="auth-secondary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void saveAccountDestination(account, true)}>Disconnect {brand.creatorName}</button>}
+                  <div className="studio-integration-sync-stats" aria-label={`Sync summary for ${account.externalUsername}`}>
+                    <div className="studio-integration-sync-stat studio-integration-account-last-sync-mobile">
+                      <span>Last sync</span>
+                      <strong>{formatDate(account.lastSuccessfulSyncAt)}</strong>
+                      <small>→ {destinationCreator?.name || 'No destination'}</small>
                     </div>
+                    <div className="studio-integration-account-status-pills studio-integration-account-status-pills-mobile">
+                      <Pill label={connectionStatusLabel} tone={accountTone(account.connectionStatus)} />
+                      {!savedDestinationCreatorId && <Pill label={`Needs ${brand.creatorName}`} tone="warning" />}
+                    </div>
+                    <div className="studio-integration-sync-stat">
+                      <span>Metadata</span>
+                      <strong>{metadataSynchronized}/{metadataDiscovered}</strong>
+                      <small>{metadataRemaining} remaining</small>
+                      <i><b style={{ width: `${metadataPercent}%` }} /></i>
+                    </div>
+                    <div className="studio-integration-sync-stat">
+                      <span>Source copies</span>
+                      <strong>{sourceCopyTitle}</strong>
+                      <small>{sourceCopyDetail}</small>
+                      <i><b style={{ width: `${sourceCopyPercent}%` }} /></i>
+                    </div>
+                    {ancillarySyncJobs.map(({ type, label, description, job }) => {
+                      const waitingForMetadata = Boolean(activeCatalogueJob);
+                      const discovered = job?.progress?.discovered ?? 0;
+                      const synchronized = job?.progress?.synchronized ?? 0;
+                      const remaining = job?.progress?.remaining ?? Math.max(0, discovered - synchronized);
+                      const percent = waitingForMetadata
+                        ? 0
+                        : discovered
+                          ? Math.min(100, Math.round((synchronized / discovered) * 100))
+                          : job?.status === 'successful' ? 100 : 0;
+                      const statusLabel = waitingForMetadata
+                        ? 'Waiting for metadata'
+                        : job ? syncJobStatusLabel(job.status) : 'Queued';
+                      return <div className="studio-integration-sync-stat" key={`${type}-${job?.externalSyncJobId || 'waiting'}`}>
+                        <span>{label}</span>
+                        <strong>{waitingForMetadata ? statusLabel : discovered ? `${synchronized}/${discovered}` : statusLabel}</strong>
+                        <small>{description} · {waitingForMetadata ? 'Starts after metadata completes' : remaining > 0 ? `${remaining} remaining` : statusLabel}</small>
+                        <i><b style={{ width: `${percent}%` }} /></i>
+                      </div>;
+                    })}
                   </div>
+                  {account.connectionStatus === 'authentication_required' && <p className="studio-work-metadata-warning">DeviantArt needs authorization or an updated permission grant. Reconnect this same account to repair it without changing its creator assignment.</p>}
                   {editingPreset && <section className="studio-integration-credential-form" aria-label={`Publishing preset for ${account.externalUsername}`}>
                     <div>
                       <p className="auth-eyebrow">DeviantArt publishing preset</p>
@@ -904,56 +1099,87 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
               );
             })}
           </div>
-        ) : !loading && <div className="studio-empty-state">{accounts.length
-          ? <>No connected accounts match this application filter. <button type="button" className="auth-secondary-btn" onClick={() => setAccountApplicationFilterId('')}>Show all accounts</button></>
-          : `Connect an account to import its catalogue, galleries, and engagement history into ${brand.productName}.`}</div>}
-      </Card>
-
-      <Card title="Gallery mapping" eyebrow={`Independent ${brand.productName} collections`} className="studio-integration-gallery-mapping">
-        <div className="studio-inline-form">
-          <input value={collectionName} onChange={(event) => setCollectionName(event.target.value)} placeholder={`New ${brand.productName} collection`} />
-          <button type="button" className="auth-secondary-btn" onClick={() => void createCollection()}>Create collection</button>
-        </div>
-        <div className="studio-integration-mapping-list">
-          {collections.externalCollections.map((externalCollection) => {
-            const mapping = collections.mappings.find((item) => item.externalCollectionId === externalCollection.externalCollectionId);
-            return (
-              <div className="studio-integration-mapping-row" key={externalCollection.externalCollectionId}>
-                <span>
-                  <strong>{externalCollection.name}</strong>
-                  <small>{externalCollection.externalUsername || 'DeviantArt'} gallery{typeof externalCollection.remoteSize === 'number' ? ` · ${externalCollection.remoteSize} works` : ''}</small>
-                  {externalCollection.syncStatus === 'missing' && <small className="error">No longer returned by DeviantArt</small>}
-                  {mapping?.lastMembershipSyncAt && <small>{mapping.lastMembershipCount || 0} mapped works · last reconciled {formatDate(mapping.lastMembershipSyncAt)}</small>}
-                  {mapping?.lastMembershipError && <small className="error">{mapping.lastMembershipError}</small>}
-                </span>
-                <div className="studio-integration-mapping-actions">
-                  <select disabled={externalCollection.syncStatus === 'missing'} value={mapping?.ubeeqCollectionId || ''} onChange={(event) => void saveMapping(externalCollection, event.target.value)}>
-                    <option value="">Map to {brand.productName} collection…</option>
-                    {collections.ubeeqCollections.map((collection) => <option key={collection.ubeeqCollectionId} value={collection.ubeeqCollectionId}>{collection.name}</option>)}
-                  </select>
-                  {mapping && <select aria-label={`${externalCollection.name} synchronization mode`} value={mapping.syncMode} onChange={(event) => void updateMappingMode(externalCollection, mapping, event.target.value as StudioExternalCollectionMapping['syncMode'])}>
-                    <option value="continuous">Keep synchronized</option>
-                    <option value="initial_only">Import once</option>
-                    <option value="manual">Manual</option>
-                    <option value="ignored">Ignore</option>
-                  </select>}
-                  {!mapping && (
-                    <button
-                      type="button"
-                      className="auth-secondary-btn"
-                      disabled={workingExternalCollectionId === externalCollection.externalCollectionId}
-                      onClick={() => void createCollectionForGallery(externalCollection)}
-                    >
-                      {workingExternalCollectionId === externalCollection.externalCollectionId ? 'Creating…' : `Create this Gallery as a ${brand.productName} Gallery`}
-                    </button>
-                  )}
+        ) : !loading && accounts.length > 0 && <div className="studio-empty-state">
+          No connected accounts match this application filter. <button type="button" className="auth-secondary-btn" onClick={() => setAccountApplicationFilterId('')}>Show all accounts</button>
+        </div>}
+        {accounts.length > 0 && <section className="studio-integration-mapping-section" aria-labelledby="deviantart-collection-mapping-title">
+          <div className="studio-integration-mapping-section-heading">
+            <p className="studio-module-eyebrow">{brand.productName} collection mapping</p>
+            <h4 id="deviantart-collection-mapping-title">Gallery mapping</h4>
+            <p className="small">Map imported DeviantArt galleries to existing {brand.productName} Collections. Create and edit Collections from the Collections section.</p>
+          </div>
+          <div className="studio-integration-mapping-list">
+            {collections.externalCollections.map((externalCollection) => {
+              const mapping = collections.mappings.find((item) => item.externalCollectionId === externalCollection.externalCollectionId);
+              return (
+                <div className="studio-integration-mapping-row" key={externalCollection.externalCollectionId}>
+                  <span>
+                    <strong>{externalCollection.name}</strong>
+                    <small>{externalCollection.externalUsername || 'DeviantArt'} gallery{typeof externalCollection.remoteSize === 'number' ? ` · ${externalCollection.remoteSize} works` : ''}</small>
+                    {externalCollection.syncStatus === 'missing' && <small className="error">No longer returned by DeviantArt</small>}
+                    {mapping?.lastMembershipSyncAt && <small>{mapping.lastMembershipCount || 0} mapped works · last reconciled {formatDate(mapping.lastMembershipSyncAt)}</small>}
+                    {mapping?.lastMembershipError && <small className="error">{mapping.lastMembershipError}</small>}
+                  </span>
+                  <div className="studio-integration-mapping-actions">
+                    <select disabled={externalCollection.syncStatus === 'missing'} value={mapping?.ubeeqCollectionId || ''} onChange={(event) => void saveMapping(externalCollection, event.target.value)}>
+                      <option value="">Map to {brand.productName} collection…</option>
+                      {collections.ubeeqCollections.map((collection) => <option key={collection.ubeeqCollectionId} value={collection.ubeeqCollectionId}>{collection.name}</option>)}
+                    </select>
+                    {mapping && <select aria-label={`${externalCollection.name} synchronization mode`} value={mapping.syncMode} onChange={(event) => void updateMappingMode(externalCollection, mapping, event.target.value as StudioExternalCollectionMapping['syncMode'])}>
+                      <option value="continuous">Keep synchronized</option>
+                      <option value="initial_only">Import once</option>
+                      <option value="manual">Manual</option>
+                      <option value="ignored">Ignore</option>
+                    </select>}
+                  </div>
                 </div>
+              );
+            })}
+          </div>
+          {!collections.externalCollections.length && <div className="studio-empty-state">Gallery folders appear after the account's first import. Create {brand.productName} Collections from the Collections section, then map galleries here.</div>}
+        </section>}
+      </Card>}
+      {!visibleIntegrationPlatforms.length && <div className="studio-empty-state">No integrations are currently shown. Use the controls above to show a platform.</div>}
+      {movingAccountId && (() => {
+        const movingAccount = accounts.find((account) => account.externalAccountId === movingAccountId);
+        if (!movingAccount) return null;
+        const closeMoveModal = () => {
+          setMovingAccountId('');
+          setMoveCreatorId('');
+        };
+        return (
+          <div className="studio-account-move-modal-layer" role="presentation" onClick={closeMoveModal}>
+            <div
+              className="studio-account-move-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="studio-account-move-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="studio-account-move-modal-header">
+                <div>
+                  <p className="auth-eyebrow">Move DeviantArt account</p>
+                  <h3 id="studio-account-move-title">{movingAccount.externalUsername}</h3>
+                </div>
+                <button type="button" className="studio-account-move-modal-close" onClick={closeMoveModal} aria-label="Close">×</button>
               </div>
-            );
-          })}
-        </div>
-        {!collections.externalCollections.length && <div className="studio-empty-state">Gallery folders appear after the account's first import. {brand.productName} collections remain independent unless you map them here.</div>}
-      </Card>
+              <p className="small">Choose the {brand.creatorName} that should own this account’s synchronization and publishing destination.</p>
+              <label className="studio-account-move-modal-field">
+                <span>Destination {brand.creatorName}</span>
+                <select value={moveCreatorId} onChange={(event) => setMoveCreatorId(event.target.value)}>
+                  {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
+                </select>
+              </label>
+              <div className="studio-inline-actions">
+                <button type="button" className="auth-primary-btn" disabled={!moveCreatorId || workingAccountId === movingAccountId} onClick={() => void moveAccount()}>
+                  {workingAccountId === movingAccountId ? 'Saving…' : 'Move account'}
+                </button>
+                <button type="button" className="auth-secondary-btn" disabled={workingAccountId === movingAccountId} onClick={closeMoveModal}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </section>
   );
 }

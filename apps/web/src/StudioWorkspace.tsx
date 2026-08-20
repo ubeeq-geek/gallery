@@ -192,11 +192,8 @@ export function StudioWorkspace({ onCreatorCreated }: { onCreatorCreated?: () =>
             {activeCreator && <CreatorLaunchChecklist creator={activeCreator} />}
             <DashboardView
               metrics={metrics}
-              creators={creators}
-              files={files}
               posts={posts}
               entries={entries}
-              activeCreatorId={activeCreatorId}
             />
           </>
         );
@@ -359,7 +356,7 @@ export function StudioWorkspace({ onCreatorCreated }: { onCreatorCreated?: () =>
     <StudioLayout
       section={section}
       title={creators.length ? sectionMeta.label : `Welcome to ${brand.studioName}`}
-      description={creators.length ? sectionMeta.description : `Create a free ${brand.workspaceName} when you are ready to share or manage your creative work.`}
+      description={creators.length ? sectionMeta.description : 'Become a Creator when you are ready to share or manage your creative work.'}
       onboarding={!creators.length}
       creators={creators}
       activeCreatorId={activeCreatorId}

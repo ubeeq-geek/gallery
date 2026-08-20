@@ -464,6 +464,48 @@ const upsertContent = async (
   }
   const currentPublication = await store.getExternalPublication(account.externalAccountId, remote.externalContentId);
   let asset: Asset | null = currentPublication ? await store.getAsset(currentPublication.assetId) : null;
+
+  // A connected account can be moved between Creators.  ExternalPublication
+  // is keyed by the remote account/content pair, so it remains the durable
+  // sync cursor, but the imported Work must follow the account's new
+  // destination Creator.  Never move the old Asset/Work in place: that would
+  // silently rewrite a Creator's catalogue and make the old Creator appear to
+  // have imported content that is now owned by someone else.  Instead, reuse
+  // a prior imported copy for this remote item under the new Creator when one
+  // exists, or create a fresh copy below.
+  if (asset && asset.creatorIdentityId !== primaryCreatorIdentityId) {
+    const targetWorks = await store.listWorksByCreator(config.tenantId, primaryCreatorIdentityId);
+    const targetWork = targetWorks.find((work) => (
+      work.origin.type === 'import'
+      && work.origin.platform === account.platform
+      && work.origin.integrationAccountId === account.externalAccountId
+      && work.origin.remoteId === remote.externalContentId
+    ));
+    asset = targetWork ? await store.getAsset(targetWork.workId) : null;
+
+    // Source-copy jobs queued for the previous Creator must not keep that
+    // catalogue in the account's active sync stream after reassignment.  The
+    // next reconciliation will enqueue a new content-sync job for the target
+    // Asset.  Leave completed/processing jobs alone so an in-flight download
+    // can finish safely; queued retries are safe to cancel.
+    if (currentPublication) {
+      const jobs = await store.listExternalSyncJobs(account.externalAccountId, 500);
+      await Promise.all(jobs
+        .filter((job) => (
+          job.type === 'content_sync'
+          && job.payload?.externalPublicationId === currentPublication.externalPublicationId
+          && job.payload?.assetId === currentPublication.assetId
+          && ['queued', 'retry_scheduled', 'rate_limited'].includes(job.status)
+        ))
+        .map((job) => store.updateExternalSyncJob({
+          ...job,
+          status: 'cancelled',
+          errorCode: 'CREATOR_REASSIGNED',
+          errorMessage: 'Source synchronization was superseded when the DeviantArt account moved to another Creator',
+          updatedAt: now
+        })));
+    }
+  }
   if (!asset) {
     asset = {
       assetId: randomUUID(),

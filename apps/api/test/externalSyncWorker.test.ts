@@ -144,6 +144,72 @@ describe('external metadata update verification', () => {
     jest.restoreAllMocks();
   });
 
+  it('starts a fresh Creator import when a DeviantArt account is reassigned', async () => {
+    const store = new InMemoryStore();
+    const now = new Date().toISOString();
+    const encryptionKey = 'worker-creator-reassignment-test-key';
+    await store.createExternalPlatformCredential({
+      externalPlatformCredentialId: 'credential-reassignment', userId: 'user-1', platform: 'deviantart', clientId: 'client-id',
+      clientSecretEncrypted: encryptExternalCredential('client-secret', encryptionKey),
+      redirectUri: 'http://localhost:4000/integrations/deviantart/callback', createdAt: now, updatedAt: now
+    });
+    await store.createExternalAccount({
+      externalAccountId: 'account-reassignment', userId: 'user-1', creatorIdentityId: 'creator-new', primaryCreatorIdentityId: 'creator-new',
+      externalPlatformCredentialId: 'credential-reassignment', platform: 'deviantart', externalUserId: 'owner-1', externalUsername: 'owner',
+      accessTokenEncrypted: encryptExternalCredential('access-token', encryptionKey), connectionStatus: 'connected', createdAt: now, updatedAt: now
+    });
+    await store.createAsset({
+      assetId: 'asset-old-creator', userId: 'user-1', creatorIdentityId: 'creator-old', assetType: 'image', canonicalTitle: 'Reassigned work',
+      visibility: 'private', titleSyncPolicy: 'initially_mirrored', descriptionSyncPolicy: 'initially_mirrored', createdAt: now, updatedAt: now
+    });
+    await store.createWork({
+      workId: 'asset-old-creator', tenantId: 'tenant-1', creatorId: 'creator-old', kind: 'image', title: 'Reassigned work', slug: 'reassigned-work',
+      slugHistory: ['reassigned-work'], description: 'Old Creator copy', tags: ['old'], contentRating: 'general', aiDisclosure: 'none', heavyTopics: [], status: 'draft',
+      origin: { type: 'import', platform: 'deviantart', integrationAccountId: 'account-reassignment', remoteId: 'deviation-reassigned', importedAt: now },
+      revision: 1, createdAt: now, updatedAt: now
+    });
+    await store.createExternalPublication({
+      externalPublicationId: 'publication-reassignment', assetId: 'asset-old-creator', externalAccountId: 'account-reassignment', platform: 'deviantart',
+      externalContentId: 'deviation-reassigned', syncStatus: 'active', rawMetadataJson: {}, createdAt: now, updatedAt: now
+    });
+    await store.createExternalSyncJob({
+      externalSyncJobId: 'account-import-reassignment', externalAccountId: 'account-reassignment', type: 'full_reconciliation', status: 'queued',
+      progress: { discovered: 0, synchronized: 0, remaining: 0 }, attemptCount: 0, createdAt: now, updatedAt: now
+    });
+    await store.createExternalSyncJob({
+      externalSyncJobId: 'old-source-copy-reassignment', externalAccountId: 'account-reassignment', type: 'content_sync', status: 'queued',
+      payload: { assetId: 'asset-old-creator', externalPublicationId: 'publication-reassignment' }, attemptCount: 0, createdAt: now, updatedAt: now
+    });
+
+    const completeItem = {
+      deviationid: 'deviation-reassigned', title: 'Reassigned work', url: 'https://www.deviantart.com/owner/art/reassigned-work-1',
+      description: 'New Creator copy', tags: ['new'], is_mature: false, allows_comments: true, is_ai_generated: false, noai: false, published_time: 1786637885
+    };
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      const requestUrl = new URL(String(input));
+      const ok = (payload: Record<string, unknown>) => ({ ok: true, status: 200, json: async () => payload, headers: { get: () => null } } as unknown as Response);
+      if (requestUrl.pathname.endsWith('/gallery/folders')) return ok({ results: [], has_more: false });
+      if (requestUrl.pathname.endsWith('/gallery/all')) return ok({ results: [completeItem], has_more: false });
+      throw new Error(`Unexpected test request: ${requestUrl.pathname}`);
+    });
+
+    await processExternalSyncJob(store, {
+      tenantId: 'tenant-1', externalTokenEncryptionKey: encryptionKey, externalSyncBaseDelaySeconds: 60
+    } as AppConfig, 'account-import-reassignment', { enqueue: jest.fn(async () => undefined) });
+
+    const publication = await store.getExternalPublication('account-reassignment', 'deviation-reassigned');
+    expect(publication?.assetId).not.toBe('asset-old-creator');
+    expect(await store.getAsset(publication!.assetId)).toMatchObject({ creatorIdentityId: 'creator-new' });
+    expect(await store.getWork('tenant-1', 'asset-old-creator')).toMatchObject({ creatorId: 'creator-old', title: 'Reassigned work', description: 'Old Creator copy' });
+    expect((await store.listWorksByCreator('tenant-1', 'creator-new'))).toEqual([
+      expect.objectContaining({ workId: publication!.assetId, creatorId: 'creator-new', description: 'New Creator copy', tags: ['new'] })
+    ]);
+    expect(await store.getExternalSyncJob('old-source-copy-reassignment')).toMatchObject({ status: 'cancelled', errorCode: 'CREATOR_REASSIGNED' });
+    expect(await store.getPublication('tenant-1', 'publication-reassignment')).toMatchObject({ creatorId: 'creator-new', workId: publication!.assetId });
+    expect(fetchSpy).toHaveBeenCalled();
+    jest.restoreAllMocks();
+  });
+
   it('accepts semantically equivalent HTML and normalized tag order', () => {
     expect(externalContentUpdateMismatches(remoteContent(), {
       title: 'Updated title',
