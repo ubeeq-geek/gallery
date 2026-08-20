@@ -62,10 +62,15 @@ import type {
   ExternalActivity,
   ExternalSyncCheckpoint,
   ExternalSyncJob,
-  ExternalSyncLog
+  ExternalSyncLog,
+  CommunityInstallation,
+  CommunityDestination,
+  CommunityEvent,
+  CommunityDelivery
 } from './domain';
 import { ContentCoreRepository } from './contentCoreRepository';
 import { ExternalPlatformRepository } from './externalPlatformRepository';
+import { CommunityRepository } from './communityRepository';
 import { CanonicalContentRepository } from './canonicalContentRepository';
 import { normalizeContentRating } from './contentRating';
 import { normalizeAiDisclosure, normalizeHeavyTopics } from './disclosures';
@@ -84,6 +89,7 @@ export class DynamoStore implements DataStore {
   private readonly client: DynamoDBDocumentClient;
   private readonly coreRepo?: ContentCoreRepository;
   private readonly externalPlatformRepo?: ExternalPlatformRepository;
+  private readonly communityRepo?: CommunityRepository;
   private readonly canonicalContentRepo?: CanonicalContentRepository;
   private readonly localUsernameReservations = new Map<string, { username: string; email: string }>();
   private readonly localUserProfiles = new Map<string, UserProfile>();
@@ -101,6 +107,7 @@ export class DynamoStore implements DataStore {
     if (config.useContentCoreTable) {
       this.coreRepo = new ContentCoreRepository(this.client, config.contentCoreTable);
       this.externalPlatformRepo = new ExternalPlatformRepository(this.client, config.contentCoreTable);
+      this.communityRepo = new CommunityRepository(this.client, config.contentCoreTable);
       this.canonicalContentRepo = new CanonicalContentRepository(this.client, config.contentCoreTable);
     }
   }
@@ -117,6 +124,11 @@ export class DynamoStore implements DataStore {
       throw new Error('Canonical content requires USE_CONTENT_CORE_TABLE=true');
     }
     return this.canonicalContentRepo;
+  }
+
+  private community(): CommunityRepository {
+    if (!this.communityRepo) throw new Error('Community integrations require USE_CONTENT_CORE_TABLE=true');
+    return this.communityRepo;
   }
 
   async listWorksByCreator(tenantId: string, creatorId: string): Promise<Work[]> { return this.canonicalContent().listWorksByCreator(tenantId, creatorId); }
@@ -1619,6 +1631,21 @@ export class DynamoStore implements DataStore {
   async updateExternalSyncJob(job: ExternalSyncJob): Promise<void> { await this.externalPlatform().updateExternalSyncJob(job); }
   async listExternalSyncLogs(externalSyncJobId: string, limit?: number): Promise<ExternalSyncLog[]> { return this.externalPlatform().listExternalSyncLogs(externalSyncJobId, limit); }
   async appendExternalSyncLog(log: ExternalSyncLog): Promise<void> { await this.externalPlatform().appendExternalSyncLog(log); }
+
+  async listCommunityInstallationsByUser(userId: string): Promise<CommunityInstallation[]> { return this.community().listCommunityInstallationsByUser(userId); }
+  async getCommunityInstallation(communityInstallationId: string): Promise<CommunityInstallation | null> { return this.community().getCommunityInstallation(communityInstallationId); }
+  async upsertCommunityInstallation(installation: CommunityInstallation): Promise<void> { await this.community().upsertCommunityInstallation(installation); }
+  async deleteCommunityInstallation(communityInstallationId: string): Promise<void> { await this.community().deleteCommunityInstallation(communityInstallationId); }
+  async listCommunityDestinationsByCreator(creatorIdentityId: string): Promise<CommunityDestination[]> { return this.community().listCommunityDestinationsByCreator(creatorIdentityId); }
+  async getCommunityDestination(communityDestinationId: string): Promise<CommunityDestination | null> { return this.community().getCommunityDestination(communityDestinationId); }
+  async upsertCommunityDestination(destination: CommunityDestination): Promise<void> { await this.community().upsertCommunityDestination(destination); }
+  async deleteCommunityDestination(communityDestinationId: string): Promise<void> { await this.community().deleteCommunityDestination(communityDestinationId); }
+  async getCommunityEventByIdempotency(tenantId: string, idempotencyKey: string): Promise<CommunityEvent | null> { return this.community().getCommunityEventByIdempotency(tenantId, idempotencyKey); }
+  async getCommunityEvent(communityEventId: string): Promise<CommunityEvent | null> { return this.community().getCommunityEvent(communityEventId); }
+  async createCommunityEvent(event: CommunityEvent): Promise<void> { await this.community().createCommunityEvent(event); }
+  async getCommunityDelivery(communityDeliveryId: string): Promise<CommunityDelivery | null> { return this.community().getCommunityDelivery(communityDeliveryId); }
+  async listCommunityDeliveriesByCreator(creatorIdentityId: string, limit?: number): Promise<CommunityDelivery[]> { return this.community().listCommunityDeliveriesByCreator(creatorIdentityId, limit); }
+  async upsertCommunityDelivery(delivery: CommunityDelivery): Promise<void> { await this.community().upsertCommunityDelivery(delivery); }
 
   async getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null> {
     if (this.coreRepo) {

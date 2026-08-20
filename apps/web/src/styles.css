@@ -8129,6 +8129,109 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     margin: 0.35rem 0 1rem;
   }
 
+  .studio-discord-installations,
+  .studio-discord-destinations {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 1rem;
+  }
+
+  .studio-discord-installation,
+  .studio-discord-destination,
+  .studio-discord-destination-editor {
+    display: grid;
+    gap: 0.85rem;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: 0.8rem;
+    background: var(--surface-muted);
+  }
+
+  .studio-discord-installation,
+  .studio-discord-destination {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .studio-discord-installation__heading {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    min-width: 0;
+  }
+
+  .studio-discord-installation__heading h3,
+  .studio-discord-destination h3,
+  .studio-discord-destination-editor h3 {
+    margin: 0;
+  }
+
+  .studio-discord-installation__heading > img,
+  .studio-discord-installation__icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    flex: 0 0 2.5rem;
+    border-radius: 0.65rem;
+    object-fit: cover;
+  }
+
+  .studio-discord-installation__icon {
+    display: grid;
+    place-items: center;
+    background: #5865f2;
+    color: #fff;
+    font-weight: 800;
+  }
+
+  .studio-discord-destination-editor {
+    margin-top: 0.9rem;
+  }
+
+  .studio-discord-destination-editor > div > .small,
+  .studio-discord-destination > div > .small {
+    margin: 0.25rem 0 0;
+  }
+
+  .studio-discord-destination-editor .studio-integration-toolbar {
+    align-items: end;
+    justify-content: flex-start;
+  }
+
+  .studio-discord-destination-editor .studio-integration-toolbar label {
+    min-width: 12rem;
+  }
+
+  .studio-discord-destination-editor .studio-discord-template {
+    flex: 1 1 20rem;
+  }
+
+  .studio-discord-default-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 0.65rem 1rem;
+    margin-top: 0.8rem;
+  }
+
+  .studio-discord-default-controls > label:not(.studio-discord-media-option) {
+    display: grid;
+    gap: 0.35rem;
+    min-width: 13rem;
+  }
+
+  .studio-discord-media-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.8rem;
+    cursor: pointer;
+  }
+
+  .studio-discord-media-option input {
+    width: auto;
+    margin: 0;
+  }
+
   .studio-integration-gallery-mapping {
     grid-column: 1 / -1;
   }
@@ -10674,6 +10777,20 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
 
     .studio-integration-sync-stat.studio-integration-account-last-sync-mobile {
       display: grid;
+    }
+
+    .studio-discord-installation,
+    .studio-discord-destination {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
+
+    .studio-discord-destination-editor .studio-integration-toolbar label,
+    .studio-discord-destination-editor .studio-discord-template,
+    .studio-discord-default-controls > label:not(.studio-discord-media-option) {
+      width: 100%;
+      min-width: 0;
+      flex-basis: 100%;
     }
 
     .studio-integration-account-status-pills-mobile {

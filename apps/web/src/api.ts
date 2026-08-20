@@ -2,6 +2,8 @@ import { getValidIdToken } from './cognitoAuth';
 import type { PostBlock } from './domainTypes';
 import type { StudioExternalAsset, StudioExternalPublication, StudioSpacePublication, StudioUbeeqCollection } from './studio/types';
 
+export type AnnouncementPresetId = 'recommended' | 'image_showcase' | 'writing_release' | 'video_premiere' | 'audio_release' | 'compact_link' | 'text_only' | 'collection_digest' | 'series_digest';
+
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 const usesLocalDeveloperApi = import.meta.env.DEV && /^(https?:\/\/)(localhost|127\.0\.0\.1|fanadmin\.top)(?::\d+)?(?:\/|$)/.test(configuredApiBase);
 const hasLocalCognitoConfiguration = Boolean(
@@ -1268,6 +1270,94 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/bluesky/accounts${query}`);
     return handleJson(response);
   },
+  async studioGetDiscordConfiguration() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/discord/configuration`);
+    return handleJson(response) as Promise<{
+      platform: 'discord';
+      configured: boolean;
+      requiredConfiguration: string[];
+      installations: Array<{
+        communityInstallationId: string;
+        displayName: string;
+        iconUrl?: string;
+        status: 'connected' | 'needs_attention' | 'disabled';
+        lastCheckedAt?: string;
+        lastError?: string;
+      }>;
+    }>;
+  },
+  async studioStartDiscordConnection(returnPath = '/studio/workspace?section=integrations') {
+    const response = await fetch(`${API_BASE}/studio/integrations/discord/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ returnPath })
+    });
+    return handleJson(response) as Promise<{ authorizationUrl: string }>;
+  },
+  async studioListDiscordDestinations(creatorId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/discord/destinations?creatorId=${encodeURIComponent(creatorId)}`);
+    return handleJson(response) as Promise<Array<{
+      communityDestinationId: string;
+      communityInstallationId: string;
+      remoteChannelId: string;
+      displayName: string;
+      status: 'active' | 'needs_attention' | 'disabled';
+      eventTypes: Array<'work_published' | 'works_published'>;
+      defaultAnnouncementPreset?: AnnouncementPresetId;
+      defaultIncludePrimaryMedia?: boolean;
+      template?: string;
+      deliveries?: Array<{ status: string; updatedAt: string; sentAt?: string; errorMessage?: string }>;
+    }>>;
+  },
+  async studioListDiscordChannels(communityInstallationId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/discord/installations/${encodeURIComponent(communityInstallationId)}/channels`);
+    return handleJson(response) as Promise<{
+      installation: { communityInstallationId: string; displayName: string; status: 'connected' | 'needs_attention' | 'disabled' };
+      channels: Array<{ id: string; name: string; type: number }>;
+    }>;
+  },
+  async studioCreateDiscordDestination(payload: { creatorId: string; communityInstallationId: string; remoteChannelId: string; template?: string; defaultAnnouncementPreset?: AnnouncementPresetId; defaultIncludePrimaryMedia?: boolean }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/discord/destinations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async studioUpdateDiscordDestination(communityDestinationId: string, payload: { status?: 'active' | 'needs_attention' | 'disabled'; template?: string; defaultAnnouncementPreset?: AnnouncementPresetId; defaultIncludePrimaryMedia?: boolean }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/discord/destinations/${encodeURIComponent(communityDestinationId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
+  async studioDeleteDiscordDestination(communityDestinationId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/discord/destinations/${encodeURIComponent(communityDestinationId)}`, {
+      method: 'DELETE', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async studioQueueDiscordBulkAnnouncement(payload: { creatorId: string; workIds: string[]; preset?: AnnouncementPresetId; includePrimaryMedia?: boolean }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/discord/announcements/bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response) as Promise<{ queued: boolean; workCount: number }>;
+  },
+  async studioTestDiscordDestination(communityDestinationId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/discord/destinations/${encodeURIComponent(communityDestinationId)}/test`, {
+      method: 'POST', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async studioDeleteDiscordInstallation(communityInstallationId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/discord/installations/${encodeURIComponent(communityInstallationId)}`, {
+      method: 'DELETE', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
   async studioListDeviantArtAccounts(creatorId?: string) {
     const query = creatorId ? `?creatorId=${encodeURIComponent(creatorId)}` : '';
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts${query}`);
@@ -1621,6 +1711,7 @@ export const api = {
     published: boolean;
     hostingMode?: 'linked' | 'hosted';
     visibility?: 'private' | 'unlisted' | 'public';
+    announcement?: { mode?: 'default' | 'per_work' | 'digest' | 'none'; preset?: AnnouncementPresetId; includePrimaryMedia?: boolean };
   }) {
     const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}/publications/eversally`, {
       method: 'PUT',

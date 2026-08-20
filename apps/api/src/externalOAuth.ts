@@ -20,6 +20,13 @@ interface BlueskyOAuthStatePayload {
   nonce: string;
 }
 
+interface DiscordOAuthStatePayload {
+  userId: string;
+  platform: 'discord';
+  returnPath: string;
+  nonce: string;
+}
+
 const stateSecret = (config: AppConfig): string => config.externalTokenEncryptionKey || config.unlockJwtSecret;
 
 const pkceVerifier = (config: AppConfig, nonce: string): string => (
@@ -94,6 +101,24 @@ export const verifyBlueskyOAuthState = (config: AppConfig, value: string): Blues
     || typeof state.nonce !== 'string'
   ) throw new Error('OAuth state is invalid');
   return state as BlueskyOAuthStatePayload;
+};
+
+export const issueDiscordOAuthState = (
+  config: AppConfig,
+  value: Omit<DiscordOAuthStatePayload, 'nonce'>
+): { state: string; nonce: string } => {
+  const nonce = randomUUID();
+  return { state: jwt.sign({ ...value, nonce }, stateSecret(config), { expiresIn: '10m' }), nonce };
+};
+
+export const verifyDiscordOAuthState = (config: AppConfig, value: string): DiscordOAuthStatePayload => {
+  const payload = jwt.verify(value, stateSecret(config));
+  if (!payload || typeof payload !== 'object') throw new Error('OAuth state is invalid');
+  const state = payload as Partial<DiscordOAuthStatePayload>;
+  if (typeof state.userId !== 'string' || state.platform !== 'discord' || typeof state.returnPath !== 'string' || typeof state.nonce !== 'string') {
+    throw new Error('OAuth state is invalid');
+  }
+  return state as DiscordOAuthStatePayload;
 };
 
 export const resolveExternalOAuthReturnUrl = (config: AppConfig, returnPath: string, query: Record<string, string>): string => {

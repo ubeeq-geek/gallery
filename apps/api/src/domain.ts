@@ -1101,3 +1101,93 @@ export interface ExternalSyncLog {
   detail?: Record<string, unknown>;
   createdAt: string;
 }
+
+/**
+ * Community integrations deliver creator events into spaces where audiences
+ * already gather. They are deliberately separate from ExternalPublication:
+ * a Discord message announces a Work, but is never a copy of that Work.
+ */
+export type CommunityProvider = 'discord';
+export type CommunityIntegrationStatus = 'connected' | 'needs_attention' | 'disabled';
+export type CommunityDestinationStatus = 'active' | 'needs_attention' | 'disabled';
+export type CommunityEventType = 'work_published' | 'works_published';
+/**
+ * A portable announcement presentation. Providers render these differently,
+ * but the intent travels with the Work rather than with a Discord template.
+ */
+export type AnnouncementPresetId =
+  | 'recommended'
+  | 'image_showcase'
+  | 'writing_release'
+  | 'video_premiere'
+  | 'audio_release'
+  | 'compact_link'
+  | 'text_only'
+  | 'collection_digest'
+  | 'series_digest';
+export type AnnouncementDeliveryMode = 'default' | 'per_work' | 'digest' | 'none';
+export type CommunityDeliveryStatus = 'queued' | 'sending' | 'sent' | 'retry_scheduled' | 'failed' | 'cancelled';
+
+export interface CommunityInstallation {
+  communityInstallationId: string;
+  userId: string;
+  provider: CommunityProvider;
+  remoteInstallationId: string;
+  displayName: string;
+  iconUrl?: string;
+  installedByRemoteUserId?: string;
+  status: CommunityIntegrationStatus;
+  lastCheckedAt?: string;
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommunityDestination {
+  communityDestinationId: string;
+  userId: string;
+  creatorIdentityId: string;
+  provider: CommunityProvider;
+  communityInstallationId: string;
+  remoteChannelId: string;
+  displayName: string;
+  status: CommunityDestinationStatus;
+  eventTypes: CommunityEventType[];
+  /** Destination default; a Work publish can override it for that release. */
+  defaultAnnouncementPreset?: AnnouncementPresetId;
+  defaultIncludePrimaryMedia?: boolean;
+  template?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommunityEvent {
+  communityEventId: string;
+  tenantId: string;
+  userId: string;
+  creatorIdentityId: string;
+  workId?: string;
+  type: CommunityEventType;
+  idempotencyKey: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CommunityDelivery {
+  communityDeliveryId: string;
+  tenantId: string;
+  userId: string;
+  creatorIdentityId: string;
+  communityEventId: string;
+  communityDestinationId: string;
+  provider: CommunityProvider;
+  status: CommunityDeliveryStatus;
+  attemptCount: number;
+  nextAttemptAt?: string;
+  remoteMessageId?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  sentAt?: string;
+}

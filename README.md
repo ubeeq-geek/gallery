@@ -72,6 +72,11 @@ The API reads environment variables from the shell that starts it; it does **not
 | `BLUESKY_OAUTH_JWKS_JSON` | unset | Public JWKS JSON advertised to Bluesky. Never include private JWK fields here. |
 | `BLUESKY_OAUTH_PRIVATE_JWK` | unset | Confidential ES256 signing JWK. Load from managed secret storage in production; never commit it. |
 | `BLUESKY_OAUTH_SERVICE_URL` / `BLUESKY_OAUTH_SERVICE_JWKS_URL` | unset | The dedicated OAuth broker and its public JWKS. Studio uses these to issue and verify Creator-scoped Bluesky connection proofs without receiving a refresh token. |
+| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | unset | Discord application OAuth credentials for native community delivery. Keep the client secret out of source control. |
+| `DISCORD_BOT_TOKEN` | unset | Bot token used only by the API/worker to enumerate permitted channels and send announcements. Never expose it to the web client. |
+| `DISCORD_SECRETS_NAME` | unset | Optional Secrets Manager JSON secret for the Discord client secret and bot token. Use this for every shared AWS environment, including development. |
+| `DISCORD_OAUTH_REDIRECT_URI` | `https://fanadmin.top:4000/integrations/discord/callback` | Register this exact URL in the Discord application’s OAuth2 Redirects list. The Ubeeq local API should use port `4001`. |
+| `DISCORD_API_BASE_URL` | `https://discord.com/api/v10` | Optional API base override for controlled testing. |
 
 For a stable local encryption key, run this once and export the result before starting the API:
 
@@ -400,6 +405,23 @@ npm run dev:eversally
 ```
 
 Sign in through the existing local web flow, then open `/studio/workspace?section=integrations`. `LOCAL_AUTH_USER_ID` is accepted only when the API has no Cognito verifier configured; do not set it in a deployed environment.
+
+## Discord Community Delivery
+
+Discord is a **community-delivery** integration, not a second content host. It can announce a Work after it first becomes public in an Eversally Space; it never creates a separate canonical Work or treats a Discord message as a publication.
+
+### Discord application setup
+
+1. Create an application and bot in the [Discord Developer Portal](https://discord.com/developers/applications).
+2. Add the exact redirect URI: `https://<api-host>/integrations/discord/callback` (locally, `https://fanadmin.top:4000/integrations/discord/callback` for Eversally or port `4001` for Ubeeq).
+3. Enable the OAuth scopes `identify`, `guilds`, `bot`, and `applications.commands`. The install URL asks only for **View Channels**, **Send Messages**, and **Embed Links** permissions.
+4. Configure the API with `DISCORD_CLIENT_ID` and `DISCORD_OAUTH_REDIRECT_URI`. Keep `discordClientSecret` and `discordBotToken` in Secrets Manager: set `DISCORD_SECRETS_NAME` for a shared development deployment, or use the existing `APP_SECRETS_NAME` JSON in production. Client ID and redirect URI remain ordinary deployment environment values.
+
+In Studio → Integrations, connect Discord once, then select a text or announcement channel for each Creator that should receive messages. A connected server belongs to the user account and can be reused by that user’s Creator identities. The API never exposes bot tokens or OAuth access tokens to the browser.
+
+Each destination has an editable compact template using `{title}`, `{url}`, and `{creator}`, and offers a safe test message. When a Work first becomes **public** in its Space, delivery is queued with an idempotency key. The worker retries transient failures (including Discord’s `retry_after` rate limits) up to six times; a missing channel or lost permissions pauses the destination as **Needs attention** instead of repeatedly posting. Discord messages suppress all automatic mentions (`@everyone`, roles, and users).
+
+This initial integration intentionally does not read message history, manage members, send DMs, use the Gateway, or implement moderation/archive mirroring. Slash commands and Challenge-specific messages are future additions.
 
 ## GroupingCore Migration
 

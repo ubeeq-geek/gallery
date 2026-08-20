@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { api } from '../../api';
+import { api, type AnnouncementPresetId } from '../../api';
 import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { Pill } from '../components/Pill';
@@ -26,6 +26,20 @@ const matureClassificationOptions: Array<{ value: MatureClassification; label: s
 ];
 
 const defaultVisibleIntegrationPlatforms: StudioIntegrationPlatform[] = ['deviantart', 'bluesky'];
+
+const discordAnnouncementPresets: Array<{ id: AnnouncementPresetId; label: string; description: string }> = [
+  { id: 'recommended', label: 'Recommended', description: 'Matches the announcement to each Work type.' },
+  { id: 'image_showcase', label: 'Image showcase', description: 'A visual release with the primary image where available.' },
+  { id: 'writing_release', label: 'Post or story', description: 'A reading-first release with a clear title and link.' },
+  { id: 'video_premiere', label: 'Video premiere', description: 'A video release with a concise call to watch.' },
+  { id: 'audio_release', label: 'Audio release', description: 'A track or audio release with a concise call to listen.' },
+  { id: 'compact_link', label: 'Compact link', description: 'One concise announcement and a link.' },
+  { id: 'text_only', label: 'Text only', description: 'No rich preview or primary media.' },
+  { id: 'collection_digest', label: 'Collection digest', description: 'A grouped release for a gallery or album.' },
+  { id: 'series_digest', label: 'Series digest', description: 'A grouped release for chapters or episodes.' }
+];
+
+const discordPresetLabel = (preset?: AnnouncementPresetId): string => discordAnnouncementPresets.find((option) => option.id === preset)?.label || 'Recommended';
 
 const normalizeVisibleIntegrationPlatforms = (values?: readonly string[]): StudioIntegrationPlatform[] => {
   if (!values) return [...defaultVisibleIntegrationPlatforms];
@@ -130,6 +144,27 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [blueskyConfiguration, setBlueskyConfiguration] = useState<{ configured: boolean; requiredConfiguration: string[] } | null>(null);
   const [blueskyAccounts, setBlueskyAccounts] = useState<Array<{ externalAccountId: string; externalUsername: string; externalUserId: string }>>([]);
   const [blueskyHandle, setBlueskyHandle] = useState('');
+  const [discordConfiguration, setDiscordConfiguration] = useState<{
+    configured: boolean;
+    installations: Array<{ communityInstallationId: string; displayName: string; iconUrl?: string; status: 'connected' | 'needs_attention' | 'disabled'; lastError?: string }>;
+  } | null>(null);
+  const [discordDestinations, setDiscordDestinations] = useState<Array<{
+    communityDestinationId: string;
+    communityInstallationId: string;
+    remoteChannelId: string;
+    displayName: string;
+    status: 'active' | 'needs_attention' | 'disabled';
+    template?: string;
+    defaultAnnouncementPreset?: AnnouncementPresetId;
+    defaultIncludePrimaryMedia?: boolean;
+    deliveries?: Array<{ status: string; updatedAt: string; sentAt?: string; errorMessage?: string }>;
+  }>>([]);
+  const [discordChannelsByInstallation, setDiscordChannelsByInstallation] = useState<Record<string, Array<{ id: string; name: string; type: number }>>>({});
+  const [discordInstallationId, setDiscordInstallationId] = useState('');
+  const [discordChannelId, setDiscordChannelId] = useState('');
+  const [discordAnnouncementPreset, setDiscordAnnouncementPreset] = useState<AnnouncementPresetId>('recommended');
+  const [discordIncludePrimaryMedia, setDiscordIncludePrimaryMedia] = useState(true);
+  const [discordBusy, setDiscordBusy] = useState('');
   const [accounts, setAccounts] = useState<StudioDeviantArtAccount[]>([]);
   const [jobsByAccount, setJobsByAccount] = useState<Record<string, StudioExternalSyncJob[]>>({});
   const [collections, setCollections] = useState<CollectionResponse>({ ubeeqCollections: [], externalCollections: [], mappings: [] });
@@ -257,6 +292,18 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
 
   useEffect(() => {
     const url = new URL(window.location.href);
+    const discordState = url.searchParams.get('discord');
+    if (!discordState) return;
+    const detail = url.searchParams.get('message');
+    url.searchParams.delete('discord');
+    url.searchParams.delete('message');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    if (discordState === 'connected') setMessage('Discord server connected. Choose the Creator channels that should receive Space announcements.');
+    else setConnectionError(detail || 'Discord connection could not be completed.');
+  }, []);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
     const state = url.searchParams.get('state');
     const proof = url.searchParams.get('proof');
     if (url.searchParams.get('bluesky') !== 'connected' || !state || !proof) return;
@@ -279,11 +326,13 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     setLoading(true);
     setError('');
     try {
-      const [nextConfiguration, nextAccounts, nextBlueskyConfiguration, nextBlueskyAccounts] = await Promise.all([
+      const [nextConfiguration, nextAccounts, nextBlueskyConfiguration, nextBlueskyAccounts, nextDiscordConfiguration, nextDiscordDestinations] = await Promise.all([
         api.studioGetDeviantArtConfiguration(),
         api.studioListDeviantArtAccounts(),
         api.studioGetBlueskyConfiguration(),
-        api.studioListBlueskyAccounts(nextCreatorId)
+        api.studioListBlueskyAccounts(nextCreatorId),
+        api.studioGetDiscordConfiguration(),
+        api.studioListDiscordDestinations(nextCreatorId)
       ]);
       const typedAccounts = (nextAccounts || []) as StudioDeviantArtAccount[];
       const nextCollections = typedAccounts.length
@@ -302,6 +351,8 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       setCollections(nextCollections as CollectionResponse);
       setBlueskyConfiguration(nextBlueskyConfiguration);
       setBlueskyAccounts((nextBlueskyAccounts || []) as Array<{ externalAccountId: string; externalUsername: string; externalUserId: string }>);
+      setDiscordConfiguration(nextDiscordConfiguration);
+      setDiscordDestinations(nextDiscordDestinations || []);
       const nextJobs = await Promise.all(typedAccounts.map(async (account) => [
         account.externalAccountId,
         await api.studioListDeviantArtSyncJobs(account.externalAccountId) as StudioExternalSyncJob[]
@@ -337,6 +388,33 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       ? currentCredentialId
       : credentials[0].externalPlatformCredentialId);
   }, [configuration]);
+
+  useEffect(() => {
+    const installations = discordConfiguration?.installations || [];
+    setDiscordInstallationId((current) => installations.some((installation) => installation.communityInstallationId === current)
+      ? current
+      : installations[0]?.communityInstallationId || '');
+  }, [discordConfiguration]);
+
+  const loadDiscordChannels = async (installationId: string) => {
+    if (!installationId) return;
+    setDiscordBusy(`channels:${installationId}`);
+    setError('');
+    try {
+      const result = await api.studioListDiscordChannels(installationId);
+      setDiscordChannelsByInstallation((current) => ({ ...current, [installationId]: result.channels }));
+      setDiscordChannelId((current) => result.channels.some((channel) => channel.id === current) ? current : result.channels[0]?.id || '');
+    } catch (channelError) {
+      setError(channelError instanceof Error ? channelError.message : 'Unable to load Discord channels.');
+    } finally {
+      setDiscordBusy('');
+    }
+  };
+
+  useEffect(() => {
+    if (discordInstallationId && !discordChannelsByInstallation[discordInstallationId]) void loadDiscordChannels(discordInstallationId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discordInstallationId]);
 
   const activeCredential = useMemo(
     () => (configuration?.credentials || []).find((credential) => credential.externalPlatformCredentialId === activeCredentialId),
@@ -416,6 +494,100 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       window.location.assign(result.authorizationUrl);
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : 'Unable to begin Bluesky authorization.');
+    }
+  };
+
+  const connectDiscord = async () => {
+    setError('');
+    setConnectionError('');
+    try {
+      const result = await api.studioStartDiscordConnection('/studio/workspace?section=integrations');
+      window.location.assign(result.authorizationUrl);
+    } catch (connectError) {
+      setError(connectError instanceof Error ? connectError.message : 'Unable to begin Discord installation.');
+    }
+  };
+
+  const createDiscordDestination = async () => {
+    if (!creatorId || !discordInstallationId || !discordChannelId) return;
+    setDiscordBusy('create');
+    setError('');
+    try {
+      await api.studioCreateDiscordDestination({ creatorId, communityInstallationId: discordInstallationId, remoteChannelId: discordChannelId, defaultAnnouncementPreset: discordAnnouncementPreset, defaultIncludePrimaryMedia: discordIncludePrimaryMedia });
+      setMessage('Discord announcement channel saved. The recommended format can be adjusted for each release.');
+      await load();
+    } catch (destinationError) {
+      setError(destinationError instanceof Error ? destinationError.message : 'Unable to save the Discord announcement channel.');
+    } finally {
+      setDiscordBusy('');
+    }
+  };
+
+  const testDiscordDestination = async (destinationId: string) => {
+    setDiscordBusy(`test:${destinationId}`);
+    setError('');
+    try {
+      await api.studioTestDiscordDestination(destinationId);
+      setMessage('Discord test announcement sent.');
+      await load();
+    } catch (testError) {
+      setError(testError instanceof Error ? testError.message : 'Discord test announcement could not be sent.');
+    } finally {
+      setDiscordBusy('');
+    }
+  };
+
+  const updateDiscordDestinationStatus = async (destinationId: string, status: 'active' | 'disabled') => {
+    setDiscordBusy(`status:${destinationId}`);
+    try {
+      await api.studioUpdateDiscordDestination(destinationId, { status });
+      await load();
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : 'Unable to update Discord channel.');
+    } finally {
+      setDiscordBusy('');
+    }
+  };
+
+  const updateDiscordDestinationFormat = async (destinationId: string, payload: { defaultAnnouncementPreset?: AnnouncementPresetId; defaultIncludePrimaryMedia?: boolean }) => {
+    setDiscordBusy(`format:${destinationId}`);
+    setError('');
+    try {
+      await api.studioUpdateDiscordDestination(destinationId, payload);
+      setMessage('Discord announcement defaults updated.');
+      await load();
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : 'Unable to update Discord announcement defaults.');
+    } finally {
+      setDiscordBusy('');
+    }
+  };
+
+  const deleteDiscordDestination = async (destinationId: string) => {
+    if (!window.confirm('Remove this Discord announcement channel? Future Space publications will no longer be announced there.')) return;
+    setDiscordBusy(`delete:${destinationId}`);
+    try {
+      await api.studioDeleteDiscordDestination(destinationId);
+      setMessage('Discord announcement channel removed.');
+      await load();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Unable to remove the Discord announcement channel.');
+    } finally {
+      setDiscordBusy('');
+    }
+  };
+
+  const deleteDiscordInstallation = async (installationId: string) => {
+    if (!window.confirm('Disconnect this Discord server? Its Creator channel destinations will also be removed.')) return;
+    setDiscordBusy(`installation:${installationId}`);
+    try {
+      await api.studioDeleteDiscordInstallation(installationId);
+      setMessage('Discord server disconnected.');
+      await load();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Unable to disconnect the Discord server.');
+    } finally {
+      setDiscordBusy('');
     }
   };
 
@@ -773,6 +945,67 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
             </div>)}
           </div>
         ) : <span></span>}
+      </Card>}
+      {visibleIntegrationPlatforms.includes('discord') && <Card
+        title="Discord community"
+        eyebrow="Community delivery"
+        className="studio-integration-accounts"
+        actions={<span className="studio-integration-account-count">{discordConfiguration?.installations.length || 0} connected server{(discordConfiguration?.installations.length || 0) === 1 ? '' : 's'}</span>}
+      >
+        <p className="small studio-integration-account-availability">Install the Discord app once for a server, then choose the channels each Creator should use. Discord messages announce a Space Work; they never become a separate Work publication.</p>
+        {discordConfiguration && !discordConfiguration.configured && <p className="studio-integration-setup-notice">Discord is not yet configured. Complete the deployment setup to install a server.</p>}
+        {discordConfiguration?.configured && !discordConfiguration.installations.length && <div className="studio-integration-row-actions">
+          <button type="button" className="auth-primary-btn" onClick={() => void connectDiscord()}>Install Discord app</button>
+        </div>}
+        {discordConfiguration?.installations.length ? <>
+          <div className="studio-discord-installations">
+            {discordConfiguration.installations.map((installation) => <div key={installation.communityInstallationId} className="studio-discord-installation">
+              <div className="studio-discord-installation__heading">
+                {installation.iconUrl ? <img src={installation.iconUrl} alt="" /> : <span className="studio-discord-installation__icon" aria-hidden="true">#</span>}
+                <div><p className="auth-eyebrow">Discord server</p><h3>{installation.displayName}</h3>{installation.lastError && <p className="small error">{installation.lastError}</p>}</div>
+              </div>
+              <div className="studio-integration-row-actions">
+                <Pill tone={installation.status === 'connected' ? 'success' : installation.status === 'needs_attention' ? 'warning' : 'default'} label={installation.status.replace(/_/g, ' ')} />
+                <button type="button" className="auth-secondary-btn" disabled={discordBusy === `channels:${installation.communityInstallationId}`} onClick={() => void loadDiscordChannels(installation.communityInstallationId)}>{discordBusy === `channels:${installation.communityInstallationId}` ? 'Loading channels…' : 'Refresh channels'}</button>
+                <button type="button" className="auth-secondary-btn" disabled={discordBusy === `installation:${installation.communityInstallationId}`} onClick={() => void deleteDiscordInstallation(installation.communityInstallationId)}>Disconnect server</button>
+              </div>
+            </div>)}
+          </div>
+          <section className="studio-discord-destination-editor" aria-label="Add Discord announcement channel">
+            <div><p className="auth-eyebrow">Creator announcement channel</p><h3>Set a default release format</h3><p className="small">Choose the channel’s recommended announcement. Each Space publish can keep this default, use a different format, combine a batch into one digest, or skip the announcement.</p></div>
+            <div className="studio-integration-toolbar">
+              <label><span>Discord server</span><select value={discordInstallationId} onChange={(event) => { setDiscordInstallationId(event.target.value); setDiscordChannelId(''); }}>
+                {(discordConfiguration?.installations || []).map((installation) => <option key={installation.communityInstallationId} value={installation.communityInstallationId}>{installation.displayName}</option>)}
+              </select></label>
+              <label><span>Channel</span><select value={discordChannelId} disabled={!discordInstallationId || !(discordChannelsByInstallation[discordInstallationId]?.length)} onChange={(event) => setDiscordChannelId(event.target.value)}>
+                {(discordChannelsByInstallation[discordInstallationId] || []).map((channel) => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}
+              </select></label>
+              <label className="studio-discord-template"><span>Default format</span><select value={discordAnnouncementPreset} onChange={(event) => setDiscordAnnouncementPreset(event.target.value as AnnouncementPresetId)}>{discordAnnouncementPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label} — {preset.description}</option>)}</select></label>
+              <label className="studio-discord-media-option"><input type="checkbox" checked={discordIncludePrimaryMedia} onChange={(event) => setDiscordIncludePrimaryMedia(event.target.checked)} /><span>Include primary media in supported rich previews</span></label>
+              <button type="button" className="auth-primary-btn" disabled={!discordChannelId || discordBusy === 'create'} onClick={() => void createDiscordDestination()}>{discordBusy === 'create' ? 'Saving…' : 'Add channel'}</button>
+            </div>
+            {!discordChannelsByInstallation[discordInstallationId]?.length && discordInstallationId && <p className="small">Refresh channels after confirming the Discord app can view and send messages in the channel you want to use.</p>}
+          </section>
+          {discordDestinations.length ? <div className="studio-discord-destinations">
+            {discordDestinations.map((destination) => {
+              const lastDelivery = destination.deliveries?.[0];
+              return <div key={destination.communityDestinationId} className="studio-discord-destination">
+                <div><p className="auth-eyebrow">Announcement channel</p><h3>{destination.displayName}</h3><p className="small">{destination.status === 'disabled' ? 'Paused — public Space Works are not announced here.' : 'New public Space Works are announced here.'}{lastDelivery?.sentAt ? ` Last announced ${formatDate(lastDelivery.sentAt)}.` : lastDelivery?.errorMessage ? ` Last delivery needs attention: ${lastDelivery.errorMessage}` : ''}</p>
+                  <div className="studio-discord-default-controls">
+                    <label><span>Default format</span><select disabled={discordBusy === `format:${destination.communityDestinationId}`} value={destination.defaultAnnouncementPreset || 'recommended'} onChange={(event) => void updateDiscordDestinationFormat(destination.communityDestinationId, { defaultAnnouncementPreset: event.target.value as AnnouncementPresetId })}>{discordAnnouncementPresets.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
+                    <label className="studio-discord-media-option"><input type="checkbox" disabled={discordBusy === `format:${destination.communityDestinationId}`} checked={destination.defaultIncludePrimaryMedia !== false} onChange={(event) => void updateDiscordDestinationFormat(destination.communityDestinationId, { defaultIncludePrimaryMedia: event.target.checked })} /><span>Include primary media in supported rich previews</span></label>
+                  </div>
+                </div>
+                <div className="studio-integration-row-actions">
+                  <Pill tone={destination.status === 'active' ? 'success' : destination.status === 'needs_attention' ? 'warning' : 'default'} label={destination.status.replace(/_/g, ' ')} />
+                  <button type="button" className="auth-secondary-btn" disabled={discordBusy === `test:${destination.communityDestinationId}`} onClick={() => void testDiscordDestination(destination.communityDestinationId)}>{discordBusy === `test:${destination.communityDestinationId}` ? 'Sending…' : 'Send test'}</button>
+                  <button type="button" className="auth-secondary-btn" disabled={discordBusy === `status:${destination.communityDestinationId}`} onClick={() => void updateDiscordDestinationStatus(destination.communityDestinationId, destination.status === 'disabled' ? 'active' : 'disabled')}>{destination.status === 'disabled' ? 'Resume' : 'Pause'}</button>
+                  <button type="button" className="auth-secondary-btn" disabled={discordBusy === `delete:${destination.communityDestinationId}`} onClick={() => void deleteDiscordDestination(destination.communityDestinationId)}>Remove</button>
+                </div>
+              </div>;
+            })}
+          </div> : <p className="studio-empty-state">No Discord channels are configured for this Creator yet.</p>}
+        </> : null}
       </Card>}
       {visibleIntegrationPlatforms.includes('deviantart') && <Card
         title="DeviantArt integration"
