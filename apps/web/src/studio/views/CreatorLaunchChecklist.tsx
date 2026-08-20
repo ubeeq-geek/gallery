@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
-import { brand, creatorBaseUrl } from '../../brand';
+import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import type { StudioCreator, StudioExternalAsset } from '../types';
 
@@ -15,7 +15,11 @@ export function CreatorLaunchChecklist({ creator }: { creator: StudioCreator }) 
   const [data, setData] = useState<OnboardingData | null>(null);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
-  const publicUrl = `${creatorBaseUrl}${creator.slug}`;
+  // The URL we show as the creator's public address is always the canonical
+  // hosted brand URL. Preview actions, however, must stay in the environment
+  // the Studio is currently running in (local, dev, or production).
+  const publicUrl = `${brand.creatorBaseUrl}${encodeURIComponent(creator.slug)}`;
+  const previewUrl = `${window.location.origin}/creators/${encodeURIComponent(creator.slug)}?preview=1`;
   const feeds = api.getCreatorFeedUrls(creator.slug);
 
   useEffect(() => {
@@ -62,7 +66,7 @@ export function CreatorLaunchChecklist({ creator }: { creator: StudioCreator }) 
   };
 
   return <Card title={`Finish setting up ${creator.name}`} eyebrow={`Your ${brand.workspaceName} · ${completeCount}/4 core steps`} className="studio-launch-checklist">
-    <p className="studio-home-intro">Your Space is ready at <a href={publicUrl} target="_blank" rel="noreferrer">{publicUrl}</a>. Build the public presence first; discovery is always a separate, explicit choice.</p>
+    <p className="studio-home-intro">Your Space is ready at <a href={previewUrl} target="_blank" rel="noreferrer">{publicUrl}</a>. Build the public presence first; discovery is always a separate, explicit choice.</p>
     {error && <p className="error">{error}</p>}
     <ol className="studio-launch-steps">
       <li className={profileReady ? 'is-complete' : ''}><div><strong>Profile and branding</strong><span>{profileReady ? 'Profile details or branding have been added.' : 'Add a bio, links, avatar, or cover so visitors know whose Space this is.'}</span></div><Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=creator-profile&creatorId=${encodeURIComponent(creator.creatorId)}`}>{profileReady ? 'Edit profile' : 'Set up profile'}</Link></li>
@@ -71,7 +75,7 @@ export function CreatorLaunchChecklist({ creator }: { creator: StudioCreator }) 
       <li className={hasSpacePublication ? 'is-complete' : ''}><div><strong>Publish to your Space</strong><span>{hasSpacePublication ? 'At least one Work is now visible in your Space.' : firstWork ? 'Open your first Work to choose Space visibility. Public Space visibility does not opt it into discovery.' : 'Create or import a Work before publishing it.'}</span></div>{firstWork ? <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=works&creatorId=${encodeURIComponent(creator.creatorId)}&workId=${encodeURIComponent(firstWork.assetId)}`}>{hasSpacePublication ? 'Review publication' : 'Choose visibility'}</Link> : <span className="small">Waiting for a Work</span>}</li>
     </ol>
     <div className="studio-launch-resources">
-      <a className="auth-secondary-btn no-underline" href={publicUrl} target="_blank" rel="noreferrer">Preview public Space</a>
+      <a className="auth-secondary-btn no-underline" href={previewUrl} target="_blank" rel="noreferrer">Preview public Space</a>
       <a className="auth-secondary-btn no-underline" href={feeds.rss} target="_blank" rel="noreferrer">Open RSS feed</a>
       <button type="button" className="auth-secondary-btn" disabled={exporting} onClick={() => void downloadExport()}>{exporting ? 'Preparing export…' : 'Download portable export'}</button>
     </div>

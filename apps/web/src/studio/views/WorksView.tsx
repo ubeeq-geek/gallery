@@ -39,13 +39,6 @@ const matureClassificationOptions: Array<{ value: MatureClassification; label: s
   { value: 'ideology', label: 'Ideology' }
 ];
 
-const lifecycleLabel = (lifecycle: WorkLifecycle): string => lifecycle[0].toUpperCase() + lifecycle.slice(1);
-const availabilityLabel = (availability: StudioExternalAsset['contentAvailability']): string => ({
-  metadata_only: 'Metadata only',
-  external_reference: 'External reference only',
-  display_copy: 'Display copy stored',
-  original_hosted: 'Original backed up'
-})[availability];
 const destinationStatusLabel = (status: StudioExternalAsset['destinationPublications'][number]['status']): string => ({
   live: 'Published', draft: 'Draft / staged', scheduled: 'Scheduled', queued: 'Queued', publishing: 'Publishing', updating: 'Updating', failed: 'Error', missing: 'Missing remotely', removed: 'Removed', unknown: 'Unknown'
 })[status];
@@ -62,7 +55,15 @@ const assetTypeLabel = (asset: StudioExternalAsset): string => {
 };
 
 function WorkThumbnail({ asset }: { asset: StudioExternalAsset }) {
-  const deviantArtThumbnailUrl = asset.publications.find((publication) => publication.previewUrl)?.previewUrl;
+  const eversallyPublished = asset.destinationPublications.some((publication) => (
+    publication.destination === 'eversally' && publication.status === 'live' && publication.visibility !== 'private'
+  ));
+  // Once a work is public in Eversally, do not fall back to a remote DA
+  // preview. That URL can disappear when the DA account is disconnected and
+  // would make the hosted catalogue appear to depend on DA.
+  const deviantArtThumbnailUrl = eversallyPublished
+    ? undefined
+    : asset.publications.find((publication) => publication.previewUrl)?.previewUrl;
   const [url, setUrl] = useState(asset.thumbnailUrl || deviantArtThumbnailUrl);
 
   useEffect(() => {
@@ -70,12 +71,13 @@ function WorkThumbnail({ asset }: { asset: StudioExternalAsset }) {
   }, [asset.thumbnailUrl, deviantArtThumbnailUrl]);
 
   const handleLoadError = () => {
-    setUrl((currentUrl) => currentUrl === asset.thumbnailUrl ? deviantArtThumbnailUrl : undefined);
+    setUrl((currentUrl) => currentUrl === asset.thumbnailUrl && !eversallyPublished ? deviantArtThumbnailUrl : undefined);
   };
 
   return (
     <div className="studio-work-thumbnail" aria-hidden="true">
       <span>{assetTypeLabel(asset).slice(0, 1)}</span>
+      <small className="studio-work-thumbnail-id">{(asset.canonicalSlug || asset.assetId).slice(0, 12)}</small>
       {url && <img src={url} alt="" onError={handleLoadError} />}
     </div>
   );
@@ -163,6 +165,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   const [bulkDestinationUpdating, setBulkDestinationUpdating] = useState(false);
   const [bulkDestinationMessage, setBulkDestinationMessage] = useState('');
   const [bulkReviewOpen, setBulkReviewOpen] = useState(false);
+  const [bulkReviewPlatform, setBulkReviewPlatform] = useState<'eversally' | 'deviantart' | 'bluesky'>('deviantart');
   const [bulkPublishing, setBulkPublishing] = useState(false);
   const [bulkPublishMessage, setBulkPublishMessage] = useState('');
   const appliedRouteCollectionFilter = useRef('');
@@ -172,11 +175,6 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     () => collections.ubeeqCollections.find((collection) => collection.ubeeqCollectionId === collectionId),
     [collectionId, collections.ubeeqCollections]
   );
-  const selectedPlatformAccount = useMemo(
-    () => accounts.find((account) => account.externalAccountId === platformAccountId),
-    [accounts, platformAccountId]
-  );
-
   const load = async (nextCreatorId = creatorId) => {
     if (!nextCreatorId) return;
     setLoading(true);
@@ -211,9 +209,12 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   };
 
   useEffect(() => {
-    if (creatorId || !creators.length) return;
-    setCreatorId(creators.some((creator) => creator.creatorId === requestedCreatorId) ? requestedCreatorId : creators[0].creatorId);
-  }, [creatorId, creators, requestedCreatorId]);
+    if (!creators.length) return;
+    const nextCreatorId = creators.some((creator) => creator.creatorId === requestedCreatorId)
+      ? requestedCreatorId
+      : creators[0].creatorId;
+    setCreatorId((current) => current === nextCreatorId ? current : nextCreatorId);
+  }, [creators, requestedCreatorId]);
 
   useEffect(() => {
     void load();
@@ -281,6 +282,13 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
       )) || manuallyAssignedAssetIds.has(asset.assetId);
       if (!inCollection) return false;
       if (lifecycle !== 'all' && asset.workStatus !== lifecycle) return false;
+      const hasSpaceDestination = asset.destinationPublications.some((publication) => publication.destination === 'eversally' && publication.status !== 'removed')
+        || asset.publicationIntents.some((intent) => intent.destination === 'eversally' && intent.enabled);
+      const hasDeviantArtDestination = asset.publications.some((publication) => publication.platform === 'deviantart' && publication.syncStatus !== 'deleted')
+        || asset.destinationPublications.some((publication) => publication.destination === 'deviantart' && publication.status !== 'removed')
+        || asset.publicationIntents.some((intent) => intent.destination === 'deviantart' && intent.enabled);
+      if (!shownPlatforms.eversally && !hasDeviantArtDestination) return false;
+      if (!shownPlatforms.deviantart && !hasSpaceDestination) return false;
       if (platformAccountId && !(
         asset.origin.integrationAccountId === platformAccountId
         || asset.publications.some((publication) => publication.externalAccountId === platformAccountId)
@@ -315,7 +323,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
       return [asset.canonicalTitle || '', asset.canonicalDescription || '', ...asset.publications.flatMap((publication) => [publication.externalTitle || '', ...publication.externalTags])]
         .some((value) => value.toLowerCase().includes(normalizedQuery));
     });
-  }, [assets, collectionId, lifecycle, manuallyAssignedAssetIds, mappedExternalCollectionIds, platformAccountId, platformFilter, query]);
+  }, [assets, collectionId, lifecycle, manuallyAssignedAssetIds, mappedExternalCollectionIds, platformAccountId, platformFilter, query, shownPlatforms.deviantart, shownPlatforms.eversally]);
   const sortedAssets = useMemo(() => [...visibleAssets]
     .sort((left, right) => {
       if (sort === 'updated_desc') return right.updatedAt.localeCompare(left.updatedAt);
@@ -405,8 +413,13 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
 
   useEffect(() => {
     if (!creatorId || worksListSearch === location.search.replace(/^\?/, '')) return;
+    // The sidebar owns the shared creator context through the URL. When it
+    // changes creator, this view can render once with its previous local
+    // state before the creator-sync effect catches up. Do not write that
+    // stale value back to the URL or the two states can oscillate forever.
+    if (requestedCreatorId && requestedCreatorId !== creatorId && creators.some((creator) => creator.creatorId === requestedCreatorId)) return;
     navigate({ pathname: location.pathname, search: `?${worksListSearch}` }, { replace: true });
-  }, [creatorId, location.pathname, location.search, navigate, worksListSearch]);
+  }, [creatorId, creators, location.pathname, location.search, navigate, requestedCreatorId, worksListSearch]);
 
   const workRoute = (workId: string, tab?: string) => worksWorkspacePath(`?${worksListSearch}`, { workId, tab });
 
@@ -687,25 +700,63 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     await load();
   };
 
+  const bulkDestinationCount = Number(bulkSpaceIntent) + Number(bulkDeviantArtIntent);
+
   return (
     <section className="studio-works-layout">
       <Card
         title="Works"
-        eyebrow={`${brand.creatorName} catalogue`}
-        actions={<>
+        eyebrow={`${activeCreator?.name || brand.creatorName} catalogue`}
+      >
+        <div className="studio-works-primary-actions" aria-label="Work actions">
           <button type="button" className="auth-secondary-btn" disabled={loading || !creatorId} onClick={() => void load()}>
             {loading ? 'Refreshing…' : 'Refresh works'}
           </button>
           <Link className="auth-primary-btn no-underline" to={worksWorkspacePath(`?${worksListSearch}`, { create: true })}>Upload works</Link>
-        </>}
-      >
+          <Link className="auth-secondary-btn no-underline studio-works-create-writing" to={worksWorkspacePath(`?${worksListSearch}`, { create: true, kind: 'writing' })}>Create Post or Story</Link>
+        </div>
+        <div className="studio-works-platform-chips" role="group" aria-label="Platforms shown">
+          <button
+            type="button"
+            className={`studio-works-platform-chip ${shownPlatforms.eversally && shownPlatforms.deviantart ? 'is-active' : ''}`}
+            aria-pressed={shownPlatforms.eversally && shownPlatforms.deviantart}
+            onClick={() => setShownPlatforms({ eversally: true, deviantart: true })}
+          >
+            <span className="studio-works-platform-dot studio-works-platform-dot-all" />
+            <span>All</span>
+            <small>{assets.length}</small>
+          </button>
+          <button
+            type="button"
+            className={`studio-works-platform-chip ${shownPlatforms.eversally && !shownPlatforms.deviantart ? 'is-active' : ''}`}
+            aria-pressed={shownPlatforms.eversally && !shownPlatforms.deviantart}
+            onClick={() => setShownPlatforms({ eversally: true, deviantart: false })}
+          >
+            <span className="studio-works-platform-dot studio-works-platform-dot-space" />
+            <span>{brand.workspaceFullName}</span>
+            <small>{assets.filter((asset) => asset.destinationPublications.some((publication) => publication.destination === 'eversally' && publication.status !== 'removed')).length}</small>
+          </button>
+          <button
+            type="button"
+            className={`studio-works-platform-chip ${shownPlatforms.deviantart && !shownPlatforms.eversally ? 'is-active' : ''}`}
+            aria-pressed={shownPlatforms.deviantart && !shownPlatforms.eversally}
+            onClick={() => setShownPlatforms({ eversally: false, deviantart: true })}
+          >
+            <span className="studio-works-platform-dot studio-works-platform-dot-deviantart" />
+            <span>DeviantArt</span>
+            <small>{assets.filter((asset) => asset.destinationPublications.some((publication) => publication.destination === 'deviantart' && publication.status !== 'removed')).length}</small>
+          </button>
+          {[
+            ['bluesky', 'Bluesky', '#5b86ad'],
+            ['youtube', 'YouTube', '#9a5151'],
+            ['soundcloud', 'SoundCloud', '#b56b32'],
+            ['fanvue', 'FanVue', '#795aa4']
+          ].map(([key, label, color]) => <button type="button" className="studio-works-platform-chip is-disabled" disabled key={key} title={`${label} publishing is not available yet`}>
+            <span className="studio-works-platform-dot" style={{ background: color }} />
+            <span>{label}</span>
+          </button>)}
+        </div>
         <div className="studio-works-controls">
-          <label>
-            <span>{brand.creatorName}</span>
-            <select value={creatorId} onChange={(event) => { setCreatorId(event.target.value); setCollectionId(''); setPlatformAccountId(''); setPage(1); }}>
-              {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
-            </select>
-          </label>
           <label>
             <span>Collection</span>
             <select value={collectionId} onChange={(event) => { setCollectionId(event.target.value); setPage(1); }}>
@@ -723,34 +774,17 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
             </select>
           </label>
           <label>
-            <span>Platform state</span>
-            <select value={platformFilter} onChange={(event) => { setPlatformFilter(event.target.value as PlatformFilter); setPage(1); }}>
-              <option value="all">All platform states</option>
-              <option value="published_anywhere">Published anywhere</option>
-              <option value="published_nowhere">Published nowhere</option>
-              <option value="unpublished_unqueued">Unpublished and unqueued</option>
-              <option value="unpublished_images">Unpublished images (drafts)</option>
-              <option value="eversally_live">Published on {brand.workspaceFullName}</option>
-              <option value="deviantart_live">Published on DeviantArt</option>
-              <option value="out_of_sync">Out of sync</option>
-              <option value="error">Errors</option>
-            </select>
-          </label>
-          <label>
-            <span>Platform account</span>
-            <select value={platformAccountId} disabled={!accounts.length} onChange={(event) => { setPlatformAccountId(event.target.value); setPage(1); }}>
-              <option value="">{accounts.length ? 'All platform accounts' : 'No connected accounts'}</option>
-              {!!accounts.length && <optgroup label="DeviantArt">
-                {accounts.map((account) => <option key={account.externalAccountId} value={account.externalAccountId}>@{account.externalUsername}</option>)}
-              </optgroup>}
-            </select>
-          </label>
-          <label>
             <span>Sort</span>
             <select value={sort} onChange={(event) => { setSort(event.target.value as WorkSort); setPage(1); }}>
               <option value="name_asc">Name: A–Z</option>
               <option value="name_desc">Name: Z–A</option>
               <option value="updated_desc">Last updated</option>
+            </select>
+          </label>
+          <label>
+            <span>Per page</span>
+            <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
+              {worksPageSizes.map((size) => <option key={size} value={size}>{size}</option>)}
             </select>
           </label>
           <label className="studio-works-search">
@@ -759,41 +793,51 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
           </label>
         </div>
 
-        <p className="studio-works-context"><strong>{activeCreator?.name || brand.creatorName}</strong>{selectedCollection ? ` · ${selectedCollection.name}` : ' · All works'}{lifecycle !== 'all' ? ` · ${lifecycleLabel(lifecycle)}` : ''}{selectedPlatformAccount ? ` · DeviantArt / @${selectedPlatformAccount.externalUsername}` : ''}</p>
-        {!selectedCollection && <p className="studio-works-space-note">A Work’s local state is independent from every publishing destination. Select destinations here, then choose <strong>Review &amp; publish</strong> on the Work to publish to DeviantArt or your Space.</p>}
-        <fieldset className="studio-works-platform-view">
-          <legend>Platforms shown</legend>
-          <label><input type="checkbox" checked={shownPlatforms.eversally} onChange={(event) => setShownPlatforms((current) => ({ ...current, eversally: event.target.checked }))} /> <span>{brand.workspaceFullName}</span></label>
-          <label><input type="checkbox" checked={shownPlatforms.deviantart} onChange={(event) => setShownPlatforms((current) => ({ ...current, deviantart: event.target.checked }))} /> <span>DeviantArt</span></label>
-        </fieldset>
+        <details className="studio-works-more-filters">
+          <summary>More filters</summary>
+          <div className="studio-works-more-filters-grid">
+            <label>
+              <span>Platform state</span>
+              <select value={platformFilter} onChange={(event) => { setPlatformFilter(event.target.value as PlatformFilter); setPage(1); }}>
+                <option value="all">All platform states</option>
+                <option value="published_anywhere">Published anywhere</option>
+                <option value="published_nowhere">Published nowhere</option>
+                <option value="unpublished_unqueued">Unpublished and unqueued</option>
+                <option value="unpublished_images">Unpublished images (drafts)</option>
+                <option value="eversally_live">Published on {brand.workspaceFullName}</option>
+                <option value="deviantart_live">Published on DeviantArt</option>
+                <option value="out_of_sync">Out of sync</option>
+                <option value="error">Errors</option>
+              </select>
+            </label>
+            <label>
+              <span>Platform account</span>
+              <select value={platformAccountId} disabled={!accounts.length} onChange={(event) => { setPlatformAccountId(event.target.value); setPage(1); }}>
+                <option value="">{accounts.length ? 'All platform accounts' : 'No connected accounts'}</option>
+                {!!accounts.length && <optgroup label="DeviantArt">
+                  {accounts.map((account) => <option key={account.externalAccountId} value={account.externalAccountId}>@{account.externalUsername}</option>)}
+                </optgroup>}
+              </select>
+            </label>
+          </div>
+        </details>
+
         {loading && <p className="small">Loading works…</p>}
         {error && <p className="error">{error}</p>}
 
-        {!!visibleAssets.length && <nav className="studio-works-pagination" aria-label="Works pagination">
-          <span>Showing {pageStart + 1}–{Math.min(pageStart + pageSize, visibleAssets.length)} of {visibleAssets.length} works</span>
-          <label>
-            <span>Per page</span>
-            <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
-              {worksPageSizes.map((size) => <option key={size} value={size}>{size}</option>)}
-            </select>
-          </label>
-          <div className="studio-works-pagination-actions">
-            <button type="button" className="auth-secondary-btn" disabled={currentPage === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
-            <span>Page {currentPage} of {pageCount}</span>
-            <button type="button" className="auth-secondary-btn" disabled={currentPage === pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>Next</button>
-          </div>
-        </nav>}
-
         {!!displayedAssets.length && <div className="studio-works-bulk-bar">
-          <label className="studio-work-select-all">
+          <label className="studio-work-select-all" aria-label={`Select all ${displayedAssets.length} works on this page`}>
             <input
               type="checkbox"
               checked={selectedDisplayedAssetIds.length === displayedAssets.length}
               onChange={(event) => setSelectedWorkAssetIds(event.target.checked ? displayedAssets.map((asset) => asset.assetId) : [])}
             />
-            <span>Select page ({displayedAssets.length})</span>
+            <span>Select all</span>
           </label>
-          <span className="studio-works-selection-count">{selectedDisplayedAssetIds.length} selected</span>
+          <span className="studio-works-selection-count">
+            <span className="studio-works-selection-count-wide">{selectedWorkAssetIds.length} of {visibleAssets.length} selected</span>
+            <span className="studio-works-selection-count-compact">{selectedWorkAssetIds.length} selected</span>
+          </span>
           <label className="studio-works-bulk-collection">
             <span>Add selected to collection</span>
             <select value={bulkCollectionId} onChange={(event) => setBulkCollectionId(event.target.value)}>
@@ -805,9 +849,30 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
             {bulkUpdating ? 'Adding…' : 'Add selected'}
           </button>
           <button type="button" className="auth-primary-btn" disabled={!selectedDisplayedAssetIds.length || bulkPublishing} onClick={() => setBulkReviewOpen((current) => !current)}>
-            {bulkReviewOpen ? 'Close review' : `Review & publish ${selectedDisplayedAssetIds.length}`}
+            {bulkReviewOpen ? 'Close review' : <>
+              <span className="studio-works-review-label-wide">Review &amp; publish ({selectedDisplayedAssetIds.length})</span>
+              <span className="studio-works-review-label-compact">Publish</span>
+            </>}
           </button>
-          {bulkReviewOpen && !!selectedDisplayedAssetIds.length && <div className="studio-work-destination-target studio-works-bulk-review">
+          {bulkReviewOpen && !!selectedDisplayedAssetIds.length && <div className="studio-works-review-dialog-layer" role="presentation" onMouseDown={() => setBulkReviewOpen(false)}>
+            <div className="studio-works-review-dialog" role="dialog" aria-modal="true" aria-labelledby="studio-review-publish-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="studio-work-destination-target studio-works-bulk-review">
+            <h3 id="studio-review-publish-title">Review &amp; publish — {selectedDisplayedAssetIds.length} work{selectedDisplayedAssetIds.length === 1 ? '' : 's'}</h3>
+            <div className="studio-works-review-tabs" role="tablist" aria-label="Review destinations">
+              {([
+                ['eversally', brand.workspaceFullName],
+                ['deviantart', 'DeviantArt'],
+                ['bluesky', 'Bluesky']
+              ] as const).map(([platform, label]) => <button
+                key={platform}
+                type="button"
+                role="tab"
+                aria-selected={bulkReviewPlatform === platform}
+                className={bulkReviewPlatform === platform ? 'is-active' : ''}
+                onClick={() => setBulkReviewPlatform(platform)}
+              >{label}</button>)}
+            </div>
+            {bulkReviewPlatform === 'bluesky' && <p className="studio-works-review-note">Bluesky announcements use the Work link and preview when that account is connected. Select another tab to configure publishing destinations.</p>}
             <span>Bulk publishing review</span>
             {!bulkSpaceIntent && !bulkDeviantArtIntent && <p className="studio-work-metadata-warning">Choose at least one publish destination below.</p>}
             {bulkDeviantArtIntent && !bulkDestinationAccountId && <p className="studio-work-metadata-warning">Choose a DeviantArt account below.</p>}
@@ -821,9 +886,27 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
               {displayedAssets.filter((asset) => selectedDisplayedAssetIds.includes(asset.assetId)).slice(0, 8).map((asset, index) => <li key={asset.assetId}>{index + 1}. {asset.canonicalTitle || asset.publications[0]?.externalTitle || 'Untitled work'}</li>)}
             </ol>
             {selectedDisplayedAssetIds.length > 8 && <p className="small">…and {selectedDisplayedAssetIds.length - 8} more.</p>}
-            <button type="button" className="auth-primary-btn" disabled={bulkPublishing || (!bulkSpaceIntent && !bulkDeviantArtIntent) || (bulkDeviantArtIntent && !bulkDestinationAccountId)} onClick={() => void publishSelectedWorks()}>{bulkPublishing ? 'Publishing…' : `Publish ${selectedDisplayedAssetIds.length} selected work${selectedDisplayedAssetIds.length === 1 ? '' : 's'}`}</button>
-          </div>}
-          <div className="studio-works-bulk-destination">
+            <div className="studio-works-review-dialog-actions">
+              <button type="button" className="auth-secondary-btn" disabled={bulkPublishing} onClick={() => setBulkReviewOpen(false)}>Cancel</button>
+              <button type="button" className="auth-primary-btn" disabled={bulkPublishing || bulkReviewPlatform === 'bluesky' || !bulkDestinationCount || (bulkDeviantArtIntent && !bulkDestinationAccountId)} onClick={() => void publishSelectedWorks()}>{bulkPublishing ? 'Publishing…' : `Publish to ${bulkDestinationCount} destination${bulkDestinationCount === 1 ? '' : 's'}`}</button>
+            </div>
+          </div>
+          <div className="studio-works-bulk-destination studio-works-review-panel">
+            {bulkReviewPlatform === 'eversally' && <>
+              <span>Publish to {brand.workspaceFullName}</span>
+              <label><input type="checkbox" checked={bulkSpaceIntent} onChange={(event) => setBulkSpaceIntent(event.target.checked)} /> Publish these Works to {brand.workspaceFullName}</label>
+              <label><span>Space visibility</span><select value={bulkSpaceVisibility} onChange={(event) => setBulkSpaceVisibility(event.target.value as 'private' | 'unlisted' | 'public')}>
+                <option value="private">Private</option>
+                <option value="unlisted">Unlisted</option>
+                <option value="public">Space-visible</option>
+              </select></label>
+              <small className="studio-work-destination-message">Publishing to your Space does not opt these Works into discovery.</small>
+            </>}
+            {bulkReviewPlatform === 'bluesky' && <>
+              <span>Bluesky announcements</span>
+              <p className="studio-works-review-note">Bluesky publishing will be available when a Bluesky account is connected for this Creator. No announcement will be sent for Private or Unlisted Works.</p>
+            </>}
+            {bulkReviewPlatform === 'deviantart' && <>
             <span>Publish destinations</span>
             <label><input type="checkbox" checked={bulkSpaceIntent} onChange={(event) => setBulkSpaceIntent(event.target.checked)} /> {brand.workspaceFullName}</label>
             {bulkSpaceIntent && <select value={bulkSpaceVisibility} onChange={(event) => setBulkSpaceVisibility(event.target.value as 'private' | 'unlisted' | 'public')} aria-label={`${brand.workspaceFullName} visibility for selected works`}>
@@ -889,7 +972,10 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
             </button>
             {bulkDestinationMessage && <small className="studio-work-destination-message">{bulkDestinationMessage}</small>}
             {bulkPublishMessage && <small className="studio-work-destination-message">{bulkPublishMessage}</small>}
+            </>}
           </div>
+            </div>
+          </div>}
         </div>}
         <div className="studio-works-list">
           {displayedAssets.map((asset) => {
@@ -901,7 +987,6 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
               collection.name.toLowerCase().includes(collectionPickerQuery.trim().toLowerCase())
             ));
             const isCollectionPickerOpen = collectionPickerAssetId === asset.assetId;
-            const assetLifecycle = asset.workStatus === 'deleted' ? 'archived' : asset.workStatus;
             const deviantArtDestinations = asset.publications.filter((publication) => publication.platform === 'deviantart' && publication.syncStatus !== 'deleted');
             const remoteLifecycleIssues = asset.publications.filter((publication) => (
               publication.platform === 'deviantart'
@@ -936,31 +1021,14 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                 <div className="studio-work-details">
                   <strong>{asset.canonicalTitle || asset.publications[0]?.externalTitle || 'Untitled work'}</strong>
                   <span>{assetTypeLabel(asset)} · {originLabel}</span>
-                  <div className="studio-work-local-state">
-                    <span>Work in {brand.productName}</span>
-                    <strong>{lifecycleLabel(assetLifecycle)} · {availabilityLabel(asset.contentAvailability)}</strong>
-                  </div>
-                  <div className="studio-work-destination-states">
-                    <span>Destinations</span>
-                    {destinationRows.map((row) => <div className="studio-work-destination-state" key={`${row.destination}:${row.accountId || 'space'}`}>
-                      <strong>{row.label}</strong>
-                      <span className={row.publication?.status === 'live' ? 'studio-destination-live' : row.publication?.status === 'failed' ? 'studio-destination-error' : ''}>
-                        {row.publication
-                          ? row.publication.destination === 'eversally' && row.publication.status === 'live' && row.publication.visibility === 'private'
-                            ? 'Private · managers only'
-                            : `${destinationStatusLabel(row.publication.status)}${row.publication.destination === 'eversally' ? ` · ${row.publication.visibility}` : ''}`
-                          : 'Not published'}
-                        {row.publication && row.publication.syncStatus !== 'in_sync' && row.publication.syncStatus !== 'not_applicable' ? ` · ${row.publication.syncStatus.replace(/_/g, ' ')}` : ''}
-                      </span>
-                      {row.intent && !row.publication && <small>Selected to publish as {row.intent.desiredStatus === 'draft' ? 'draft / staged' : row.intent.desiredStatus}</small>}
-                    </div>)}
-                  </div>
                   {asset.engagement && <div className="studio-work-engagement" title={asset.engagement.capturedAt ? `Updated ${new Date(asset.engagement.capturedAt).toLocaleString()}` : undefined}>
                     <span><strong>{engagementNumber(asset.engagement.views)}</strong> views</span>
                     <span><strong>{engagementNumber(asset.engagement.favourites)}</strong> favourites</span>
                     <span><strong>{engagementNumber(asset.engagement.comments)}</strong> comments</span>
                     <span><strong>{engagementNumber(asset.engagement.downloads)}</strong> downloads</span>
                   </div>}
+                  <details className="studio-work-row-advanced">
+                    <summary>Publishing intent</summary>
                   <div className="studio-work-destination-target">
                     <span>Publishing intent</span>
                     <label className="studio-work-intent-option">
@@ -1000,9 +1068,30 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                         : <div><small>No connected account is available for this creator.</small><Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}`}>Manage integrations</Link></div>}
                     {destinationMessageByAsset[asset.assetId] && <small className="studio-work-destination-message">{destinationMessageByAsset[asset.assetId]}</small>}
                   </div>
+                  </details>
                   {remoteLifecycleIssues.map((publication) => <small className="studio-work-metadata-warning" key={`remote-state:${publication.externalPublicationId}`}>
                     @{publication.externalUsername} · {publication.syncStatus.replace(/_/g, ' ')}{publication.remoteStateReason ? ` — ${publication.remoteStateReason}` : ''}
                   </small>)}
+                </div>
+                <div className="studio-work-destination-column">
+                  <div className="studio-work-destination-states">
+                    <span>Destinations</span>
+                    {destinationRows.map((row) => <div className="studio-work-destination-state" key={`${row.destination}:${row.accountId || 'space'}`}>
+                      <div className="studio-work-destination-chip">
+                        <span className={`studio-works-platform-dot ${row.destination === 'eversally' ? 'studio-works-platform-dot-space' : 'studio-works-platform-dot-deviantart'}`} />
+                        <strong>{row.label}</strong>
+                        <span className={`studio-work-destination-pill ${row.publication?.status === 'live' ? 'studio-destination-live' : row.publication?.status === 'failed' ? 'studio-destination-error' : ''}`}>
+                          {row.publication
+                            ? row.publication.destination === 'eversally' && row.publication.status === 'live' && row.publication.visibility === 'private'
+                              ? 'Private · managers only'
+                              : `${destinationStatusLabel(row.publication.status)}${row.publication.destination === 'eversally' ? ` · ${row.publication.visibility}` : ''}`
+                            : 'Not published'}
+                          {row.publication && row.publication.syncStatus !== 'in_sync' && row.publication.syncStatus !== 'not_applicable' ? ` · ${row.publication.syncStatus.replace(/_/g, ' ')}` : ''}
+                        </span>
+                      </div>
+                      {row.intent && !row.publication && <small>Selected to publish as {row.intent.desiredStatus === 'draft' ? 'draft / staged' : row.intent.desiredStatus}</small>}
+                    </div>)}
+                  </div>
                 </div>
                 <div className="studio-work-actions">
                   {selectedCollection && manuallyAssigned && <span className="studio-work-membership">Added to this collection</span>}
@@ -1012,6 +1101,14 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                       ? <div>{assignedCollections.map((collection) => <span className="studio-work-collection-chip" key={collection.ubeeqCollectionId}>{collection.name}</span>)}</div>
                       : <small>Not in a collection</small>}
                   </div>
+                  <Link
+                    className="auth-secondary-btn no-underline"
+                    to={workRoute(asset.assetId)}
+                  >
+                    {deviantArtDestinations.some((publication) => publication.syncStatus === 'pending_publish') || !asset.destinationPublications.some((publication) => publication.status === 'live')
+                      ? 'Review & publish'
+                      : 'Edit metadata'}
+                  </Link>
                   <button
                     type="button"
                     className="auth-secondary-btn"
@@ -1021,21 +1118,13 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                       setCollectionPickerQuery('');
                     }}
                   >
-                    {isCollectionPickerOpen ? 'Done' : 'Manage collections'}
+                    {isCollectionPickerOpen ? 'Done' : 'Collections'}
                   </button>
                   <Link
                     className="auth-secondary-btn no-underline"
                     to={workRoute(asset.assetId, 'activity')}
                   >
                     Activity
-                  </Link>
-                  <Link
-                    className="auth-secondary-btn no-underline"
-                    to={workRoute(asset.assetId)}
-                  >
-                    {deviantArtDestinations.some((publication) => publication.syncStatus === 'pending_publish') || !asset.destinationPublications.some((publication) => publication.status === 'live')
-                      ? 'Review & publish'
-                      : 'Edit metadata'}
                   </Link>
                   {asset.destinationPublications.some((publication) => publication.destination === 'eversally' && publication.status === 'live' && publication.visibility !== 'private') && asset.canonicalSlug && activeCreator?.slug && <Link
                     className="auth-secondary-btn no-underline"

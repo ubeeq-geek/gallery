@@ -215,6 +215,12 @@ export class InMemoryStore implements DataStore {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
+  async listPublicationsByDestination(tenantId: string, destination: Publication['destination']): Promise<Publication[]> {
+    return this.publications
+      .filter((publication) => publication.tenantId === tenantId && publication.destination === destination)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
   async getPublication(tenantId: string, publicationId: string): Promise<Publication | null> {
     return this.publications.find((publication) => publication.tenantId === tenantId && publication.publicationId === publicationId) || null;
   }

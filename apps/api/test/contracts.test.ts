@@ -471,13 +471,14 @@ describe('API contract', () => {
     const response = await request(app)
       .post('/studio/creators')
       .set('x-user-id', 'u-ubeeqer')
-      .send({ name: 'Open Studio', slug: 'open-studio', space: { coverPreset: 'eversally-cover-7' } });
+      .send({ name: 'Open Studio', slug: 'open-studio', visibleIntegrations: ['deviantart'], space: { coverPreset: 'eversally-cover-7' } });
 
     expect(response.status).toBe(201);
     expect(response.body.spaceTier).toBe('free');
     const creators = await store.listCreatorsByUserId('u-ubeeqer');
     expect(creators).toHaveLength(1);
     expect(creators[0].slug).toBe('open-studio');
+    expect(creators[0].visibleIntegrations).toEqual(['deviantart']);
     expect(creators[0].space?.coverPreset).toBe('eversally-cover-7');
   });
 

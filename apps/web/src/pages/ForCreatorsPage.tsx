@@ -8,7 +8,7 @@ export function ForCreatorsPage() {
         <p className="text-sm uppercase tracking-wide text-slate-400">For {brand.creatorPlural}</p>
         <h1 className="text-3xl font-semibold">{brand.formalCreatorName} support at {brand.productName}</h1>
         <p className="text-slate-300 max-w-3xl">
-          Every {brand.memberName} can create a free {brand.workspaceName}. Invitations are for an additional support tier while we refine publishing and hosting tools.
+          Every {brand.memberName} can become a {brand.creatorName.toLowerCase()}. Each {brand.creatorName.toLowerCase()} receives a free {brand.workspaceName}; invitations are for an additional support tier while we refine publishing and hosting tools.
         </p>
       </header>
 

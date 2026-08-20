@@ -59,6 +59,11 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const [success, setSuccess] = useState('');
   const [metadataWarning, setMetadataWarning] = useState('');
   const [remoteUpdateJobs, setRemoteUpdateJobs] = useState<StudioExternalSyncJob[]>([]);
+  const [nativeDaType, setNativeDaType] = useState<'literature' | 'journal' | 'status'>('literature');
+  const [nativeDaAccountId, setNativeDaAccountId] = useState('');
+  const [nativeDaBody, setNativeDaBody] = useState('');
+  const [nativeDaBusy, setNativeDaBusy] = useState(false);
+  const [nativeDaMessage, setNativeDaMessage] = useState('');
 
   const backToWorks = () => {
     navigate(worksWorkspacePath(location.search));
@@ -98,6 +103,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       const availableAccounts = connectedAccounts.filter((account) => !destinations.some((publication) => publication.externalAccountId === account.externalAccountId));
       const savedIntent = found.publicationIntents.find((intent) => intent.enabled && intent.destination === 'deviantart' && availableAccounts.some((account) => account.externalAccountId === intent.integrationAccountId));
       setAccounts(connectedAccounts);
+      setNativeDaAccountId(selected?.externalAccountId || connectedAccounts[0]?.externalAccountId || '');
       setExternalCollections(((collectionResult as { externalCollections?: StudioExternalCollection[] }).externalCollections || []));
       setNewDestinationAccountId(savedIntent?.integrationAccountId || (availableAccounts.length === 1 ? availableAccounts[0].externalAccountId : ''));
       setNewDestinationTargetStatus(savedIntent?.desiredStatus === 'draft' ? 'draft' : 'published');
@@ -105,7 +111,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       setSelectedPublicationId(selected?.externalPublicationId || '');
       setLinked(selected ? isMetadataLinked(found) : false);
       setTitle(found.canonicalTitle || selected?.externalTitle || '');
-      setDescriptionBlocks(parseDescriptionBlocks(found.canonicalDescription || selected?.externalDescription || ''));
+      setDescriptionBlocks(found.body?.length ? clonePostBlocks(found.body) : parseDescriptionBlocks(found.canonicalDescription || selected?.externalDescription || ''));
       setIntegrationTitle(selected?.externalTitle || '');
       setIntegrationDescriptionBlocks(parseDescriptionBlocks(selected?.externalDescription || ''));
       setTags(selected?.externalTags || []);
@@ -417,10 +423,11 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       const updated = await api.studioUpdateExternalAsset(asset.assetId, {
         canonicalTitle: title,
         canonicalDescription,
+        body: descriptionBlocks,
         titleSyncPolicy: linked && canLink ? 'mirrored' : 'independent',
         descriptionSyncPolicy: linked && canLink && canUpdatePublishedDescription ? 'mirrored' : 'independent',
         integrationMetadata
-      }) as Pick<StudioExternalAsset, 'canonicalTitle' | 'canonicalDescription' | 'titleSyncPolicy' | 'descriptionSyncPolicy' | 'updatedAt'> & {
+      }) as Pick<StudioExternalAsset, 'canonicalTitle' | 'canonicalDescription' | 'body' | 'titleSyncPolicy' | 'descriptionSyncPolicy' | 'updatedAt'> & {
         remoteUpdateJobs?: StudioExternalSyncJob[];
         remoteUpdateWarnings?: string[];
       };
@@ -447,7 +454,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         } : publication)
       } : current);
       setTitle(updated.canonicalTitle || '');
-      setDescriptionBlocks(parseDescriptionBlocks(updated.canonicalDescription || ''));
+      setDescriptionBlocks(updated.body?.length ? clonePostBlocks(updated.body) : parseDescriptionBlocks(updated.canonicalDescription || ''));
       setIntegrationTitle(nextIntegrationTitle);
       setIntegrationDescriptionBlocks(parseDescriptionBlocks(canUpdatePublishedDescription ? nextIntegrationDescription : sourceDescription));
       setTags(normalizedTags);
@@ -460,6 +467,50 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to save this work’s metadata.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const publishNativeDeviantArt = async () => {
+    const nativeAccountId = nativeDaAccountId || integration?.externalAccountId;
+    if (!asset || !nativeAccountId) return;
+    const body = nativeDaBody.trim() || serializeDescriptionBlocks(descriptionBlocks, 'deviantart');
+    if (!body) {
+      setError('Add some text before publishing this DeviantArt native post.');
+      return;
+    }
+    setNativeDaBusy(true);
+    setNativeDaMessage('');
+    setError('');
+    try {
+      const common = {
+        title: title || asset.canonicalTitle || 'Untitled work',
+        body,
+        tags: tags.map((tag) => tag.trim()).filter(Boolean),
+        collectionExternalIds: integrationCollectionIds,
+        isMature,
+        matureLevel,
+        matureClassification,
+        allowComments
+      };
+      if (nativeDaType === 'literature') {
+        await api.studioPublishDeviantArtLiterature(asset.assetId, nativeAccountId, {
+          ...common,
+          description: serializeDescriptionBlocks(descriptionBlocks, 'deviantart')
+        });
+      } else if (nativeDaType === 'journal') {
+        await api.studioPublishDeviantArtJournal(asset.assetId, nativeAccountId, common);
+      } else {
+        await api.studioPublishDeviantArtStatus(asset.assetId, nativeAccountId, { body });
+      }
+      setNativeDaBody('');
+      setNativeDaMessage(`Published a DeviantArt ${nativeDaType}. It is now recorded as an independent destination publication.`);
+      const refreshed = await api.studioListWorks(creatorId) as { items?: StudioExternalAsset[] };
+      const refreshedAsset = (refreshed.items || []).find((item) => item.assetId === workId);
+      if (refreshedAsset) setAsset(refreshedAsset);
+    } catch (nativeError) {
+      setError(nativeError instanceof Error ? nativeError.message : `Unable to publish the DeviantArt ${nativeDaType}.`);
+    } finally {
+      setNativeDaBusy(false);
     }
   };
 
@@ -611,6 +662,38 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
               </article>)}
             </div> : <p className="small">No destinations yet. {accounts.length ? 'Choose the DeviantArt account above to prepare this work for synchronization.' : `You can continue editing the ${brand.productName} metadata while you manage the creator’s connected platforms.`}</p>}
           </section>
+
+          {accounts.length > 0 && <section className="studio-work-native-da">
+            <div>
+              <p className="studio-work-metadata-field-heading">Native DeviantArt publishing</p>
+              <p>Use DeviantArt’s native text endpoints for literature, journals, and short status updates. These do not require an image upload.</p>
+            </div>
+            <div className="studio-inline-actions">
+              <label>
+                <span>DeviantArt account</span>
+                <select value={nativeDaAccountId} disabled={nativeDaBusy} onChange={(event) => setNativeDaAccountId(event.target.value)}>
+                  {accounts.map((account) => <option key={account.externalAccountId} value={account.externalAccountId}>{account.externalUsername}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>Post type</span>
+                <select value={nativeDaType} disabled={nativeDaBusy} onChange={(event) => setNativeDaType(event.target.value as typeof nativeDaType)}>
+                  <option value="literature">Literature</option>
+                  <option value="journal">Journal</option>
+                  <option value="status">Status update</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              <span>{nativeDaType === 'status' ? 'Status text' : 'Body'}</span>
+              <textarea value={nativeDaBody} disabled={nativeDaBusy} onChange={(event) => setNativeDaBody(event.target.value)} placeholder={nativeDaType === 'status' ? 'Share an update…' : 'Write the text to publish…'} rows={6} />
+            </label>
+            <div className="studio-inline-actions">
+              <button type="button" className="auth-primary-btn" disabled={nativeDaBusy} onClick={() => void publishNativeDeviantArt()}>{nativeDaBusy ? 'Publishing…' : `Publish ${nativeDaType}`}</button>
+              {nativeDaMessage && <span className="success" role="status">{nativeDaMessage}</span>}
+            </div>
+            <small>Poll creation is not offered because DeviantArt’s current public API reference does not document a supported poll-create endpoint.</small>
+          </section>}
 
           <section className="studio-work-space-controls">
             <div>

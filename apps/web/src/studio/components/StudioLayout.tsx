@@ -71,7 +71,7 @@ export function StudioLayout({
             </div>
           </div>
         )}
-        {onboarding && <div className="studio-contributor-label"><strong>Your next step</strong><p>A free {brand.workspaceName} is ready whenever you are.</p></div>}
+        {onboarding && <div className="studio-contributor-label"><strong>Your next step</strong><p>Become a {brand.creatorName} whenever you’re ready — nothing below is required today.</p></div>}
         <nav className="studio-sidebar-nav">
           {!onboarding && studioPrimaryNavSections.map(navItem)}
         </nav>
@@ -87,7 +87,7 @@ export function StudioLayout({
       <section className="studio-main">
         <header className="studio-section-header">
           <div>
-            <p className="studio-page-eyebrow">{activeCreator ? activeCreator.name : brand.studioName}</p>
+            {!onboarding && <p className="studio-page-eyebrow">{activeCreator ? activeCreator.name : brand.studioName}</p>}
             <h1>{title}</h1>
             <p>{description}</p>
           </div>

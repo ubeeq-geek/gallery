@@ -68,6 +68,23 @@ export class CanonicalContentRepository implements CanonicalStore {
     return items;
   }
 
+  private async listIndex2<T>(key: string, prefix: string, entityType: string): Promise<T[]> {
+    const items: T[] = [];
+    let ExclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const result = await this.client.send(new QueryCommand({
+        TableName: this.tableName,
+        IndexName: 'GSI2',
+        KeyConditionExpression: 'GSI2PK = :pk AND begins_with(GSI2SK, :sk)',
+        ExpressionAttributeValues: { ':pk': key, ':sk': prefix },
+        ExclusiveStartKey
+      }));
+      items.push(...(result.Items || []).filter((item) => item.entityType === entityType).map((item) => clean<T>(item)));
+      ExclusiveStartKey = result.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+    return items;
+  }
+
   async listWorksByCreator(tenantId: string, creatorId: string): Promise<Work[]> {
     const items = await this.listIndex<Work>(`${tenantPrefix(tenantId)}#CREATOR_WORK#${creatorId}`, 'WORK#', 'WORK');
     return items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -147,6 +164,11 @@ export class CanonicalContentRepository implements CanonicalStore {
 
   async listPublicationsByWork(tenantId: string, workId: string): Promise<Publication[]> {
     const items = await this.listIndex<Publication>(`${tenantPrefix(tenantId)}#WORK_PUBLICATION#${workId}`, 'PUBLICATION#', 'PUBLICATION');
+    return items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async listPublicationsByDestination(tenantId: string, destination: Publication['destination']): Promise<Publication[]> {
+    const items = await this.listIndex2<Publication>(`${tenantPrefix(tenantId)}#DESTINATION_PUBLICATION#${destination}`, 'PUBLICATION#', 'PUBLICATION');
     return items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 

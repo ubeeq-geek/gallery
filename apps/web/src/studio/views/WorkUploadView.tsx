@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { brand } from '../../brand';
+import { createDescriptionBlock, serializeDescriptionBlocks } from '../../blockContent';
+import { BlockEditor } from '../../components/BlockEditor';
+import type { PostBlock } from '../../domainTypes';
 import { Card } from '../components/Card';
 import { worksWorkspacePath } from '../workListNavigation';
 import type { StudioCreator } from '../types';
@@ -21,11 +24,16 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
   const location = useLocation();
   const navigate = useNavigate();
   const requestedCreatorId = new URLSearchParams(location.search).get('creatorId') || '';
+  const requestedKind = new URLSearchParams(location.search).get('kind');
+  const isWriting = requestedKind === 'writing' || requestedKind === 'literature' || requestedKind === 'article';
+  const [writingKind, setWritingKind] = useState<'article' | 'literature'>(requestedKind === 'literature' ? 'literature' : 'article');
   const [creatorId, setCreatorId] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState('');
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState<PostBlock[]>(() => [createDescriptionBlock()]);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -37,6 +45,30 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
   }, [creatorId, creators, requestedCreatorId]);
 
   const submit = async () => {
+    if (isWriting) {
+      if (!creatorId || !title.trim() || !serializeDescriptionBlocks(body).replace(/<[^>]+>/g, '').trim()) {
+        setError('Add a title and some body text before creating this Work.');
+        return;
+      }
+      setUploading(true);
+      setError('');
+      try {
+        const created = await api.studioCreateWork({
+          creatorId,
+          originalFilename: title.trim(),
+          title: title.trim(),
+          kind: writingKind,
+          body,
+          description: serializeDescriptionBlocks(body)
+        });
+        navigate(`/studio/workspace?section=works&creatorId=${encodeURIComponent(creatorId)}&workId=${encodeURIComponent(created.work.workId)}`);
+      } catch (createError) {
+        setError(createError instanceof Error ? createError.message : 'Unable to create this writing Work.');
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
     if (!creatorId || !files.length) return;
     setUploading(true);
     setError('');
@@ -81,11 +113,13 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
   return (
     <section className="studio-work-upload-layout">
       <Card
-        title="Upload works"
+        title={isWriting ? 'Create Post or Story' : 'Upload works'}
         eyebrow={`Works / ${activeCreator?.name || brand.creatorName}`}
         actions={<button type="button" className="auth-secondary-btn" onClick={() => navigate(worksWorkspacePath(location.search))}>Back to Works</button>}
       >
-        <p className="studio-work-upload-lede">Select one or more images. Each image becomes its own {brand.productName} work; multi-image works will arrive as a separate composition workflow.</p>
+        <p className="studio-work-upload-lede">{isWriting
+          ? `Create a writing Work with the block editor. Posts and Stories use the same portable content model and can be reviewed, published to ${brand.workspaceFullName}, and adapted for connected platforms.`
+          : `Select one or more images. Each image becomes its own ${brand.productName} work; multi-image works will arrive as a separate composition workflow.`}</p>
         <div className="studio-work-upload-form">
           <label>
             <span>{brand.creatorName}</span>
@@ -93,7 +127,25 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
               {creators.map((creator) => <option key={creator.creatorId} value={creator.creatorId}>{creator.name}</option>)}
             </select>
           </label>
-          <div className="studio-work-upload-files">
+          {isWriting ? <>
+            <label>
+              <span>Writing type</span>
+              <select value={writingKind} disabled={uploading} onChange={(event) => setWritingKind(event.target.value as 'article' | 'literature')}>
+                <option value="article">Post</option>
+                <option value="literature">Story</option>
+              </select>
+            </label>
+            <label>
+              <span>Title</span>
+              <input value={title} disabled={uploading} onChange={(event) => setTitle(event.target.value)} maxLength={300} placeholder="A title for your Post or Story" />
+            </label>
+            <BlockEditor
+              label="Body"
+              value={body}
+              onChange={setBody}
+              helpText="Write portable blocks that can be shown in your Space and adapted for DeviantArt."
+            />
+          </> : <div className="studio-work-upload-files">
             <span>Images</span>
             <input
               ref={fileInputRef}
@@ -128,7 +180,7 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
               <span>or choose images from your computer</span>
               <small>Bulk upload is supported; every selected image becomes one work.</small>
             </button>
-          </div>
+          </div>}
         </div>
         {!!files.length && <ul className="studio-work-upload-file-list">
           {files.map((file) => <li key={`${file.name}:${file.lastModified}`}><strong>{file.name}</strong><span>{titleFromFilename(file.name)} · {Math.ceil(file.size / 1024)} KB</span></li>)}
@@ -136,8 +188,8 @@ export function WorkUploadView({ creators }: { creators: StudioCreator[] }) {
         {progress && <p className="small">{progress}</p>}
         {error && <p className="error">{error}</p>}
         <div className="studio-work-metadata-footer">
-          <button type="button" className="auth-primary-btn" disabled={uploading || !creatorId || !files.length} onClick={() => void submit()}>
-            {uploading ? 'Uploading…' : `Create ${files.length || ''} work${files.length === 1 ? '' : 's'}`}
+          <button type="button" className="auth-primary-btn" disabled={uploading || !creatorId || (isWriting ? !title.trim() : !files.length)} onClick={() => void submit()}>
+            {uploading ? (isWriting ? 'Creating…' : 'Uploading…') : isWriting ? `Create ${writingKind === 'article' ? 'Post' : 'Story'}` : `Create ${files.length || ''} work${files.length === 1 ? '' : 's'}`}
           </button>
           <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=works${creatorId ? `&creatorId=${encodeURIComponent(creatorId)}` : ''}`}>Cancel</Link>
         </div>

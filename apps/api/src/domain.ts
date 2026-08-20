@@ -157,6 +157,7 @@ export interface Creator {
   creatorId: string;
   name: string;
   slug: string;
+  visibleIntegrations?: string[];
   spaceTier?: 'free' | 'approved';
   approvedCreatorAt?: string;
   slugHistory?: string[];

@@ -353,6 +353,7 @@ type TrendingImage = {
   postSlug?: string;
   postTitle?: string;
   postSummary?: string;
+  canonicalWorkSlug?: string;
   artistId: string;
   artistName: string;
   galleryId: string;
@@ -564,6 +565,7 @@ type CreatorProfilePayload = {
   name: string;
   slug: string;
   status: 'active' | 'inactive';
+  isOwner?: boolean;
   isFollowing?: boolean;
   space?: {
     bio?: string;
@@ -599,6 +601,7 @@ type CreatorProfilePayload = {
   groupingCount?: number;
   feedItems?: Array<{
     imageId: string;
+    canonicalWorkSlug?: string;
     title: string;
     assetType: 'image' | 'video' | 'audio';
     createdAt: string;
@@ -928,7 +931,9 @@ function HeaderAuth({
   const adminCount = sanitizeNotificationCount(roleNotificationCounts?.admin);
   const memberProfileHref = profile?.username ? `/u/${encodeURIComponent(profile.username)}` : '/settings';
   const creatorProfiles = (managedArtists || []).filter((artist) => Boolean(artist.slug));
-  const artistProfileHref = primaryManagedArtist?.slug ? `/creators/${primaryManagedArtist.slug}` : memberProfileHref;
+  const artistProfileHref = primaryManagedArtist?.slug
+    ? `/creators/${primaryManagedArtist.slug}?preview=1`
+    : memberProfileHref;
   const studioHref = '/studio';
   const adminHref = studioHref;
   const isExternalAdminHref = false;
@@ -1149,7 +1154,7 @@ function HeaderAuth({
                     to="/studio"
                     className="auth-nav-btn auth-nav-btn-primary hidden sm:inline-flex"
                   >
-                    Create a {brand.workspaceName}
+                    Become a {brand.creatorName}
                   </Link>
                 )}
                 <details className="user-menu">
@@ -1164,7 +1169,7 @@ function HeaderAuth({
                         Studio{studioCount > 0 ? ` (${formatNotificationBadge(studioCount)})` : ''}
                       </Link>
                     )}
-                    {!canAccessStudio && <Link to="/studio" onClick={closeUserMenus}>Create a {brand.workspaceName}</Link>}
+                    {!canAccessStudio && <Link to="/studio" onClick={closeUserMenus}>Become a {brand.creatorName}</Link>}
                     {false && isAdmin && (isExternalAdminHref ? (
                       <a href={adminHref} onClick={closeUserMenus}>
                         Admin{adminCount > 0 ? ` (${formatNotificationBadge(adminCount)})` : ''}
@@ -1609,7 +1614,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
                 : signinMethod === 'email_otp'
                 ? 'Sign in with a one-time code sent to your email.'
                 : 'Sign in to continue to your account.')
-              : `Join as ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.memberName} to follow work, save collections, and create a ${brand.workspaceName} whenever you are ready.`}
+              : `Join as ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.memberName} to follow work, save collections, and become a ${brand.creatorName.toLowerCase()} whenever you are ready.`}
           </p>
           {authMode === 'signin' && otpContext !== 'mfa' && (
             <div className="auth-method-switch">
@@ -1733,7 +1738,7 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
             Need to confirm your account? <Link to="/auth/confirm">Confirm registration</Link>
           </div>
 
-          {authMode === 'register' && <p className="auth-legal-copy">By creating an account, you agree to the <Link to="/space-rules">{brand.rulesName}</Link>. A creator {brand.workspaceName} is optional and can be created later.</p>}
+          {authMode === 'register' && <p className="auth-legal-copy">By creating an account, you agree to the <Link to="/space-rules">{brand.rulesName}</Link>. A {brand.creatorName.toLowerCase()} identity and {brand.workspaceName} are optional and can be created later.</p>}
 
           <div className="small">
             {authMode === 'signin'
@@ -1747,12 +1752,12 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
 
         <div className="auth-showcase panel">
           <span className="auth-chip">One account. Your pace.</span>
-          <h1>{authMode === 'signin' ? 'Return to the work and people you follow.' : `Start as ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.memberName}. Become ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.formalCreatorName} when it serves your work.`}</h1>
-          <p>{brand.productName} membership is for participating in the community. A {brand.workspaceFullName} is a separate, free creator setup when you are ready to publish or manage a catalogue.</p>
+          <h1>{authMode === 'signin' ? 'Return to the work and people you follow.' : `Start as ${brand.id === 'eversally' ? 'an' : 'a'} ${brand.memberName}. Become a Creator when it serves your work.`}</h1>
+          <p>{brand.productName} membership is for participating in the community. Become a {brand.creatorName.toLowerCase()} when you are ready; your {brand.workspaceFullName} is included as its public home and Studio.</p>
           <div className="auth-feature-grid">
             <article><strong>Follow creators</strong><p>Keep up with work from people and {brand.workspacePlural} you care about.</p></article>
             <article><strong>Save what matters</strong><p>Build private collections and return to work you want to revisit.</p></article>
-            <article><strong>Create later</strong><p>Open a free {brand.workspaceName} when you want a public home or creator tools.</p></article>
+            <article><strong>Become a Creator later</strong><p>Choose a {brand.creatorName.toLowerCase()} identity when you want a public home or creator tools.</p></article>
           </div>
           <div className="auth-showcase-actions">
             {authMode === 'signin'
@@ -6581,10 +6586,12 @@ function ProfileExternalLinkIcon({ label }: { label: string }) {
 
 function CreatorProfilePage({
   viewerProfile,
+  viewerUser,
   managedArtists,
   onDiscoveryDockChange
 }: {
   viewerProfile?: UserProfile | null;
+  viewerUser?: CurrentUser;
   managedArtists?: ManagedArtist[];
   onDiscoveryDockChange?: (state: DiscoveryDockSummary | null) => void;
 }) {
@@ -6593,12 +6600,13 @@ function CreatorProfilePage({
   const shareCodeStorageKey = `ubeeq:creator-share:${slug}`;
   const suppliedShareCode = new URLSearchParams(location.search).get('access') || undefined;
   const requestedLocalPreview = new URLSearchParams(location.search).get('preview') === '1';
-  // Local development has no browser session for the seeded `local-user`.
-  // When this is one of that user's Creator profiles, explicitly mark the
-  // request as an owner preview. Public visitors (including Incognito) never
-  // receive this flag and therefore remain subject to Space visibility.
+  // When this is one of the signed-in user's Creator profiles, explicitly
+  // mark the request as an owner preview. The API still validates that the
+  // preview is allowed by its local/development configuration, so this does
+  // not weaken production visibility for public visitors (including
+  // Incognito windows).
   const localPreview = requestedLocalPreview || (
-    import.meta.env.DEV && Boolean((managedArtists || []).some((artist) => (
+    Boolean(viewerUser && (managedArtists || []).some((artist) => (
       artist.slug === slug || artist.artistId === slug
     )))
   );
@@ -6653,11 +6661,12 @@ function CreatorProfilePage({
   const swatches = ['#fda4af', '#7dd3fc', '#6ee7b7', '#a5b4fc', '#fcd34d', '#e9a8f4', '#5eead4', '#fdba74'];
   const profileEditorId = profile?.creatorId || profile?.artistId;
   const canEditProfile = Boolean(profile && profileEditorId && (
+    profile.isOwner === true ||
     // A local Studio creation intentionally opens its private Space with the
     // explicit preview marker. Treat that preview as the owner view from the
     // first render; the normal authenticated ownership list remains the only
     // production path to editing controls.
-    (import.meta.env.DEV && localPreview) ||
+    localPreview ||
     (managedArtists || []).some((artist) => (
       artist.artistId === profileEditorId || artist.slug === profile.slug
     ))
@@ -6710,6 +6719,7 @@ function CreatorProfilePage({
     const galleryId = primaryGallery?.galleryId || item?.galleryId || '';
     return {
       imageId: item.imageId,
+      canonicalWorkSlug: item.canonicalWorkSlug,
       assetType: item.assetType === 'video' || item.assetType === 'audio' ? item.assetType : 'image',
       artistId: item.artistId || artistId,
       artistName: item.artistName || artistName,
@@ -6785,7 +6795,7 @@ function CreatorProfilePage({
   };
 
   const toggleCreatorFollow = async () => {
-    if (!profile || !viewerProfile || followSaving) return;
+    if (!profile || (!viewerProfile && !viewerUser) || followSaving) return;
     setFollowSaving(true);
     setError('');
     try {
@@ -6833,6 +6843,24 @@ function CreatorProfilePage({
         const responseArtistId = artistId || response.artistId || '';
         mapped = (response.items || []).map((item) => mapFeedItemToTrendingShape(item, artistName, responseArtistId));
         nextCursor = response.nextCursor;
+
+        // The profile feed still contains legacy media for older Spaces. Merge
+        // the canonical public Works endpoint as well so a Work published to
+        // Eversally remains visible after its source integration is removed.
+        // The API intentionally deduplicates by image/work id below; this also
+        // protects the view while a background sync is refreshing the feed.
+        try {
+          const canonicalResponse = await api.getCreatorWorks(slug, activeShareCode, localPreview) as { items?: any[] };
+          const canonicalItems = (canonicalResponse.items || []).map((item) => mapFeedItemToTrendingShape(item, artistName, responseArtistId));
+          const byId = new Map<string, TrendingImage>();
+          [...mapped, ...canonicalItems].forEach((item) => {
+            if (item.imageId && !byId.has(item.imageId)) byId.set(item.imageId, item);
+          });
+          mapped = [...byId.values()].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        } catch {
+          // The profile feed remains usable if the canonical endpoint is
+          // unavailable (for example while a local API is restarting).
+        }
       }
       setFeedItems((prev) => append ? [...prev, ...mapped] : mapped);
       setFeedCursor(nextCursor);
@@ -7267,7 +7295,11 @@ function CreatorProfilePage({
           <div className="discovery-feature-text">
             {contentTypeLabel && <span className="discovery-content-type-pill">{contentTypeLabel}</span>}
             <h3 className="discovery-feature-title">
-              {linkedPost ? <Link to={`/posts/${linkedPost.slug}`} className="no-underline">{item.title || item.imageId}</Link> : (item.title || item.imageId)}
+              {item.canonicalWorkSlug
+                ? <Link to={`/creators/${encodeURIComponent(profile.slug)}/works/${encodeURIComponent(item.canonicalWorkSlug)}`} className="no-underline">{item.title || item.imageId}</Link>
+                : linkedPost
+                  ? <Link to={`/posts/${linkedPost.slug}`} className="no-underline">{item.title || item.imageId}</Link>
+                  : (item.title || item.imageId)}
             </h3>
             <p className="discovery-feature-subtitle">by {item.artistName || profile.name}</p>
             {disclosureLine && <p className="discovery-feature-subtitle">{disclosureLine}</p>}
@@ -7502,7 +7534,7 @@ function CreatorProfilePage({
             </button>
             {canEditProfile
               ? <Link className="auth-primary-btn no-underline" to={`/studio/workspace?section=creator-profile&creatorId=${encodeURIComponent(profileEditorId!)}`}>Edit profile</Link>
-              : viewerProfile
+              : (viewerProfile || viewerUser)
               ? <button className={profile.isFollowing ? 'auth-secondary-btn' : 'auth-primary-btn'} disabled={followSaving} onClick={() => void toggleCreatorFollow()}>{followSaving ? 'Saving…' : profile.isFollowing ? 'Following' : 'Follow'}</button>
               : <Link className="auth-primary-btn no-underline" to="/auth/signin">Sign in to follow</Link>}
               <span className="public-profile-feed-links" role="group" aria-label={`${profile.name} syndication feeds`}>
@@ -8261,7 +8293,7 @@ export default function App() {
         <Route path="/story" element={<HomePage viewerProfile={myProfile} mediaRoute="story" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/image" element={<HomePage viewerProfile={myProfile} mediaRoute="image" onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/trending" element={<TrendingPage viewerProfile={myProfile} />} />
-        <Route path="/creators/:slug" element={<CreatorProfilePage viewerProfile={myProfile} managedArtists={managedArtists} onDiscoveryDockChange={setDiscoveryDock} />} />
+        <Route path="/creators/:slug" element={<CreatorProfilePage viewerProfile={myProfile} viewerUser={user} managedArtists={managedArtists} onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/u/:slug" element={<UserProfilePage viewerProfile={myProfile} />} />
         <Route path="/creators/:slug/works" element={<CreatorWorksPage />} />
         <Route path="/creators/:slug/works/:workSlug" element={<CreatorWorkPage />} />

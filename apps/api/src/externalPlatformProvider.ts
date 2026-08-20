@@ -172,9 +172,48 @@ export interface ExternalContentPublish {
   noAi?: boolean;
 }
 
+/** Native text publication payloads. These bypass Sta.sh because DeviantArt
+ * exposes dedicated endpoints for literature and journals. */
+export interface ExternalLiteraturePublish {
+  title: string;
+  body: string;
+  description?: string;
+  tags?: string[];
+  collectionExternalIds?: string[];
+  isMature?: boolean;
+  matureLevel?: 'strict' | 'moderate';
+  matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
+  allowComments?: boolean;
+  license?: string;
+}
+
+export interface ExternalJournalPublish {
+  title: string;
+  body: string;
+  tags?: string[];
+  coverUrl?: string;
+  embeddedImageUrl?: string;
+  isMature?: boolean;
+  matureLevel?: 'strict' | 'moderate';
+  matureClassification?: Array<'nudity' | 'sexual' | 'gore' | 'language' | 'ideology'>;
+  allowComments?: boolean;
+}
+
+export interface ExternalStatusPublish {
+  body: string;
+  parentExternalId?: string;
+  stashExternalId?: string;
+}
+
 export interface ExternalPublishedContent {
   externalContentId: string;
   externalDraftId?: string;
+  externalUrl?: string;
+  rawMetadata: Record<string, unknown>;
+}
+
+export interface ExternalPublishedPost {
+  externalPostId: string;
   externalUrl?: string;
   rawMetadata: Record<string, unknown>;
 }
@@ -275,6 +314,10 @@ export interface ExternalPlatformProvider {
   submitContent(accessToken: string, content: ExternalContentPublish, existingDraftId?: string): Promise<ExternalDraftContent>;
   publishDraft(accessToken: string, externalDraftId: string, content: ExternalContentPublish): Promise<ExternalPublishedContent>;
   publishContent(accessToken: string, content: ExternalContentPublish): Promise<ExternalPublishedContent>;
+  createLiterature(accessToken: string, content: ExternalLiteraturePublish): Promise<ExternalPublishedContent>;
+  updateLiterature(accessToken: string, externalContentId: string, content: ExternalLiteraturePublish): Promise<ExternalPublishedContent>;
+  createJournal(accessToken: string, content: ExternalJournalPublish): Promise<ExternalPublishedContent>;
+  postStatus(accessToken: string, content: ExternalStatusPublish): Promise<ExternalPublishedPost>;
   moveContent(): Promise<never>;
 }
 
@@ -1212,6 +1255,95 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
     const published = await this.publishDraft(accessToken, draft.externalDraftId, content);
     return { ...published, rawMetadata: { ...draft.rawMetadata, ...published.rawMetadata } };
   }
+
+  async createLiterature(accessToken: string, content: ExternalLiteraturePublish): Promise<ExternalPublishedContent> {
+    const title = content.title.trim();
+    const body = content.body.trim();
+    if (!title || !body) throw new ExternalProviderError('DeviantArt literature requires a title and body', 'invalid_response');
+    const form = this.literatureForm(content);
+    const payload = await this.requestForm('/deviation/literature/create', accessToken, form);
+    const deviation = asRecord(payload.deviation);
+    const externalContentId = asIdentifier(payload.deviationid)
+      || asIdentifier(payload.id)
+      || asIdentifier(deviation.deviationid)
+      || asIdentifier(deviation.id);
+    if (!externalContentId) throw new ExternalProviderError('DeviantArt did not return a literature deviation ID', 'invalid_response');
+    return {
+      externalContentId,
+      externalUrl: asString(payload.url) || asString(deviation.url),
+      rawMetadata: { ...payload, content_type: 'literature' }
+    };
+  }
+
+  async updateLiterature(accessToken: string, externalContentId: string, content: ExternalLiteraturePublish): Promise<ExternalPublishedContent> {
+    const title = content.title.trim();
+    const body = content.body.trim();
+    if (!title || !body) throw new ExternalProviderError('DeviantArt literature requires a title and body', 'invalid_response');
+    const payload = await this.requestForm(`/deviation/literature/update/${encodeURIComponent(externalContentId)}`, accessToken, this.literatureForm(content));
+    const deviation = asRecord(payload.deviation);
+    const returnedId = asIdentifier(payload.deviationid) || asIdentifier(payload.id) || asIdentifier(deviation.deviationid) || asIdentifier(deviation.id) || externalContentId;
+    return {
+      externalContentId: returnedId,
+      externalUrl: asString(payload.url) || asString(deviation.url),
+      rawMetadata: { ...payload, content_type: 'literature' }
+    };
+  }
+
+  async createJournal(accessToken: string, content: ExternalJournalPublish): Promise<ExternalPublishedContent> {
+    const title = content.title.trim();
+    const body = content.body.trim();
+    if (!title || !body) throw new ExternalProviderError('DeviantArt journals require a title and body', 'invalid_response');
+    const form = new URLSearchParams({ title, body, is_mature: String(content.isMature === true) });
+    if (content.tags) content.tags.forEach((tag) => form.append('tags[]', tag));
+    if (content.coverUrl) form.set('cover', content.coverUrl);
+    if (content.embeddedImageUrl) form.set('embedded_image', content.embeddedImageUrl);
+    if (content.isMature && content.matureLevel) form.set('mature_level', content.matureLevel);
+    if (content.matureClassification) content.matureClassification.forEach((classification) => form.append('mature_classification[]', classification));
+    if (content.allowComments !== undefined) form.set('allow_comments', String(content.allowComments));
+    const payload = await this.requestForm('/deviation/journal/create', accessToken, form);
+    const deviation = asRecord(payload.deviation);
+    const externalContentId = asIdentifier(payload.deviationid) || asIdentifier(payload.id) || asIdentifier(deviation.deviationid) || asIdentifier(deviation.id);
+    if (!externalContentId) throw new ExternalProviderError('DeviantArt did not return a journal deviation ID', 'invalid_response');
+    return {
+      externalContentId,
+      externalUrl: asString(payload.url) || asString(deviation.url),
+      rawMetadata: { ...payload, content_type: 'journal' }
+    };
+  }
+
+  async postStatus(accessToken: string, content: ExternalStatusPublish): Promise<ExternalPublishedPost> {
+    const body = content.body.trim();
+    if (!body) throw new ExternalProviderError('DeviantArt status updates require a body', 'invalid_response');
+    const form = new URLSearchParams({ body });
+    if (content.parentExternalId) form.set('parentid', content.parentExternalId);
+    if (content.stashExternalId) form.set('stashid', content.stashExternalId);
+    const payload = await this.requestForm('/user/statuses/post', accessToken, form);
+    const status = asRecord(payload.status);
+    const externalPostId = asIdentifier(payload.statusid) || asIdentifier(payload.id) || asIdentifier(status.statusid) || asIdentifier(status.id);
+    if (!externalPostId) throw new ExternalProviderError('DeviantArt did not return a status update ID', 'invalid_response');
+    return {
+      externalPostId,
+      externalUrl: asString(payload.url) || asString(status.url),
+      rawMetadata: { ...payload, content_type: 'status' }
+    };
+  }
+
+  private literatureForm(content: ExternalLiteraturePublish): URLSearchParams {
+    const form = new URLSearchParams({
+      title: content.title.trim(),
+      body: content.body.trim(),
+      is_mature: String(content.isMature === true)
+    });
+    if (content.description) form.set('description', content.description);
+    if (content.tags) content.tags.forEach((tag) => form.append('tags[]', tag));
+    if (content.collectionExternalIds) content.collectionExternalIds.forEach((id) => form.append('galleryids[]', id));
+    if (content.isMature && content.matureLevel) form.set('mature_level', content.matureLevel);
+    if (content.matureClassification) content.matureClassification.forEach((classification) => form.append('mature_classification[]', classification));
+    if (content.allowComments !== undefined) form.set('allow_comments', String(content.allowComments));
+    if (content.license) form.set('license', content.license);
+    return form;
+  }
+
   async moveContent(): Promise<never> { throw new ExternalProviderError('Remote writes are not enabled for DeviantArt', 'unsupported'); }
 
   private async request(path: string, accessToken: string, query?: Record<string, string>): Promise<Record<string, unknown>> {
