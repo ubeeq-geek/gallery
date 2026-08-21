@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import { AdminUpdateUserAttributesCommand, CognitoIdentityProviderClient, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSignedUrl as getCloudFrontSignedUrl } from '@aws-sdk/cloudfront-signer';
@@ -947,6 +948,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   const app = express();
   const s3Client = new S3Client({ region: config.awsRegion });
   const cognitoClient = new CognitoIdentityProviderClient({ region: config.awsRegion });
+  const sesClient = new SESv2Client({ region: config.awsRegion });
   const externalSyncQueue = injectedExternalSyncQueue || createExternalSyncQueue(config);
   const communityDeliveryQueue = injectedCommunityDeliveryQueue || createCommunityDeliveryQueue(config);
   const mediaCdnDomain = (config.mediaCdnDomain || '')
@@ -2679,6 +2681,56 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       await store.releaseUsername(normalized);
       const message = (error as Error).message || 'Registration failed';
       return res.status(400).json({ message });
+    }
+  });
+
+  app.post('/integration-requests', requireAuth, async (req, res) => {
+    const platform = typeof req.body?.platform === 'string' ? req.body.platform.trim().replace(/\s+/g, ' ') : '';
+    const details = typeof req.body?.details === 'string' ? req.body.details.trim() : '';
+    if (!platform) return res.status(400).json({ message: 'Tell us which platform you would like to use.' });
+    if (platform.length > 100) return res.status(400).json({ message: 'Platform name must be 100 characters or fewer.' });
+    if (details.length > 2_000) return res.status(400).json({ message: 'Your request details must be 2,000 characters or fewer.' });
+    if (!config.sesFromAddress || !config.integrationRequestToAddress) {
+      return res.status(503).json({ message: 'Integration requests are not configured for this deployment yet.' });
+    }
+
+    const sender = req.authUser!;
+    const recipient = config.integrationRequestToAddress;
+    const subject = `[${brand.productName}] Integration request: ${platform}`;
+    const body = [
+      `${brand.productName} integration request`,
+      '',
+      `Requested platform: ${platform}`,
+      `From: ${sender.displayName}${sender.email ? ` <${sender.email}>` : ''}`,
+      `User ID: ${sender.userId}`,
+      '',
+      'Request details:',
+      details || '(No additional details provided.)'
+    ].join('\n');
+
+    try {
+      await sesClient.send(new SendEmailCommand({
+        FromEmailAddress: config.sesFromAddress,
+        Destination: { ToAddresses: [recipient] },
+        Content: {
+          Simple: {
+            Subject: { Data: subject, Charset: 'UTF-8' },
+            Body: { Text: { Data: body, Charset: 'UTF-8' } }
+          }
+        },
+        ...(sender.email ? { ReplyToAddresses: [sender.email] } : {})
+      }));
+      console.info(JSON.stringify({ event: 'integration_request_sent', brand: brand.id, platform, recipient, userId: sender.userId }));
+      return res.status(202).json({ ok: true });
+    } catch (cause) {
+      console.error(JSON.stringify({
+        event: 'integration_request_failed',
+        brand: brand.id,
+        platform,
+        userId: sender.userId,
+        message: cause instanceof Error ? cause.message : 'Unknown email delivery error'
+      }));
+      return res.status(502).json({ message: 'We could not send your integration request. Please try again shortly.' });
     }
   });
 

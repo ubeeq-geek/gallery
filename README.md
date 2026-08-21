@@ -328,6 +328,10 @@ export WEB_APP_URL=https://app.example.com
 # Optional but required for a branded From address and reliable production delivery.
 export SES_FROM_ADDRESS=hello@example.com
 
+# Optional. Where Creator integration requests are delivered. When omitted,
+# Eversally sends to hello@eversally.com and Ubeeq sends to hello@ubeeq.site.
+export INTEGRATION_REQUEST_TO_ADDRESS=hello@example.com
+
 # Set both to enable Google.
 export GOOGLE_CLIENT_ID=...
 export GOOGLE_CLIENT_SECRET=...
@@ -356,6 +360,15 @@ The stack has separate Eversally and Ubeeq themes, subjects, and copy for accoun
 To brand **all** code emails — confirmation/resend, password reset, and authentication/MFA — configure `SES_FROM_ADDRESS` with a verified SES identity. The stack then attaches a Cognito Custom Message Lambda and uses the same product-specific visual system for every code email. Without SES, Cognito's managed sender still uses the branded confirmation template, but reset and authentication-code messages remain Cognito-managed; this avoids enabling a custom-message trigger that Cognito cannot deliver through its managed sender.
 
 Cognito requires the `{####}` token in code templates. See [Cognito email settings](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-email.html) and [message template requirements](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pool-settings-message-customizations.html).
+
+### Integration-request inbox
+
+The Creator setup flow includes an authenticated **Request an integration** form. The API sends each request using `SES_FROM_ADDRESS`, with the requesting member as the reply-to address. Its destination defaults by edition:
+
+- **Eversally:** `hello@eversally.com`
+- **Ubeeq:** `hello@ubeeq.site`
+
+SES can send email, but it does not create a receiving mailbox. Before using either default, provision the corresponding `hello@` mailbox or alias with your email host (or override `INTEGRATION_REQUEST_TO_ADDRESS`), verify the sender/domain in SES, and—while SES is in the sandbox—verify the recipient as well. CDK grants the API permission to send only when `SES_FROM_ADDRESS` is configured.
 
 ### Google setup
 

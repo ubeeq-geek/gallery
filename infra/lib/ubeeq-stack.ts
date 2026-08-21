@@ -502,6 +502,9 @@ export class UbeeqStack extends Stack {
         COGNITO_TOKEN_USE: 'id',
         ADMIN_EMAIL: adminEmail,
         ADMIN_PASSWORD: adminPassword,
+        SES_FROM_ADDRESS: sesFromAddress || '',
+        INTEGRATION_REQUEST_TO_ADDRESS: process.env.INTEGRATION_REQUEST_TO_ADDRESS?.trim()
+          || (productBrand === 'eversally' ? 'hello@eversally.com' : 'hello@ubeeq.site'),
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
         DISCORD_COMMUNITY_QUEUE_URL: discordCommunityDeliveryQueue.queueUrl,
         DISCORD_CLIENT_ID: discordClientId,
@@ -530,6 +533,12 @@ export class UbeeqStack extends Stack {
         CLOUDFRONT_PRIVATE_KEY: cloudFrontPrivateKey
       }
     });
+    if (sesFromAddress) {
+      apiFn.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+        resources: ['*']
+      }));
+    }
     const trendingRankerFn = new lambdaNodejs.NodejsFunction(this, 'TrendingRankerFunction', {
       runtime: lambda.Runtime.NODEJS_22_X,
       entry: path.join(__dirname, '../../apps/api/src/trendingRanker.ts'),
