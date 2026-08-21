@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "npm run dev:local",
-    "dev:local": "if [ -f ../web/.env.local ]; then set -a; . ../web/.env.local; set +a; fi; export PRODUCT_BRAND=${PRODUCT_BRAND:-eversally}; export COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-${VITE_COGNITO_USER_POOL_ID:-}}; export COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID:-${VITE_COGNITO_CLIENT_ID:-}}; if [ -z \"${COGNITO_USER_POOL_ID}\" ]; then export LOCAL_AUTH_USER_ID=${LOCAL_AUTH_USER_ID:-local-user}; else unset LOCAL_AUTH_USER_ID; fi; export LOCAL_MEDIA_DIRECTORY=${LOCAL_MEDIA_DIRECTORY:-/tmp/eversally-media}; export DEV_HTTPS=${DEV_HTTPS:-true}; export EXTERNAL_OAUTH_REDIRECT_URI=${EXTERNAL_OAUTH_REDIRECT_URI:-https://fanadmin.top:4000/integrations/deviantart/callback}; export DISCORD_OAUTH_REDIRECT_URI=${DISCORD_OAUTH_REDIRECT_URI:-https://fanadmin.top:4000/integrations/discord/callback}; export APP_ORIGIN=${APP_ORIGIN:-https://fanadmin.top:5174}; export EXTERNAL_TOKEN_ENCRYPTION_KEY=${EXTERNAL_TOKEN_ENCRYPTION_KEY:-$(openssl rand -base64 48)}; ts-node-dev --respawn --transpile-only src/dev.ts",
+    "dev:local": "if [ -f ../web/.env.local ]; then set -a; . ../web/.env.local; set +a; fi; if [ -f .env.local ]; then set -a; . ./.env.local; set +a; fi; export PRODUCT_BRAND=${PRODUCT_BRAND:-eversally}; export COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-${VITE_COGNITO_USER_POOL_ID:-}}; export COGNITO_CLIENT_ID=${COGNITO_CLIENT_ID:-${VITE_COGNITO_CLIENT_ID:-}}; if [ -z \"${COGNITO_USER_POOL_ID}\" ]; then export LOCAL_AUTH_USER_ID=${LOCAL_AUTH_USER_ID:-local-user}; else unset LOCAL_AUTH_USER_ID; fi; export LOCAL_MEDIA_DIRECTORY=${LOCAL_MEDIA_DIRECTORY:-/tmp/eversally-media}; export DEV_HTTPS=${DEV_HTTPS:-true}; export EXTERNAL_OAUTH_REDIRECT_URI=${EXTERNAL_OAUTH_REDIRECT_URI:-https://fanadmin.top:4000/integrations/deviantart/callback}; export DISCORD_OAUTH_REDIRECT_URI=${DISCORD_OAUTH_REDIRECT_URI:-https://fanadmin.top:4000/integrations/discord/callback}; export APP_ORIGIN=${APP_ORIGIN:-https://fanadmin.top:5174}; export EXTERNAL_TOKEN_ENCRYPTION_KEY=${EXTERNAL_TOKEN_ENCRYPTION_KEY:-$(openssl rand -base64 48)}; ts-node-dev --respawn --transpile-only src/dev.ts",
     "dev:eversally": "PRODUCT_BRAND=eversally TENANT_ID=eversally PORT=4000 APP_ORIGIN=https://fanadmin.top:5174 EXTERNAL_OAUTH_REDIRECT_URI=https://fanadmin.top:4000/integrations/deviantart/callback DISCORD_OAUTH_REDIRECT_URI=https://fanadmin.top:4000/integrations/discord/callback LOCAL_MEDIA_DIRECTORY=/tmp/eversally-media npm run dev:local",
     "dev:oss": "PRODUCT_BRAND=ubeeq TENANT_ID=ubeeq PORT=4001 APP_ORIGIN=https://fanadmin.top:5175 EXTERNAL_OAUTH_REDIRECT_URI=https://fanadmin.top:4001/integrations/deviantart/callback DISCORD_OAUTH_REDIRECT_URI=https://fanadmin.top:4001/integrations/discord/callback LOCAL_MEDIA_DIRECTORY=/tmp/ubeeq-media npm run dev:local",
     "reset:core": "ts-node --transpile-only src/scripts/resetGalleryCore.ts",
@@ -24,6 +24,7 @@
     "@aws-sdk/client-cloudformation": "^3.1024.0",
     "@aws-sdk/client-dynamodb": "^3.515.0",
     "@aws-sdk/client-s3": "^3.515.0",
+    "@aws-sdk/client-sesv2": "^3.1115.0",
     "@aws-sdk/client-sqs": "^3.1009.0",
     "@aws-sdk/cloudfront-signer": "^3.1003.0",
     "@aws-sdk/lib-dynamodb": "^3.515.0",

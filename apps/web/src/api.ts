@@ -947,6 +947,14 @@ export const api = {
     });
     return handleJson(response);
   },
+  async requestIntegration(payload: { platform: string; details?: string }) {
+    const response = await fetch(`${API_BASE}/integration-requests`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(payload)
+    });
+    return handleJson(response);
+  },
   async studioListChallenges() {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/challenges`);
     return handleJson(response);

@@ -85,7 +85,7 @@ export function CreatorsView({
   const [slugSuggestions, setSlugSuggestions] = useState<string[]>([]);
   const [activeNameSuggestion, setActiveNameSuggestion] = useState('');
   const [activeSlugSuggestion, setActiveSlugSuggestion] = useState('');
-  const [visibleIntegrations, setVisibleIntegrations] = useState<StudioIntegrationPlatform[]>(['deviantart', 'bluesky']);
+  const [visibleIntegrations, setVisibleIntegrations] = useState<StudioIntegrationPlatform[]>([]);
   const formErrorRef = useRef<HTMLParagraphElement>(null);
 
   const filtered = useMemo(() => {
@@ -115,7 +115,7 @@ export function CreatorsView({
     setSlugSuggestions([]);
     setActiveNameSuggestion('');
     setActiveSlugSuggestion('');
-    setVisibleIntegrations(creator?.visibleIntegrations ?? ['deviantart', 'bluesky']);
+    setVisibleIntegrations(creator?.visibleIntegrations ?? []);
   };
 
   const showValidationError = (message: string, field: 'name' | 'slug' | 'external-links', linkIndexes: number[] = []) => {

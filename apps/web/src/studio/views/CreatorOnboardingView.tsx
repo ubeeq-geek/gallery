@@ -1,14 +1,25 @@
-import { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { brand, creatorBaseUrl } from '../../brand';
 import { Card } from '../components/Card';
-import { siBluesky, siDeviantart, type SimpleIcon } from 'simple-icons';
+import { siBluesky, siDeviantart, siDiscord, type SimpleIcon } from 'simple-icons';
 import { studioIntegrationPlatforms, type StudioCreator, type StudioIntegrationPlatform } from '../types';
 
 const creatorOnboardingPlatformIcons: Partial<Record<StudioIntegrationPlatform, SimpleIcon>> = {
   bluesky: siBluesky,
-  deviantart: siDeviantart
+  deviantart: siDeviantart,
+  discord: siDiscord
+};
+
+const selectedPlatformsFromSearch = (search: string): StudioIntegrationPlatform[] => {
+  const requested = (new URLSearchParams(search).get('platforms') || '')
+    .split(',')
+    .map((platform) => platform.trim().toLowerCase())
+    .filter(Boolean);
+  return studioIntegrationPlatforms
+    .map((platform) => platform.id)
+    .filter((platform) => requested.includes(platform));
 };
 
 const suggestSlug = (name: string) => name
@@ -20,15 +31,25 @@ const suggestSlug = (name: string) => name
 
 export function CreatorOnboardingView({ onCreated }: { onCreated: (creator: StudioCreator) => Promise<void> }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
-  const [visibleIntegrations, setVisibleIntegrations] = useState<StudioIntegrationPlatform[]>(['deviantart', 'bluesky']);
+  const [visibleIntegrations, setVisibleIntegrations] = useState<StudioIntegrationPlatform[]>(() => selectedPlatformsFromSearch(location.search));
   // The rules acknowledgement is opt-out rather than a gate the user has to
   // discover. The creator still has to explicitly submit the form.
   const [accepted, setAccepted] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [requestFormOpen, setRequestFormOpen] = useState(false);
+  const [requestedPlatform, setRequestedPlatform] = useState('');
+  const [requestDetails, setRequestDetails] = useState('');
+  const [requestLoading, setRequestLoading] = useState(false);
+  const [requestMessage, setRequestMessage] = useState('');
   const resolvedSlug = useMemo(() => slug.trim() || suggestSlug(name), [name, slug]);
+
+  useEffect(() => {
+    setVisibleIntegrations(selectedPlatformsFromSearch(location.search));
+  }, [location.search]);
 
   const becomeCreator = async () => {
     if (!name.trim() || !resolvedSlug || !accepted) return;
@@ -42,6 +63,22 @@ export function CreatorOnboardingView({ onCreated }: { onCreated: (creator: Stud
       setError(cause instanceof Error ? cause.message : `Unable to create your ${brand.creatorName.toLowerCase()} identity.`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const submitIntegrationRequest = async () => {
+    if (!requestedPlatform.trim() || requestLoading) return;
+    setRequestLoading(true);
+    setRequestMessage('');
+    try {
+      await api.requestIntegration({ platform: requestedPlatform, details: requestDetails });
+      setRequestMessage(`Thanks — your ${requestedPlatform.trim()} integration request has been sent.`);
+      setRequestedPlatform('');
+      setRequestDetails('');
+    } catch (cause) {
+      setRequestMessage(cause instanceof Error ? cause.message : 'We could not send your request. Please try again.');
+    } finally {
+      setRequestLoading(false);
     }
   };
 
@@ -82,7 +119,32 @@ export function CreatorOnboardingView({ onCreated }: { onCreated: (creator: Stud
                 <span className="creator-onboarding-platform-check" aria-hidden="true">✓</span>
               </label>)}
             </div>
-            <a className="creator-onboarding-request-link" href="mailto:hello@eversally.com?subject=Request%20an%20integration">Don’t see your platform? Request an integration →</a>
+            <button
+              type="button"
+              className="creator-onboarding-request-link"
+              onClick={() => {
+                setRequestFormOpen((open) => !open);
+                setRequestMessage('');
+              }}
+              aria-expanded={requestFormOpen}
+            >
+              Don’t see your platform? Request an integration →
+            </button>
+            {requestFormOpen && <div className="creator-onboarding-request-form">
+              <label>
+                <span>Platform</span>
+                <input value={requestedPlatform} onChange={(event) => setRequestedPlatform(event.target.value)} placeholder="e.g. Mastodon" maxLength={100} />
+              </label>
+              <label>
+                <span>How would you use it? <small>(optional)</small></span>
+                <textarea value={requestDetails} onChange={(event) => setRequestDetails(event.target.value)} placeholder="Tell us what you would want to publish, import, or manage." maxLength={2000} rows={3} />
+              </label>
+              <div className="creator-onboarding-request-actions">
+                <button type="button" className="auth-primary-btn" onClick={() => void submitIntegrationRequest()} disabled={!requestedPlatform.trim() || requestLoading}>{requestLoading ? 'Sending…' : 'Send request'}</button>
+                <button type="button" className="auth-secondary-btn" onClick={() => setRequestFormOpen(false)}>Cancel</button>
+              </div>
+              {requestMessage && <p className={requestMessage.startsWith('Thanks') ? 'success' : 'error'} role="status">{requestMessage}</p>}
+            </div>}
           </fieldset>
         </div>
         <label className="creator-onboarding-consent">

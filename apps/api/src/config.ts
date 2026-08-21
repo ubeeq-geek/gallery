@@ -69,6 +69,10 @@ export interface AppConfig {
   localAuthRole?: 'user' | 'contributor' | 'creator' | 'admin';
   localAuthEmail?: string;
   localAuthDisplayName?: string;
+  /** Verified sender used for product-originated email such as integration requests. */
+  sesFromAddress?: string;
+  /** Brand inbox that receives creator integration requests. */
+  integrationRequestToAddress?: string;
 }
 
 export const loadConfig = (): AppConfig => {
@@ -140,7 +144,10 @@ export const loadConfig = (): AppConfig => {
   adminPassword: process.env.ADMIN_PASSWORD,
   localAuthRole: (process.env.LOCAL_AUTH_ROLE as AppConfig['localAuthRole']) || undefined,
   localAuthEmail: process.env.LOCAL_AUTH_EMAIL,
-  localAuthDisplayName: process.env.LOCAL_AUTH_DISPLAY_NAME
+  localAuthDisplayName: process.env.LOCAL_AUTH_DISPLAY_NAME,
+  sesFromAddress: process.env.SES_FROM_ADDRESS?.trim(),
+  integrationRequestToAddress: process.env.INTEGRATION_REQUEST_TO_ADDRESS?.trim()
+    || (process.env.PRODUCT_BRAND === 'eversally' ? 'hello@eversally.com' : 'hello@ubeeq.site')
   };
   if (deploymentStage === 'production' || deploymentStage === 'prod') {
     const missing = [
