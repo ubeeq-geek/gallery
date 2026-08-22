@@ -60,6 +60,12 @@ export interface AppConfig {
   discordOAuthRedirectUri?: string;
   discordCommunityQueueUrl?: string;
   discordApiBaseUrl: string;
+  /** Managed Tumblr OAuth 2 application; creator-owned credentials are encrypted per connector. */
+  tumblrClientId?: string;
+  tumblrClientSecret?: string;
+  tumblrOAuthRedirectUri?: string;
+  tumblrApiBaseUrl: string;
+  tumblrMediaBlockLimit: number;
   localAuthUserId?: string;
   /** Email used for the optional first-admin bootstrap. */
   adminEmail?: string;
@@ -137,6 +143,11 @@ export const loadConfig = (): AppConfig => {
   discordOAuthRedirectUri: process.env.DISCORD_OAUTH_REDIRECT_URI,
   discordCommunityQueueUrl: process.env.DISCORD_COMMUNITY_QUEUE_URL,
   discordApiBaseUrl: process.env.DISCORD_API_BASE_URL || 'https://discord.com/api/v10',
+  tumblrClientId: process.env.TUMBLR_CLIENT_ID,
+  tumblrClientSecret: process.env.TUMBLR_CLIENT_SECRET,
+  tumblrOAuthRedirectUri: process.env.TUMBLR_OAUTH_REDIRECT_URI,
+  tumblrApiBaseUrl: process.env.TUMBLR_API_BASE_URL || 'https://api.tumblr.com',
+  tumblrMediaBlockLimit: Number(process.env.TUMBLR_MEDIA_BLOCK_LIMIT || 10),
   localAuthUserId: process.env.LOCAL_AUTH_USER_ID,
   adminEmail: process.env.ADMIN_EMAIL || (
     process.env.PRODUCT_BRAND === 'eversally' ? 'admin@eversally.com' : 'admin@ubeeq.site'

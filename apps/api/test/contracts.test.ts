@@ -35,7 +35,9 @@ const buildConfig = (): AppConfig => ({
   externalContentMaxBytes: 50 * 1024 * 1024,
   externalTokenEncryptionKey: 'test-external-encryption-key',
   externalOAuthRedirectUri: 'http://localhost:4000/integrations/deviantart/callback',
-  discordApiBaseUrl: 'https://discord.com/api/v10'
+  discordApiBaseUrl: 'https://discord.com/api/v10',
+  tumblrApiBaseUrl: 'https://api.tumblr.com',
+  tumblrMediaBlockLimit: 10
 });
 
 describe('API contract', () => {
