@@ -109,6 +109,7 @@ import { dismissExternalActivity, replyToExternalComment } from './externalSyncW
 import { createCommunityDeliveryQueue } from './communityDeliveryQueue';
 import type { CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getDiscordGuild, listDiscordChannels, sendDiscordMessage, queueDiscordWorkPublished, queueDiscordWorksPublished } from './discordCommunity';
+import { GhostIntegrationService, registerGhostRoutes } from './ghostIntegration';
 
 interface CreateAppOptions {
   config: AppConfig;
@@ -1561,6 +1562,40 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
     return true;
   };
+
+  const ghostService = new GhostIntegrationService(config.externalTokenEncryptionKey);
+  registerGhostRoutes(app, ghostService, ensureCreatorContentAccess, async (workId, connectionId) => {
+    const work = await store.getWork(config.tenantId, workId);
+    const connection = connectionId ? ghostService.getConnection(connectionId) : undefined;
+    const assets = work ? await store.listCanonicalAssetsByWork(config.tenantId, workId) : [];
+    const checks = {
+      workOwned: Boolean(work),
+      workPublishable: Boolean(work && work.status !== 'deleted' && work.status !== 'archived'),
+      connectionHealthy: Boolean(connection && connection.state === 'ACTIVE' && connection.creatorId === work?.creatorId),
+      canonicalAssetReady: assets.some((asset) => asset.status === 'ready' && (asset.storage.mode === 'hosted' || asset.storage.mode === 'external')),
+      rendererSupported: Boolean(work && (work.kind === 'article' || work.kind === 'literature' || work.body?.length || work.description)),
+      safetyClear: Boolean(work && work.status !== 'deleted')
+    };
+    const reasonByCheck: Record<keyof typeof checks, string> = {
+      workOwned: 'Work not found',
+      workPublishable: 'Work is not publishable',
+      connectionHealthy: 'An active Ghost connection owned by this creator is required',
+      canonicalAssetReady: 'A ready canonical Asset or approved derivative is required',
+      rendererSupported: 'This Work does not contain supported long-form content',
+      safetyClear: 'A safety hold blocks Ghost publishing'
+    };
+    return {
+      eligible: Object.values(checks).every(Boolean),
+      workId,
+      creatorId: work?.creatorId || '',
+      connectionId,
+      checks,
+      reasons: (Object.keys(checks) as Array<keyof typeof checks>).flatMap((key) => checks[key] ? [] : [reasonByCheck[key]])
+    };
+  }, async (creatorId, derivativeAssetId) => {
+    const asset = await store.getCanonicalAsset(config.tenantId, derivativeAssetId);
+    return Boolean(asset && asset.creatorId === creatorId && asset.status === 'ready' && asset.mimeType.startsWith('image/'));
+  }, isAdminRequest);
 
   const ensureCreatorAccountAccess = async (req: express.Request, res: express.Response, creatorId: string): Promise<boolean> => {
     if (!(await ensureCreatorContentAccess(req, res, creatorId))) return false;
