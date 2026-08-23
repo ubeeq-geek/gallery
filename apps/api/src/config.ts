@@ -69,6 +69,12 @@ export interface AppConfig {
   discordOAuthRedirectUri?: string;
   discordCommunityQueueUrl?: string;
   discordApiBaseUrl: string;
+  patreonClientId?: string;
+  patreonClientSecret?: string;
+  patreonOAuthRedirectUri?: string;
+  patreonPatronOAuthRedirectUri?: string;
+  patreonWebhookSecret?: string;
+  patreonIntegrationTable?: string;
   localAuthUserId?: string;
   /** Email used for the optional first-admin bootstrap. */
   adminEmail?: string;
@@ -154,6 +160,12 @@ export const loadConfig = (): AppConfig => {
   discordOAuthRedirectUri: process.env.DISCORD_OAUTH_REDIRECT_URI,
   discordCommunityQueueUrl: process.env.DISCORD_COMMUNITY_QUEUE_URL,
   discordApiBaseUrl: process.env.DISCORD_API_BASE_URL || 'https://discord.com/api/v10',
+  patreonClientId: process.env.PATREON_CLIENT_ID,
+  patreonClientSecret: process.env.PATREON_CLIENT_SECRET,
+  patreonOAuthRedirectUri: process.env.PATREON_OAUTH_REDIRECT_URI,
+  patreonPatronOAuthRedirectUri: process.env.PATREON_PATRON_OAUTH_REDIRECT_URI,
+  patreonWebhookSecret: process.env.PATREON_WEBHOOK_SECRET,
+  patreonIntegrationTable: process.env.PATREON_INTEGRATION_TABLE,
   localAuthUserId: process.env.LOCAL_AUTH_USER_ID,
   adminEmail: process.env.ADMIN_EMAIL || (
     process.env.PRODUCT_BRAND === 'eversally' ? 'admin@eversally.com' : 'admin@ubeeq.site'

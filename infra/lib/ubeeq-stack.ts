@@ -131,6 +131,14 @@ export class UbeeqStack extends Stack {
       deletionProtection: isProduction,
       removalPolicy: dataRemovalPolicy
     });
+    const patreonIntegrationTable = new dynamodb.Table(this, 'PatreonIntegrationTable', {
+      partitionKey: { name: 'integrationId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'recordId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: isProduction ? { pointInTimeRecoveryEnabled: true } : undefined,
+      deletionProtection: isProduction,
+      removalPolicy: dataRemovalPolicy
+    });
     contentCoreTable.addGlobalSecondaryIndex({
       indexName: 'GSI1',
       partitionKey: { name: 'GSI1PK', type: dynamodb.AttributeType.STRING },
@@ -512,6 +520,7 @@ export class UbeeqStack extends Stack {
         CONTENT_STATS_TABLE: contentStatsTable.tableName,
         TRENDING_FEED_TABLE: trendingFeedTable.tableName,
         CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        PATREON_INTEGRATION_TABLE: patreonIntegrationTable.tableName,
         USE_CONTENT_CORE_TABLE: 'true',
         MEDIA_BUCKET: mediaBucket.bucketName,
         COGNITO_USER_POOL_ID: userPool.userPoolId,
@@ -727,6 +736,7 @@ export class UbeeqStack extends Stack {
     contentStatsTable.grantReadWriteData(apiFn);
     trendingFeedTable.grantReadWriteData(apiFn);
     contentCoreTable.grantReadWriteData(apiFn);
+    patreonIntegrationTable.grantReadWriteData(apiFn);
     contentCoreTable.grantReadWriteData(externalSyncFn);
     contentCoreTable.grantReadWriteData(externalSyncSchedulerFn);
     contentCoreTable.grantReadWriteData(discordCommunityDeliveryFn);
