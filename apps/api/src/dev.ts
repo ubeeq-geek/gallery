@@ -10,6 +10,9 @@ import { createInProcessExternalSyncQueue, type ExternalSyncQueue } from './exte
 import { createInProcessCommunityDeliveryQueue, type CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { processDiscordDelivery } from './discordCommunity';
 import { runAdminBootstrap } from './adminBootstrap';
+import { SmugMugCanonicalOutboundSource, SmugMugCanonicalSink, SmugMugImageScanner } from './smugMugCanonicalSink';
+import { EncryptedInMemorySmugMugCredentialVault, SmugMugHttpGateway } from './smugMugGateway';
+import { SmugMugIntegrationService } from './smugMugIntegration';
 
 // A local seed is useful for offline UI work, but it must not override real
 // Cognito identities when the paired web app has an auth configuration.
@@ -44,6 +47,17 @@ const config = {
 };
 void runAdminBootstrap(config);
 const store = new InMemoryStore();
+const smugMugService = config.smugMugApiKey && config.smugMugApiSecret && config.smugMugOAuthCallbackUrl && config.externalTokenEncryptionKey
+  ? new SmugMugIntegrationService(
+    new SmugMugHttpGateway({
+      apiKey: config.smugMugApiKey, apiSecret: config.smugMugApiSecret, callbackUrl: config.smugMugOAuthCallbackUrl,
+      vault: new EncryptedInMemorySmugMugCredentialVault(config.externalTokenEncryptionKey)
+    }),
+    new SmugMugCanonicalSink(store, config, new SmugMugImageScanner()),
+    undefined,
+    new SmugMugCanonicalOutboundSource(store, config)
+  )
+  : undefined;
 
 type LocalStoreSnapshot = {
   version: 1;
@@ -154,7 +168,8 @@ const app = createApp({
   config,
   store,
   externalSyncQueue,
-  communityDeliveryQueue
+  communityDeliveryQueue,
+  smugMugService
 });
 const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || '127.0.0.1';

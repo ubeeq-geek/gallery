@@ -109,12 +109,14 @@ import { dismissExternalActivity, replyToExternalComment } from './externalSyncW
 import { createCommunityDeliveryQueue } from './communityDeliveryQueue';
 import type { CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getDiscordGuild, listDiscordChannels, sendDiscordMessage, queueDiscordWorkPublished, queueDiscordWorksPublished } from './discordCommunity';
+import { SmugMugError, type SmugMugIntegrationService, type SmugMugMigrationMode } from './smugMugIntegration';
 
 interface CreateAppOptions {
   config: AppConfig;
   store: DataStore;
   externalSyncQueue?: ExternalSyncQueue;
   communityDeliveryQueue?: CommunityDeliveryQueue;
+  smugMugService?: SmugMugIntegrationService;
 }
 
 let hasHandledInvocation = false;
@@ -952,7 +954,7 @@ const parsePassthroughCursor = (token?: string): string | undefined => {
 const encodePassthroughCursor = (value: string): string =>
   encodeCursorToken({ v: 1, type: 'passthrough', value });
 
-export const createApp = ({ config, store, externalSyncQueue: injectedExternalSyncQueue, communityDeliveryQueue: injectedCommunityDeliveryQueue }: CreateAppOptions) => {
+export const createApp = ({ config, store, externalSyncQueue: injectedExternalSyncQueue, communityDeliveryQueue: injectedCommunityDeliveryQueue, smugMugService }: CreateAppOptions) => {
   const brand = brandForConfig(config);
   const app = express();
   const s3Client = new S3Client({ region: config.awsRegion });
@@ -2586,6 +2588,96 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.use(express.json({ limit: '10mb' }));
   app.use(createOptionalAuthMiddleware(config));
   if (config.localMediaDirectory) app.use('/media/local', express.static(config.localMediaDirectory));
+
+  const handleSmugMugError = (res: express.Response, error: unknown) => {
+    if (error instanceof SmugMugError) return res.status(error.status).json({ code: error.code, message: error.message });
+    logServerError('smugmug.integration', error);
+    return res.status(502).json({ code: 'SMUGMUG_UNAVAILABLE', message: 'SmugMug could not complete the request.' });
+  };
+  const requireSmugMug = (res: express.Response) => {
+    if (smugMugService) return smugMugService;
+    res.status(503).json({ code: 'SMUGMUG_NOT_CONFIGURED', message: 'SmugMug migration is not configured.' });
+    return undefined;
+  };
+  const safeSmugMugResponse = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => (
+    key === 'encryptedCredentialRef' || key === 'oauthState' ? undefined : item
+  )));
+
+  app.post('/api/integrations/smugmug/connections/start', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res);
+    if (!service) return;
+    const creatorId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!creatorId) return res.status(400).json({ code: 'CREATOR_REQUIRED', message: 'Choose a creator archive.' });
+    if (!(await ensureCreatorAccountAccess(req, res, creatorId))) return;
+    try { return res.status(201).json(safeSmugMugResponse(await service.start(req.authUser!.userId, creatorId))); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.get('/api/integrations/smugmug/oauth/callback', async (req, res) => {
+    const service = requireSmugMug(res);
+    if (!service) return;
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    const verifier = typeof req.query.oauth_verifier === 'string' ? req.query.oauth_verifier : (typeof req.query.code === 'string' ? req.query.code : '');
+    if (!state || !verifier) return res.status(400).json({ code: 'INVALID_OAUTH_CALLBACK', message: 'OAuth state and verifier are required.' });
+    try { return res.json(safeSmugMugResponse(await service.callback(state, verifier))); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/connections/:id/inventory', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    try { return res.status(202).json(safeSmugMugResponse(await service.inventory(req.params.id, req.authUser!.userId))); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/migrations/:id/confirm', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    const modes = new Set<SmugMugMigrationMode>(['REFERENCE_ONLY', 'SELECTED_SOURCE_MIGRATION', 'FULL_CATALOGUE_MIGRATION']);
+    const mode = req.body?.mode as SmugMugMigrationMode;
+    if (!modes.has(mode)) return res.status(400).json({ code: 'INVALID_MIGRATION_MODE', message: 'Choose a supported migration mode.' });
+    const galleryIds = Array.isArray(req.body?.selectedGalleryIds) ? req.body.selectedGalleryIds.filter((id: unknown): id is string => typeof id === 'string') : [];
+    try { return res.status(202).json(await service.confirm(req.params.id, req.authUser!.userId, mode, galleryIds)); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/migrations/:id/resume', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    try { return res.status(202).json(await service.resume(req.params.id, req.authUser!.userId)); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/connections/:id/sync', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    try { return res.status(202).json(safeSmugMugResponse(await service.sync(req.params.id, req.authUser!.userId))); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/connections/:id/publish', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    const galleryId = typeof req.body?.galleryId === 'string' ? req.body.galleryId.trim() : '';
+    const workIds = Array.isArray(req.body?.workIds) ? req.body.workIds.filter((value: unknown): value is string => typeof value === 'string' && Boolean(value.trim())).map((value: string) => value.trim()) : [];
+    if (!galleryId) return res.status(400).json({ code: 'GALLERY_REQUIRED', message: 'Choose a SmugMug gallery.' });
+    try {
+      const result = await service.publishSelected(req.params.id, req.authUser!.userId, galleryId, workIds);
+      auditLog(req, 'smugmug.selected.publish', { externalAccountId: req.params.id, galleryId, workCount: workIds.length });
+      return res.json(result);
+    } catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/connections/:id/metadata-sync', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    const workIds = Array.isArray(req.body?.workIds) ? req.body.workIds.filter((value: unknown): value is string => typeof value === 'string' && Boolean(value.trim())).map((value: string) => value.trim()) : [];
+    try {
+      const result = await service.syncSelectedMetadata(req.params.id, req.authUser!.userId, workIds);
+      auditLog(req, 'smugmug.selected.metadata-sync', { externalAccountId: req.params.id, workCount: workIds.length });
+      return res.json(result);
+    } catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.delete('/api/integrations/smugmug/connections/:id', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    try { await service.disconnect(req.params.id, req.authUser!.userId); return res.status(204).end(); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
 
   const resolvePlatformRole = async (userId: string): Promise<PlatformRole> => {
     if (store.getUserIdentity) {

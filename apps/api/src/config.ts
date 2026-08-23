@@ -46,6 +46,10 @@ export interface AppConfig {
   externalAccountScanIntervalSeconds: number;
   externalActivityScanIntervalSeconds: number;
   deviantArtPublishedDescriptionUpdate: boolean;
+  /** SmugMug OAuth 1.0a application credentials. Kept server-side. */
+  smugMugApiKey?: string;
+  smugMugApiSecret?: string;
+  smugMugOAuthCallbackUrl?: string;
   externalContentMaxBytes: number;
   localMediaDirectory?: string;
   appOrigin?: string;
@@ -139,6 +143,9 @@ export const loadConfig = (): AppConfig => {
     || process.env.DEVIANTART_EXPERIMENTAL_PUBLISHED_DESCRIPTION_UPDATE
     || 'true'
   ) === 'true',
+  smugMugApiKey: process.env.SMUGMUG_API_KEY,
+  smugMugApiSecret: process.env.SMUGMUG_API_SECRET,
+  smugMugOAuthCallbackUrl: process.env.SMUGMUG_OAUTH_CALLBACK_URL,
   externalContentMaxBytes: Number(process.env.EXTERNAL_CONTENT_MAX_BYTES || 50 * 1024 * 1024),
   localMediaDirectory: process.env.LOCAL_MEDIA_DIRECTORY || (process.env.LOCAL_AUTH_USER_ID ? '/tmp/ubeeq-media' : undefined),
   appOrigin: process.env.APP_ORIGIN,

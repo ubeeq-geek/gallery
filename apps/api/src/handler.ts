@@ -3,10 +3,11 @@ import { loadConfig } from './config';
 import { createApp } from './app';
 import { DynamoStore } from './dynamoStore';
 import { runAdminBootstrap } from './adminBootstrap';
+import { createSmugMugService } from './smugMugFactory';
 
 const config = loadConfig();
 const store = new DynamoStore(config);
-const app = createApp({ config, store });
+const app = createApp({ config, store, smugMugService: createSmugMugService(config, store) });
 const bootstrapPromise = runAdminBootstrap(config);
 
 const appHandler = serverless(app);
