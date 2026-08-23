@@ -660,7 +660,7 @@ export interface TrendingFeedItem {
 }
 
 /** Platforms with a creator-owned connected account. OAuth custody can differ by platform. */
-export type ExternalPlatform = 'deviantart' | 'youtube' | 'bluesky';
+export type ExternalPlatform = 'deviantart' | 'youtube' | 'bluesky' | 'instagram';
 export type ExternalAccountConnectionStatus =
   | 'connected'
   | 'authentication_required'
@@ -748,6 +748,12 @@ export interface ExternalAccount {
   /** Whether subsequent synchronizations should also copy available source files into the local creator workspace. */
   includeSourceFilesOnSync?: boolean;
   deviantArtPublishingPreset?: DeviantArtPublishingPreset;
+  instagram?: {
+    accountType: 'BUSINESS' | 'CREATOR';
+    apiVersion: string;
+    policyProfileVersion: string;
+    enabledCapabilities: Array<'metadata_import' | 'publish_images' | 'publish_reels' | 'publish_stories' | 'insights' | 'comment_management'>;
+  };
   createdAt: string;
   updatedAt: string;
 }

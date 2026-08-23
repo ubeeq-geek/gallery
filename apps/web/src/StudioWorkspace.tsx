@@ -11,6 +11,7 @@ import { DashboardView } from './studio/views/DashboardView';
 import { CreatorsView } from './studio/views/CreatorsView';
 import { FilesMediaView } from './studio/views/FilesMediaView';
 import { DeviantArtView } from './studio/views/DeviantArtView';
+import { InstagramView } from './studio/views/InstagramView';
 import { CollectionsView } from './studio/views/CollectionsView';
 import { WorksView } from './studio/views/WorksView';
 import { ActivityView } from './studio/views/ActivityView';
@@ -236,7 +237,14 @@ export function StudioWorkspace({ onCreatorCreated }: { onCreatorCreated?: () =>
       case 'creators':
         return renderCreatorsView();
       case 'integrations':
-        return <DeviantArtView creators={creators} />;
+        return <div className="studio-stack">
+          <Card title="Integration destinations" eyebrow="Creator-controlled connections">
+            <div className="studio-task-grid">
+              <details open><summary><strong>Instagram</strong> · Public-safe previews</summary><InstagramView creators={creators} /></details>
+              <details><summary><strong>DeviantArt</strong> · Catalogue sync</summary><DeviantArtView creators={creators} /></details>
+            </div>
+          </Card>
+        </div>;
       case 'files-media':
         return (
           <FilesMediaView

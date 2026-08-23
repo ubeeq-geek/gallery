@@ -68,6 +68,12 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     capabilities: ['connect', 'catalogue_import', 'engagement_read', 'reconcile'],
     credentialCustody: 'application'
   },
+  instagram: {
+    platform: 'instagram',
+    label: 'Instagram',
+    capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'engagement_read', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
   bluesky: {
     platform: 'bluesky',
     label: 'Bluesky',

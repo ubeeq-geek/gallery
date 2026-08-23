@@ -82,6 +82,21 @@ export interface AppConfig {
   sesFromAddress?: string;
   /** Brand inbox that receives creator integration requests. */
   integrationRequestToAddress?: string;
+  /** Managed Instagram application settings. Publishing remains gated until review is explicitly marked complete. */
+  instagramAppId?: string;
+  instagramAppSecret?: string;
+  instagramOAuthRedirectUri?: string;
+  instagramGraphApiVersion?: string;
+  instagramAppReviewComplete?: boolean;
+  instagramWebhookVerifyToken?: string;
+  instagramDeliverySecret?: string;
+  /** Public HTTPS API origin used only to construct opaque Meta delivery capabilities. */
+  instagramDeliveryBaseUrl?: string;
+  instagramMetadataImportEnabled?: boolean;
+  instagramInsightsEnabled?: boolean;
+  instagramInsightRetentionDays?: number;
+  instagramReelsEnabled?: boolean;
+  instagramStoriesEnabled?: boolean;
 }
 
 export const loadConfig = (): AppConfig => {
@@ -164,7 +179,20 @@ export const loadConfig = (): AppConfig => {
   localAuthDisplayName: process.env.LOCAL_AUTH_DISPLAY_NAME,
   sesFromAddress: process.env.SES_FROM_ADDRESS?.trim(),
   integrationRequestToAddress: process.env.INTEGRATION_REQUEST_TO_ADDRESS?.trim()
-    || (process.env.PRODUCT_BRAND === 'eversally' ? 'hello@eversally.com' : 'hello@ubeeq.site')
+    || (process.env.PRODUCT_BRAND === 'eversally' ? 'hello@eversally.com' : 'hello@ubeeq.site'),
+  instagramAppId: process.env.INSTAGRAM_APP_ID?.trim(),
+  instagramAppSecret: process.env.INSTAGRAM_APP_SECRET,
+  instagramOAuthRedirectUri: process.env.INSTAGRAM_OAUTH_REDIRECT_URI?.trim(),
+  instagramGraphApiVersion: process.env.INSTAGRAM_GRAPH_API_VERSION?.trim() || 'v24.0',
+  instagramAppReviewComplete: process.env.INSTAGRAM_APP_REVIEW_COMPLETE === 'true',
+  instagramWebhookVerifyToken: process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN,
+  instagramDeliverySecret: process.env.INSTAGRAM_DELIVERY_SECRET,
+  instagramDeliveryBaseUrl: process.env.INSTAGRAM_DELIVERY_BASE_URL?.trim(),
+  instagramMetadataImportEnabled: process.env.INSTAGRAM_METADATA_IMPORT_ENABLED === 'true',
+  instagramInsightsEnabled: process.env.INSTAGRAM_INSIGHTS_ENABLED === 'true',
+  instagramInsightRetentionDays: Math.max(1, Number(process.env.INSTAGRAM_INSIGHT_RETENTION_DAYS || 90)),
+  instagramReelsEnabled: process.env.INSTAGRAM_REELS_ENABLED === 'true',
+  instagramStoriesEnabled: process.env.INSTAGRAM_STORIES_ENABLED === 'true'
   };
   if (deploymentStage === 'production' || deploymentStage === 'prod') {
     const missing = [

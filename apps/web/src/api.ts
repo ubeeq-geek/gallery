@@ -1230,6 +1230,63 @@ export const api = {
       credentials?: Array<{ externalPlatformCredentialId: string; applicationLabel?: string; clientId: string; redirectUri: string; updatedAt: string }>;
     }>;
   },
+  async studioGetInstagramConfiguration() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/integrations/instagram/configuration`);
+    return handleJson(response) as Promise<{
+      configured: boolean;
+      onboardingEnabled: boolean;
+      state: 'READY' | 'APP_REVIEW_REQUIRED' | 'NOT_CONFIGURED';
+      apiVersion: string;
+      policyProfile: 'instagram_public_safe';
+      pilotCapabilities: { accountRead: boolean; mediaRead: boolean; imagePublish: boolean; carouselPublish: boolean; reelPublish: boolean; storyPublish: boolean; insightsRead: boolean };
+    }>;
+  },
+  async studioStartInstagramConnection(creatorId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/connections/start`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ creatorId })
+    });
+    return handleJson(response) as Promise<{ authorizationUrl: string }>;
+  },
+  async studioGetInstagramConnections(creatorId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/integrations/instagram/connections?creatorId=${encodeURIComponent(creatorId)}`);
+    return handleJson(response) as Promise<Array<{ id: string; username: string; accountType: 'BUSINESS' | 'CREATOR'; apiVersion: string; policyProfileVersion: string; capabilities: string[]; state: string }>>;
+  },
+  async studioDisconnectInstagram(connectionId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/connections/${encodeURIComponent(connectionId)}`, { method: 'DELETE', headers: await authHeaders() });
+    return handleJson(response);
+  },
+  async studioSetInstagramCapabilities(connectionId: string, capabilities: string[]) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/connections/${encodeURIComponent(connectionId)}/capabilities`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ capabilities }) });
+    return handleJson(response) as Promise<{ id: string; capabilities: string[] }>;
+  },
+  async studioSyncInstagramMetadata(connectionId: string, cursor?: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/connections/${encodeURIComponent(connectionId)}/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ cursor }) });
+    return handleJson(response) as Promise<{ items: Array<{ workId: string; title: string; remoteUrl?: string; contentAvailability: 'external_reference'; sourceNotice: string }>; remoteChanges: Array<{ workId: string; remoteId: string; fields: string[] }>; nextCursor?: string }>;
+  },
+  async studioResolveInstagramReference(workId: string, strategy: 'keep_local' | 'accept_remote' | 'field_by_field', fields?: Array<'title' | 'description'>) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/external-references/${encodeURIComponent(workId)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ strategy, fields }) });
+    return handleJson(response);
+  },
+  async studioMapInstagramReference(referenceWorkId: string, workId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/external-references/${encodeURIComponent(referenceWorkId)}/map`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ workId }) });
+    return handleJson(response);
+  },
+  async studioGetInstagramInsights(connectionId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/integrations/instagram/connections/${encodeURIComponent(connectionId)}/insights`);
+    return handleJson(response) as Promise<{ items: Array<{ publicationId: string; metric: string; value: number; capturedAt: string; retentionExpiresAt: string }>; definitionsVersion: string; containsAudienceIdentity: false }>;
+  },
+  async studioUpdateInstagramPublication(publicationId: string, payload: { caption?: string; accessibilityText?: string }) {
+    const response = await fetch(`${API_BASE}/api/instagram/publications/${encodeURIComponent(publicationId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async studioArchiveInstagramPublication(publicationId: string) {
+    const response = await fetch(`${API_BASE}/api/instagram/publications/${encodeURIComponent(publicationId)}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ confirm: true }) });
+    return handleJson(response);
+  },
+  async studioDeleteInstagramPublication(publicationId: string) {
+    const response = await fetch(`${API_BASE}/api/instagram/publications/${encodeURIComponent(publicationId)}?confirm=true`, { method: 'DELETE', headers: await authHeaders() });
+    return handleJson(response);
+  },
   async studioSaveDeviantArtCredentials(payload: { creatorId?: string; externalPlatformCredentialId?: string; createNew?: boolean; applicationLabel?: string; clientId: string; clientSecret?: string }) {
     const response = await fetch(`${API_BASE}/studio/integrations/deviantart/credentials`, {
       method: 'PUT',
