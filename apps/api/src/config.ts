@@ -82,6 +82,11 @@ export interface AppConfig {
   sesFromAddress?: string;
   /** Brand inbox that receives creator integration requests. */
   integrationRequestToAddress?: string;
+  vimeoClientId?: string;
+  vimeoClientSecret?: string;
+  vimeoOAuthRedirectUri?: string;
+  vimeoWebhookSecret?: string;
+  vimeoUploadQueueUrl?: string;
 }
 
 export const loadConfig = (): AppConfig => {
@@ -164,7 +169,12 @@ export const loadConfig = (): AppConfig => {
   localAuthDisplayName: process.env.LOCAL_AUTH_DISPLAY_NAME,
   sesFromAddress: process.env.SES_FROM_ADDRESS?.trim(),
   integrationRequestToAddress: process.env.INTEGRATION_REQUEST_TO_ADDRESS?.trim()
-    || (process.env.PRODUCT_BRAND === 'eversally' ? 'hello@eversally.com' : 'hello@ubeeq.site')
+    || (process.env.PRODUCT_BRAND === 'eversally' ? 'hello@eversally.com' : 'hello@ubeeq.site'),
+  vimeoClientId: process.env.VIMEO_CLIENT_ID,
+  vimeoClientSecret: process.env.VIMEO_CLIENT_SECRET,
+  vimeoOAuthRedirectUri: process.env.VIMEO_OAUTH_REDIRECT_URI,
+  vimeoWebhookSecret: process.env.VIMEO_WEBHOOK_SECRET,
+  vimeoUploadQueueUrl: process.env.VIMEO_UPLOAD_QUEUE_URL
   };
   if (deploymentStage === 'production' || deploymentStage === 'prod') {
     const missing = [

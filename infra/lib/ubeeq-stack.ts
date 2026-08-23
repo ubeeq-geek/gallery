@@ -222,6 +222,17 @@ export class UbeeqStack extends Stack {
         queue: externalSyncDlq
       }
     });
+    const vimeoUploadDlq = new sqs.Queue(this, 'VimeoUploadDlq', {
+      retentionPeriod: Duration.days(isProduction ? 14 : 1),
+      encryption: sqs.QueueEncryption.SQS_MANAGED
+    });
+    const vimeoUploadQueue = new sqs.Queue(this, 'VimeoUploadQueue', {
+      // Leave enough time for Lambda shutdown and SQS redelivery bookkeeping.
+      visibilityTimeout: Duration.minutes(20),
+      receiveMessageWaitTime: Duration.seconds(20),
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+      deadLetterQueue: { maxReceiveCount: 5, queue: vimeoUploadDlq }
+    });
     const discordCommunityDeliveryDlq = new sqs.Queue(this, 'DiscordCommunityDeliveryDlq', {
       retentionPeriod: Duration.days(isProduction ? 14 : 1)
     });
@@ -419,6 +430,14 @@ export class UbeeqStack extends Stack {
     const unlockJwtSecret = isProduction
       ? appSecrets!.secretValueFromJson('unlockJwtSecret').unsafeUnwrap()
       : (process.env.UNLOCK_JWT_SECRET || 'dev-secret');
+    const vimeoClientId = process.env.VIMEO_CLIENT_ID?.trim() || '';
+    const vimeoOAuthRedirectUri = process.env.VIMEO_OAUTH_REDIRECT_URI?.trim() || '';
+    const vimeoClientSecret = isProduction
+      ? appSecrets!.secretValueFromJson('vimeoClientSecret').unsafeUnwrap()
+      : (process.env.VIMEO_CLIENT_SECRET?.trim() || '');
+    const vimeoWebhookSecret = isProduction
+      ? appSecrets!.secretValueFromJson('vimeoWebhookSecret').unsafeUnwrap()
+      : (process.env.VIMEO_WEBHOOK_SECRET?.trim() || '');
     const discordClientId = process.env.DISCORD_CLIENT_ID?.trim() || '';
     const discordOAuthRedirectUri = process.env.DISCORD_OAUTH_REDIRECT_URI?.trim() || '';
     // A shared development Discord app is still a confidential OAuth client:
@@ -523,6 +542,11 @@ export class UbeeqStack extends Stack {
         INTEGRATION_REQUEST_TO_ADDRESS: process.env.INTEGRATION_REQUEST_TO_ADDRESS?.trim()
           || (productBrand === 'eversally' ? 'hello@eversally.com' : 'hello@ubeeq.site'),
         EXTERNAL_SYNC_QUEUE_URL: externalSyncQueue.queueUrl,
+        VIMEO_UPLOAD_QUEUE_URL: vimeoUploadQueue.queueUrl,
+        VIMEO_CLIENT_ID: vimeoClientId,
+        VIMEO_CLIENT_SECRET: vimeoClientSecret,
+        VIMEO_OAUTH_REDIRECT_URI: vimeoOAuthRedirectUri,
+        VIMEO_WEBHOOK_SECRET: vimeoWebhookSecret,
         DISCORD_COMMUNITY_QUEUE_URL: discordCommunityDeliveryQueue.queueUrl,
         DISCORD_CLIENT_ID: discordClientId,
         DISCORD_CLIENT_SECRET: discordClientSecret,
@@ -628,6 +652,55 @@ export class UbeeqStack extends Stack {
         TENANT_ID: process.env.TENANT_ID || productBrand,
         APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || webAppUrl || '')
       }
+    });
+    const vimeoUploadFn = new lambdaNodejs.NodejsFunction(this, 'VimeoUploadFunction', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      entry: path.join(__dirname, '../../apps/api/src/vimeoUploadHandler.ts'),
+      handler: 'handler',
+      timeout: Duration.minutes(15),
+      memorySize: 1024,
+      depsLockFilePath: path.join(__dirname, '../../package-lock.json'),
+      bundling: { target: 'node22', externalModules: ['@aws-sdk/*'] },
+      ...productionFunctionOptions('VimeoUploadFunctionLogs'),
+      environment: {
+        DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
+        CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        USE_CONTENT_CORE_TABLE: 'true',
+        MEDIA_BUCKET: mediaBucket.bucketName,
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        EXTERNAL_TOKEN_ENCRYPTION_KEY: externalTokenEncryptionKey,
+        UNLOCK_JWT_SECRET: unlockJwtSecret,
+        PRODUCT_BRAND: productBrand,
+        TENANT_ID: process.env.TENANT_ID || productBrand,
+        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || '')
+      }
+    });
+    const vimeoReconciliationFn = new lambdaNodejs.NodejsFunction(this, 'VimeoReconciliationFunction', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      entry: path.join(__dirname, '../../apps/api/src/vimeoReconciliationHandler.ts'),
+      handler: 'handler',
+      timeout: Duration.minutes(5),
+      depsLockFilePath: path.join(__dirname, '../../package-lock.json'),
+      bundling: { target: 'node22', externalModules: ['@aws-sdk/*'] },
+      ...productionFunctionOptions('VimeoReconciliationFunctionLogs'),
+      environment: {
+        DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
+        CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        USE_CONTENT_CORE_TABLE: 'true',
+        MEDIA_BUCKET: mediaBucket.bucketName,
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        EXTERNAL_TOKEN_ENCRYPTION_KEY: externalTokenEncryptionKey,
+        UNLOCK_JWT_SECRET: unlockJwtSecret,
+        PRODUCT_BRAND: productBrand,
+        TENANT_ID: process.env.TENANT_ID || productBrand,
+        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || '')
+      }
+    });
+    new events.Rule(this, 'VimeoReconciliationSchedule', {
+      schedule: events.Schedule.rate(Duration.minutes(15)),
+      targets: [new targets.LambdaFunction(vimeoReconciliationFn)]
     });
     const externalSyncSchedulerFn = new lambdaNodejs.NodejsFunction(this, 'ExternalSyncSchedulerFunction', {
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -745,12 +818,21 @@ export class UbeeqStack extends Stack {
     mediaBucket.grantReadWrite(videoPosterIngestFn);
     videoPosterIngestQueue.grantConsumeMessages(videoPosterIngestFn);
     externalSyncQueue.grantSendMessages(apiFn);
+    vimeoUploadQueue.grantSendMessages(apiFn);
     discordCommunityDeliveryQueue.grantSendMessages(apiFn);
     externalSyncQueue.grantConsumeMessages(externalSyncFn);
+    vimeoUploadQueue.grantConsumeMessages(vimeoUploadFn);
+    contentCoreTable.grantReadWriteData(vimeoUploadFn);
+    contentCoreTable.grantReadWriteData(vimeoReconciliationFn);
+    mediaBucket.grantRead(vimeoUploadFn);
     externalSyncQueue.grantSendMessages(externalSyncSchedulerFn);
     discordCommunityDeliveryQueue.grantConsumeMessages(discordCommunityDeliveryFn);
     discordCommunityDeliveryQueue.grantSendMessages(discordCommunityDeliveryFn);
     externalSyncFn.addEventSource(new lambdaEventSources.SqsEventSource(externalSyncQueue, {
+      batchSize: 1,
+      reportBatchItemFailures: true
+    }));
+    vimeoUploadFn.addEventSource(new lambdaEventSources.SqsEventSource(vimeoUploadQueue, {
       batchSize: 1,
       reportBatchItemFailures: true
     }));

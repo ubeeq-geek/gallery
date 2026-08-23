@@ -3,6 +3,8 @@ import cors from 'cors';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import { AdminUpdateUserAttributesCommand, CognitoIdentityProviderClient, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSignedUrl as getCloudFrontSignedUrl } from '@aws-sdk/cloudfront-signer';
 import { createHash, createPublicKey, randomUUID } from 'crypto';
@@ -109,6 +111,9 @@ import { dismissExternalActivity, replyToExternalComment } from './externalSyncW
 import { createCommunityDeliveryQueue } from './communityDeliveryQueue';
 import type { CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getDiscordGuild, listDiscordChannels, sendDiscordMessage, queueDiscordWorkPublished, queueDiscordWorksPublished } from './discordCommunity';
+import { installVimeoRoutes } from './vimeoIntegration';
+import { DynamoVimeoRepository } from './vimeoRepository';
+import { createVimeoQueue } from './vimeoQueue';
 
 interface CreateAppOptions {
   config: AppConfig;
@@ -2583,8 +2588,17 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   // Writing Works use structured block documents and should not be constrained
   // by the small default JSON parser limit. External destinations still apply
   // their own limits when publishing.
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({
+    limit: '10mb',
+    verify: (req, _res, body) => {
+      if (req.url?.split('?')[0] === '/webhooks/vimeo') (req as typeof req & { rawBody?: Buffer }).rawBody = Buffer.from(body);
+    }
+  }));
   app.use(createOptionalAuthMiddleware(config));
+  const vimeoRepository = config.useContentCoreTable
+    ? new DynamoVimeoRepository(DynamoDBDocumentClient.from(new DynamoDBClient({ region: config.awsRegion })), config.contentCoreTable)
+    : undefined;
+  installVimeoRoutes(app, config, store, vimeoRepository, undefined, createVimeoQueue(config));
   if (config.localMediaDirectory) app.use('/media/local', express.static(config.localMediaDirectory));
 
   const resolvePlatformRole = async (userId: string): Promise<PlatformRole> => {
