@@ -23,6 +23,54 @@ const remoteContent = (overrides: Partial<ExternalRemoteContent> = {}): External
 });
 
 describe('external metadata update verification', () => {
+  it('leases refresh-token rotation so only one worker can spend a token', async () => {
+    const store = new InMemoryStore();
+    const expires = Math.floor(Date.now() / 1000) + 30;
+    await expect(store.acquireExternalAccountRefreshLease('account-1', 'worker-1', expires)).resolves.toBe(true);
+    await expect(store.acquireExternalAccountRefreshLease('account-1', 'worker-2', expires)).resolves.toBe(false);
+    await store.releaseExternalAccountRefreshLease('account-1', 'worker-2');
+    await expect(store.acquireExternalAccountRefreshLease('account-1', 'worker-2', expires)).resolves.toBe(false);
+    await store.releaseExternalAccountRefreshLease('account-1', 'worker-1');
+    await expect(store.acquireExternalAccountRefreshLease('account-1', 'worker-2', expires)).resolves.toBe(true);
+  });
+
+  it('imports SoundCloud tracks as metadata-only audio Works without canonical source Assets', async () => {
+    const store = new InMemoryStore();
+    const now = new Date().toISOString();
+    const encryptionKey = 'soundcloud-worker-key';
+    await store.createExternalPlatformCredential({
+      externalPlatformCredentialId: 'sc-credential', userId: 'sc-user', platform: 'soundcloud', clientId: 'client',
+      clientSecretEncrypted: encryptExternalCredential('secret', encryptionKey), redirectUri: 'https://studio.example/integrations/soundcloud/callback', createdAt: now, updatedAt: now
+    });
+    await store.createExternalAccount({
+      externalAccountId: 'sc-account', userId: 'sc-user', creatorIdentityId: 'sc-creator', primaryCreatorIdentityId: 'sc-creator',
+      externalPlatformCredentialId: 'sc-credential', platform: 'soundcloud', externalUserId: 'soundcloud:users:1', externalUsername: 'artist',
+      accessTokenEncrypted: encryptExternalCredential('token', encryptionKey), connectionStatus: 'connected', includeSourceFilesOnSync: false, createdAt: now, updatedAt: now
+    });
+    await store.createExternalSyncJob({ externalSyncJobId: 'sc-import', externalAccountId: 'sc-account', type: 'account_import', status: 'queued', payload: { syncContent: true }, attemptCount: 0, createdAt: now, updatedAt: now });
+    const fetchSpy = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ collection: [] }), headers: { get: () => null } } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ collection: [{ urn: 'soundcloud:tracks:1', title: 'External track', permalink_url: 'https://soundcloud.com/artist/track', tag_list: 'ambient' }] }), headers: { get: () => null } } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ urn: 'soundcloud:tracks:1', title: 'External track', permalink_url: 'https://soundcloud.com/artist/track', tag_list: 'ambient' }), headers: { get: () => null } } as unknown as Response);
+    const queue = { enqueue: jest.fn(async () => undefined) };
+
+    await processExternalSyncJob(store, { tenantId: 'test', externalTokenEncryptionKey: encryptionKey, externalSyncBaseDelaySeconds: 1, soundCloudEnabled: true } as AppConfig, 'sc-import', queue);
+
+    const [work] = await store.listWorksByCreator('test', 'sc-creator');
+    expect(work).toMatchObject({ kind: 'audio', status: 'draft', primaryAssetId: undefined, origin: { platform: 'soundcloud', remoteId: 'soundcloud:tracks:1' } });
+    expect(await store.getCanonicalAsset('test', `${work.workId}:remote`)).toBeNull();
+    expect((await store.listPublicationsByWork('test', work.workId))[0]).toMatchObject({ destination: 'soundcloud', remoteId: 'soundcloud:tracks:1' });
+    expect((await store.listExternalSyncJobs('sc-account')).some((job) => job.type === 'content_sync')).toBe(false);
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('/streams') || String(url).includes('/download'))).toBe(false);
+    const activityJob = (await store.listExternalSyncJobs('sc-account')).find((job) => job.type === 'activity_sync')!;
+    fetchSpy
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ urn: 'soundcloud:users:1', username: 'artist', permalink_url: 'https://soundcloud.com/artist' }), headers: { get: () => null } } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ collection: [{ type: 'track-like', created_at: now, user: { urn: 'soundcloud:users:2', username: 'fan' }, track: { urn: 'soundcloud:tracks:1', title: 'External track' } }] }), headers: { get: () => null } } as unknown as Response);
+    await processExternalSyncJob(store, { tenantId: 'test', externalTokenEncryptionKey: encryptionKey, externalSyncBaseDelaySeconds: 1, soundCloudEnabled: true } as AppConfig, activityJob.externalSyncJobId, queue);
+    expect((await store.listExternalActivitiesByPublication((await store.listExternalPublications('sc-account'))[0].externalPublicationId))[0]).toMatchObject({ type: 'favourite', externalActorName: 'fan' });
+    jest.restoreAllMocks();
+  });
+
   it('paces consecutive DeviantArt API requests before relying on 429 backoff', async () => {
     jest.useFakeTimers({ now: 0 });
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({

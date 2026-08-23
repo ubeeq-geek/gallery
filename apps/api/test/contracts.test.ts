@@ -42,6 +42,39 @@ const buildConfig = (): AppConfig => ({
 });
 
 describe('API contract', () => {
+  it('compliance-gates creator-owned SoundCloud credentials and connection authorization', async () => {
+    const store = new InMemoryStore();
+    const disabledApp = createApp({ config: buildConfig(), store });
+    await request(disabledApp)
+      .put('/studio/integrations/soundcloud/credentials')
+      .set('x-user-id', 'soundcloud-owner')
+      .send({ clientId: 'client', clientSecret: 'secret' })
+      .expect(403);
+
+    const config = {
+      ...buildConfig(), soundCloudEnabled: true,
+      soundCloudOAuthRedirectUri: 'https://studio.example/integrations/soundcloud/callback'
+    };
+    const app = createApp({ config, store });
+    const saved = await request(app)
+      .put('/studio/integrations/soundcloud/credentials')
+      .set('x-user-id', 'soundcloud-owner')
+      .send({ clientId: 'client', clientSecret: 'secret', applicationLabel: 'My SoundCloud app' })
+      .expect(201);
+    expect(saved.body).not.toHaveProperty('clientSecret');
+    expect(saved.body.platform).toBe('soundcloud');
+
+    const connected = await request(app)
+      .post('/studio/integrations/soundcloud/connect')
+      .set('x-user-id', 'soundcloud-owner')
+      .send({ externalPlatformCredentialId: saved.body.externalPlatformCredentialId })
+      .expect(200);
+    const authorizationUrl = new URL(connected.body.authorizationUrl);
+    expect(authorizationUrl.origin).toBe('https://secure.soundcloud.com');
+    expect(authorizationUrl.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(connected.body.sourceControlNotice).toContain('does not create a backup');
+  });
+
   it('serves and updates distinct public member and Creator profiles', async () => {
     const store = new InMemoryStore();
     const app = createApp({ config: buildConfig(), store });

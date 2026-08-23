@@ -29,6 +29,9 @@ export interface AppConfig {
   cognitoClientId?: string;
   cognitoTokenUse?: 'id' | 'access';
   externalOAuthRedirectUri?: string;
+  soundCloudOAuthRedirectUri?: string;
+  /** Compliance approval gate; SoundCloud remains unavailable unless explicitly enabled. */
+  soundCloudEnabled?: boolean;
   externalTokenEncryptionKey?: string;
   externalSyncQueueUrl?: string;
   externalSyncBaseDelaySeconds: number;
@@ -120,6 +123,8 @@ export const loadConfig = (): AppConfig => {
   cognitoClientId: process.env.COGNITO_CLIENT_ID || process.env.VITE_COGNITO_CLIENT_ID,
   cognitoTokenUse: (process.env.COGNITO_TOKEN_USE as 'id' | 'access') || 'id',
   externalOAuthRedirectUri: process.env.EXTERNAL_OAUTH_REDIRECT_URI,
+  soundCloudOAuthRedirectUri: process.env.SOUNDCLOUD_OAUTH_REDIRECT_URI,
+  soundCloudEnabled: (process.env.SOUNDCLOUD_ENABLED || 'false') === 'true',
   externalTokenEncryptionKey: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY,
   externalSyncQueueUrl: process.env.EXTERNAL_SYNC_QUEUE_URL,
   externalSyncBaseDelaySeconds: Number(process.env.EXTERNAL_SYNC_BASE_DELAY_SECONDS || 60),

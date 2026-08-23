@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import type { AppConfig } from './config';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
-import { readStoredUbeeqWorkImage, storeExternalContent } from './externalContentStorage';
+import { openStoredUbeeqWorkStream, readStoredUbeeqWorkImage, storeExternalContent } from './externalContentStorage';
 import { brandForConfig } from './brand';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation } from './integrationStandard';
@@ -346,8 +346,26 @@ const providerForAccount = async (store: DataStore, config: AppConfig, account: 
     minimumRequestIntervalMs: account.platform === 'youtube'
       ? config.youtubeMinimumRequestIntervalMs
       : config.deviantArtMinimumRequestIntervalMs,
-    ...(account.platform === 'youtube' ? { apiBaseUrl: config.youtubeApiBaseUrl } : {})
+    ...(account.platform === 'youtube' ? { apiBaseUrl: config.youtubeApiBaseUrl } : {}),
+    ...(account.platform === 'soundcloud' ? { enabled: config.soundCloudEnabled === true } : {})
   });
+};
+
+const accountRefreshTails = new Map<string, Promise<void>>();
+
+const withAccountRefreshLock = async <T>(externalAccountId: string, callback: () => Promise<T>): Promise<T> => {
+  const previous = accountRefreshTails.get(externalAccountId) || Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.catch(() => undefined).then(() => current);
+  accountRefreshTails.set(externalAccountId, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await callback();
+  } finally {
+    release();
+    if (accountRefreshTails.get(externalAccountId) === tail) accountRefreshTails.delete(externalAccountId);
+  }
 };
 
 const refreshAccessTokenIfNeeded = async (
@@ -362,23 +380,44 @@ const refreshAccessTokenIfNeeded = async (
     return { account, accessToken };
   }
   if (!account.refreshTokenEncrypted) {
-    throw new ExternalProviderError('External-platform authentication has expired', 'authentication_required');
+    throw new ExternalProviderError(`${account.platform} authentication has expired`, 'authentication_required');
   }
-  const refreshToken = decryptExternalCredential(account.refreshTokenEncrypted, config.externalTokenEncryptionKey);
-  const tokens = await provider.refreshAuthentication(refreshToken);
-  const refreshed: ExternalAccount = {
-    ...account,
-    accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
-    refreshTokenEncrypted: tokens.refreshToken
-      ? encryptExternalCredential(tokens.refreshToken, config.externalTokenEncryptionKey)
-      : account.refreshTokenEncrypted,
-    tokenExpiresAt: tokens.expiresAt,
-    connectionStatus: 'connected',
-    updatedAt: new Date().toISOString()
-  };
-  await store.updateExternalAccount(refreshed);
-  accessToken = tokens.accessToken;
-  return { account: refreshed, accessToken };
+  return withAccountRefreshLock(account.externalAccountId, async () => {
+    const leaseId = randomUUID();
+    let acquired = false;
+    for (let attempt = 0; attempt < 100 && !acquired; attempt += 1) {
+      acquired = await store.acquireExternalAccountRefreshLease(account.externalAccountId, leaseId, Math.floor(Date.now() / 1000) + 30);
+      if (!acquired) await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+    if (!acquired) throw new ExternalProviderError(`${account.platform} token refresh is already in progress`, 'temporarily_unavailable');
+    try {
+      // Another worker may have rotated SoundCloud's single-use refresh token
+      // while this worker waited. Always re-read before spending it.
+      const latest = await store.getExternalAccount(account.externalAccountId) || account;
+      const latestExpiresAt = latest.tokenExpiresAt ? Date.parse(latest.tokenExpiresAt) : NaN;
+      if (Number.isFinite(latestExpiresAt) && latestExpiresAt > Date.now() + 60_000) {
+        return { account: latest, accessToken: decryptExternalCredential(latest.accessTokenEncrypted, config.externalTokenEncryptionKey) };
+      }
+      if (!latest.refreshTokenEncrypted) throw new ExternalProviderError(`${account.platform} authentication has expired`, 'authentication_required');
+      const refreshToken = decryptExternalCredential(latest.refreshTokenEncrypted, config.externalTokenEncryptionKey);
+      const tokens = await provider.refreshAuthentication(refreshToken);
+      const refreshed: ExternalAccount = {
+        ...latest,
+        accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
+        refreshTokenEncrypted: tokens.refreshToken
+          ? encryptExternalCredential(tokens.refreshToken, config.externalTokenEncryptionKey)
+          : latest.refreshTokenEncrypted,
+        tokenExpiresAt: tokens.expiresAt,
+        connectionStatus: 'connected',
+        updatedAt: new Date().toISOString()
+      };
+      await store.updateExternalAccount(refreshed);
+      accessToken = tokens.accessToken;
+      return { account: refreshed, accessToken };
+    } finally {
+      await store.releaseExternalAccountRefreshLease(account.externalAccountId, leaseId);
+    }
+  });
 };
 
 const canonicalPublicationStatus = (publication: ExternalPublication): Publication['status'] => {
@@ -488,7 +527,7 @@ const upsertContent = async (
 ): Promise<{ asset: Asset; publication: ExternalPublication }> => {
   const primaryCreatorIdentityId = account.primaryCreatorIdentityId || account.creatorIdentityId;
   if (!primaryCreatorIdentityId) {
-    throw new ExternalProviderError('Assign this DeviantArt account to a creator before importing its catalogue', 'unsupported');
+    throw new ExternalProviderError(`Assign this ${account.platform} account to a creator before importing its catalogue`, 'unsupported');
   }
   const currentPublication = await store.getExternalPublication(account.externalAccountId, remote.externalContentId);
   let asset: Asset | null = currentPublication ? await store.getAsset(currentPublication.assetId) : null;
@@ -625,6 +664,8 @@ const upsertContent = async (
 
   const workKind: Work['kind'] = remote.assetType === 'literature'
     ? 'literature'
+    : remote.assetType === 'audio'
+      ? 'audio'
     : remote.assetType === 'video'
       ? 'video'
       : remote.assetType === 'animation'
@@ -666,7 +707,9 @@ const upsertContent = async (
       remoteUrl: remote.externalUrl,
       importedAt: now
     },
-    primaryAssetId: `${asset.assetId}:remote`,
+    // SoundCloud imports are catalogue references, not source audio Assets.
+    // The normal creator upload flow may attach a canonical audio Asset later.
+    primaryAssetId: account.platform === 'soundcloud' ? undefined : `${asset.assetId}:remote`,
     revision: 1,
     createdAt: now,
     updatedAt: now,
@@ -683,31 +726,30 @@ const upsertContent = async (
       updatedAt: now
     });
   }
-  const remoteAssetId = `${asset.assetId}:remote`;
-  const currentCanonicalAsset = await store.getCanonicalAsset(config.tenantId, remoteAssetId);
-  const canonicalAsset: CanonicalAsset = {
-    assetId: remoteAssetId,
-    tenantId: config.tenantId,
-    creatorId: primaryCreatorIdentityId,
-    kind: workKind === 'video' || workKind === 'animation' ? 'video' : workKind === 'literature' ? 'document' : 'image',
-    status: 'ready',
-    mimeType: remote.content?.contentType || currentCanonicalAsset?.mimeType || 'application/octet-stream',
-    originalFilename: remote.content?.filename || currentCanonicalAsset?.originalFilename,
-    sizeBytes: remote.content?.byteSize || currentCanonicalAsset?.sizeBytes,
-    width: remote.content?.width || currentCanonicalAsset?.width,
-    height: remote.content?.height || currentCanonicalAsset?.height,
-    storage: {
-      mode: 'external',
-      externalUrl: remote.content?.sourceUrl || remote.externalUrl
-    },
-    metadata: { sourcePlatform: account.platform, sourceAccount: account.externalUsername },
-    createdAt: currentCanonicalAsset?.createdAt || now,
-    updatedAt: now
-  };
-  if (currentCanonicalAsset) await store.updateCanonicalAsset(canonicalAsset);
-  else {
-    await store.createCanonicalAsset(canonicalAsset);
-    await store.attachAssetToWork(config.tenantId, { workId: canonicalWork.workId, assetId: canonicalAsset.assetId, role: 'primary', position: 0 });
+  if (account.platform !== 'soundcloud') {
+    const remoteAssetId = `${asset.assetId}:remote`;
+    const currentCanonicalAsset = await store.getCanonicalAsset(config.tenantId, remoteAssetId);
+    const canonicalAsset: CanonicalAsset = {
+      assetId: remoteAssetId,
+      tenantId: config.tenantId,
+      creatorId: primaryCreatorIdentityId,
+      kind: workKind === 'video' || workKind === 'animation' ? 'video' : workKind === 'literature' ? 'document' : 'image',
+      status: 'ready',
+      mimeType: remote.content?.contentType || currentCanonicalAsset?.mimeType || 'application/octet-stream',
+      originalFilename: remote.content?.filename || currentCanonicalAsset?.originalFilename,
+      sizeBytes: remote.content?.byteSize || currentCanonicalAsset?.sizeBytes,
+      width: remote.content?.width || currentCanonicalAsset?.width,
+      height: remote.content?.height || currentCanonicalAsset?.height,
+      storage: { mode: 'external', externalUrl: remote.content?.sourceUrl || remote.externalUrl },
+      metadata: { sourcePlatform: account.platform, sourceAccount: account.externalUsername },
+      createdAt: currentCanonicalAsset?.createdAt || now,
+      updatedAt: now
+    };
+    if (currentCanonicalAsset) await store.updateCanonicalAsset(canonicalAsset);
+    else {
+      await store.createCanonicalAsset(canonicalAsset);
+      await store.attachAssetToWork(config.tenantId, { workId: canonicalWork.workId, assetId: canonicalAsset.assetId, role: 'primary', position: 0 });
+    }
   }
   await syncCanonicalPublication(store, config, account, canonicalWork, publication, now);
 
@@ -1117,6 +1159,22 @@ const executeRemoteUpdate = async (store: DataStore, config: AppConfig, job: Ext
   });
 };
 
+const executeRemoteDelete = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
+  const externalPublicationId = typeof job.payload?.externalPublicationId === 'string' ? job.payload.externalPublicationId : '';
+  const publication = (await store.listExternalPublications(account.externalAccountId)).find((item) => item.externalPublicationId === externalPublicationId);
+  if (!publication) throw new ExternalProviderError('The publication is no longer available for deletion', 'invalid_response');
+  const provider = await providerForAccount(store, config, account);
+  if (!provider.deleteContent) throw new ExternalProviderError(`${account.platform} does not support content deletion`, 'unsupported');
+  const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
+  await provider.deleteContent(session.accessToken, publication.externalContentId);
+  const now = new Date().toISOString();
+  await store.updateExternalPublication({ ...publication, syncStatus: 'deleted', remoteStateReason: 'Deleted after explicit creator confirmation', lastSyncedAt: now, updatedAt: now });
+  const canonical = await store.getPublication(config.tenantId, publication.externalPublicationId);
+  if (canonical) await store.upsertPublication({ ...canonical, status: 'removed', removedAt: now, updatedAt: now });
+  await updateJob(store, job, { status: 'successful', progress: { discovered: 1, synchronized: 1, remaining: 0 }, errorCode: undefined, errorMessage: undefined, nextAttemptAt: undefined });
+  await addLog(store, job.externalSyncJobId, 'info', `${account.platform} publication deleted after explicit confirmation`, { externalPublicationId });
+};
+
 const executePublish = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
   const assetId = typeof job.payload?.assetId === 'string' ? job.payload.assetId : '';
   const asset = assetId ? await store.getAsset(assetId) : null;
@@ -1159,6 +1217,59 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
   const filename = typeof job.payload?.originalFilename === 'string' && job.payload.originalFilename.trim()
     ? job.payload.originalFilename.trim()
     : `${asset.assetId}.jpg`;
+  if (account.platform === 'soundcloud') {
+    const work = await store.getWork(config.tenantId, asset.assetId);
+    if (!work || work.kind !== 'audio') throw new ExternalProviderError('Only canonical audio Works can be published to SoundCloud', 'invalid_response');
+    if (!spacePublication.hostedContentType.startsWith('audio/')) throw new ExternalProviderError('The SoundCloud source Asset must be audio', 'invalid_response');
+    const visibility = job.payload?.visibility === 'public' || job.payload?.visibility === 'unlisted' ? job.payload.visibility : 'private';
+    const published = await provider.publishContent(session.accessToken, {
+      body: Buffer.alloc(0),
+      uploadSource: {
+        assetId: asset.assetId,
+        filename,
+        contentType: spacePublication.hostedContentType,
+        byteSize: spacePublication.hostedByteSize,
+        openReadStream: () => openStoredUbeeqWorkStream(config, spacePublication.hostedObjectKey!)
+      },
+      filename,
+      contentType: spacePublication.hostedContentType,
+      title: pendingPublication.externalTitle || asset.canonicalTitle || filename,
+      description: pendingPublication.externalDescription ?? asset.canonicalDescription,
+      tags,
+      visibility,
+      artist: metadataString(savedSettings, 'metadataArtist', 'artist'),
+      providerFields: {
+        genre: metadataString(savedSettings, 'genre'),
+        license: metadataString(savedSettings, 'license'),
+        purchase_url: metadataString(savedSettings, 'purchaseUrl', 'purchase_url'),
+        downloadable: metadataBoolean(savedSettings, 'downloadable'),
+        commentable: metadataBoolean(savedSettings, 'commentable')
+      }
+    });
+    const now = new Date().toISOString();
+    const publication: ExternalPublication = {
+      ...pendingPublication,
+      externalContentId: published.externalContentId,
+      externalUrl: published.externalUrl,
+      externalTitle: pendingPublication.externalTitle || asset.canonicalTitle,
+      externalDescription: pendingPublication.externalDescription ?? asset.canonicalDescription,
+      externalTags: tags,
+      targetStatus: 'published',
+      syncStatus: 'active',
+      rawMetadataJson: { ...savedSettings, ...published.rawMetadata },
+      publishedAt: now,
+      remoteCreatedAt: now,
+      remoteUpdatedAt: now,
+      lastSyncedAt: now,
+      lastSeenAt: now,
+      updatedAt: now
+    };
+    await store.updateExternalPublication(publication, pendingPublication.externalContentId);
+    await syncCanonicalPublication(store, config, session.account, work, publication, now);
+    await updateJob(store, job, { status: 'successful', progress: { discovered: 1, synchronized: 1, remaining: 0 }, errorCode: undefined, errorMessage: undefined, nextAttemptAt: undefined });
+    await addLog(store, job.externalSyncJobId, 'info', `${brandForConfig(config).productName} audio uploaded to SoundCloud`, { assetId: asset.assetId, externalContentId: published.externalContentId });
+    return;
+  }
   const content: ExternalContentPublish = {
     body: await readStoredUbeeqWorkImage(config, spacePublication.hostedObjectKey),
     filename,
@@ -1541,7 +1652,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
   if (!contentScanComplete) {
     do {
       await ensureJobActive(store, job.externalSyncJobId);
-      const pageCursor = cursor || '0';
+      const pageCursor = cursor || (account.platform === 'deviantart' ? '0' : undefined);
       const page = await provider.listContent(session.accessToken, {
         username: session.account.externalUsername,
         cursor: pageCursor,
@@ -1572,7 +1683,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
               currentJob = await updateJob(store, currentJob, {
                 payload: {
                   ...(currentJob.payload || {}),
-                  resumeCursor: pageCursor,
+                  ...(pageCursor ? { resumeCursor: pageCursor } : {}),
                   resumeItemIndex: itemIndex,
                   resumePageLoaded: true,
                   contentScanComplete: false,
@@ -1729,6 +1840,7 @@ const upsertRemoteComment = async (
     body: remote.body,
     createdAtRemote: remote.createdAt,
     parentExternalCommentExternalId: remote.parentExternalCommentId,
+    positionMilliseconds: remote.positionMilliseconds,
     externalAuthorAvatarUrl: remote.authorAvatarUrl,
     replyCount: remote.replyCount,
     likeCount: remote.likeCount,
@@ -1942,7 +2054,7 @@ const synchronizeAccountProfile = async (
   account: ExternalAccount,
   now: string
 ): Promise<{ changed: boolean; profile: ExternalAccountProfile }> => {
-  const remote = await provider.getProfile(accessToken, account.externalUsername);
+  const remote = await provider.getProfile(accessToken, account.platform === 'soundcloud' ? account.externalUserId : account.externalUsername);
   const profileFingerprint = fingerprint({
     profileUrl: remote.profileUrl,
     avatarUrl: remote.avatarUrl,
@@ -2121,6 +2233,28 @@ const executeActivitySync = async (store: DataStore, config: AppConfig, job: Ext
     }
     synchronized += 1;
   };
+  if (session.account.platform === 'soundcloud') {
+    const checkpoint = await store.getExternalSyncCheckpoint(account.externalAccountId, 'messages.feed', account.externalAccountId);
+    const known = new Set(checkpoint?.recentRemoteIds || []);
+    const remoteIds: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await provider.listMessages(session.accessToken, 'feed', cursor);
+      discovered += page.items.length;
+      let newOnPage = 0;
+      for (const remote of page.items) {
+        remoteIds.push(remote.remoteActivityId);
+        if (!known.has(remote.remoteActivityId)) newOnPage += 1;
+        await storeRemoteActivity(remote);
+      }
+      cursor = known.size && newOnPage === 0 ? undefined : page.nextCursor;
+    } while (cursor);
+    await updateCheckpoint(store, session.account, 'messages.feed', account.externalAccountId, now, remoteIds);
+    const engagementJob = await enqueueRelatedSyncJob(store, config, session.account, 'engagement_sync', queue);
+    await updateJob(store, job, { status: 'successful', progress: { discovered, synchronized, remaining: 0 }, errorCode: undefined, errorMessage: undefined, nextAttemptAt: undefined });
+    await addLog(store, job.externalSyncJobId, 'info', 'Available SoundCloud activity synchronized', { discovered, synchronized, profileChanged: profileResult.changed, engagementJobId: engagementJob.externalSyncJobId });
+    return;
+  }
   for (const feedbackType of ['comments', 'replies', 'activity'] as const) {
     const resourceType = `feedback.${feedbackType}` as ExternalSyncCheckpoint['resourceType'];
     const checkpoint = await store.getExternalSyncCheckpoint(account.externalAccountId, resourceType, account.externalAccountId);
@@ -2306,6 +2440,41 @@ export const dismissExternalActivity = async (
   return updated;
 };
 
+const executeUserAction = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
+  const action = typeof job.payload?.action === 'string' ? job.payload.action : '';
+  const targetId = typeof job.payload?.targetId === 'string' ? job.payload.targetId : '';
+  if (!targetId) throw new ExternalProviderError('The SoundCloud action target is missing', 'invalid_response');
+  const provider = await providerForAccount(store, config, account);
+  const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
+  const invoke = async (): Promise<ExternalRemoteComment | undefined> => {
+    if (action === 'comment' && provider.postTimedComment) return provider.postTimedComment(session.accessToken, targetId, String(job.payload?.body || ''), typeof job.payload?.timestampMs === 'number' ? job.payload.timestampMs : undefined);
+    if (action === 'like' && provider.likeContent) await provider.likeContent(session.accessToken, targetId);
+    else if (action === 'unlike' && provider.unlikeContent) await provider.unlikeContent(session.accessToken, targetId);
+    else if (action === 'repost' && provider.repostContent) await provider.repostContent(session.accessToken, targetId);
+    else if (action === 'unrepost' && provider.unrepostContent) await provider.unrepostContent(session.accessToken, targetId);
+    else if (action === 'follow' && provider.followUser) await provider.followUser(session.accessToken, targetId);
+    else if (action === 'unfollow' && provider.unfollowUser) await provider.unfollowUser(session.accessToken, targetId);
+    else if (action !== 'comment') throw new ExternalProviderError(`Unsupported ${account.platform} user action`, 'unsupported');
+    return undefined;
+  };
+  const comment = await invoke();
+  const now = new Date().toISOString();
+  const publication = (await store.listExternalPublications(account.externalAccountId)).find((item) => item.externalContentId === targetId);
+  if (comment && publication) await upsertRemoteComment(store, publication, comment, now);
+  await upsertActivity(store, session.account, {
+    remoteActivityId: `outbound:${job.payload?.idempotencyKey || job.externalSyncJobId}`,
+    sourceMessageId: job.externalSyncJobId,
+    type: comment ? 'comment' : action === 'like' || action === 'unlike' ? 'favourite' : 'activity',
+    occurredAt: now,
+    externalContentId: publication?.externalContentId,
+    externalCommentId: comment?.externalCommentId,
+    body: comment?.body || action,
+    rawPayload: { action, targetId }
+  }, publication, now, 'outbound');
+  await updateJob(store, job, { status: 'successful', progress: { discovered: 1, synchronized: 1, remaining: 0 }, errorCode: undefined, errorMessage: undefined, nextAttemptAt: undefined });
+  await addLog(store, job.externalSyncJobId, 'info', `Explicit ${account.platform} ${action} action completed`, { targetId });
+};
+
 export const processExternalSyncJob = async (store: DataStore, config: AppConfig, externalSyncJobId: string, queue?: ExternalSyncQueue): Promise<void> => {
   const job = await store.getExternalSyncJob(externalSyncJobId);
   if (!job || job.status === 'cancelled' || job.status === 'successful') return;
@@ -2383,6 +2552,10 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
       await executeEngagementSync(store, config, processingJob, account);
     } else if (job.type === 'remote_update') {
       await executeRemoteUpdate(store, config, processingJob, account, queue);
+    } else if (job.type === 'remote_delete') {
+      await executeRemoteDelete(store, config, processingJob, account);
+    } else if (job.type === 'user_action') {
+      await executeUserAction(store, config, processingJob, account);
     } else if (job.type === 'publish') {
       await executePublish(store, config, processingJob, account);
     } else {
