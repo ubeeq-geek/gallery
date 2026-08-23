@@ -30,6 +30,14 @@ export interface AppConfig {
   cognitoTokenUse?: 'id' | 'access';
   externalOAuthRedirectUri?: string;
   externalTokenEncryptionKey?: string;
+  /** Master secret used to derive per-connection signatures for approved WordPress webhook adapters. */
+  wordpressWebhookSecret?: string;
+  /** Exact HTTPS hostnames allowed in generated WordPress core embed blocks. Empty disables embeds. */
+  wordpressApprovedEmbedHosts: string[];
+  /** Exact site hosts approved for the narrow managed WordPress cohort. */
+  wordpressManagedSiteHosts: string[];
+  /** Exact site hosts disabled for compatibility, policy, or safety reasons. */
+  wordpressBlockedSiteHosts: string[];
   externalSyncQueueUrl?: string;
   externalSyncBaseDelaySeconds: number;
   /** Minimum spacing between DeviantArt API calls. Keep this conservative: DA applies adaptive limits. */
@@ -121,6 +129,10 @@ export const loadConfig = (): AppConfig => {
   cognitoTokenUse: (process.env.COGNITO_TOKEN_USE as 'id' | 'access') || 'id',
   externalOAuthRedirectUri: process.env.EXTERNAL_OAUTH_REDIRECT_URI,
   externalTokenEncryptionKey: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY,
+  wordpressWebhookSecret: process.env.WORDPRESS_WEBHOOK_SECRET,
+  wordpressApprovedEmbedHosts: (process.env.WORDPRESS_APPROVED_EMBED_HOSTS || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
+  wordpressManagedSiteHosts: (process.env.WORDPRESS_MANAGED_SITE_HOSTS || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
+  wordpressBlockedSiteHosts: (process.env.WORDPRESS_BLOCKED_SITE_HOSTS || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
   externalSyncQueueUrl: process.env.EXTERNAL_SYNC_QUEUE_URL,
   externalSyncBaseDelaySeconds: Number(process.env.EXTERNAL_SYNC_BASE_DELAY_SECONDS || 60),
   deviantArtMinimumRequestIntervalMs: Number(process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || 2000),

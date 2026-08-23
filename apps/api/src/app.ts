@@ -109,6 +109,7 @@ import { dismissExternalActivity, replyToExternalComment } from './externalSyncW
 import { createCommunityDeliveryQueue } from './communityDeliveryQueue';
 import type { CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getDiscordGuild, listDiscordChannels, sendDiscordMessage, queueDiscordWorkPublished, queueDiscordWorksPublished } from './discordCommunity';
+import { createWordPressRouter } from './wordpressIntegration';
 
 interface CreateAppOptions {
   config: AppConfig;
@@ -2585,6 +2586,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   // their own limits when publishing.
   app.use(express.json({ limit: '10mb' }));
   app.use(createOptionalAuthMiddleware(config));
+  app.use('/api', createWordPressRouter(config, store));
   if (config.localMediaDirectory) app.use('/media/local', express.static(config.localMediaDirectory));
 
   const resolvePlatformRole = async (userId: string): Promise<PlatformRole> => {

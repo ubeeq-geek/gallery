@@ -12,6 +12,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import type { AppConfig } from './config';
 import type { DataStore, TrendingFeedQueryOptions } from './store';
+import type { WordPressIntegrationState } from './wordpressIntegration';
 import type {
   Creator,
   CreatorMember,
@@ -86,6 +87,20 @@ import type {
 } from './canonicalDomain';
 
 export class DynamoStore implements DataStore {
+  private localWordPressStates = new Map<string, WordPressIntegrationState>();
+
+  async getWordPressIntegrationState(tenantId: string): Promise<WordPressIntegrationState> {
+    if (!this.config.useContentCoreTable) return structuredClone(this.localWordPressStates.get(tenantId) || { connections: [], publications: [], externalReferences: [], mediaMappings: [], audits: [] });
+    const result = await this.client.send(new GetCommand({ TableName: this.config.contentCoreTable, Key: { PK: `TENANT#${tenantId}#WORDPRESS`, SK: 'STATE' } }));
+    const state = result.Item?.state as WordPressIntegrationState | undefined;
+    return state || { connections: [], publications: [], externalReferences: [], mediaMappings: [], audits: [] };
+  }
+
+  async putWordPressIntegrationState(tenantId: string, state: WordPressIntegrationState): Promise<void> {
+    if (!this.config.useContentCoreTable) { this.localWordPressStates.set(tenantId, structuredClone(state)); return; }
+    await this.client.send(new PutCommand({ TableName: this.config.contentCoreTable, Item: { PK: `TENANT#${tenantId}#WORDPRESS`, SK: 'STATE', entityType: 'WORDPRESS_STATE', state, updatedAt: new Date().toISOString() } }));
+  }
+
   private readonly client: DynamoDBDocumentClient;
   private readonly coreRepo?: ContentCoreRepository;
   private readonly externalPlatformRepo?: ExternalPlatformRepository;
