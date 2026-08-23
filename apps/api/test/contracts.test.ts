@@ -29,6 +29,7 @@ const buildConfig = (): AppConfig => ({
   trendingCandidateLimit: 1500,
   externalSyncBaseDelaySeconds: 60,
   deviantArtMinimumRequestIntervalMs: 0,
+  flickrMinimumRequestIntervalMs: 0,
   externalAccountScanIntervalSeconds: 21600,
   externalActivityScanIntervalSeconds: 120,
   deviantArtPublishedDescriptionUpdate: false,
