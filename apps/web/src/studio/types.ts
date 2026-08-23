@@ -3,6 +3,7 @@ import type { PostBlock } from '../domainTypes';
 export const studioIntegrationPlatforms = [
   { id: 'deviantart', label: 'DeviantArt' },
   { id: 'youtube', label: 'YouTube' },
+  { id: 'fanvue', label: 'Fanvue' },
   { id: 'bluesky', label: 'Bluesky' },
   { id: 'discord', label: 'Discord' }
 ] as const;
