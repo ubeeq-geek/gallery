@@ -38,6 +38,12 @@ const buildConfig = (): AppConfig => ({
   discordApiBaseUrl: 'https://discord.com/api/v10',
   youtubeMinimumRequestIntervalMs: 1000,
   youtubeApiBaseUrl: 'https://www.googleapis.com/youtube/v3',
+  tumblrApiBaseUrl: 'https://api.tumblr.com',
+  tumblrMediaBlockLimit: 10,
+  tumblrHourlyRequestLimit: 1000,
+  tumblrDailyRequestLimit: 5000,
+  tumblrPublishMaxAttempts: 5,
+  tumblrRetryBaseDelaySeconds: 60,
   externalScheduledScansEnabled: false
 });
 

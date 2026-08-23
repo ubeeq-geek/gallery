@@ -6,7 +6,7 @@ import { runAdminBootstrap } from './adminBootstrap';
 
 const config = loadConfig();
 const store = new DynamoStore(config);
-const app = createApp({ config, store });
+const app = createApp({ config, store, tumblrRepository: store.tumblrRepository });
 const bootstrapPromise = runAdminBootstrap(config);
 
 const appHandler = serverless(app);
