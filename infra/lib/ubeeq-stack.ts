@@ -63,6 +63,10 @@ export class UbeeqStack extends Stack {
     const apiCertificateArn = process.env.API_CERTIFICATE_ARN?.trim();
     const webCertificateArn = process.env.WEB_CERTIFICATE_ARN?.trim();
     const manageFullProductDomains = process.env.ENABLE_FULL_PRODUCT_DOMAINS === 'true';
+    // Development can optionally publish the built web app behind a disposable
+    // CloudFront URL without requiring Route53, ACM, or a DNS cutover. This is
+    // intentionally opt-in so a normal local/dev API deploy remains unchanged.
+    const manageDevWebHosting = !isProduction && process.env.ENABLE_DEV_WEB_HOSTING === 'true';
     if (isProduction && !webAppUrl) {
       throw new Error('WEB_APP_URL is required when DEPLOYMENT_STAGE=production so CORS can be restricted.');
     }
@@ -437,6 +441,19 @@ export class UbeeqStack extends Stack {
     const discordBotToken = discordEnabled && discordSecrets
       ? discordSecrets.secretValueFromJson('discordBotToken').unsafeUnwrap()
       : (process.env.DISCORD_BOT_TOKEN?.trim() || '');
+    // YouTube is optional. Unlike the product's core secrets, do not assume
+    // APP_SECRETS_NAME contains this field: enabling a new optional adapter
+    // must not break an existing deployment. Point YOUTUBE_SECRETS_NAME at a
+    // JSON secret with youtubeOAuthClientSecret when the adapter is enabled.
+    const youtubeOAuthClientId = process.env.YOUTUBE_OAUTH_CLIENT_ID?.trim() || '';
+    const youtubeOAuthRedirectUri = process.env.YOUTUBE_OAUTH_REDIRECT_URI?.trim() || '';
+    const youtubeSecretsName = process.env.YOUTUBE_SECRETS_NAME?.trim();
+    const youtubeSecrets = youtubeSecretsName
+      ? secretsmanager.Secret.fromSecretNameV2(this, 'YouTubeIntegrationSecrets', youtubeSecretsName)
+      : undefined;
+    const youtubeOAuthClientSecret = youtubeSecrets
+      ? youtubeSecrets.secretValueFromJson('youtubeOAuthClientSecret').unsafeUnwrap()
+      : (process.env.YOUTUBE_OAUTH_CLIENT_SECRET?.trim() || '');
     // Keep the bootstrap password out of source control and plain-text CDK
     // configuration in production. Local/development deployments may provide
     // ADMIN_PASSWORD directly; production reads adminPassword from the
@@ -511,6 +528,11 @@ export class UbeeqStack extends Stack {
         DISCORD_CLIENT_SECRET: discordClientSecret,
         DISCORD_BOT_TOKEN: discordBotToken,
         DISCORD_OAUTH_REDIRECT_URI: discordOAuthRedirectUri,
+        YOUTUBE_OAUTH_CLIENT_ID: youtubeOAuthClientId,
+        YOUTUBE_OAUTH_CLIENT_SECRET: youtubeOAuthClientSecret,
+        YOUTUBE_OAUTH_REDIRECT_URI: youtubeOAuthRedirectUri,
+        YOUTUBE_MIN_REQUEST_INTERVAL_MS: process.env.YOUTUBE_MIN_REQUEST_INTERVAL_MS || '1000',
+        YOUTUBE_API_BASE_URL: process.env.YOUTUBE_API_BASE_URL || 'https://www.googleapis.com/youtube/v3',
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
         DEVIANTART_MIN_REQUEST_INTERVAL_MS: process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || '2000',
@@ -524,7 +546,12 @@ export class UbeeqStack extends Stack {
         BLUESKY_OAUTH_SERVICE_URL: process.env.BLUESKY_OAUTH_SERVICE_URL || '',
         BLUESKY_OAUTH_SERVICE_JWKS_URL: process.env.BLUESKY_OAUTH_SERVICE_JWKS_URL || '',
         UNLOCK_JWT_SECRET: unlockJwtSecret,
-        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || ''),
+        // Keep the API's browser origin aligned with the deployed web host in
+        // development as well as production.  Without this fallback, a
+        // disposable CloudFront deployment has a valid API Gateway preflight
+        // but Express rejects the subsequent GET/POST requests as CORS
+        // violations because APP_ORIGIN is empty.
+        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || webAppUrl || ''),
         TRENDING_FEED_MAX_ITEMS: '600',
         TRENDING_CANDIDATE_LIMIT: '1500',
         MEDIA_CDN_DOMAIN: mediaDistribution.distributionDomainName,
@@ -594,9 +621,11 @@ export class UbeeqStack extends Stack {
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
         DEVIANTART_MIN_REQUEST_INTERVAL_MS: process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || '2000',
         DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE: process.env.DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE || 'true',
+        YOUTUBE_MIN_REQUEST_INTERVAL_MS: process.env.YOUTUBE_MIN_REQUEST_INTERVAL_MS || '1000',
+        YOUTUBE_API_BASE_URL: process.env.YOUTUBE_API_BASE_URL || 'https://www.googleapis.com/youtube/v3',
         PRODUCT_BRAND: productBrand,
         TENANT_ID: process.env.TENANT_ID || productBrand,
-        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || '')
+        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || webAppUrl || '')
       }
     });
     const externalSyncSchedulerFn = new lambdaNodejs.NodejsFunction(this, 'ExternalSyncSchedulerFunction', {
@@ -625,7 +654,7 @@ export class UbeeqStack extends Stack {
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
         PRODUCT_BRAND: productBrand,
         TENANT_ID: process.env.TENANT_ID || productBrand,
-        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || '')
+        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || webAppUrl || '')
       }
     });
     const discordCommunityDeliveryFn = new lambdaNodejs.NodejsFunction(this, 'DiscordCommunityDeliveryFunction', {
@@ -819,7 +848,9 @@ export class UbeeqStack extends Stack {
         recordName: apiDomain,
         target: route53.RecordTarget.fromAlias(new route53Targets.ApiGatewayDomain(apiCustomDomain))
       });
+    }
 
+    if (manageFullProductDomains || manageDevWebHosting) {
       const webBucket = new s3.Bucket(this, 'PublicWebBucket', {
         blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
         encryption: s3.BucketEncryption.S3_MANAGED,
@@ -840,8 +871,10 @@ export class UbeeqStack extends Stack {
           { httpStatus: 403, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: Duration.minutes(1) },
           { httpStatus: 404, responseHttpStatus: 200, responsePagePath: '/index.html', ttl: Duration.minutes(1) }
         ],
-        domainNames: [rootDomain],
-        certificate: acm.Certificate.fromCertificateArn(this, 'PublicWebCertificate', webCertificateArn!),
+        ...(manageFullProductDomains && rootDomain && webCertificateArn ? {
+          domainNames: [rootDomain],
+          certificate: acm.Certificate.fromCertificateArn(this, 'PublicWebCertificate', webCertificateArn)
+        } : {}),
         minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021
       });
       new s3deploy.BucketDeployment(this, 'PublicWebDeployment', {
@@ -851,16 +884,22 @@ export class UbeeqStack extends Stack {
         distributionPaths: ['/*'],
         prune: true
       });
-      new route53.ARecord(this, 'PublicWebAliasRecord', {
-        zone,
-        recordName: rootDomain,
-        target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(publicWebDistribution))
-      });
-      new route53.AaaaRecord(this, 'PublicWebIpv6AliasRecord', {
-        zone,
-        recordName: rootDomain,
-        target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(publicWebDistribution))
-      });
+      if (manageFullProductDomains && rootDomain && hostedZoneId) {
+        const zone = route53.HostedZone.fromHostedZoneAttributes(this, 'PublicHostedZoneForWeb', {
+          hostedZoneId,
+          zoneName: rootDomain
+        });
+        new route53.ARecord(this, 'PublicWebAliasRecord', {
+          zone,
+          recordName: rootDomain,
+          target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(publicWebDistribution))
+        });
+        new route53.AaaaRecord(this, 'PublicWebIpv6AliasRecord', {
+          zone,
+          recordName: rootDomain,
+          target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(publicWebDistribution))
+        });
+      }
     }
 
     let operationsTopic: sns.Topic | undefined;
@@ -988,6 +1027,7 @@ export class UbeeqStack extends Stack {
     if (apiCustomDomain) new CfnOutput(this, 'CustomApiUrl', { value: `https://${apiCustomDomain.domainName}` });
     if (publicWebDistribution && rootDomain) new CfnOutput(this, 'PublicWebUrl', { value: `https://${rootDomain}` });
     if (publicWebDistribution) new CfnOutput(this, 'PublicWebDistributionDomainName', { value: publicWebDistribution.distributionDomainName });
+    if (publicWebDistribution && manageDevWebHosting) new CfnOutput(this, 'DevWebUrl', { value: `https://${publicWebDistribution.distributionDomainName}` });
     new CfnOutput(this, 'MediaBucketName', { value: mediaBucket.bucketName });
     new CfnOutput(this, 'VideoPosterIngestQueueUrl', { value: videoPosterIngestQueue.queueUrl });
     new CfnOutput(this, 'VideoPosterIngestQueueArn', { value: videoPosterIngestQueue.queueArn });

@@ -862,7 +862,14 @@ const buildUsernameSuggestions = async (
   input: string,
   productBrand: 'ubeeq' | 'eversally'
 ): Promise<string[]> => {
-  const base = normalizeUsername(input).replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '') || 'user';
+  // When suggestions are generated from an email address (for example when
+  // the registration form is autofilled), use only the recipient/local part.
+  // Including the domain makes suggestions noisy ("namegmailcom-ever") and
+  // exposes an implementation detail that is not useful as a public handle.
+  const trimmedInput = input.trim();
+  const atIndex = trimmedInput.indexOf('@');
+  const suggestionSeed = atIndex > 0 ? trimmedInput.slice(0, atIndex) : trimmedInput;
+  const base = normalizeUsername(suggestionSeed).replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '') || 'user';
   const withPrefix = (prefix: string) => `${prefix}-${base}`.slice(0, 30).replace(/-+$/g, '');
   const withSuffix = (suffix: string) => `${base.slice(0, Math.max(3, 29 - suffix.length))}-${suffix}`;
   const communityTerm = productBrand === 'eversally' ? 'ever' : 'ubeeqer';
@@ -1137,7 +1144,10 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     clientId: credential.clientId,
     clientSecret: decryptExternalCredential(credential.clientSecretEncrypted, config.externalTokenEncryptionKey),
     redirectUri: credential.redirectUri,
-    minimumRequestIntervalMs: config.deviantArtMinimumRequestIntervalMs
+    minimumRequestIntervalMs: credential.platform === 'youtube'
+      ? config.youtubeMinimumRequestIntervalMs
+      : config.deviantArtMinimumRequestIntervalMs,
+    ...(credential.platform === 'youtube' ? { apiBaseUrl: config.youtubeApiBaseUrl } : {})
   });
 
   /** Resolve and refresh a connected DeviantArt account for a one-shot native
@@ -2503,7 +2513,10 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         res.setHeader('Server-Timing', parts.join(', '));
         res.setHeader('x-handler-ms', elapsedMs.toFixed(1));
       }
-      console.info(`[api-timing] id=${requestId} method=${req.method} path=${req.originalUrl} status=${res.statusCode} cold=${coldStart ? 1 : 0} handlerMs=${elapsedMs.toFixed(1)}`);
+      // Never place OAuth authorization codes, state tokens, or other query
+      // values in routine request logs. The route path is sufficient for timing
+      // diagnostics; callback handlers log their own token-safe stages below.
+      console.info(`[api-timing] id=${requestId} method=${req.method} path=${req.path} status=${res.statusCode} cold=${coldStart ? 1 : 0} handlerMs=${elapsedMs.toFixed(1)}`);
       return originalEnd(...args);
     }) as typeof res.end;
 
@@ -5932,6 +5945,259 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return res.status(204).end();
   });
 
+  const youtubeConfigurationReady = () => Boolean(
+    config.externalTokenEncryptionKey
+    && config.youtubeOAuthClientId
+    && config.youtubeOAuthClientSecret
+    && config.youtubeOAuthRedirectUri
+  );
+
+  const youtubeCredentialForUser = async (userId: string): Promise<ExternalPlatformCredential | null> => {
+    const credentials = await store.listExternalPlatformCredentialsByUser(userId);
+    return credentials.find((credential) => credential.platform === 'youtube') || null;
+  };
+
+  const ensureYoutubeCredential = async (userId: string): Promise<ExternalPlatformCredential> => {
+    const existing = await youtubeCredentialForUser(userId);
+    if (existing) return existing;
+    if (!youtubeConfigurationReady()) throw new Error('YouTube OAuth is not configured');
+    const now = new Date().toISOString();
+    const credential: ExternalPlatformCredential = {
+      externalPlatformCredentialId: randomUUID(),
+      userId,
+      platform: 'youtube',
+      applicationLabel: 'YouTube OAuth',
+      clientId: config.youtubeOAuthClientId!,
+      clientSecretEncrypted: encryptExternalCredential(config.youtubeOAuthClientSecret!, config.externalTokenEncryptionKey),
+      redirectUri: config.youtubeOAuthRedirectUri!,
+      createdAt: now,
+      updatedAt: now
+    };
+    await store.createExternalPlatformCredential(credential);
+    return credential;
+  };
+
+  app.get('/studio/integrations/youtube/configuration', requireAuth, async (_req, res) => {
+    return res.json({
+      platform: 'youtube',
+      configured: youtubeConfigurationReady(),
+      callbackUrl: config.youtubeOAuthRedirectUri,
+      scope: 'https://www.googleapis.com/auth/youtube.readonly',
+      quotaGuidance: 'YouTube imports use a lightweight channel/video scan and are paced to protect your daily API quota. Standard YouTube projects begin with 10,000 quota units per day.',
+      requiredConfiguration: [
+        ...(config.externalTokenEncryptionKey ? [] : ['EXTERNAL_TOKEN_ENCRYPTION_KEY']),
+        ...(config.youtubeOAuthClientId ? [] : ['YOUTUBE_OAUTH_CLIENT_ID']),
+        ...(config.youtubeOAuthClientSecret ? [] : ['YOUTUBE_OAUTH_CLIENT_SECRET']),
+        ...(config.youtubeOAuthRedirectUri ? [] : ['YOUTUBE_OAUTH_REDIRECT_URI'])
+      ],
+      credential: await youtubeCredentialForUser(_req.authUser!.userId).then((credential) => credential ? toExternalPlatformCredentialResponse(credential) : null)
+    });
+  });
+
+  app.post('/studio/integrations/youtube/connect', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    if (!youtubeConfigurationReady()) {
+      return res.status(409).json({ message: 'YouTube is not yet configured for this deployment.' });
+    }
+    const requestedReturnPath = typeof req.body?.returnPath === 'string' ? req.body.returnPath : '';
+    const returnPath = requestedReturnPath.startsWith('/studio/')
+      ? requestedReturnPath
+      : '/studio/workspace?section=integrations';
+    try {
+      const credential = await ensureYoutubeCredential(req.authUser!.userId);
+      const provider = providerForCredential(credential);
+      const issuedState = issueExternalOAuthState(config, {
+        userId: req.authUser!.userId,
+        ...(creatorIdentityId ? { creatorIdentityId } : {}),
+        externalPlatformCredentialId: credential.externalPlatformCredentialId,
+        platform: 'youtube',
+        returnPath
+      });
+      return res.json({ authorizationUrl: provider.createAuthorizationUrl(issuedState.state, externalOAuthPkce(config, issuedState.nonce)) });
+    } catch (error) {
+      logServerError('youtube.connect', error);
+      return res.status(503).json({ message: 'YouTube connection could not be started.' });
+    }
+  });
+
+  app.get('/integrations/youtube/callback', async (req, res) => {
+    const requestId = String(res.getHeader('x-request-id') || 'unknown');
+    const traceCallback = (stage: string, outcome?: string) => console.info(JSON.stringify({
+      event: 'youtube_oauth_callback',
+      requestId,
+      stage,
+      ...(outcome ? { outcome } : {})
+    }));
+    traceCallback('received');
+    const stateValue = typeof req.query.state === 'string' ? req.query.state : '';
+    let state: ReturnType<typeof verifyExternalOAuthState>;
+    try {
+      state = verifyExternalOAuthState(config, stateValue);
+      if (state.platform !== 'youtube') throw new Error('Incorrect OAuth platform');
+    } catch {
+      traceCallback('state_validation', 'failed');
+      return res.status(400).json({ message: 'The YouTube connection request is invalid or has expired.' });
+    }
+    traceCallback('state_validation', 'complete');
+    const redirect = (params: Record<string, string>) => {
+      try {
+        const location = resolveExternalOAuthReturnUrl(config, state.returnPath, params);
+        traceCallback('redirect', params.youtube || 'complete');
+        return res.redirect(302, location);
+      } catch {
+        traceCallback('redirect', 'failed');
+        return res.status(400).json({ message: 'The YouTube connection return URL is invalid.' });
+      }
+    };
+    if (typeof req.query.error === 'string') {
+      const reason = req.query.error.trim().slice(0, 120);
+      return redirect({ youtube: reason === 'access_denied' ? 'cancelled' : 'failed', reason });
+    }
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!code) return redirect({ youtube: 'failed', reason: 'missing_authorization_code' });
+    if (state.creatorIdentityId && !(await store.hasCreatorAccess(state.userId, state.creatorIdentityId))) {
+      return redirect({ youtube: 'failed', reason: 'creator_access_changed' });
+    }
+    try {
+      const credential = await store.getExternalPlatformCredential(state.externalPlatformCredentialId);
+      if (!credential || credential.userId !== state.userId || credential.platform !== 'youtube') {
+        return redirect({ youtube: 'failed', reason: 'oauth_application_unavailable' });
+      }
+      const provider = providerForCredential(credential);
+      if (!provider.isConfigured()) return redirect({ youtube: 'failed', reason: 'oauth_not_configured' });
+      const tokens = await provider.exchangeAuthorizationCode(code, externalOAuthPkce(config, state.nonce));
+      traceCallback('token_exchange', 'complete');
+      const remoteAccount = await provider.getAccount(tokens.accessToken);
+      traceCallback('channel_lookup', 'complete');
+      const now = new Date().toISOString();
+      const existing = (await store.listExternalAccountsByUser(state.userId)).find((account) => (
+        account.platform === 'youtube' && account.externalUserId === remoteAccount.externalUserId
+      ));
+      const candidateCreators = !state.creatorIdentityId && !existing?.primaryCreatorIdentityId && !existing?.creatorIdentityId
+        ? await store.listCreatorsByUserId(state.userId)
+        : [];
+      const soleCreator = candidateCreators.length === 1 ? candidateCreators[0] : undefined;
+      const destinationCreatorIdentityId = state.creatorIdentityId
+        || existing?.primaryCreatorIdentityId
+        || existing?.creatorIdentityId
+        || soleCreator?.creatorId;
+      const account: ExternalAccount = {
+        externalAccountId: existing?.externalAccountId || randomUUID(),
+        userId: state.userId,
+        creatorIdentityId: destinationCreatorIdentityId,
+        primaryCreatorIdentityId: destinationCreatorIdentityId,
+        externalPlatformCredentialId: credential.externalPlatformCredentialId,
+        platform: 'youtube',
+        externalUserId: remoteAccount.externalUserId,
+        externalUsername: remoteAccount.externalUsername,
+        accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
+        refreshTokenEncrypted: tokens.refreshToken
+          ? encryptExternalCredential(tokens.refreshToken, config.externalTokenEncryptionKey)
+          : existing?.refreshTokenEncrypted,
+        tokenExpiresAt: tokens.expiresAt,
+        connectionStatus: 'connected',
+        lastSyncAttemptAt: existing?.lastSyncAttemptAt,
+        lastSuccessfulSyncAt: existing?.lastSuccessfulSyncAt,
+        initialContentSyncRequested: false,
+        includeSourceFilesOnSync: false,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now
+      };
+      if (existing) await store.updateExternalAccount(account);
+      else await store.createExternalAccount(account);
+      if (destinationCreatorIdentityId) {
+        await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, [{
+          externalAccountId: account.externalAccountId,
+          creatorIdentityId: destinationCreatorIdentityId,
+          userId: account.userId,
+          createdAt: now,
+          updatedAt: now
+        }]);
+      }
+      traceCallback('account_storage', 'complete');
+      return redirect({
+        // A creator selected before OAuth is already a valid assignment.  Previously
+        // this was reported as "assignment required" unless the fallback happened
+        // to find exactly one creator, even though the account and assignment had
+        // both been saved.  Studio consequently treated a successful connection as
+        // a failure and did not reload its channel list.
+        youtube: destinationCreatorIdentityId
+          ? (state.creatorIdentityId ? 'connected' : soleCreator ? 'connected_destination_defaulted' : 'connected')
+          : 'connected_assignment_required',
+        account: account.externalAccountId
+      });
+    } catch (error) {
+      // OAuth can succeed while the Google project still has the YouTube Data
+      // API disabled.  That first becomes visible when we look up the channel,
+      // before there is an account record to show in Studio.  Keep the provider
+      // detail out of the URL, but give Studio an actionable setup state.
+      const reason = error instanceof ExternalProviderError
+        && /youtube data api v3 .*?(not been used|disabled|enable)/i.test(error.message)
+        ? 'youtube_data_api_disabled'
+        : error instanceof ExternalProviderError
+          && error.operation === 'account_lookup'
+          && /no youtube channel is available/i.test(error.message)
+          ? 'youtube_channel_unavailable'
+        : error instanceof ExternalProviderError
+          ? error.code
+          : 'connection_failed';
+      logServerError('youtube.callback', error);
+      const stage = error instanceof ExternalProviderError && error.operation
+        ? error.operation
+        : 'callback';
+      traceCallback(stage, `failed:${reason}`);
+      return redirect({ youtube: 'failed', reason, stage });
+    }
+  });
+
+  app.get('/studio/integrations/youtube/accounts', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const accounts = creatorIdentityId
+      ? await store.listExternalAccountsByCreatorIdentity(creatorIdentityId)
+      : await store.listExternalAccountsByUser(req.authUser!.userId);
+    const responses = await Promise.all(accounts
+      .filter((account) => account.platform === 'youtube' && account.connectionStatus !== 'disabled')
+      .map(async (account) => ({
+        ...toExternalAccountResponse(account),
+        creatorAssignments: (await store.listExternalAccountCreatorAssignments(account.externalAccountId))
+          .map((assignment) => assignment.creatorIdentityId)
+      })));
+    return res.json(responses);
+  });
+
+  app.post('/studio/integrations/youtube/accounts/:externalAccountId/sync', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'youtube') return res.status(404).json({ message: 'YouTube account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this YouTube connection.' });
+    if (!account.primaryCreatorIdentityId && !account.creatorIdentityId) {
+      return res.status(409).json({ message: 'Assign this YouTube channel to a creator before synchronizing.' });
+    }
+    try {
+      const job = await enqueueExternalSyncJob(account.externalAccountId, 'full_reconciliation', { syncContent: false });
+      auditLog(req, 'youtube.sync.requested', { externalAccountId: account.externalAccountId, jobId: job.externalSyncJobId });
+      return res.status(202).json(job);
+    } catch (error) {
+      logServerError('youtube.sync.enqueue', error);
+      return res.status(503).json({ message: 'The synchronization queue is unavailable. The channel remains connected.' });
+    }
+  });
+
+  app.delete('/studio/integrations/youtube/accounts/:externalAccountId', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'youtube') return res.status(404).json({ message: 'YouTube account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this YouTube connection.' });
+    const now = new Date().toISOString();
+    await store.updateExternalAccount({ ...account, accessTokenEncrypted: '', refreshTokenEncrypted: undefined, tokenExpiresAt: undefined, connectionStatus: 'disabled', updatedAt: now });
+    const jobs = await store.listExternalSyncJobs(account.externalAccountId, 100);
+    await Promise.all(jobs.filter((job) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status)).map((job) => (
+      store.updateExternalSyncJob({ ...job, status: 'cancelled', errorCode: 'ACCOUNT_REMOVED', errorMessage: 'Synchronization stopped because the YouTube channel was removed', updatedAt: now })
+    )));
+    auditLog(req, 'youtube.account.removed', { externalAccountId: account.externalAccountId });
+    return res.status(204).end();
+  });
+
   app.get('/studio/integrations/deviantart/configuration', requireAuth, async (req, res) => {
     const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
     if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
@@ -6079,6 +6345,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     let state: ReturnType<typeof verifyExternalOAuthState>;
     try {
       state = verifyExternalOAuthState(config, stateValue);
+      if (state.platform !== 'deviantart') throw new Error('Incorrect OAuth platform');
     } catch {
       return res.status(400).json({ message: 'The DeviantArt connection request is invalid or has expired.' });
     }
@@ -6180,7 +6447,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       ? await store.listExternalAccountsByCreatorIdentity(creatorIdentityId)
       : await store.listExternalAccountsByUser(req.authUser!.userId);
     const responses = await Promise.all(accounts
-      .filter((account) => account.connectionStatus !== 'disabled')
+      .filter((account) => account.platform === 'deviantart' && account.connectionStatus !== 'disabled')
       .map(async (account) => {
       const storedAssignments = (await store.listExternalAccountCreatorAssignments(account.externalAccountId))
         .map((assignment) => assignment.creatorIdentityId);

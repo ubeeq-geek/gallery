@@ -41,6 +41,8 @@ export interface ExternalPlatformApplicationCredentials {
   redirectUri: string;
   /** Provider API pacing. OAuth token exchange is intentionally excluded. */
   minimumRequestIntervalMs?: number;
+  /** Override for tests; production uses the public platform API base URL. */
+  apiBaseUrl?: string;
 }
 
 export interface ExternalOAuthPkce {
@@ -1423,6 +1425,209 @@ export class DeviantArtProvider implements ExternalPlatformProvider {
   }
 }
 
+/**
+ * Read-only YouTube adapter. A YouTube video remains an external, embed-only
+ * asset: Ubeeq/Eversally owns the canonical Work and only imports metadata,
+ * thumbnails, playlists, and current engagement. Uploading or mutating videos
+ * is deliberately not enabled by this first integration slice.
+ */
+export class YouTubeProvider implements ExternalPlatformProvider {
+  readonly platform = 'youtube' as const;
+  private nextRequestAt = 0;
+
+  constructor(private readonly credentials?: ExternalPlatformApplicationCredentials) {}
+
+  isConfigured(): boolean {
+    return Boolean(this.credentials?.clientId && this.credentials?.clientSecret && this.credentials?.redirectUri);
+  }
+
+  createAuthorizationUrl(state: string, pkce?: ExternalOAuthPkce): string {
+    if (!this.isConfigured()) throw new ExternalProviderError('YouTube OAuth is not configured', 'authentication_required');
+    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    url.searchParams.set('client_id', this.credentials!.clientId);
+    url.searchParams.set('redirect_uri', this.credentials!.redirectUri);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', 'https://www.googleapis.com/auth/youtube.readonly');
+    url.searchParams.set('access_type', 'offline');
+    url.searchParams.set('include_granted_scopes', 'true');
+    // Explicit consent makes refresh-token behaviour predictable for a new connection.
+    url.searchParams.set('prompt', 'consent');
+    url.searchParams.set('state', state);
+    if (pkce) {
+      url.searchParams.set('code_challenge', pkce.codeChallenge);
+      url.searchParams.set('code_challenge_method', 'S256');
+    }
+    return url.toString();
+  }
+
+  async exchangeAuthorizationCode(code: string, pkce?: ExternalOAuthPkce): Promise<ExternalAuthTokens> {
+    return this.exchangeToken({
+      grant_type: 'authorization_code', code, redirect_uri: this.credentials?.redirectUri || '',
+      ...(pkce ? { code_verifier: pkce.codeVerifier } : {})
+    });
+  }
+
+  async refreshAuthentication(refreshToken: string): Promise<ExternalAuthTokens> {
+    return this.exchangeToken({ grant_type: 'refresh_token', refresh_token: refreshToken });
+  }
+
+  async getAccount(accessToken: string): Promise<ExternalRemoteAccount> {
+    const item = await this.firstChannel(accessToken);
+    return { externalUserId: asString(item.id) || '', externalUsername: asString(asRecord(item.snippet).title) || asString(item.id) || 'YouTube channel' };
+  }
+
+  async getProfile(accessToken: string, _username: string): Promise<ExternalRemoteProfile> {
+    const item = await this.firstChannel(accessToken);
+    const snippet = asRecord(item.snippet);
+    const statistics = asRecord(item.statistics);
+    const thumbnails = asRecord(snippet.thumbnails);
+    const high = asRecord(thumbnails.high);
+    const medium = asRecord(thumbnails.medium);
+    const channelId = asString(item.id);
+    return {
+      profileUrl: channelId ? `https://www.youtube.com/channel/${channelId}` : undefined,
+      avatarUrl: asString(high.url) || asString(medium.url),
+      tagline: asString(snippet.description),
+      joinedAt: asString(snippet.publishedAt),
+      stats: { deviations: asNumber(statistics.videoCount), profilePageviews: asNumber(statistics.viewCount) },
+      rawPayload: item
+    };
+  }
+
+  async listContent(accessToken: string, options: { username: string; cursor?: string; limit?: number }): Promise<ExternalContentPage> {
+    // Search costs 100 quota units per call. The uploads playlist plus a
+    // batched Videos lookup is both incremental and dramatically cheaper.
+    const channel = await this.firstChannel(accessToken);
+    const uploadsPlaylistId = asString(asRecord(asRecord(channel.contentDetails).relatedPlaylists).uploads);
+    if (!uploadsPlaylistId) throw new ExternalProviderError('The YouTube channel has no uploads playlist', 'invalid_response', undefined, 'account_lookup');
+    const page = await this.api(accessToken, '/playlistItems', {
+      part: 'contentDetails', playlistId: uploadsPlaylistId, maxResults: String(Math.min(options.limit || 50, 50)),
+      ...(options.cursor && options.cursor !== '0' ? { pageToken: options.cursor } : {})
+    });
+    const ids = this.videoIdsFromPlaylistItems(page);
+    const detailById = await this.videoDetailsById(accessToken, ids);
+    return { items: ids.map((id) => this.toContent(detailById.get(id) || {})).filter((item): item is ExternalRemoteContent => Boolean(item)), nextCursor: asString(page.nextPageToken) };
+  }
+
+  async getContent(accessToken: string, externalContentId: string): Promise<ExternalRemoteContent> {
+    const response = await this.api(accessToken, '/videos', { part: 'snippet,contentDetails,statistics,status', id: externalContentId });
+    const item = asRecord(Array.isArray(response.items) ? response.items[0] : undefined);
+    const mapped = this.toContent(item);
+    if (!mapped) throw new ExternalProviderError('YouTube video was not found or is no longer accessible', 'invalid_response');
+    return mapped;
+  }
+
+  async getOriginalDownload(_accessToken: string, externalContentId: string): Promise<ExternalRemoteDownload> {
+    return { status: 'not_downloadable', rawPayload: { externalContentId, reason: 'YouTube originals are not copied by this integration.' } };
+  }
+
+  async getEngagement(accessToken: string, externalContentIds: string[]): Promise<ExternalRemoteEngagement[]> {
+    if (!externalContentIds.length) return [];
+    const response = await this.api(accessToken, '/videos', { part: 'statistics', id: externalContentIds.join(',') });
+    return (Array.isArray(response.items) ? response.items : []).map(asRecord).map((item) => {
+      const statistics = asRecord(item.statistics);
+      return { externalContentId: asString(item.id) || '', metrics: { views: asNumber(statistics.viewCount), comments: asNumber(statistics.commentCount), other: { likes: asNumber(statistics.likeCount) } }, rawPayload: item };
+    }).filter((item) => Boolean(item.externalContentId));
+  }
+
+  async listCollections(accessToken: string, _username: string): Promise<ExternalRemoteCollection[]> {
+    const response = await this.api(accessToken, '/playlists', { part: 'snippet,contentDetails', mine: 'true', maxResults: '50' });
+    return (Array.isArray(response.items) ? response.items : []).map(asRecord).map((item) => ({
+      externalCollectionId: asString(item.id) || '', name: asString(asRecord(item.snippet).title) || 'Untitled playlist', description: asString(asRecord(item.snippet).description),
+      size: asNumber(asRecord(item.contentDetails).itemCount), rawMetadata: item
+    })).filter((item) => Boolean(item.externalCollectionId));
+  }
+
+  async listCollectionContent(accessToken: string, externalCollectionId: string, _username: string, cursor?: string): Promise<ExternalContentPage> {
+    const page = await this.api(accessToken, '/playlistItems', { part: 'contentDetails', playlistId: externalCollectionId, maxResults: '50', ...(cursor ? { pageToken: cursor } : {}) });
+    const ids = this.videoIdsFromPlaylistItems(page);
+    if (!ids.length) return { items: [], nextCursor: asString(page.nextPageToken) };
+    const details = await this.videoDetailsById(accessToken, ids);
+    return {
+      items: ids.map((id) => this.toContent(details.get(id) || {}))
+        .filter((item): item is ExternalRemoteContent => Boolean(item))
+        .map((item) => ({ ...item, collectionExternalIds: [externalCollectionId] })),
+      nextCursor: asString(page.nextPageToken)
+    };
+  }
+
+  async listComments(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteComment[]; nextCursor?: string }> {
+    const page = await this.api(accessToken, '/commentThreads', { part: 'snippet', videoId: externalContentId, maxResults: '50', ...(cursor ? { pageToken: cursor } : {}) });
+    const items = (Array.isArray(page.items) ? page.items : []).map(asRecord).map((item) => {
+      const threadSnippet = asRecord(item.snippet);
+      const topLevelComment = asRecord(threadSnippet.topLevelComment);
+      const commentSnippet = asRecord(topLevelComment.snippet);
+      return { externalCommentId: asString(topLevelComment.id) || asString(item.id) || '', authorName: asString(commentSnippet.authorDisplayName), authorAvatarUrl: asString(commentSnippet.authorProfileImageUrl), body: asString(commentSnippet.textDisplay) || '', createdAt: asString(commentSnippet.publishedAt), replyCount: asNumber(threadSnippet.totalReplyCount), rawPayload: item };
+    }).filter((item) => Boolean(item.externalCommentId));
+    return { items, nextCursor: asString(page.nextPageToken) };
+  }
+
+  async listFeedback(): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }> { return { items: [] }; }
+  async listMessages(): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }> { return { items: [] }; }
+  async listMessageStack(): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }> { return { items: [] }; }
+  async listWatchers(): Promise<{ items: ExternalRemoteWatcher[]; nextCursor?: string; truncated?: boolean }> { return { items: [], truncated: true }; }
+  async deleteMessage(): Promise<void> { throw this.unsupported('Deleting YouTube messages is not supported.'); }
+  async listFavourites(): Promise<{ items: ExternalRemoteFavourite[]; nextCursor?: string }> { return { items: [] }; }
+  async postComment(): Promise<ExternalRemoteComment> { throw this.unsupported('Posting YouTube comments is not supported.'); }
+  async createGalleryFolder(): Promise<ExternalRemoteCollection> { throw this.unsupported('Creating YouTube playlists is not supported.'); }
+  async updateContent(): Promise<void> { throw this.unsupported('Updating YouTube videos is not supported.'); }
+  async submitContent(): Promise<ExternalDraftContent> { throw this.unsupported('Uploading YouTube videos is not supported.'); }
+  async publishDraft(): Promise<ExternalPublishedContent> { throw this.unsupported('Publishing YouTube videos is not supported.'); }
+  async publishContent(): Promise<ExternalPublishedContent> { throw this.unsupported('Publishing YouTube videos is not supported.'); }
+  async createLiterature(): Promise<ExternalPublishedContent> { throw this.unsupported('YouTube does not support this publication type.'); }
+  async updateLiterature(): Promise<ExternalPublishedContent> { throw this.unsupported('YouTube does not support this publication type.'); }
+  async createJournal(): Promise<ExternalPublishedContent> { throw this.unsupported('YouTube does not support this publication type.'); }
+  async postStatus(): Promise<ExternalPublishedPost> { throw this.unsupported('YouTube does not support status updates.'); }
+  async moveContent(): Promise<never> { throw this.unsupported('Moving YouTube content is not supported.'); }
+
+  private unsupported(message: string): ExternalProviderError { return new ExternalProviderError(message, 'unsupported'); }
+  private async exchangeToken(input: Record<string, string>): Promise<ExternalAuthTokens> {
+    if (!this.isConfigured()) throw this.unsupported('YouTube OAuth is not configured.');
+    const body = new URLSearchParams({ ...input, client_id: this.credentials!.clientId, client_secret: this.credentials!.clientSecret });
+    const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
+    const payload = asRecord(await response.json().catch(() => ({})));
+    if (!response.ok) throw new ExternalProviderError(asString(payload.error_description) || 'Google OAuth token exchange failed', response.status === 401 ? 'authentication_required' : 'invalid_response', undefined, 'token_exchange');
+    const accessToken = asString(payload.access_token); if (!accessToken) throw new ExternalProviderError('Google OAuth returned no access token', 'invalid_response', undefined, 'token_exchange');
+    const expiresIn = asNumber(payload.expires_in);
+    return { accessToken, refreshToken: asString(payload.refresh_token), ...(expiresIn ? { expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString() } : {}) };
+  }
+  private async firstChannel(accessToken: string): Promise<Record<string, unknown>> {
+    const response = await this.api(accessToken, '/channels', { part: 'snippet,statistics,contentDetails', mine: 'true', maxResults: '1' });
+    const item = asRecord(Array.isArray(response.items) ? response.items[0] : undefined);
+    if (!asString(item.id)) throw new ExternalProviderError('No YouTube channel is available for this Google account', 'invalid_response', undefined, 'account_lookup');
+    return item;
+  }
+  private videoIdsFromPlaylistItems(page: Record<string, unknown>): string[] {
+    return (Array.isArray(page.items) ? page.items : []).map(asRecord)
+      .map((item) => asString(asRecord(item.contentDetails).videoId))
+      .filter((id): id is string => Boolean(id));
+  }
+  private async videoDetailsById(accessToken: string, ids: string[]): Promise<Map<string, Record<string, unknown>>> {
+    const detailsById = new Map<string, Record<string, unknown>>();
+    if (!ids.length) return detailsById;
+    const details = await this.api(accessToken, '/videos', { part: 'snippet,contentDetails,statistics,status', id: ids.join(',') });
+    for (const raw of (Array.isArray(details.items) ? details.items : [])) {
+      const item = asRecord(raw); const id = asString(item.id); if (id) detailsById.set(id, item);
+    }
+    return detailsById;
+  }
+  private toContent(item: Record<string, unknown>): ExternalRemoteContent | undefined {
+    const id = asString(item.id); if (!id) return undefined;
+    const snippet = asRecord(item.snippet); const statistics = asRecord(item.statistics); const status = asRecord(item.status); const thumbnails = asRecord(snippet.thumbnails); const high = asRecord(thumbnails.high); const medium = asRecord(thumbnails.medium);
+    const privacy = asString(status.privacyStatus);
+    return { externalContentId: id, externalUrl: `https://www.youtube.com/watch?v=${id}`, title: asString(snippet.title) || `YouTube video ${id}`, description: asString(snippet.description), tags: Array.isArray(snippet.tags) ? snippet.tags.filter((tag): tag is string => typeof tag === 'string') : [], assetType: 'video', publishedAt: asString(snippet.publishedAt), remoteCreatedAt: asString(snippet.publishedAt), remoteUpdatedAt: asString(snippet.publishedAt), collectionExternalIds: [], remoteState: privacy === 'private' ? 'restricted' : 'active', content: { sourceUrl: `https://www.youtube.com/watch?v=${id}`, contentType: 'video/youtube', filename: `${id}.youtube` }, metrics: { views: asNumber(statistics.viewCount), comments: asNumber(statistics.commentCount), other: { likes: asNumber(statistics.likeCount), duration: asString(asRecord(item.contentDetails).duration), thumbnailUrl: asString(high.url) || asString(medium.url) } }, rawMetadata: item };
+  }
+  private async api(accessToken: string, path: string, params: Record<string, string>): Promise<Record<string, unknown>> {
+    const delay = Math.max(0, this.nextRequestAt - Date.now()); if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    this.nextRequestAt = Date.now() + Math.max(0, this.credentials?.minimumRequestIntervalMs || 0);
+    const baseUrl = (this.credentials?.apiBaseUrl || 'https://www.googleapis.com/youtube/v3').replace(/\/$/, '');
+    const url = new URL(`${baseUrl}${path}`); Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+    const response = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` } }); const payload = asRecord(await response.json().catch(() => ({})));
+    if (!response.ok) { const details = asRecord(payload.error); const reason = asString(Array.isArray(details.errors) ? asRecord(details.errors[0]).reason : undefined); const code = response.status === 401 ? 'authentication_required' : response.status === 429 || reason === 'quotaExceeded' || reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded' ? 'rate_limited' : response.status >= 500 ? 'temporarily_unavailable' : 'invalid_response'; throw new ExternalProviderError(asString(details.message) || `YouTube request failed (${response.status})`, code, code === 'rate_limited' ? parseRetryAfterSeconds(response.headers.get('retry-after')) || 300 : undefined); }
+    return payload;
+  }
+}
+
 const withProviderOperation = (
   error: unknown,
   operation: 'token_exchange' | 'account_lookup'
@@ -1433,5 +1638,6 @@ const withProviderOperation = (
 
 export const createExternalPlatformProvider = (platform: ExternalPlatform, credentials?: ExternalPlatformApplicationCredentials): ExternalPlatformProvider => {
   if (platform === 'deviantart') return new DeviantArtProvider(credentials);
+  if (platform === 'youtube') return new YouTubeProvider(credentials);
   throw new Error(`Unsupported external platform: ${platform}`);
 };

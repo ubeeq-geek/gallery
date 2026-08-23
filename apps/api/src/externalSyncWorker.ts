@@ -331,13 +331,16 @@ export const externalContentUpdateMismatches = (remote: ExternalRemoteContent, u
 const providerForAccount = async (store: DataStore, config: AppConfig, account: ExternalAccount): Promise<ExternalPlatformProvider> => {
   const credential = await store.getExternalPlatformCredential(account.externalPlatformCredentialId);
   if (!credential || credential.userId !== account.userId || credential.platform !== account.platform) {
-    throw new ExternalProviderError('The account-owned DeviantArt application credentials are unavailable', 'authentication_required');
+    throw new ExternalProviderError(`The account-owned ${account.platform} application credentials are unavailable`, 'authentication_required');
   }
   return createExternalPlatformProvider(account.platform, {
     clientId: credential.clientId,
     clientSecret: decryptExternalCredential(credential.clientSecretEncrypted, config.externalTokenEncryptionKey),
     redirectUri: credential.redirectUri,
-    minimumRequestIntervalMs: config.deviantArtMinimumRequestIntervalMs
+    minimumRequestIntervalMs: account.platform === 'youtube'
+      ? config.youtubeMinimumRequestIntervalMs
+      : config.deviantArtMinimumRequestIntervalMs,
+    ...(account.platform === 'youtube' ? { apiBaseUrl: config.youtubeApiBaseUrl } : {})
   });
 };
 
@@ -353,7 +356,7 @@ const refreshAccessTokenIfNeeded = async (
     return { account, accessToken };
   }
   if (!account.refreshTokenEncrypted) {
-    throw new ExternalProviderError('DeviantArt authentication has expired', 'authentication_required');
+    throw new ExternalProviderError('External-platform authentication has expired', 'authentication_required');
   }
   const refreshToken = decryptExternalCredential(account.refreshTokenEncrypted, config.externalTokenEncryptionKey);
   const tokens = await provider.refreshAuthentication(refreshToken);
@@ -1507,9 +1510,9 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
       : []
   );
   let currentJob = job;
-  const shouldSyncContent = job.payload?.syncContent === true
+  const shouldSyncContent = session.account.platform === 'deviantart' && (job.payload?.syncContent === true
     || session.account.initialContentSyncRequested === true
-    || session.account.includeSourceFilesOnSync === true;
+    || session.account.includeSourceFilesOnSync === true);
   if (!contentScanComplete) {
     do {
       await ensureJobActive(store, job.externalSyncJobId);
@@ -1531,7 +1534,12 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
           && metadataBoolean(item.rawMetadata, 'is_ai_generated', 'isAiGenerated', 'ai_generated', 'created_with_ai') !== undefined
           && metadataBoolean(item.rawMetadata, 'noai', 'noAI', 'noAi', 'no_ai') !== undefined;
         let resolvedItem = item;
-        if (!item.description || !item.tags.length || !hasPublishedSettings) {
+        // YouTube listContent already returns the full batched Videos resource.
+        // Avoid an extra API request for every video that simply has no tags or
+        // an intentionally empty description.
+        const needsFullRemoteMetadata = session.account.platform === 'deviantart'
+          && (!item.description || !item.tags.length || !hasPublishedSettings);
+        if (needsFullRemoteMetadata) {
           try {
             resolvedItem = await provider.getContent(session.accessToken, item.externalContentId);
           } catch (error) {
@@ -1547,14 +1555,14 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
                 },
                 progress: { discovered, synchronized, remaining: 1 }
               });
-              await addLog(store, job.externalSyncJobId, 'warning', 'DeviantArt rate limit detected; reconciliation stopped immediately and its position was saved', {
+              await addLog(store, job.externalSyncJobId, 'warning', `${session.account.platform === 'youtube' ? 'YouTube' : 'DeviantArt'} rate limit detected; reconciliation stopped immediately and its position was saved`, {
                 externalContentId: item.externalContentId,
                 resumeCursor: pageCursor,
                 resumeItemIndex: itemIndex
               });
               throw error;
             }
-            await addLog(store, job.externalSyncJobId, 'warning', 'Could not load complete DeviantArt metadata; retaining catalogue values', {
+            await addLog(store, job.externalSyncJobId, 'warning', `Could not load complete ${session.account.platform === 'youtube' ? 'YouTube' : 'DeviantArt'} metadata; retaining catalogue values`, {
               externalContentId: item.externalContentId,
               message: error instanceof Error ? error.message : String(error)
             });
@@ -1657,10 +1665,12 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     updatedAt: now
   });
   const [activityJob, engagementJob] = await Promise.all([
-    enqueueRelatedSyncJob(store, config, session.account, 'activity_sync', queue),
+    session.account.platform === 'deviantart'
+      ? enqueueRelatedSyncJob(store, config, session.account, 'activity_sync', queue)
+      : Promise.resolve(undefined),
     enqueueRelatedSyncJob(store, config, session.account, 'engagement_sync', queue)
   ]);
-  await addLog(store, job.externalSyncJobId, 'info', 'DeviantArt account import completed', {
+  await addLog(store, job.externalSyncJobId, 'info', `${session.account.platform} account import completed`, {
     discovered,
     synchronized,
     collections: collections.length,
@@ -1670,7 +1680,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     missingPublications: lifecycle.missing,
     deletedPublications: lifecycle.deleted,
     restrictedPublications: lifecycle.restricted,
-    activityJobId: activityJob.externalSyncJobId,
+    activityJobId: activityJob?.externalSyncJobId,
     engagementJobId: engagementJob.externalSyncJobId
   });
 };
@@ -2389,7 +2399,8 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
           });
         }
       }
-      await addLog(store, externalSyncJobId, 'warning', 'DeviantArt rate limit reached; account work paused', {
+      const platformLabel = account.platform === 'youtube' ? 'YouTube' : 'DeviantArt';
+      await addLog(store, externalSyncJobId, 'warning', `${platformLabel} rate limit reached; account work paused`, {
         type: job.type,
         attemptCount,
         delaySeconds: delay,
@@ -2462,10 +2473,13 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
     // Hold the single worker slot briefly after each job as well. This closes
     // the gap between separate SQS/Lambda invocations, where an in-process
     // request pacer may be reset by a cold start.
-    const intervalMs = Number.isFinite(config.deviantArtMinimumRequestIntervalMs)
-      ? Math.max(0, Math.floor(config.deviantArtMinimumRequestIntervalMs))
+    const minimumRequestIntervalMs = account.platform === 'youtube'
+      ? config.youtubeMinimumRequestIntervalMs
+      : config.deviantArtMinimumRequestIntervalMs;
+    const intervalMs = Number.isFinite(minimumRequestIntervalMs)
+      ? Math.max(0, Math.floor(minimumRequestIntervalMs))
       : 0;
-    if (account.platform === 'deviantart' && intervalMs) {
+    if ((account.platform === 'deviantart' || account.platform === 'youtube') && intervalMs) {
       await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
     }
   }

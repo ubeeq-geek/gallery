@@ -1253,6 +1253,35 @@ export const api = {
     });
     return handleJson(response) as Promise<{ authorizationUrl: string }>;
   },
+  async studioGetYoutubeConfiguration() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/youtube/configuration`);
+    return handleJson(response) as Promise<{ platform: 'youtube'; configured: boolean; callbackUrl?: string; scope?: string; quotaGuidance?: string; requiredConfiguration: string[] }>;
+  },
+  async studioStartYoutubeConnection(creatorId?: string, returnPath = '/studio/workspace?section=integrations') {
+    const response = await fetch(`${API_BASE}/studio/integrations/youtube/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ ...(creatorId ? { creatorId } : {}), returnPath })
+    });
+    return handleJson(response) as Promise<{ authorizationUrl: string }>;
+  },
+  async studioListYoutubeAccounts(creatorId?: string) {
+    const query = creatorId ? `?creatorId=${encodeURIComponent(creatorId)}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/youtube/accounts${query}`);
+    return handleJson(response);
+  },
+  async studioSyncYoutubeAccount(externalAccountId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/youtube/accounts/${encodeURIComponent(externalAccountId)}/sync`, {
+      method: 'POST', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async studioRemoveYoutubeAccount(externalAccountId: string) {
+    const response = await fetch(`${API_BASE}/studio/integrations/youtube/accounts/${encodeURIComponent(externalAccountId)}`, {
+      method: 'DELETE', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
   async studioGetBlueskyConfiguration() {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/bluesky/configuration`);
     return handleJson(response) as Promise<{ platform: 'bluesky'; configured: boolean; authorizationUrl?: string; requiredConfiguration: string[] }>;

@@ -8157,6 +8157,14 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     grid-column: 1 / -1;
   }
 
+  /* Integration panes stay in a predictable alphabetical order, independent
+     of which platforms the creator has chosen to show. */
+  .studio-integration-grid > .studio-integration-pane--bluesky { order: 1; }
+  .studio-integration-grid > .studio-integration-pane--discord { order: 2; }
+  .studio-integration-grid > .studio-integration-pane--deviantart { order: 3; }
+  .studio-integration-grid > .studio-integration-pane--youtube { order: 4; }
+  .studio-integration-grid > .studio-empty-state { order: 5; }
+
   .studio-integration-setup-notice {
     margin: 0.75rem 0 0;
     padding: 0.7rem 0.85rem;
@@ -8175,6 +8183,149 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
 
   .studio-integration-account-availability {
     margin: 0.35rem 0 1rem;
+  }
+
+  .studio-youtube-integration {
+    display: grid;
+    gap: 1.25rem;
+  }
+
+  .studio-youtube-card-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .studio-youtube-card-actions .studio-integration-account-count {
+    margin-left: auto;
+  }
+
+  @media (max-width: 720px) {
+    .studio-youtube-card-actions {
+      justify-content: flex-start;
+    }
+
+    .studio-youtube-card-actions .studio-integration-account-count {
+      margin-left: 0;
+    }
+  }
+
+  .studio-youtube-integration > .studio-module-card-header {
+    margin-bottom: 0;
+  }
+
+  .studio-youtube-introduction {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 1rem;
+    max-width: 74rem;
+  }
+
+  .studio-youtube-icon {
+    display: grid;
+    width: 3rem;
+    height: 3rem;
+    place-items: center;
+    flex: 0 0 3rem;
+    border-radius: 0.85rem;
+    background: color-mix(in srgb, #ff0033 12%, var(--surface-muted));
+    color: #d9002b;
+  }
+
+  .studio-youtube-icon svg {
+    width: 1.65rem;
+    height: 1.65rem;
+  }
+
+  .studio-youtube-description {
+    max-width: 68rem;
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.98rem;
+    line-height: 1.55;
+  }
+
+  .studio-youtube-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.9rem;
+  }
+
+  .studio-youtube-facts span {
+    padding: 0.38rem 0.65rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface-muted);
+    color: var(--text);
+    font-size: 0.78rem;
+    font-weight: 650;
+  }
+
+  .studio-youtube-quota-note {
+    margin: 0.8rem 0 0;
+    color: var(--muted);
+    font-size: 0.84rem;
+    line-height: 1.45;
+  }
+
+  .studio-youtube-empty-state,
+  .studio-youtube-connected-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.25rem;
+    padding: 1.25rem;
+    border: 1px solid var(--line);
+    border-radius: 0.9rem;
+    background: var(--surface-muted);
+  }
+
+  .studio-youtube-empty-state h4 {
+    margin: 0 0 0.3rem;
+    font-size: 1.05rem;
+  }
+
+  .studio-youtube-empty-state p,
+  .studio-youtube-connected-actions p {
+    max-width: 52rem;
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+
+  .studio-youtube-empty-state .auth-primary-btn,
+  .studio-youtube-connected-actions .auth-primary-btn {
+    flex: 0 0 auto;
+  }
+
+  .studio-youtube-connected-actions {
+    margin-bottom: 0.4rem;
+  }
+
+  .studio-youtube-release-note {
+    padding: 0.9rem 1rem;
+    border-left: 3px solid var(--brand-primary-border);
+    border-radius: 0 0.7rem 0.7rem 0;
+    background: color-mix(in srgb, var(--brand-primary-soft) 55%, var(--surface));
+  }
+
+  .studio-youtube-release-note strong {
+    display: block;
+    margin-bottom: 0.2rem;
+    color: var(--text);
+    font-size: 0.88rem;
+  }
+
+  .studio-youtube-release-note p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.84rem;
+    line-height: 1.45;
   }
 
   .studio-discord-installations,
@@ -11742,4 +11893,19 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
   .studio-works-selection-count-compact { display: inline; }
   .studio-works-review-label-wide { display: none; }
   .studio-works-review-label-compact { display: inline; }
+
+  .studio-youtube-introduction {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-youtube-empty-state,
+  .studio-youtube-connected-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .studio-youtube-empty-state .auth-primary-btn,
+  .studio-youtube-connected-actions .auth-primary-btn {
+    width: 100%;
+  }
 }

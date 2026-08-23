@@ -34,6 +34,13 @@ export interface AppConfig {
   externalSyncBaseDelaySeconds: number;
   /** Minimum spacing between DeviantArt API calls. Keep this conservative: DA applies adaptive limits. */
   deviantArtMinimumRequestIntervalMs: number;
+  /** Google OAuth application used for the optional YouTube read-only connection. */
+  youtubeOAuthClientId?: string;
+  youtubeOAuthClientSecret?: string;
+  youtubeOAuthRedirectUri?: string;
+  /** Keep the import conservative; quota is shared by every channel using this app. */
+  youtubeMinimumRequestIntervalMs: number;
+  youtubeApiBaseUrl: string;
   externalAccountScanIntervalSeconds: number;
   externalActivityScanIntervalSeconds: number;
   deviantArtPublishedDescriptionUpdate: boolean;
@@ -115,6 +122,11 @@ export const loadConfig = (): AppConfig => {
   externalSyncQueueUrl: process.env.EXTERNAL_SYNC_QUEUE_URL,
   externalSyncBaseDelaySeconds: Number(process.env.EXTERNAL_SYNC_BASE_DELAY_SECONDS || 60),
   deviantArtMinimumRequestIntervalMs: Number(process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || 2000),
+  youtubeOAuthClientId: process.env.YOUTUBE_OAUTH_CLIENT_ID,
+  youtubeOAuthClientSecret: process.env.YOUTUBE_OAUTH_CLIENT_SECRET,
+  youtubeOAuthRedirectUri: process.env.YOUTUBE_OAUTH_REDIRECT_URI,
+  youtubeMinimumRequestIntervalMs: Number(process.env.YOUTUBE_MIN_REQUEST_INTERVAL_MS || 1000),
+  youtubeApiBaseUrl: process.env.YOUTUBE_API_BASE_URL || 'https://www.googleapis.com/youtube/v3',
   externalAccountScanIntervalSeconds: Number(process.env.EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS || 21600),
   externalActivityScanIntervalSeconds: Number(process.env.EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS || 120),
   deviantArtPublishedDescriptionUpdate: (
