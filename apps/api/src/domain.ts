@@ -660,14 +660,23 @@ export interface TrendingFeedItem {
 }
 
 /** Platforms with a creator-owned connected account. OAuth custody can differ by platform. */
-export type ExternalPlatform = 'deviantart' | 'youtube' | 'bluesky' | 'instagram';
+export type ExternalPlatform =
+  | 'bluesky'
+  | 'deviantart'
+  | 'flickr'
+  | 'instagram'
+  | 'soundcloud'
+  | 'youtube'
+  | 'fanvue'
+  | 'tumblr'
+  | 'wordpress';
 export type ExternalAccountConnectionStatus =
   | 'connected'
   | 'authentication_required'
   | 'rate_limited'
   | 'temporarily_unavailable'
   | 'disabled';
-export type ExternalAssetType = 'image' | 'literature' | 'video' | 'animation' | 'other';
+export type ExternalAssetType = 'image' | 'literature' | 'video' | 'audio' | 'animation' | 'other';
 export type AssetVisibility = 'private' | 'unlisted' | 'public';
 export type UbeeqCollectionType = 'collection' | 'gallery' | 'series';
 export type MetadataSyncPolicy = 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
@@ -687,6 +696,8 @@ export type ExternalSyncJobType =
   | 'comment_sync'
   | 'full_reconciliation'
   | 'publish'
+  | 'remote_delete'
+  | 'user_action'
   | 'remote_update';
 export type ExternalSyncJobStatus =
   | 'queued'
@@ -980,6 +991,7 @@ export interface ExternalComment {
   body: string;
   createdAtRemote?: string;
   parentExternalCommentExternalId?: string;
+  positionMilliseconds?: number;
   replyCount?: number;
   likeCount?: number;
   isLiked?: boolean;

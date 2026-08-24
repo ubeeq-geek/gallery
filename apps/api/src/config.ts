@@ -29,7 +29,23 @@ export interface AppConfig {
   cognitoClientId?: string;
   cognitoTokenUse?: 'id' | 'access';
   externalOAuthRedirectUri?: string;
+  soundCloudOAuthRedirectUri?: string;
+  /** Compliance approval gate; SoundCloud remains unavailable unless explicitly enabled. */
+  soundCloudEnabled?: boolean;
   externalTokenEncryptionKey?: string;
+  /** Master secret used to derive per-connection signatures for approved WordPress webhook adapters. */
+  wordpressWebhookSecret?: string;
+  /** Exact HTTPS hostnames allowed in generated WordPress core embed blocks. Empty disables embeds. */
+  wordpressApprovedEmbedHosts: string[];
+  /** Exact site hosts approved for the narrow managed WordPress cohort. */
+  wordpressManagedSiteHosts: string[];
+  /** Exact site hosts disabled for compatibility, policy, or safety reasons. */
+  wordpressBlockedSiteHosts: string[];
+  /** Flickr OAuth 1.0a application credentials. The secret is server-only. */
+  flickrApiKey?: string;
+  flickrApiSecret?: string;
+  flickrOAuthCallbackUrl?: string;
+  flickrMinimumRequestIntervalMs: number;
   externalSyncQueueUrl?: string;
   externalSyncBaseDelaySeconds: number;
   /** Minimum spacing between DeviantArt API calls. Keep this conservative: DA applies adaptive limits. */
@@ -46,6 +62,10 @@ export interface AppConfig {
   externalAccountScanIntervalSeconds: number;
   externalActivityScanIntervalSeconds: number;
   deviantArtPublishedDescriptionUpdate: boolean;
+  /** SmugMug OAuth 1.0a application credentials. Kept server-side. */
+  smugMugApiKey?: string;
+  smugMugApiSecret?: string;
+  smugMugOAuthCallbackUrl?: string;
   externalContentMaxBytes: number;
   localMediaDirectory?: string;
   appOrigin?: string;
@@ -69,6 +89,27 @@ export interface AppConfig {
   discordOAuthRedirectUri?: string;
   discordCommunityQueueUrl?: string;
   discordApiBaseUrl: string;
+  /** Fanvue studio-pilot OAuth and API configuration. Secrets must come from managed application secrets. */
+  fanvueClientId?: string;
+  fanvueClientSecret?: string;
+  fanvueOAuthRedirectUri?: string;
+  fanvueWebhookSecret?: string;
+  fanvueApiBaseUrl?: string;
+  fanvueAuthorizeUrl?: string;
+  fanvueApiVersion?: string;
+  /** Managed Tumblr OAuth 2 application; creator-owned credentials are encrypted per connector. */
+  tumblrClientId?: string;
+  tumblrClientSecret?: string;
+  tumblrOAuthRedirectUri?: string;
+  tumblrApiBaseUrl: string;
+  tumblrMediaBlockLimit: number;
+  /** Versioned, deployment-owned destination policy rules; never supplied by publish callers. */
+  tumblrPolicyRulesJson?: string;
+  tumblrPublishQueueUrl?: string;
+  tumblrHourlyRequestLimit: number;
+  tumblrDailyRequestLimit: number;
+  tumblrPublishMaxAttempts: number;
+  tumblrRetryBaseDelaySeconds: number;
   localAuthUserId?: string;
   /** Email used for the optional first-admin bootstrap. */
   adminEmail?: string;
@@ -97,6 +138,11 @@ export interface AppConfig {
   instagramInsightRetentionDays?: number;
   instagramReelsEnabled?: boolean;
   instagramStoriesEnabled?: boolean;
+  vimeoClientId?: string;
+  vimeoClientSecret?: string;
+  vimeoOAuthRedirectUri?: string;
+  vimeoWebhookSecret?: string;
+  vimeoUploadQueueUrl?: string;
 }
 
 export const loadConfig = (): AppConfig => {
@@ -135,7 +181,17 @@ export const loadConfig = (): AppConfig => {
   cognitoClientId: process.env.COGNITO_CLIENT_ID || process.env.VITE_COGNITO_CLIENT_ID,
   cognitoTokenUse: (process.env.COGNITO_TOKEN_USE as 'id' | 'access') || 'id',
   externalOAuthRedirectUri: process.env.EXTERNAL_OAUTH_REDIRECT_URI,
+  soundCloudOAuthRedirectUri: process.env.SOUNDCLOUD_OAUTH_REDIRECT_URI,
+  soundCloudEnabled: (process.env.SOUNDCLOUD_ENABLED || 'false') === 'true',
   externalTokenEncryptionKey: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY,
+  wordpressWebhookSecret: process.env.WORDPRESS_WEBHOOK_SECRET,
+  wordpressApprovedEmbedHosts: (process.env.WORDPRESS_APPROVED_EMBED_HOSTS || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
+  wordpressManagedSiteHosts: (process.env.WORDPRESS_MANAGED_SITE_HOSTS || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
+  wordpressBlockedSiteHosts: (process.env.WORDPRESS_BLOCKED_SITE_HOSTS || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
+  flickrApiKey: process.env.FLICKR_API_KEY,
+  flickrApiSecret: process.env.FLICKR_API_SECRET,
+  flickrOAuthCallbackUrl: process.env.FLICKR_OAUTH_CALLBACK_URL,
+  flickrMinimumRequestIntervalMs: Number(process.env.FLICKR_MIN_REQUEST_INTERVAL_MS || 1000),
   externalSyncQueueUrl: process.env.EXTERNAL_SYNC_QUEUE_URL,
   externalSyncBaseDelaySeconds: Number(process.env.EXTERNAL_SYNC_BASE_DELAY_SECONDS || 60),
   deviantArtMinimumRequestIntervalMs: Number(process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || 2000),
@@ -154,6 +210,9 @@ export const loadConfig = (): AppConfig => {
     || process.env.DEVIANTART_EXPERIMENTAL_PUBLISHED_DESCRIPTION_UPDATE
     || 'true'
   ) === 'true',
+  smugMugApiKey: process.env.SMUGMUG_API_KEY,
+  smugMugApiSecret: process.env.SMUGMUG_API_SECRET,
+  smugMugOAuthCallbackUrl: process.env.SMUGMUG_OAUTH_CALLBACK_URL,
   externalContentMaxBytes: Number(process.env.EXTERNAL_CONTENT_MAX_BYTES || 50 * 1024 * 1024),
   localMediaDirectory: process.env.LOCAL_MEDIA_DIRECTORY || (process.env.LOCAL_AUTH_USER_ID ? '/tmp/ubeeq-media' : undefined),
   appOrigin: process.env.APP_ORIGIN,
@@ -169,6 +228,24 @@ export const loadConfig = (): AppConfig => {
   discordOAuthRedirectUri: process.env.DISCORD_OAUTH_REDIRECT_URI,
   discordCommunityQueueUrl: process.env.DISCORD_COMMUNITY_QUEUE_URL,
   discordApiBaseUrl: process.env.DISCORD_API_BASE_URL || 'https://discord.com/api/v10',
+  fanvueClientId: process.env.FANVUE_CLIENT_ID,
+  fanvueClientSecret: process.env.FANVUE_CLIENT_SECRET,
+  fanvueOAuthRedirectUri: process.env.FANVUE_OAUTH_REDIRECT_URI,
+  fanvueWebhookSecret: process.env.FANVUE_WEBHOOK_SECRET,
+  fanvueApiBaseUrl: process.env.FANVUE_API_BASE_URL || 'https://api.fanvue.com',
+  fanvueAuthorizeUrl: process.env.FANVUE_AUTHORIZE_URL || 'https://auth.fanvue.com/oauth/authorize',
+  fanvueApiVersion: process.env.FANVUE_API_VERSION || '2026-08-01',
+  tumblrClientId: process.env.TUMBLR_CLIENT_ID,
+  tumblrClientSecret: process.env.TUMBLR_CLIENT_SECRET,
+  tumblrOAuthRedirectUri: process.env.TUMBLR_OAUTH_REDIRECT_URI,
+  tumblrApiBaseUrl: process.env.TUMBLR_API_BASE_URL || 'https://api.tumblr.com',
+  tumblrMediaBlockLimit: Number(process.env.TUMBLR_MEDIA_BLOCK_LIMIT || 10),
+  tumblrPolicyRulesJson: process.env.TUMBLR_POLICY_RULES_JSON,
+  tumblrPublishQueueUrl: process.env.TUMBLR_PUBLISH_QUEUE_URL,
+  tumblrHourlyRequestLimit: Number(process.env.TUMBLR_HOURLY_REQUEST_LIMIT || 1000),
+  tumblrDailyRequestLimit: Number(process.env.TUMBLR_DAILY_REQUEST_LIMIT || 5000),
+  tumblrPublishMaxAttempts: Number(process.env.TUMBLR_PUBLISH_MAX_ATTEMPTS || 5),
+  tumblrRetryBaseDelaySeconds: Number(process.env.TUMBLR_RETRY_BASE_DELAY_SECONDS || 60),
   localAuthUserId: process.env.LOCAL_AUTH_USER_ID,
   adminEmail: process.env.ADMIN_EMAIL || (
     process.env.PRODUCT_BRAND === 'eversally' ? 'admin@eversally.com' : 'admin@ubeeq.site'
@@ -192,7 +269,12 @@ export const loadConfig = (): AppConfig => {
   instagramInsightsEnabled: process.env.INSTAGRAM_INSIGHTS_ENABLED === 'true',
   instagramInsightRetentionDays: Math.max(1, Number(process.env.INSTAGRAM_INSIGHT_RETENTION_DAYS || 90)),
   instagramReelsEnabled: process.env.INSTAGRAM_REELS_ENABLED === 'true',
-  instagramStoriesEnabled: process.env.INSTAGRAM_STORIES_ENABLED === 'true'
+  instagramStoriesEnabled: process.env.INSTAGRAM_STORIES_ENABLED === 'true',
+  vimeoClientId: process.env.VIMEO_CLIENT_ID,
+  vimeoClientSecret: process.env.VIMEO_CLIENT_SECRET,
+  vimeoOAuthRedirectUri: process.env.VIMEO_OAUTH_REDIRECT_URI,
+  vimeoWebhookSecret: process.env.VIMEO_WEBHOOK_SECRET,
+  vimeoUploadQueueUrl: process.env.VIMEO_UPLOAD_QUEUE_URL
   };
   if (deploymentStage === 'production' || deploymentStage === 'prod') {
     const missing = [
