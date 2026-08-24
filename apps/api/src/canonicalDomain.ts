@@ -136,6 +136,22 @@ export interface Publication {
     remoteContentFingerprint?: string;
     errorCode?: string;
     errorMessage?: string;
+    /** Provider-neutral reconciliation state; raw provider payloads never belong here. */
+    reconciliation?: {
+      baseline?: Record<string, unknown>;
+      remote?: Record<string, unknown>;
+      status: 'in_sync' | 'local_newer' | 'remote_newer' | 'non_conflicting_changes' | 'conflict';
+      fields: Array<{
+        field: string;
+        lastSynced: unknown;
+        local: unknown;
+        remote: unknown;
+        localChanged: boolean;
+        remoteChanged: boolean;
+        conflict: boolean;
+      }>;
+      updatedAt: string;
+    };
   };
   providerData?: Record<string, unknown>;
   createdAt: string;

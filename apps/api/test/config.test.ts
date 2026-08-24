@@ -10,7 +10,8 @@ const productionVariables = [
   'APP_ORIGIN',
   'EXTERNAL_TOKEN_ENCRYPTION_KEY',
   'UNLOCK_JWT_SECRET',
-  'LOCAL_AUTH_USER_ID'
+  'LOCAL_AUTH_USER_ID',
+  'EXTERNAL_SCHEDULED_SCANS_ENABLED'
 ];
 
 describe('production API configuration', () => {
@@ -28,7 +29,8 @@ describe('production API configuration', () => {
     expect(loadConfig()).toMatchObject({
       deploymentStage: 'development',
       unlockJwtSecret: 'dev-secret',
-      deviantArtMinimumRequestIntervalMs: 2_000
+      deviantArtMinimumRequestIntervalMs: 2_000,
+      externalScheduledScansEnabled: false
     });
   });
 
@@ -50,6 +52,8 @@ describe('production API configuration', () => {
     process.env.LOCAL_AUTH_USER_ID = 'local-user';
     expect(() => loadConfig()).toThrow('LOCAL_AUTH_USER_ID');
     delete process.env.LOCAL_AUTH_USER_ID;
-    expect(loadConfig()).toMatchObject({ deploymentStage: 'production', appOrigin: 'https://eversally.test' });
+    expect(loadConfig()).toMatchObject({ deploymentStage: 'production', appOrigin: 'https://eversally.test', externalScheduledScansEnabled: true });
+    process.env.EXTERNAL_SCHEDULED_SCANS_ENABLED = 'false';
+    expect(loadConfig().externalScheduledScansEnabled).toBe(false);
   });
 });

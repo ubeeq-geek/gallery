@@ -19,6 +19,7 @@ import type {
   SpacePublication,
   ExternalSyncJob,
   ExternalSyncLog,
+  IntegrationReviewHold,
   UbeeqCollection,
   UbeeqCollectionAsset
 } from './domain';
@@ -724,6 +725,24 @@ export class ExternalPlatformRepository {
       SK: `LOG#${log.createdAt}#${log.externalSyncLogId}`,
       entityType: 'EXTERNAL_SYNC_LOG',
       ...log
+    });
+  }
+
+  async listActiveIntegrationReviewHolds(targets: Array<{ targetType: IntegrationReviewHold['targetType']; targetId: string }>): Promise<IntegrationReviewHold[]> {
+    const holds = await Promise.all(targets.map((target) => this.listByPartition<IntegrationReviewHold>(
+      `INTEGRATION_REVIEW_HOLD_TARGET#${target.targetType}#${target.targetId}`,
+      'HOLD#',
+      'INTEGRATION_REVIEW_HOLD'
+    )));
+    return holds.flat().filter((hold) => hold.active);
+  }
+
+  async upsertIntegrationReviewHold(hold: IntegrationReviewHold): Promise<void> {
+    await this.put({
+      PK: `INTEGRATION_REVIEW_HOLD_TARGET#${hold.targetType}#${hold.targetId}`,
+      SK: `HOLD#${hold.createdAt}#${hold.integrationReviewHoldId}`,
+      entityType: 'INTEGRATION_REVIEW_HOLD',
+      ...hold
     });
   }
 }

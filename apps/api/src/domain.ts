@@ -1102,6 +1102,18 @@ export interface ExternalSyncLog {
   createdAt: string;
 }
 
+/** Minimal integration-facing projection of the support/safety hold model. */
+export interface IntegrationReviewHold {
+  integrationReviewHoldId: string;
+  targetType: 'work' | 'asset' | 'creator' | 'external_account' | 'integration_connection' | 'publication' | 'external_content';
+  targetId: string;
+  holdType: string;
+  reason: string;
+  active: boolean;
+  createdAt: string;
+  releasedAt?: string;
+}
+
 /**
  * Community integrations deliver creator events into spaces where audiences
  * already gather. They are deliberately separate from ExternalPublication:

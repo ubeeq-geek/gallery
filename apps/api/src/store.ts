@@ -51,6 +51,7 @@ import type {
   ExternalSyncCheckpoint,
   ExternalSyncJob,
   ExternalSyncLog,
+  IntegrationReviewHold,
   CommunityInstallation,
   CommunityDestination,
   CommunityEvent,
@@ -292,6 +293,8 @@ export interface DataStore extends CanonicalStore {
   updateExternalSyncJob(job: ExternalSyncJob): Promise<void>;
   listExternalSyncLogs(externalSyncJobId: string, limit?: number): Promise<ExternalSyncLog[]>;
   appendExternalSyncLog(log: ExternalSyncLog): Promise<void>;
+  listActiveIntegrationReviewHolds(targets: Array<{ targetType: IntegrationReviewHold['targetType']; targetId: string }>): Promise<IntegrationReviewHold[]>;
+  upsertIntegrationReviewHold(hold: IntegrationReviewHold): Promise<void>;
 
   listCommunityInstallationsByUser(userId: string): Promise<CommunityInstallation[]>;
   getCommunityInstallation(communityInstallationId: string): Promise<CommunityInstallation | null>;
