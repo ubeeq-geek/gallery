@@ -111,6 +111,7 @@ import { dismissExternalActivity, replyToExternalComment } from './externalSyncW
 import { createCommunityDeliveryQueue } from './communityDeliveryQueue';
 import type { CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getDiscordGuild, listDiscordChannels, sendDiscordMessage, queueDiscordWorkPublished, queueDiscordWorksPublished } from './discordCommunity';
+import { createWordPressRouter } from './wordpressIntegration';
 import { registerFlickrRoutes } from './flickrIntegration';
 import { createFlickrRepository } from './flickrRepository';
 import { SmugMugError, type SmugMugIntegrationService, type SmugMugMigrationMode } from './smugMugIntegration';
@@ -2628,6 +2629,7 @@ export const createApp = ({
     }
   }));
   app.use(createOptionalAuthMiddleware(config));
+  app.use('/api', createWordPressRouter(config, store));
   registerFlickrRoutes(app, config, createFlickrRepository(config), undefined, store);
   const vimeoRepository = config.useContentCoreTable
     ? new DynamoVimeoRepository(DynamoDBDocumentClient.from(new DynamoDBClient({ region: config.awsRegion })), config.contentCoreTable)

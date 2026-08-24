@@ -62,6 +62,7 @@ import type {
   CommunityDelivery
 } from './domain';
 import type { DataStore, TrendingFeedQueryOptions } from './store';
+import type { WordPressIntegrationState } from './wordpressIntegration';
 import { capabilitiesForRole } from './roleHelpers';
 import type {
   CanonicalAsset,
@@ -75,6 +76,16 @@ import type {
 } from './canonicalDomain';
 
 export class InMemoryStore implements DataStore {
+  private wordpressStates = new Map<string, WordPressIntegrationState>();
+
+  async getWordPressIntegrationState(tenantId: string): Promise<WordPressIntegrationState> {
+    return structuredClone(this.wordpressStates.get(tenantId) || { connections: [], publications: [], externalReferences: [], mediaMappings: [], audits: [] });
+  }
+
+  async putWordPressIntegrationState(tenantId: string, state: WordPressIntegrationState): Promise<void> {
+    this.wordpressStates.set(tenantId, structuredClone(state));
+  }
+
   private getOrCreateIdentity(userId: string): UserIdentity {
     const existing = this.userIdentities.find((item) => item.userId === userId);
     if (existing) return existing;

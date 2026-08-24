@@ -33,6 +33,14 @@ export interface AppConfig {
   /** Compliance approval gate; SoundCloud remains unavailable unless explicitly enabled. */
   soundCloudEnabled?: boolean;
   externalTokenEncryptionKey?: string;
+  /** Master secret used to derive per-connection signatures for approved WordPress webhook adapters. */
+  wordpressWebhookSecret?: string;
+  /** Exact HTTPS hostnames allowed in generated WordPress core embed blocks. Empty disables embeds. */
+  wordpressApprovedEmbedHosts: string[];
+  /** Exact site hosts approved for the narrow managed WordPress cohort. */
+  wordpressManagedSiteHosts: string[];
+  /** Exact site hosts disabled for compatibility, policy, or safety reasons. */
+  wordpressBlockedSiteHosts: string[];
   /** Flickr OAuth 1.0a application credentials. The secret is server-only. */
   flickrApiKey?: string;
   flickrApiSecret?: string;
@@ -161,6 +169,10 @@ export const loadConfig = (): AppConfig => {
   soundCloudOAuthRedirectUri: process.env.SOUNDCLOUD_OAUTH_REDIRECT_URI,
   soundCloudEnabled: (process.env.SOUNDCLOUD_ENABLED || 'false') === 'true',
   externalTokenEncryptionKey: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY,
+  wordpressWebhookSecret: process.env.WORDPRESS_WEBHOOK_SECRET,
+  wordpressApprovedEmbedHosts: (process.env.WORDPRESS_APPROVED_EMBED_HOSTS || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
+  wordpressManagedSiteHosts: (process.env.WORDPRESS_MANAGED_SITE_HOSTS || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
+  wordpressBlockedSiteHosts: (process.env.WORDPRESS_BLOCKED_SITE_HOSTS || '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean),
   flickrApiKey: process.env.FLICKR_API_KEY,
   flickrApiSecret: process.env.FLICKR_API_SECRET,
   flickrOAuthCallbackUrl: process.env.FLICKR_OAUTH_CALLBACK_URL,

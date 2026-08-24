@@ -68,6 +68,12 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     capabilities: ['connect', 'catalogue_import', 'engagement_read', 'reconcile'],
     credentialCustody: 'application'
   },
+  wordpress: {
+    platform: 'wordpress',
+    label: 'WordPress',
+    capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
   flickr: {
     platform: 'flickr',
     label: 'Flickr',

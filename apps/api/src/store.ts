@@ -58,6 +58,7 @@ import type {
   CommunityDelivery
 } from './domain';
 import type { CanonicalStore } from './canonicalStore';
+import type { WordPressIntegrationState } from './wordpressIntegration';
 
 export interface TrendingFeedQueryOptions {
   source?: 'media' | 'post' | 'combined';
@@ -70,6 +71,8 @@ export interface TrendingFeedQueryOptions {
 }
 
 export interface DataStore extends CanonicalStore {
+  getWordPressIntegrationState(tenantId: string): Promise<WordPressIntegrationState>;
+  putWordPressIntegrationState(tenantId: string, state: WordPressIntegrationState): Promise<void>;
   getSiteSettings(): Promise<SiteSettings>;
   updateSiteSettings(settings: SiteSettings): Promise<void>;
 
