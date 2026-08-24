@@ -1,8 +1,8 @@
 import type { ExternalPlatform } from './domain';
 import type { DataStore } from './store';
 
-/** Includes native destinations that are integrations but not external-content providers. */
-export type IntegrationPlatform = ExternalPlatform | 'discord';
+/** Includes native and newer adapters not yet represented by legacy ExternalAccount. */
+export type IntegrationPlatform = ExternalPlatform | 'discord' | 'ghost' | 'smugmug' | 'vimeo';
 
 /**
  * The small, composable surface used to describe an integration.  A provider
@@ -89,7 +89,7 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
   soundcloud: {
     platform: 'soundcloud',
     label: 'SoundCloud',
-    capabilities: ['connect', 'catalogue_import', 'engagement_read', 'engagement_write', 'reconcile'],
+    capabilities: ['connect', 'catalogue_import', 'publish', 'engagement_read', 'engagement_write', 'reconcile'],
     credentialCustody: 'application'
   },
   fanvue: {
@@ -107,7 +107,7 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
   bluesky: {
     platform: 'bluesky',
     label: 'Bluesky',
-    capabilities: ['connect'],
+    capabilities: ['connect', 'publish'],
     credentialCustody: 'isolated_broker'
   },
   tumblr: {
@@ -121,8 +121,29 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     label: 'Discord',
     capabilities: ['connect', 'publish'],
     credentialCustody: 'application'
+  },
+  ghost: {
+    platform: 'ghost',
+    label: 'Ghost',
+    capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
+  smugmug: {
+    platform: 'smugmug',
+    label: 'SmugMug',
+    capabilities: ['connect', 'catalogue_import', 'source_migration', 'publish', 'reconcile'],
+    credentialCustody: 'application'
+  },
+  vimeo: {
+    platform: 'vimeo',
+    label: 'Vimeo',
+    capabilities: ['connect', 'catalogue_import', 'source_migration', 'publish', 'remote_update', 'remote_delete', 'engagement_read', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
   }
 };
+
+export const getIntegrationDefinition = (platform: IntegrationPlatform): IntegrationDefinition => integrationDefinitions[platform];
+export const listIntegrationDefinitions = (): IntegrationDefinition[] => Object.values(integrationDefinitions);
 
 export const supportsIntegrationOperation = (
   platform: IntegrationPlatform,

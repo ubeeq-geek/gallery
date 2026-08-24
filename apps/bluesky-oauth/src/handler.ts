@@ -1,7 +1,7 @@
 import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { JoseKey, NodeOAuthClient } from '@atproto/oauth-client-node';
-import { createHash, createPrivateKey, randomUUID } from 'node:crypto';
+import { createHash, createHmac, createPrivateKey, randomUUID, timingSafeEqual } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 
 type ApiEvent = {
@@ -10,6 +10,9 @@ type ApiEvent = {
   requestContext?: { http?: { path?: string } };
   rawQueryString?: string;
   queryStringParameters?: Record<string, string | undefined>;
+  headers?: Record<string, string | undefined>;
+  body?: string | null;
+  isBase64Encoded?: boolean;
 };
 
 type ApiResponse = {
@@ -26,6 +29,7 @@ const oauthBrand = process.env.BLUESKY_OAUTH_BRAND === 'ubeeq' ? 'ubeeq' : 'ever
 const privateJwkJson = process.env.BLUESKY_OAUTH_PRIVATE_JWK;
 /** The Studio origin that receives a short-lived, signed connection proof. */
 const studioReturnUrl = process.env.BLUESKY_OAUTH_STUDIO_RETURN_URL;
+const internalSecret = process.env.BLUESKY_OAUTH_INTERNAL_SECRET;
 // AT Protocol state/session payloads contain optional fields. DynamoDB's v3
 // document client rejects undefined values unless they are explicitly removed.
 const documentClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
@@ -177,6 +181,15 @@ const oauthClient = async (): Promise<NodeOAuthClient> => {
 const pathFor = (event: ApiEvent): string => event.path || event.rawPath || event.requestContext?.http?.path || '';
 const queryFor = (event: ApiEvent): URLSearchParams => new URLSearchParams(event.rawQueryString || new URLSearchParams(event.queryStringParameters).toString());
 
+const rawBodyFor = (event: ApiEvent): Buffer => Buffer.from(event.body || '', event.isBase64Encoded ? 'base64' : 'utf8');
+const validInternalSignature = (event: ApiEvent, body: Buffer): boolean => {
+  const signature = Object.entries(event.headers || {}).find(([name]) => name.toLowerCase() === 'x-ubeeq-signature-256')?.[1];
+  if (!internalSecret || !signature?.startsWith('sha256=')) return false;
+  const received = Buffer.from(signature.slice(7), 'hex');
+  const expected = createHmac('sha256', internalSecret).update(body).digest();
+  return received.length === expected.length && timingSafeEqual(received, expected);
+};
+
 const connectionReturn = (state: string, proof: string): ApiResponse | undefined => {
   if (!studioReturnUrl) return undefined;
   const url = new URL(studioReturnUrl);
@@ -204,6 +217,34 @@ export const handler = async (event: ApiEvent): Promise<ApiResponse> => {
     }
     if (path.endsWith('/oauth/bluesky/jwks.json')) {
       return json(200, client.jwks, 'public, max-age=300');
+    }
+    if (path.endsWith('/oauth/bluesky/publish')) {
+      const rawBody = rawBodyFor(event);
+      if (!validInternalSignature(event, rawBody)) return json(401, { message: 'Invalid broker request signature.' });
+      const payload = JSON.parse(rawBody.toString('utf8')) as { did?: string; text?: string; idempotencyKey?: string; createdAt?: string };
+      const did = payload.did?.trim();
+      const text = payload.text?.trim();
+      const idempotencyKey = payload.idempotencyKey?.trim();
+      const createdAt = payload.createdAt?.trim();
+      if (!did?.startsWith('did:') || !text || text.length > 300 || !idempotencyKey || !createdAt || !Number.isFinite(Date.parse(createdAt))) {
+        return json(400, { message: 'A DID, announcement text, idempotency key, and publication timestamp are required.' });
+      }
+      const session = await client.restore(did as `did:${string}:${string}`);
+      const rkey = `ubeeq-${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 40)}`;
+      const response = await session.fetchHandler('/xrpc/com.atproto.repo.putRecord', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          repo: did,
+          collection: 'app.bsky.feed.post',
+          rkey,
+          validate: true,
+          record: { $type: 'app.bsky.feed.post', text, createdAt }
+        })
+      });
+      const result = await response.json() as { uri?: string; cid?: string; message?: string };
+      if (!response.ok || !result.uri) return json(response.status >= 500 ? 502 : response.status, { message: result.message || 'Bluesky rejected the announcement.' });
+      return json(200, { uri: result.uri, cid: result.cid });
     }
     if (path.endsWith('/oauth/bluesky/authorize')) {
       const handle = queryFor(event).get('handle')?.trim().toLowerCase();

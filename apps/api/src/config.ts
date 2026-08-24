@@ -81,6 +81,8 @@ export interface AppConfig {
   blueskyOAuthServiceUrl?: string;
   /** Public JWKS used to verify one-time connection proofs issued by the OAuth broker. */
   blueskyOAuthServiceJwksUrl?: string;
+  /** Shared HMAC secret for API-to-broker announcement publication requests. */
+  blueskyOAuthInternalSecret?: string;
   /** Discord application credentials for the native community integration. */
   discordClientId?: string;
   discordClientSecret?: string;
@@ -229,6 +231,7 @@ export const loadConfig = (): AppConfig => {
   blueskyOAuthPrivateJwk: process.env.BLUESKY_OAUTH_PRIVATE_JWK,
   blueskyOAuthServiceUrl: process.env.BLUESKY_OAUTH_SERVICE_URL,
   blueskyOAuthServiceJwksUrl: process.env.BLUESKY_OAUTH_SERVICE_JWKS_URL,
+  blueskyOAuthInternalSecret: process.env.BLUESKY_OAUTH_INTERNAL_SECRET,
   discordClientId: process.env.DISCORD_CLIENT_ID,
   discordClientSecret: process.env.DISCORD_CLIENT_SECRET,
   discordBotToken: process.env.DISCORD_BOT_TOKEN,
@@ -273,7 +276,7 @@ export const loadConfig = (): AppConfig => {
   instagramAppId: process.env.INSTAGRAM_APP_ID?.trim(),
   instagramAppSecret: process.env.INSTAGRAM_APP_SECRET,
   instagramOAuthRedirectUri: process.env.INSTAGRAM_OAUTH_REDIRECT_URI?.trim(),
-  instagramGraphApiVersion: process.env.INSTAGRAM_GRAPH_API_VERSION?.trim() || 'v24.0',
+  instagramGraphApiVersion: process.env.INSTAGRAM_GRAPH_API_VERSION?.trim() || 'v26.0',
   instagramAppReviewComplete: process.env.INSTAGRAM_APP_REVIEW_COMPLETE === 'true',
   instagramWebhookVerifyToken: process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN,
   instagramDeliverySecret: process.env.INSTAGRAM_DELIVERY_SECRET,

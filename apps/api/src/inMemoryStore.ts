@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import { assertPublicationDisclosureHistoryImmutable } from './aiProvenance';
+import { assertAnnouncementPublicationImmutable } from './announcementPublication';
 import type {
   Creator,
   CreatorMember,
@@ -248,6 +250,7 @@ export class InMemoryStore implements DataStore {
   }
 
   async upsertPublication(publication: Publication): Promise<void> {
+    assertPublicationDisclosureHistoryImmutable(await this.getPublication(publication.tenantId, publication.publicationId), publication);
     this.publications = this.publications.filter((item) => !(item.tenantId === publication.tenantId && item.publicationId === publication.publicationId));
     this.publications.push(publication);
   }
@@ -1399,6 +1402,11 @@ export class InMemoryStore implements DataStore {
   }
 
   async upsertCommunityDelivery(delivery: CommunityDelivery): Promise<void> {
+    const previous = await this.getCommunityDelivery(delivery.communityDeliveryId);
+    if (previous?.announcementPublication) {
+      if (!delivery.announcementPublication) throw new Error('Queued announcement publication content is immutable.');
+      assertAnnouncementPublicationImmutable(previous.announcementPublication, delivery.announcementPublication);
+    }
     this.communityDeliveries = this.communityDeliveries.filter((item) => item.communityDeliveryId !== delivery.communityDeliveryId);
     this.communityDeliveries.push(delivery);
   }

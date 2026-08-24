@@ -1138,7 +1138,7 @@ export interface IntegrationReviewHold {
  * already gather. They are deliberately separate from ExternalPublication:
  * a Discord message announces a Work, but is never a copy of that Work.
  */
-export type CommunityProvider = 'discord';
+export type CommunityProvider = 'discord' | 'bluesky';
 export type CommunityIntegrationStatus = 'connected' | 'needs_attention' | 'disabled';
 export type CommunityDestinationStatus = 'active' | 'needs_attention' | 'disabled';
 export type CommunityEventType = 'work_published' | 'works_published';
@@ -1212,6 +1212,8 @@ export interface CommunityDelivery {
   communityEventId: string;
   communityDestinationId: string;
   provider: CommunityProvider;
+  /** Provider-neutral immutable announcement request rendered at delivery time. */
+  announcementPublication?: import('./announcementPublication').AnnouncementPublication;
   status: CommunityDeliveryStatus;
   attemptCount: number;
   nextAttemptAt?: string;

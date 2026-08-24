@@ -141,7 +141,8 @@ export class BlueskyOAuthStack extends Stack {
         // from a browser request.
         BLUESKY_OAUTH_STUDIO_RETURN_URL: `https://${props.rootDomain}/studio/workspace?section=integrations`,
         BLUESKY_OAUTH_BRAND: props.brand,
-        BLUESKY_OAUTH_PRIVATE_JWK: oauthSecret.secretValueFromJson('blueskyOAuthPrivateJwk').unsafeUnwrap()
+        BLUESKY_OAUTH_PRIVATE_JWK: oauthSecret.secretValueFromJson('blueskyOAuthPrivateJwk').unsafeUnwrap(),
+        BLUESKY_OAUTH_INTERNAL_SECRET: oauthSecret.secretValueFromJson('blueskyOAuthInternalSecret').unsafeUnwrap()
       }
     });
     sessions.grantReadWriteData(oauthFunction);
