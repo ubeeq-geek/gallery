@@ -50,8 +50,7 @@ describe('external metadata update verification', () => {
     await store.createExternalSyncJob({ externalSyncJobId: 'sc-import', externalAccountId: 'sc-account', type: 'account_import', status: 'queued', payload: { syncContent: true }, attemptCount: 0, createdAt: now, updatedAt: now });
     const fetchSpy = jest.spyOn(global, 'fetch')
       .mockResolvedValueOnce({ ok: true, json: async () => ({ collection: [] }), headers: { get: () => null } } as unknown as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ collection: [{ urn: 'soundcloud:tracks:1', title: 'External track', permalink_url: 'https://soundcloud.com/artist/track', tag_list: 'ambient' }] }), headers: { get: () => null } } as unknown as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ urn: 'soundcloud:tracks:1', title: 'External track', permalink_url: 'https://soundcloud.com/artist/track', tag_list: 'ambient' }), headers: { get: () => null } } as unknown as Response);
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ collection: [{ urn: 'soundcloud:tracks:1', title: 'External track', permalink_url: 'https://soundcloud.com/artist/track', tag_list: 'ambient' }] }), headers: { get: () => null } } as unknown as Response);
     const queue = { enqueue: jest.fn(async () => undefined) };
 
     await processExternalSyncJob(store, { tenantId: 'test', externalTokenEncryptionKey: encryptionKey, externalSyncBaseDelaySeconds: 1, soundCloudEnabled: true } as AppConfig, 'sc-import', queue);

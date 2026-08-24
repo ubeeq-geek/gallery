@@ -1801,7 +1801,7 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
     updatedAt: now
   });
   const [activityJob, engagementJob] = await Promise.all([
-    session.account.platform === 'deviantart'
+    (session.account.platform === 'deviantart' || session.account.platform === 'soundcloud')
       ? enqueueRelatedSyncJob(store, config, session.account, 'activity_sync', queue)
       : Promise.resolve(undefined),
     enqueueRelatedSyncJob(store, config, session.account, 'engagement_sync', queue)
