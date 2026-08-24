@@ -11909,6 +11909,14 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     width: 100%;
   }
 }
+.studio-integration-overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, .55fr); gap: 1.25rem; align-items: start; }
+.studio-integration-safety-note { display: grid; gap: .45rem; padding: 1rem; border: 1px solid var(--border-color, #d8d5ce); border-radius: .75rem; background: color-mix(in srgb, var(--surface, #fff) 88%, #f2b45f); }
+.studio-integration-safety-note span, .studio-capability-row small, .studio-integration-steps span { display: block; color: var(--muted, #68645e); }
+.studio-capability-list { display: grid; gap: .6rem; margin-top: 1rem; }
+.studio-capability-row { display: flex; gap: .75rem; align-items: start; padding: .75rem; border: 1px solid var(--border-color, #dedbd4); border-radius: .65rem; }
+.studio-integration-steps { display: grid; gap: .85rem; padding-left: 1.4rem; }
+.studio-status-pill { align-self: center; padding: .25rem .55rem; border-radius: 999px; background: #fff0cf; color: #7a4b00; font-size: .78rem; font-weight: 700; }
+@media (max-width: 760px) { .studio-integration-overview { grid-template-columns: 1fr; } }
 
 /* Tumblr connector setup and Work publishing */
 .studio-tumblr-connect-mode,

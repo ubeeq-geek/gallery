@@ -18,6 +18,10 @@ import type { AppConfig } from './config';
 import { brandForConfig } from './brand';
 import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation, type IntegrationPlatform, type IntegrationPolicyTarget } from './integrationStandard';
 import { resolvePublicationReconciliation } from './integrationReconciliation';
+import { INSTAGRAM_PILOT_INSIGHT_METRICS, INSTAGRAM_PILOT_MEDIA_CONSTRAINTS, instagramDeploymentStatus, createManagedInstagramProvider } from './instagramConfiguration';
+import { InstagramProviderError } from './instagramProvider';
+import { issueInstagramOAuthState, verifyInstagramOAuthState } from './externalOAuth';
+import { evaluateInstagramEligibility, instagramIdempotencyKey, instagramPublishingLimitAvailable, issueInstagramDeliveryCapability, validateInstagramMedia, verifyInstagramDeliveryCapability, verifyInstagramWebhookSignature, type InstagramCapabilities, type InstagramPlacement } from './instagramIntegration';
 import type { DataStore } from './store';
 import { hashPassword } from './unlock';
 import type {
@@ -57,7 +61,7 @@ import type {
   UbeeqCollectionAsset
 } from './domain';
 import { contentAvailabilityForAssets } from './canonicalDomain';
-import type { CanonicalAsset, CreatorCollection as CanonicalCollection, Publication, PublicationIntent, Work } from './canonicalDomain';
+import type { CanonicalAsset, CreatorCollection as CanonicalCollection, Publication, PublicationIntent, Work, WorkAsset } from './canonicalDomain';
 import {
   generateCreatorCoverRenditions,
   generateCreatorProfileRenditions,
@@ -6216,6 +6220,487 @@ export const createApp = ({
     auditLog(req, 'discord.installation.deleted', { communityInstallationId: installation.communityInstallationId });
     return res.status(204).end();
   });
+
+  app.get('/api/integrations/instagram/configuration', requireAuth, (_req, res) => {
+    // This response is intentionally deployment metadata only. Secrets, app ids,
+    // redirect credentials, tokens, and provider payloads never reach Studio.
+    res.json(instagramDeploymentStatus(config));
+  });
+
+  app.get('/webhooks/instagram', (req, res) => {
+    const mode = typeof req.query['hub.mode'] === 'string' ? req.query['hub.mode'] : '';
+    const token = typeof req.query['hub.verify_token'] === 'string' ? req.query['hub.verify_token'] : '';
+    const challenge = typeof req.query['hub.challenge'] === 'string' ? req.query['hub.challenge'] : '';
+    if (mode !== 'subscribe' || !config.instagramWebhookVerifyToken || token !== config.instagramWebhookVerifyToken || !challenge) return res.status(403).end();
+    return res.status(200).type('text/plain').send(challenge);
+  });
+
+  app.post('/webhooks/instagram', async (req, res) => {
+    const rawBody = (req as express.Request & { instagramRawBody?: Buffer }).instagramRawBody;
+    const signature = req.header('x-hub-signature-256');
+    if (!rawBody || !config.instagramAppSecret || !verifyInstagramWebhookSignature(rawBody, signature, config.instagramAppSecret)) {
+      await store.appendAuditEvent({ auditId: randomUUID(), action: 'instagram.webhook.rejected', actorRole: 'public', detail: { reason: 'signature_invalid' }, createdAt: new Date().toISOString() });
+      return res.status(401).end();
+    }
+    const payload = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+    if (payload.object !== 'instagram') return res.status(202).end();
+    const entries = Array.isArray(payload.entry) ? payload.entry.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object') : [];
+    const providerTimes = entries.map((entry) => Number(entry.time) * 1000).filter(Number.isFinite);
+    const newestProviderTime = providerTimes.length ? Math.max(...providerTimes) : undefined;
+    if (newestProviderTime && Math.abs(Date.now() - newestProviderTime) > 24 * 60 * 60 * 1000) {
+      await store.appendAuditEvent({ auditId: randomUUID(), action: 'instagram.webhook.rejected', actorRole: 'public', detail: { reason: 'replay_window' }, createdAt: new Date().toISOString() });
+      return res.status(202).end();
+    }
+    const eventHash = createHash('sha256').update(rawBody).digest('hex');
+    const scopeKey = `instagram-webhook:${config.tenantId}`;
+    if (await store.getIdempotencyRecord(scopeKey, eventHash)) return res.status(200).end();
+    const now = new Date();
+    await store.putIdempotencyRecord({ scopeKey, idempotencyKey: eventHash, status: 200, createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString() });
+    const types = [...new Set(entries.flatMap((entry) => (Array.isArray(entry.changes) ? entry.changes : []).map((change) => change && typeof change === 'object' ? String((change as Record<string, unknown>).field || 'unknown') : 'unknown')))];
+    await store.appendAuditEvent({ auditId: randomUUID(), action: 'instagram.webhook.accepted', actorRole: 'public', detail: { eventHash, entryCount: entries.length, types }, createdAt: now.toISOString() });
+    return res.status(200).end();
+  });
+
+  app.post('/api/integrations/instagram/connections/start', requireAuth, async (req, res) => {
+    const creatorId = typeof req.body?.creatorId === 'string' ? req.body.creatorId : '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorId))) return;
+    const provider = createManagedInstagramProvider(config);
+    if (!provider) {
+      res.status(503).json({ code: instagramDeploymentStatus(config).state, message: 'Instagram creator onboarding is not enabled for this deployment.' });
+      return;
+    }
+    const { state } = issueInstagramOAuthState(config, {
+      userId: req.authUser!.userId, creatorIdentityId: creatorId, platform: 'instagram',
+      returnPath: `/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}`
+    });
+    res.status(201).json({ authorizationUrl: provider.createAuthorizationUrl(state) });
+  });
+
+  app.get('/api/integrations/instagram/oauth/callback', async (req, res) => {
+    const stateValue = typeof req.query.state === 'string' ? req.query.state : '';
+    let state: ReturnType<typeof verifyInstagramOAuthState>;
+    try { state = verifyInstagramOAuthState(config, stateValue); }
+    catch { return res.status(400).json({ message: 'Instagram OAuth state is invalid or expired.' }); }
+    const redirect = (values: Record<string, string>) => res.redirect(302, resolveExternalOAuthReturnUrl(config, state.returnPath, values));
+    const provider = createManagedInstagramProvider(config);
+    if (!provider) return redirect({ instagram: 'failed', reason: 'APP_REVIEW_REQUIRED' });
+    if (typeof req.query.error === 'string') return redirect({ instagram: req.query.error === 'access_denied' ? 'cancelled' : 'failed', reason: req.query.error });
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!code) return redirect({ instagram: 'failed', reason: 'missing_authorization_code' });
+    if (!(await store.hasCreatorAccess(state.userId, state.creatorIdentityId))) return redirect({ instagram: 'failed', reason: 'creator_access_changed' });
+    try {
+      const tokens = await provider.exchangeAuthorizationCode(code);
+      const remoteAccounts = await provider.getProfessionalAccounts(tokens.accessToken);
+      if (!remoteAccounts.length) return redirect({ instagram: 'failed', reason: 'UNSUPPORTED_ACCOUNT_TYPE' });
+      const existingAccounts = await store.listExternalAccountsByUser(state.userId);
+      const now = new Date().toISOString();
+      for (const remote of remoteAccounts) {
+        const existing = existingAccounts.find((account) => account.platform === 'instagram' && account.externalUserId === remote.id);
+        const account: ExternalAccount = {
+          externalAccountId: existing?.externalAccountId || randomUUID(), userId: state.userId,
+          creatorIdentityId: state.creatorIdentityId, primaryCreatorIdentityId: state.creatorIdentityId,
+          externalPlatformCredentialId: 'instagram-managed-app', platform: 'instagram', externalUserId: remote.id,
+          externalUsername: remote.username, accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
+          tokenExpiresAt: tokens.expiresIn ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString() : undefined,
+          connectionStatus: 'connected', createdAt: existing?.createdAt || now, updatedAt: now,
+          instagram: { accountType: remote.accountType, apiVersion: config.instagramGraphApiVersion || 'v24.0', policyProfileVersion: '2026-08-23.1', enabledCapabilities: ['publish_images'] }
+        };
+        if (existing) await store.updateExternalAccount(account); else await store.createExternalAccount(account);
+        await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, [{ externalAccountId: account.externalAccountId, creatorIdentityId: state.creatorIdentityId, userId: state.userId, createdAt: now, updatedAt: now }]);
+      }
+      return redirect({ instagram: 'connected', accounts: String(remoteAccounts.length) });
+    } catch (error) {
+      return redirect({ instagram: 'failed', reason: error instanceof Error ? error.name : 'provider_error' });
+    }
+  });
+
+  app.get('/api/integrations/instagram/connections', requireAuth, async (req, res) => {
+    const creatorId = typeof req.query.creatorId === 'string' ? req.query.creatorId : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    const accounts = (await store.listExternalAccountsByCreatorIdentity(creatorId)).filter((account) => account.platform === 'instagram' && account.userId === req.authUser!.userId);
+    res.json(accounts.map((account) => ({ id: account.externalAccountId, username: account.externalUsername, accountType: account.instagram?.accountType, apiVersion: account.instagram?.apiVersion, policyProfileVersion: account.instagram?.policyProfileVersion, capabilities: account.instagram?.enabledCapabilities || [], state: account.connectionStatus })));
+  });
+
+  app.patch('/api/integrations/instagram/connections/:connectionId/capabilities', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.connectionId);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || !account.instagram) return res.status(404).json({ message: 'Instagram connection not found.' });
+    const creatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorId))) return;
+    const requested = Array.isArray(req.body?.capabilities) ? req.body.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [];
+    const permitted = new Set(['publish_images', ...(config.instagramReelsEnabled ? ['publish_reels'] : []), ...(config.instagramStoriesEnabled ? ['publish_stories'] : []), ...(config.instagramMetadataImportEnabled ? ['metadata_import'] : []), ...(config.instagramInsightsEnabled ? ['insights'] : [])]);
+    if (requested.some((capability: string) => !permitted.has(capability))) return res.status(422).json({ code: 'CAPABILITY_RESTRICTED', message: 'One or more capabilities are not approved for this deployment.' });
+    const updated = { ...account, instagram: { ...account.instagram, enabledCapabilities: requested as NonNullable<ExternalAccount['instagram']>['enabledCapabilities'] }, updatedAt: new Date().toISOString() };
+    await store.updateExternalAccount(updated);
+    auditLog(req, 'instagram.connection.capabilities.updated', { connectionId: account.externalAccountId, capabilities: requested });
+    return res.json({ id: updated.externalAccountId, capabilities: updated.instagram.enabledCapabilities });
+  });
+
+  app.post('/api/integrations/instagram/connections/:connectionId/sync', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.connectionId);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || !account.instagram) return res.status(404).json({ message: 'Instagram connection not found.' });
+    const creatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    if (!config.instagramMetadataImportEnabled || !account.instagram.enabledCapabilities.includes('metadata_import')) return res.status(409).json({ code: 'CAPABILITY_RESTRICTED', message: 'Metadata-reference import is not enabled for this connection.' });
+    const provider = createManagedInstagramProvider(config);
+    if (!provider || account.connectionStatus !== 'connected') return res.status(409).json({ code: 'REAUTH_REQUIRED', message: 'The Instagram connection is unavailable.' });
+    const cursor = typeof req.body?.cursor === 'string' ? req.body.cursor : undefined;
+    const page = await provider.listMedia(decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey), account.externalUserId, cursor, 25);
+    const existingWorks = await store.listWorksByCreator(config.tenantId, creatorId);
+    const imported: Work[] = [];
+    const changed: Array<{ workId: string; remoteId: string; fields: string[] }> = [];
+    for (const media of page.items) {
+      const existing = existingWorks.find((work) => work.origin.platform === 'instagram' && work.origin.integrationAccountId === account.externalAccountId && work.origin.remoteId === media.id);
+      if (existing) {
+        const remoteCaption = media.caption?.trim() || '';
+        const fingerprint = createHash('sha256').update(remoteCaption).digest('hex');
+        const referencePublication = (await store.listPublicationsByWork(config.tenantId, existing.workId)).find((publication) => publication.destination === 'instagram' && publication.remoteId === media.id);
+        if (referencePublication && referencePublication.sync.remoteMetadataFingerprint !== fingerprint) {
+          const remoteTitle = remoteCaption.split(/\r?\n/)[0]?.trim().slice(0, 160) || existing.title;
+          const fields = [...(remoteTitle !== existing.title ? ['title'] : []), ...(remoteCaption !== (existing.description || '') ? ['description'] : [])];
+          await store.upsertPublication({ ...referencePublication, remoteUrl: media.permalink || referencePublication.remoteUrl, remoteUpdatedAt: media.timestamp || referencePublication.remoteUpdatedAt, sync: { ...referencePublication.sync, status: 'remote_newer', remoteMetadataFingerprint: fingerprint }, providerData: { ...referencePublication.providerData, pendingRemoteMetadata: { title: remoteTitle, description: remoteCaption }, pendingRemoteFields: fields }, updatedAt: new Date().toISOString() });
+          changed.push({ workId: existing.workId, remoteId: media.id, fields });
+        }
+        continue;
+      }
+      const now = new Date().toISOString();
+      const caption = media.caption?.trim() || '';
+      const title = caption.split(/\r?\n/)[0]?.trim().slice(0, 160) || `Instagram reference ${media.id.slice(-8)}`;
+      const baseSlug = slugify(title) || `instagram-${media.id.slice(-8).toLowerCase()}`;
+      const slug = existingWorks.some((work) => work.slug === baseSlug) ? `${baseSlug}-${media.id.slice(-6).toLowerCase()}` : baseSlug;
+      const work: Work = { workId: randomUUID(), tenantId: config.tenantId, creatorId, kind: media.mediaType === 'VIDEO' ? 'video' : 'image', title, slug, slugHistory: [slug], description: caption || undefined, tags: [], contentRating: 'general', aiDisclosure: 'none', heavyTopics: [], status: 'draft', origin: { type: 'import', platform: 'instagram', integrationAccountId: account.externalAccountId, remoteId: media.id, remoteUrl: media.permalink, importedAt: now }, revision: 1, createdAt: now, updatedAt: now };
+      await store.createWork(work);
+      await store.upsertPublication({ publicationId: randomUUID(), tenantId: config.tenantId, creatorId, workId: work.workId, destination: 'instagram', integrationAccountId: account.externalAccountId, status: 'live', visibility: 'public', remoteId: media.id, remoteUrl: media.permalink, remoteCreatedAt: media.timestamp, remoteUpdatedAt: media.timestamp, metadataOverrides: { description: caption }, sync: { status: 'in_sync', remoteMetadataFingerprint: createHash('sha256').update(caption).digest('hex'), lastSuccessfulAt: now }, providerData: { externalReferenceOnly: true, sourceBytesStored: false, mediaType: media.mediaType, placement: media.placement, providerVersion: account.instagram.apiVersion }, createdAt: now, updatedAt: now, publishedAt: media.timestamp } as Publication);
+      imported.push(work); existingWorks.push(work);
+    }
+    const syncedAt = new Date().toISOString();
+    await store.updateExternalAccount({ ...account, lastSuccessfulSyncAt: syncedAt, lastSyncAttemptAt: syncedAt, updatedAt: syncedAt });
+    auditLog(req, 'instagram.metadata_references.imported', { connectionId: account.externalAccountId, importedCount: imported.length });
+    return res.status(200).json({ items: imported.map((work) => ({ workId: work.workId, title: work.title, remoteId: work.origin.remoteId, remoteUrl: work.origin.remoteUrl, contentAvailability: 'external_reference', sourceNotice: 'Instagram reference only — original source is not stored in Ubeeq' })), remoteChanges: changed, nextCursor: page.nextCursor });
+  });
+
+  app.post('/api/integrations/instagram/external-references/:workId/resolve', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work || work.origin.platform !== 'instagram' || !work.origin.remoteId) return res.status(404).json({ message: 'Instagram external reference not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const publication = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'instagram' && item.remoteId === work.origin.remoteId);
+    if (!publication || publication.sync.status !== 'remote_newer') return res.status(409).json({ code: 'NO_REMOTE_CHANGE', message: 'There is no pending Instagram metadata change.' });
+    const strategy = req.body?.strategy;
+    const pending = publication.providerData?.pendingRemoteMetadata && typeof publication.providerData.pendingRemoteMetadata === 'object' ? publication.providerData.pendingRemoteMetadata as Record<string, unknown> : {};
+    const selectedFields = strategy === 'accept_remote' ? ['title', 'description'] : strategy === 'field_by_field' && Array.isArray(req.body?.fields) ? req.body.fields.filter((field: unknown) => field === 'title' || field === 'description') : [];
+    if (strategy !== 'keep_local' && strategy !== 'accept_remote' && strategy !== 'field_by_field') return res.status(422).json({ message: 'Choose keep_local, accept_remote, or field_by_field.' });
+    const updatedWork: Work = selectedFields.length ? { ...work, title: selectedFields.includes('title') && typeof pending.title === 'string' ? pending.title : work.title, description: selectedFields.includes('description') && typeof pending.description === 'string' ? pending.description : work.description, revision: work.revision + 1, updatedAt: new Date().toISOString() } : work;
+    if (updatedWork !== work) await store.updateWork(updatedWork);
+    const resolved: Publication = { ...publication, metadataOverrides: { ...publication.metadataOverrides, ...(selectedFields.includes('description') && typeof pending.description === 'string' ? { description: pending.description } : {}) }, sync: { ...publication.sync, status: 'in_sync' }, providerData: { ...publication.providerData, pendingRemoteMetadata: undefined, pendingRemoteFields: undefined, remoteResolution: strategy }, updatedAt: new Date().toISOString() };
+    await store.upsertPublication(resolved);
+    auditLog(req, 'instagram.external_reference.remote_change.resolved', { workId: work.workId, publicationId: publication.publicationId, strategy, fields: selectedFields });
+    return res.json({ work: updatedWork, publication: resolved });
+  });
+
+  app.post('/api/integrations/instagram/external-references/:referenceWorkId/map', requireAuth, async (req, res) => {
+    const reference = await store.getWork(config.tenantId, req.params.referenceWorkId);
+    const targetWorkId = typeof req.body?.workId === 'string' ? req.body.workId : '';
+    const target = await store.getWork(config.tenantId, targetWorkId);
+    if (!reference || reference.origin.platform !== 'instagram' || !reference.origin.remoteId || !target || target.creatorId !== reference.creatorId) return res.status(404).json({ message: 'Instagram reference or target Work not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, reference.creatorId))) return;
+    const publication = (await store.listPublicationsByWork(config.tenantId, reference.workId)).find((item) => item.destination === 'instagram' && item.remoteId === reference.origin.remoteId);
+    if (!publication) return res.status(404).json({ message: 'Instagram reference publication not found.' });
+    const mapped: Publication = { ...publication, workId: target.workId, providerData: { ...publication.providerData, mappedReferenceWorkId: reference.workId }, updatedAt: new Date().toISOString() };
+    await store.upsertPublication(mapped);
+    auditLog(req, 'instagram.external_reference.mapped', { referenceWorkId: reference.workId, targetWorkId: target.workId, publicationId: publication.publicationId });
+    return res.json({ referenceWorkId: reference.workId, mappedWorkId: target.workId, publication: mapped });
+  });
+
+  app.get('/api/integrations/instagram/connections/:connectionId/insights', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.connectionId);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || !account.instagram) return res.status(404).json({ message: 'Instagram connection not found.' });
+    const creatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    if (!config.instagramInsightsEnabled || !account.instagram.enabledCapabilities.includes('insights')) return res.status(409).json({ code: 'CAPABILITY_RESTRICTED', message: 'Aggregate Instagram insights are not enabled for this connection.' });
+    const provider = createManagedInstagramProvider(config);
+    if (!provider || account.connectionStatus !== 'connected') return res.status(409).json({ code: 'REAUTH_REQUIRED', message: 'The Instagram connection is unavailable.' });
+    const token = decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey);
+    const publications = (await store.listPublicationsByDestination(config.tenantId, 'instagram')).filter((publication) => publication.integrationAccountId === account.externalAccountId && publication.remoteId && publication.status === 'live');
+    const capturedAt = new Date();
+    const expiresAt = new Date(capturedAt.getTime() + (config.instagramInsightRetentionDays || 90) * 24 * 60 * 60 * 1000);
+    const providerMetrics = Object.values(INSTAGRAM_PILOT_INSIGHT_METRICS);
+    const normalizedByProvider = new Map<string, string>(Object.entries(INSTAGRAM_PILOT_INSIGHT_METRICS).map(([normalized, providerMetric]) => [providerMetric, normalized]));
+    const snapshots: Array<{ publicationId: string; metric: string; value: number; providerMetric: string; providerVersion: string; capturedAt: string; retentionExpiresAt: string }> = [];
+    for (const publication of publications) {
+      try {
+        const values = await provider.getInsights(token, publication.remoteId!, providerMetrics);
+        const publicationSnapshots = values.flatMap((value) => {
+          const metric = normalizedByProvider.get(value.metric);
+          return metric ? [{ publicationId: publication.publicationId, metric, value: value.value, providerMetric: value.metric, providerVersion: account.instagram!.apiVersion, capturedAt: capturedAt.toISOString(), retentionExpiresAt: expiresAt.toISOString() }] : [];
+        });
+        const retained = Array.isArray(publication.providerData?.insightSnapshots) ? publication.providerData.insightSnapshots.filter((snapshot) => snapshot && typeof snapshot === 'object' && String((snapshot as Record<string, unknown>).retentionExpiresAt || '') > capturedAt.toISOString()) : [];
+        await store.upsertPublication({ ...publication, providerData: { ...publication.providerData, insightSnapshots: [...retained, ...publicationSnapshots] }, updatedAt: capturedAt.toISOString() });
+        snapshots.push(...publicationSnapshots);
+      } catch (error) {
+        if (error instanceof InstagramProviderError && error.code === 'AUTHENTICATION_REQUIRED') {
+          await store.updateExternalAccount({ ...account, connectionStatus: 'authentication_required', updatedAt: capturedAt.toISOString() });
+          return res.status(409).json({ code: 'REAUTH_REQUIRED', message: 'The Instagram connection must be reauthorized.' });
+        }
+      }
+    }
+    auditLog(req, 'instagram.insights.snapshots.captured', { connectionId: account.externalAccountId, publicationCount: publications.length, snapshotCount: snapshots.length });
+    return res.json({ items: snapshots, definitionsVersion: account.instagram.apiVersion, containsAudienceIdentity: false });
+  });
+
+  app.delete('/api/integrations/instagram/connections/:connectionId', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.connectionId);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId) return res.status(404).json({ message: 'Instagram connection not found.' });
+    const creatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorId))) return;
+    const provider = createManagedInstagramProvider(config);
+    let providerRevoked = false;
+    if (provider && account.connectionStatus === 'connected') {
+      try {
+        await provider.revokeAuthorization(decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey));
+        providerRevoked = true;
+      } catch { /* Local disconnect must still stop all future actions. */ }
+    }
+    const now = new Date().toISOString();
+    await store.updateExternalAccount({ ...account, accessTokenEncrypted: encryptExternalCredential('revoked', config.externalTokenEncryptionKey), refreshTokenEncrypted: undefined, tokenExpiresAt: now, connectionStatus: 'disabled', instagram: account.instagram ? { ...account.instagram, enabledCapabilities: [] } : undefined, updatedAt: now });
+    await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, []);
+    await store.appendAuditEvent({ auditId: randomUUID(), action: 'instagram.connection.disconnected', actorUserId: req.authUser!.userId, actorRole: resolveRole(req.authUser!) === 'admin' ? 'admin' : 'user', detail: { connectionId: account.externalAccountId, providerRevoked }, createdAt: now });
+    return res.status(204).end();
+  });
+
+  app.post('/api/works/:workId/instagram/publications', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const connectionId = typeof req.body?.connectionId === 'string' ? req.body.connectionId : '';
+    const account = await store.getExternalAccount(connectionId);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || account.creatorIdentityId !== work.creatorId) return res.status(404).json({ message: 'Instagram connection not found for this Creator.' });
+    const placement = req.body?.placement as InstagramPlacement;
+    const deploymentCapabilities = instagramDeploymentStatus(config).pilotCapabilities;
+    const placementAllowed = placement === 'IMAGE' ? deploymentCapabilities.imagePublish : placement === 'CAROUSEL' ? deploymentCapabilities.carouselPublish : placement === 'REEL' ? deploymentCapabilities.reelPublish : placement === 'STORY' ? deploymentCapabilities.storyPublish : false;
+    if (!placementAllowed) return res.status(422).json({ code: 'PLACEMENT_UNSUPPORTED', message: 'This placement is not approved for the current provider adapter and deployment.' });
+    const derivativeIds = Array.isArray(req.body?.derivativeIds) ? req.body.derivativeIds.filter((value: unknown): value is string => typeof value === 'string') : [];
+    const attached = await store.listCanonicalAssetsByWork(config.tenantId, work.workId);
+    const selected: typeof attached = derivativeIds
+      .map((id: string) => attached.find((asset) => asset.assetId === id))
+      .filter((asset: (CanonicalAsset & { attachment: WorkAsset }) | undefined): asset is CanonicalAsset & { attachment: WorkAsset } => Boolean(asset));
+    if (selected.length !== derivativeIds.length || selected.some((asset) => asset.storage.mode !== 'hosted' || asset.status !== 'ready')) return res.status(422).json({ code: 'DERIVATIVE_INVALID', message: 'Every selected derivative must be a ready, hosted Asset attached to this Work.' });
+    const approved = createManagedInstagramProvider(config);
+    if (!approved) return res.status(503).json({ code: 'APP_REVIEW_REQUIRED', message: 'Instagram publishing is not enabled.' });
+    const capabilities = await approved.getCapabilities({
+      connectionId: account.externalAccountId, ownerUserId: account.userId, creatorId: work.creatorId, mode: 'EversallyManagedApp', remoteProfessionalAccountId: account.externalUserId,
+      accountType: account.instagram!.accountType, encryptedCredentialReference: account.externalAccountId, scopes: [], apiVersion: account.instagram!.apiVersion,
+      policyProfileVersion: account.instagram!.policyProfileVersion, state: account.connectionStatus === 'connected' ? 'CONNECTED' : 'REAUTH_REQUIRED',
+      capabilities: ({ accountRead: true, mediaRead: account.instagram!.enabledCapabilities.includes('metadata_import'), imagePublish: account.instagram!.enabledCapabilities.includes('publish_images'), carouselPublish: account.instagram!.enabledCapabilities.includes('publish_images'), reelPublish: account.instagram!.enabledCapabilities.includes('publish_reels'), storyPublish: account.instagram!.enabledCapabilities.includes('publish_stories'), mediaUpdate: false, mediaDeleteOrArchive: false, insightsRead: account.instagram!.enabledCapabilities.includes('insights'), commentsRead: false, commentsReply: false } satisfies InstagramCapabilities)
+    });
+    const publishingLimit = await approved.getPublishingLimit(decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey), account.externalUserId);
+    const preflight = {
+      connection: { connectionId: account.externalAccountId, ownerUserId: account.userId, creatorId: work.creatorId, mode: 'EversallyManagedApp' as const, remoteProfessionalAccountId: account.externalUserId, accountType: account.instagram!.accountType, encryptedCredentialReference: account.externalAccountId, scopes: [], capabilities, apiVersion: account.instagram!.apiVersion, policyProfileVersion: account.instagram!.policyProfileVersion, state: account.connectionStatus === 'connected' ? 'CONNECTED' as const : 'REAUTH_REQUIRED' as const },
+      placement, media: selected.map((asset) => ({ derivativeId: asset.assetId, contentType: asset.mimeType, byteSize: asset.sizeBytes || 0, width: asset.width || 0, height: asset.height || 0, durationSeconds: asset.durationSeconds })),
+      caption: typeof req.body?.caption === 'string' ? req.body.caption : '', contentRating: work.contentRating,
+      rightsAttested: req.body?.rightsAttested === true, creatorAttested: req.body?.creatorAttested === true,
+      publishingLimitAvailable: instagramPublishingLimitAvailable(publishingLimit)
+    };
+    const decision = evaluateInstagramEligibility(preflight);
+    const validationIssues = validateInstagramMedia(preflight, INSTAGRAM_PILOT_MEDIA_CONSTRAINTS);
+    if (decision.result !== 'ALLOWED_MANAGED' || validationIssues.length) return res.status(422).json({ decision, validationIssues });
+    const intentVersion = work.revision;
+    const key = instagramIdempotencyKey(work.workId, account.externalAccountId, placement, intentVersion, config.instagramDeliverySecret!);
+    const duplicate = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'instagram' && item.providerData?.idempotencyKey === key);
+    if (duplicate) return res.status(200).json({ publication: duplicate, decision, validationIssues });
+    const now = new Date().toISOString();
+    const publication: Publication = { publicationId: randomUUID(), tenantId: config.tenantId, creatorId: work.creatorId, workId: work.workId, destination: 'instagram', integrationAccountId: account.externalAccountId, status: 'draft', visibility: 'public', metadataOverrides: { description: preflight.caption, fields: { accessibilityText: typeof req.body?.accessibilityText === 'string' ? req.body.accessibilityText : '' } }, sync: { status: 'local_newer', localRevision: work.revision }, providerData: { placement, derivativeIds, derivativeHashes: selected.map((asset) => asset.checksumSha256), captionHash: createHash('sha256').update(preflight.caption).digest('hex'), providerVersion: account.instagram!.apiVersion, policyProfileVersion: decision.policyVersion, eligibilityReasonCode: decision.reasonCode, idempotencyKey: key, intentVersion: work.revision, confirmed: false }, createdAt: now, updatedAt: now };
+    await store.upsertPublication(publication);
+    auditLog(req, 'instagram.publication.draft.created', { publicationId: publication.publicationId, workId: work.workId, connectionId: account.externalAccountId, placement, policyVersion: decision.policyVersion });
+    return res.status(201).json({ publication, decision, validationIssues });
+  });
+
+  app.post('/api/instagram/publications/:publicationId/preview', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, publication.creatorId))) return;
+    return res.json({ publicationId: publication.publicationId, workId: publication.workId, placement: publication.providerData?.placement, derivativeIds: publication.providerData?.derivativeIds, caption: publication.metadataOverrides?.description || '', accessibilityText: publication.metadataOverrides?.fields?.accessibilityText || '', providerVersion: publication.providerData?.providerVersion, policyProfileVersion: publication.providerData?.policyProfileVersion, eligibilityReasonCode: publication.providerData?.eligibilityReasonCode, confirmed: publication.providerData?.confirmed === true });
+  });
+
+  app.patch('/api/instagram/publications/:publicationId', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, publication.creatorId))) return;
+    const caption = typeof req.body?.caption === 'string' ? req.body.caption : publication.metadataOverrides?.description || '';
+    const accessibilityText = typeof req.body?.accessibilityText === 'string' ? req.body.accessibilityText : String(publication.metadataOverrides?.fields?.accessibilityText || '');
+    if (caption.length > INSTAGRAM_PILOT_MEDIA_CONSTRAINTS.maximumCaptionCharacters) return res.status(422).json({ code: 'CAPTION_TOO_LONG', field: 'caption', message: `Caption must not exceed ${INSTAGRAM_PILOT_MEDIA_CONSTRAINTS.maximumCaptionCharacters} characters.` });
+    const captionChanged = caption !== (publication.metadataOverrides?.description || '');
+    const accessibilityChanged = accessibilityText !== String(publication.metadataOverrides?.fields?.accessibilityText || '');
+    const diff = [...(captionChanged ? ['caption'] : []), ...(accessibilityChanged ? ['accessibilityText'] : [])];
+    if (publication.status === 'live') return res.status(409).json({ code: 'REMOTE_UPDATE_UNSUPPORTED', diff, choices: ['CREATE_REPLACEMENT_POST', 'KEEP_REMOTE_UNCHANGED'], message: 'The approved adapter cannot update this live Instagram placement. Choose a replacement post or keep Instagram unchanged.' });
+    if (publication.status !== 'draft' && publication.status !== 'failed') return res.status(409).json({ code: 'PUBLICATION_NOT_EDITABLE', message: 'This publication cannot be edited while a provider action is in progress.' });
+    const intentVersion = Number(publication.providerData?.intentVersion || 0) + 1;
+    const placement = publication.providerData?.placement as InstagramPlacement;
+    const idempotencyKey = instagramIdempotencyKey(publication.workId, publication.integrationAccountId || '', placement, intentVersion, config.instagramDeliverySecret!);
+    const updated: Publication = { ...publication, status: 'draft', metadataOverrides: { ...publication.metadataOverrides, description: caption, fields: { ...publication.metadataOverrides?.fields, accessibilityText } }, sync: { ...publication.sync, status: 'local_newer', errorCode: undefined, errorMessage: undefined }, providerData: { ...publication.providerData, captionHash: createHash('sha256').update(caption).digest('hex'), idempotencyKey, intentVersion, confirmed: false, containerIds: undefined, containerSetComplete: undefined }, updatedAt: new Date().toISOString() };
+    await store.upsertPublication(updated);
+    auditLog(req, 'instagram.publication.draft.updated', { publicationId: publication.publicationId, diff, intentVersion });
+    return res.json({ publication: updated, diff, requiresFinalConfirmation: true });
+  });
+
+  app.post('/api/instagram/publications/:publicationId/archive', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, publication.creatorId))) return;
+    if (req.body?.confirm !== true) return res.status(422).json({ code: 'FINAL_CONFIRMATION_REQUIRED', message: 'Confirm the destination-specific archive action.' });
+    if (publication.status === 'live') return res.status(409).json({ code: 'REMOTE_ARCHIVE_UNSUPPORTED', providerEffect: 'NONE', choices: ['KEEP_REMOTE_UNCHANGED'], message: 'The approved adapter cannot archive this live Instagram post. The canonical Work remains unchanged.' });
+    const archived: Publication = { ...publication, status: 'removed', removedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    await store.upsertPublication(archived);
+    auditLog(req, 'instagram.publication.draft.archived', { publicationId: publication.publicationId });
+    return res.json({ publication: archived, providerEffect: 'NONE' });
+  });
+
+  app.delete('/api/instagram/publications/:publicationId', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, publication.creatorId))) return;
+    if (req.query.confirm !== 'true') return res.status(422).json({ code: 'FINAL_CONFIRMATION_REQUIRED', message: 'Confirm the destination-specific delete action.' });
+    if (publication.status === 'live') return res.status(409).json({ code: 'REMOTE_DELETE_UNSUPPORTED', providerEffect: 'NONE', choices: ['KEEP_REMOTE_UNCHANGED'], message: 'The approved adapter cannot delete this live Instagram post. The canonical Work and remote post remain unchanged.' });
+    const cancelled: Publication = { ...publication, status: 'removed', removedAt: new Date().toISOString(), sync: { ...publication.sync, status: 'not_applicable' }, providerData: { ...publication.providerData, confirmed: false, deliveryExpiresAt: new Date().toISOString() }, updatedAt: new Date().toISOString() };
+    await store.upsertPublication(cancelled);
+    auditLog(req, 'instagram.publication.draft.cancelled', { publicationId: publication.publicationId });
+    return res.status(200).json({ publication: cancelled, providerEffect: 'NONE', canonicalWorkDeleted: false });
+  });
+
+  app.post('/api/instagram/publications/:publicationId/publish', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, publication.creatorId))) return;
+    if (publication.status === 'live' || publication.remoteId) return res.status(200).json({ publication });
+    if (publication.status === 'publishing' || publication.status === 'unknown') return res.status(409).json({ code: 'RECONCILIATION_REQUIRED', message: 'This publication has an in-flight or ambiguous provider result and must be reconciled before retry.' });
+    if (req.body?.confirm !== true) return res.status(422).json({ code: 'FINAL_CONFIRMATION_REQUIRED', message: 'Final Instagram publication confirmation is required.' });
+    const account = publication.integrationAccountId ? await store.getExternalAccount(publication.integrationAccountId) : null;
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || account.connectionStatus !== 'connected') return res.status(409).json({ code: 'REAUTH_REQUIRED', message: 'The Instagram connection must be reauthorized.' });
+    const provider = createManagedInstagramProvider(config);
+    if (!provider || !config.instagramDeliveryBaseUrl || !config.instagramDeliverySecret) return res.status(503).json({ code: 'APP_REVIEW_REQUIRED', message: 'Instagram publishing is not enabled.' });
+    const derivativeIds = Array.isArray(publication.providerData?.derivativeIds) ? publication.providerData.derivativeIds.filter((id): id is string => typeof id === 'string') : [];
+    const assets = await Promise.all(derivativeIds.map((id) => store.getCanonicalAsset(config.tenantId, id)));
+    if (assets.some((asset) => !asset || asset.storage.mode !== 'hosted' || !asset.storage.objectKey || asset.status !== 'ready')) return res.status(422).json({ code: 'DERIVATIVE_INVALID', message: 'An approved Instagram derivative is no longer available.' });
+    const startedAt = new Date().toISOString();
+    const started: Publication = { ...publication, status: 'publishing', sync: { ...publication.sync, status: 'unknown', lastAttemptAt: startedAt }, providerData: { ...publication.providerData, confirmed: true, deliveryExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString() }, updatedAt: startedAt };
+    await store.upsertPublication(started);
+    auditLog(req, 'instagram.publication.confirmed', { publicationId: publication.publicationId, workId: publication.workId, connectionId: account.externalAccountId });
+    const createdContainerIds: string[] = [];
+    try {
+      const token = decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey);
+      const deliveryUrls = assets.map((asset, slot) => {
+        const capability = issueInstagramDeliveryCapability(asset!.assetId, publication.publicationId, slot, config.instagramDeliverySecret!, 15 * 60);
+        return `${config.instagramDeliveryBaseUrl!.replace(/\/$/, '')}/api/integrations/instagram/delivery/${encodeURIComponent(publication.publicationId)}/${slot}/${encodeURIComponent(capability.pathToken)}`;
+      });
+      const placement = ['IMAGE', 'CAROUSEL', 'REEL', 'STORY'].includes(String(publication.providerData?.placement)) ? publication.providerData!.placement as InstagramPlacement : 'IMAGE';
+      let containerIds: string[];
+      if (placement === 'CAROUSEL') {
+        const children: string[] = [];
+        for (const mediaUrl of deliveryUrls) {
+          const child = await provider.createContainer(token, account.externalUserId, { placement: 'IMAGE', mediaUrl, carouselItem: true });
+          children.push(child); createdContainerIds.push(child);
+        }
+        const parent = await provider.createContainer(token, account.externalUserId, { placement: 'CAROUSEL', mediaUrl: deliveryUrls[0], caption: publication.metadataOverrides?.description, children });
+        createdContainerIds.push(parent);
+        containerIds = [...children, parent];
+      } else {
+        const container = await provider.createContainer(token, account.externalUserId, { placement, mediaUrl: deliveryUrls[0], video: assets[0]!.mimeType.startsWith('video/'), caption: publication.metadataOverrides?.description, accessibilityText: String(publication.metadataOverrides?.fields?.accessibilityText || '') });
+        createdContainerIds.push(container); containerIds = [container];
+      }
+      const queued: Publication = { ...started, providerData: { ...started.providerData, containerIds, containerSetComplete: true }, updatedAt: new Date().toISOString() };
+      await store.upsertPublication(queued);
+      auditLog(req, 'instagram.publication.containers.created', { publicationId: publication.publicationId, containerCount: containerIds.length });
+      return res.status(202).json({ publication: queued });
+    } catch (error) {
+      const providerError = error instanceof InstagramProviderError ? error : undefined;
+      if (providerError && providerError.code !== 'UNKNOWN' && createdContainerIds.length === 0) {
+        const code = providerError.code === 'AUTHENTICATION_REQUIRED' ? 'REAUTH_REQUIRED' : providerError.code === 'RATE_LIMITED' ? 'RATE_LIMITED' : 'PLATFORM_INELIGIBLE';
+        const failed: Publication = { ...started, status: providerError.code === 'RATE_LIMITED' ? 'queued' : 'failed', sync: { ...started.sync, status: providerError.code === 'RATE_LIMITED' ? 'unknown' : 'error', errorCode: code, errorMessage: providerError.message }, updatedAt: new Date().toISOString() };
+        await store.upsertPublication(failed);
+        if (providerError.code === 'AUTHENTICATION_REQUIRED') await store.updateExternalAccount({ ...account, connectionStatus: 'authentication_required', updatedAt: failed.updatedAt });
+        if (providerError.code === 'RATE_LIMITED') await store.updateExternalAccount({ ...account, connectionStatus: 'rate_limited', rateLimitedUntil: providerError.retryAfterSeconds !== undefined ? new Date(Date.now() + providerError.retryAfterSeconds * 1000).toISOString() : account.rateLimitedUntil, updatedAt: failed.updatedAt });
+        auditLog(req, 'instagram.publication.container.rejected', { publicationId: publication.publicationId, code });
+        if (providerError.code === 'RATE_LIMITED' && providerError.retryAfterSeconds !== undefined) res.setHeader('retry-after', String(providerError.retryAfterSeconds));
+        return res.status(providerError.code === 'RATE_LIMITED' ? 202 : 422).json({ publication: failed, code });
+      }
+      const unknown: Publication = { ...started, status: 'unknown', sync: { ...started.sync, status: 'unknown', errorCode: 'AMBIGUOUS_CONTAINER_CREATION', errorMessage: 'Instagram container creation must be reconciled before retry.' }, providerData: { ...started.providerData, containerIds: createdContainerIds, containerSetComplete: false }, updatedAt: new Date().toISOString() };
+      await store.upsertPublication(unknown);
+      auditLog(req, 'instagram.publication.container.unknown', { publicationId: publication.publicationId });
+      return res.status(202).json({ publication: unknown });
+    }
+  });
+
+  app.get('/api/integrations/instagram/delivery/:publicationId/:slot/:capability', async (req, res) => {
+    const slot = Number(req.params.slot);
+    if (!config.instagramDeliverySecret || !verifyInstagramDeliveryCapability(req.params.capability, req.params.publicationId, slot, config.instagramDeliverySecret)) return res.status(404).end();
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram' || publication.status !== 'publishing' || publication.providerData?.confirmed !== true) return res.status(404).end();
+    const derivativeIds = Array.isArray(publication.providerData?.derivativeIds) ? publication.providerData.derivativeIds : [];
+    const derivativeId = derivativeIds[slot];
+    if (typeof derivativeId !== 'string') return res.status(404).end();
+    const asset = await store.getCanonicalAsset(config.tenantId, derivativeId);
+    if (!asset?.storage.objectKey || asset.storage.mode !== 'hosted' || asset.status !== 'ready') return res.status(404).end();
+    const sourceUrl = await getS3SignedUrl(s3Client, new GetObjectCommand({ Bucket: config.mediaBucket, Key: asset.storage.objectKey }), { expiresIn: 60 });
+    res.setHeader('cache-control', 'private, no-store');
+    return res.redirect(302, sourceUrl);
+  });
+
+  app.post('/api/instagram/publications/:publicationId/reconcile', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, publication.creatorId))) return;
+    const account = publication.integrationAccountId ? await store.getExternalAccount(publication.integrationAccountId) : null;
+    const provider = createManagedInstagramProvider(config);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || !provider) return res.status(409).json({ code: 'REAUTH_REQUIRED', message: 'The Instagram connection is unavailable.' });
+    const token = decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey);
+    if (publication.status === 'live' && publication.remoteId) {
+      try {
+        const remote = await provider.getMedia(token, publication.remoteId);
+        const remoteCaptionHash = createHash('sha256').update(remote.caption || '').digest('hex');
+        const changed = remoteCaptionHash !== publication.providerData?.captionHash;
+        const reconciled: Publication = { ...publication, remoteUrl: remote.permalink || publication.remoteUrl, remoteUpdatedAt: remote.timestamp || publication.remoteUpdatedAt, sync: { ...publication.sync, status: changed ? 'remote_newer' : 'in_sync', remoteMetadataFingerprint: remoteCaptionHash, lastSuccessfulAt: new Date().toISOString() }, providerData: { ...publication.providerData, remoteMediaType: remote.mediaType, remotePlacement: remote.placement }, updatedAt: new Date().toISOString() };
+        await store.upsertPublication(reconciled);
+        return res.json({ publication: reconciled, remoteState: changed ? 'REMOTE_CHANGED' : 'ACTIVE' });
+      } catch (error) {
+        if (error instanceof InstagramProviderError && error.code === 'NOT_FOUND') {
+          const missing: Publication = { ...publication, status: 'missing', sync: { ...publication.sync, status: 'remote_newer', errorCode: 'REMOTE_MISSING', errorMessage: 'The Instagram post is no longer available.' }, updatedAt: new Date().toISOString() };
+          await store.upsertPublication(missing);
+          auditLog(req, 'instagram.publication.remote_missing', { publicationId: publication.publicationId, remoteMediaId: publication.remoteId });
+          return res.status(202).json({ publication: missing, remoteState: 'REMOTE_MISSING' });
+        }
+        throw error;
+      }
+    }
+    if (publication.sync.errorCode === 'AMBIGUOUS_PUBLISH') return res.status(409).json({ code: 'UNKNOWN', message: 'Publish completion is ambiguous. Reconcile by remote media identifier before another publish request.' });
+    const containerIds = Array.isArray(publication.providerData?.containerIds) ? publication.providerData.containerIds.filter((id): id is string => typeof id === 'string') : [];
+    if (publication.providerData?.containerSetComplete !== true) return res.status(409).json({ code: 'UNKNOWN', message: 'The complete container set was not persisted. Manual provider reconciliation is required.' });
+    if (!containerIds.length) return res.status(409).json({ code: 'UNKNOWN', message: 'No safe provider identifier was persisted. Do not retry automatically; manual provider reconciliation is required.' });
+    const containerId = containerIds.at(-1)!;
+    const containerStatus = await provider.getContainerStatus(token, containerId);
+    if (containerStatus === 'IN_PROGRESS') return res.status(202).json({ publication, containerStatus });
+    if (containerStatus !== 'FINISHED') {
+      const failed: Publication = { ...publication, status: containerStatus === 'ERROR' || containerStatus === 'EXPIRED' ? 'failed' : 'unknown', sync: { ...publication.sync, status: containerStatus === 'ERROR' || containerStatus === 'EXPIRED' ? 'error' : 'unknown', errorCode: `CONTAINER_${containerStatus}` }, updatedAt: new Date().toISOString() };
+      await store.upsertPublication(failed);
+      return res.status(202).json({ publication: failed, containerStatus });
+    }
+    try {
+      const remoteId = await provider.publishContainer(token, account.externalUserId, containerId);
+      const now = new Date().toISOString();
+      const live: Publication = { ...publication, status: 'live', remoteId, publishedAt: now, sync: { ...publication.sync, status: 'in_sync', lastSuccessfulAt: now, errorCode: undefined, errorMessage: undefined }, providerData: { ...publication.providerData, deliveryExpiresAt: now }, updatedAt: now };
+      await store.upsertPublication(live);
+      auditLog(req, 'instagram.publication.published', { publicationId: publication.publicationId, remoteMediaId: remoteId, providerVersion: publication.providerData?.providerVersion });
+      try {
+        const remote = await provider.getMedia(token, remoteId);
+        const enriched: Publication = { ...live, remoteUrl: remote.permalink, remoteCreatedAt: remote.timestamp || now, remoteUpdatedAt: remote.timestamp || now, providerData: { ...live.providerData, remoteMediaType: remote.mediaType, remotePlacement: remote.placement } };
+        await store.upsertPublication(enriched);
+        return res.json({ publication: enriched, containerStatus });
+      } catch { return res.json({ publication: live, containerStatus }); }
+    } catch {
+      const unknown: Publication = { ...publication, status: 'unknown', sync: { ...publication.sync, status: 'unknown', errorCode: 'AMBIGUOUS_PUBLISH', errorMessage: 'Instagram publish completion is ambiguous and must be reconciled before retry.' }, updatedAt: new Date().toISOString() };
+      await store.upsertPublication(unknown);
+      auditLog(req, 'instagram.publication.publish.unknown', { publicationId: publication.publicationId, containerId });
+      return res.status(202).json({ publication: unknown, containerStatus });
+    }
+  });
+
 
   const youtubeConfigurationReady = () => Boolean(
     config.externalTokenEncryptionKey
