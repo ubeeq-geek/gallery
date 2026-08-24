@@ -2,6 +2,12 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import express, { type Express, type Request, type Response } from 'express';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
 import { requireAuth } from './auth';
+import {
+  diffReconciliationSnapshots,
+  reconciliationStatus,
+  resolveReconciliation,
+  type ReconciliationSnapshot
+} from './integrationReconciliation';
 
 export const GHOST_ACCEPT_VERSION = 'v5.0';
 export const GHOST_REFERENCE_NOTICE = 'Ghost reference only — connecting Ghost does not back up the original. Upload the original directly to Ubeeq to retain it under your control.';
@@ -37,6 +43,20 @@ export interface GhostPublication {
 type GhostComparablePublication = Pick<GhostPublication, 'title' | 'slug' | 'excerpt' | 'lexical' | 'visibility' | 'tags' | 'scheduledAt' | 'featureImageAssetId' | 'canonicalUrlPolicy' | 'canonicalUrl'> & {
   remoteStatus?: string;
 };
+
+/** Maps Ghost's editable metadata onto the integration-neutral contract. */
+const ghostReconciliationSnapshot = (publication: GhostComparablePublication): ReconciliationSnapshot => ({
+  title: publication.title,
+  slug: publication.slug || '',
+  excerpt: publication.excerpt || '',
+  lexical: publication.lexical,
+  visibility: publication.visibility,
+  tags: [...publication.tags],
+  scheduledAt: publication.scheduledAt || '',
+  featureImageAssetId: publication.featureImageAssetId || '',
+  canonicalUrlPolicy: publication.canonicalUrlPolicy || 'ghost',
+  canonicalUrl: publication.canonicalUrl || ''
+});
 export interface GhostAuditEvent { eventId: string; actorId: string; action: string; targetId: string; correlationId: string; result: 'success' | 'failure'; at: string; beforeHash?: string; afterHash?: string; }
 export interface GhostMediaMapping {
   mappingId: string;
@@ -204,6 +224,7 @@ export class GhostIntegrationService {
   private references = new Map<string, GhostExternalReferenceWork>();
   private mediaMappings = new Map<string, GhostMediaMapping>();
   private remoteSnapshots = new Map<string, GhostComparablePublication>();
+  private reconciliationBaselines = new Map<string, ReconciliationSnapshot>();
   private webhookEvents = new Set<string>();
   readonly audit: GhostAuditEvent[] = [];
   constructor(
@@ -455,17 +476,23 @@ export class GhostIntegrationService {
   diff(id: string) {
     const publication = this.requiredPublication(id);
     const remote = this.remoteSnapshots.get(id);
-    const fields = remote ? (['title', 'slug', 'excerpt', 'lexical', 'visibility', 'tags', 'scheduledAt', 'featureImageAssetId', 'canonicalUrlPolicy', 'canonicalUrl'] as const)
-      .flatMap((field) => JSON.stringify(publication[field] ?? null) === JSON.stringify(remote[field] ?? null)
-        ? []
-        : [{ field, local: publication[field] ?? null, remote: remote[field] ?? null }]) : [];
+    const local = ghostReconciliationSnapshot(publication);
+    const remoteSnapshot = remote ? ghostReconciliationSnapshot(remote) : undefined;
+    const reconciliationFields = remoteSnapshot
+      ? diffReconciliationSnapshots(this.reconciliationBaselines.get(id) || local, local, remoteSnapshot)
+      : [];
+    const status = reconciliationStatus(reconciliationFields);
     return {
+      status,
       changed: Boolean(publication.remoteContentHash && publication.remoteContentHash !== publication.contentHash),
       localHash: publication.contentHash,
       remoteHash: publication.remoteContentHash,
       remoteUpdatedAt: publication.remoteUpdatedAt,
-      resolutionRequired: publication.status === 'remote_changed',
-      fields,
+      resolutionRequired: publication.status === 'remote_changed' || status === 'remote_newer' || status === 'conflict',
+      // Preserve the existing Ghost endpoint's small field shape while exposing
+      // the richer shared contract for generic integration consumers.
+      fields: reconciliationFields.map(({ field, local: localValue, remote: remoteValue }) => ({ field, local: localValue, remote: remoteValue })),
+      reconciliation: { status, fields: reconciliationFields },
       choices: ['update_ghost', 'accept_remote', 'keep_ghost_unchanged', 'create_new_post'] as const
     };
   }
@@ -476,18 +503,27 @@ export class GhostIntegrationService {
     const remote = this.remoteSnapshots.get(id);
     if (!remote) throw new Error('Reconcile the Ghost publication before resolving it');
     const resolvedAt = new Date().toISOString();
+    const localSnapshot = ghostReconciliationSnapshot(publication);
+    const remoteSnapshot = ghostReconciliationSnapshot(remote);
+    const genericAction = action === 'accept_remote'
+      ? 'accept_remote'
+      : action === 'keep_ghost_unchanged'
+        ? 'keep_local'
+        : 'create_detached_copy';
+    const resolution = resolveReconciliation(localSnapshot, remoteSnapshot, { action: genericAction, confirmed });
 
     if (action === 'accept_remote') {
-      publication.title = remote.title;
-      publication.slug = remote.slug;
-      publication.excerpt = remote.excerpt;
-      publication.lexical = remote.lexical;
-      publication.visibility = remote.visibility;
-      publication.tags = [...remote.tags];
-      publication.scheduledAt = remote.scheduledAt;
-      publication.featureImageAssetId = remote.featureImageAssetId;
-      publication.canonicalUrlPolicy = remote.canonicalUrlPolicy;
-      publication.canonicalUrl = remote.canonicalUrl;
+      const resolved = resolution.local;
+      publication.title = String(resolved.title || 'Untitled Ghost content');
+      publication.slug = typeof resolved.slug === 'string' && resolved.slug ? resolved.slug : undefined;
+      publication.excerpt = typeof resolved.excerpt === 'string' && resolved.excerpt ? resolved.excerpt : undefined;
+      publication.lexical = typeof resolved.lexical === 'string' ? resolved.lexical : publication.lexical;
+      publication.visibility = resolved.visibility === 'members' || resolved.visibility === 'paid' ? resolved.visibility : 'public';
+      publication.tags = Array.isArray(resolved.tags) ? resolved.tags.filter((tag): tag is string => typeof tag === 'string') : [];
+      publication.scheduledAt = typeof resolved.scheduledAt === 'string' && resolved.scheduledAt ? resolved.scheduledAt : undefined;
+      publication.featureImageAssetId = typeof resolved.featureImageAssetId === 'string' && resolved.featureImageAssetId ? resolved.featureImageAssetId : undefined;
+      publication.canonicalUrlPolicy = resolved.canonicalUrlPolicy === 'ubeeq' || resolved.canonicalUrlPolicy === 'custom' ? resolved.canonicalUrlPolicy : 'ghost';
+      publication.canonicalUrl = typeof resolved.canonicalUrl === 'string' && resolved.canonicalUrl ? resolved.canonicalUrl : undefined;
       publication.contentHash = publicationHash(publication);
       publication.remoteContentHash = publication.contentHash;
       publication.status = remote.remoteStatus === 'scheduled' ? 'scheduled' : 'published';
@@ -509,6 +545,7 @@ export class GhostIntegrationService {
         updatedAt: resolvedAt
       };
       this.publications.set(clone.publicationId, clone);
+      this.reconciliationBaselines.set(clone.publicationId, localSnapshot);
       publication.conflictResolution = action;
       publication.conflictResolvedAt = resolvedAt;
       publication.updatedAt = resolvedAt;
@@ -521,6 +558,7 @@ export class GhostIntegrationService {
     publication.conflictResolution = action;
     publication.conflictResolvedAt = resolvedAt;
     publication.updatedAt = resolvedAt;
+    this.reconciliationBaselines.set(publication.publicationId, ghostReconciliationSnapshot(publication));
     this.record(actorId, `resolve_${action}`, publication);
     return { publication };
   }
@@ -533,7 +571,7 @@ export class GhostIntegrationService {
     if (p.featureImageAssetId && !featureImage) throw new Error('Upload the selected feature image derivative to Ghost before publishing');
     const body: Record<string, unknown> = { title: p.title, lexical: p.lexical, visibility: p.visibility, tags: mappedTags.map(name => ({ name })), ...(mappedAuthorId ? { authors: [{ id: mappedAuthorId }] } : {}), ...(featureImage ? { feature_image: featureImage.ghostImageUrl, feature_image_alt: featureImage.alt, feature_image_caption: featureImage.caption } : {}), ...(p.canonicalUrlPolicy !== 'ghost' && p.canonicalUrl ? { canonical_url: p.canonicalUrl } : {}), status: p.scheduledAt ? 'scheduled' : 'published', ...(p.remoteId && p.remoteUpdatedAt ? { updated_at: p.remoteUpdatedAt } : {}), ...(p.slug ? { slug: p.slug } : {}), ...(p.excerpt ? { custom_excerpt: p.excerpt } : {}), ...(p.scheduledAt ? { published_at: p.scheduledAt } : {}) };
     const result = await this.ghost(c, `${p.type}s/${p.remoteId ? `${p.remoteId}/` : ''}`, { method: p.remoteId ? 'PUT' : 'POST', body: JSON.stringify({ [`${p.type}s`]: [body] }) }) as Record<string, any>;
-    const remote = result[`${p.type}s`]?.[0]; p.remoteId = remote?.id || p.remoteId; p.remoteUrl = remote?.url || p.remoteUrl; p.remoteUpdatedAt = remote?.updated_at; p.remoteContentHash = p.contentHash; p.status = p.scheduledAt ? 'scheduled' : 'published'; p.updatedAt = new Date().toISOString(); this.record(actorId, 'publish', p); return p;
+    const remote = result[`${p.type}s`]?.[0]; p.remoteId = remote?.id || p.remoteId; p.remoteUrl = remote?.url || p.remoteUrl; p.remoteUpdatedAt = remote?.updated_at; p.remoteContentHash = p.contentHash; p.status = p.scheduledAt ? 'scheduled' : 'published'; p.updatedAt = new Date().toISOString(); this.reconciliationBaselines.set(p.publicationId, ghostReconciliationSnapshot(p)); this.record(actorId, 'publish', p); return p;
   }
   async reconcile(id: string, actorId: string) {
     const publication = this.requiredPublication(id);
@@ -561,7 +599,11 @@ export class GhostIntegrationService {
       publication.remoteContentHash = publicationHash(remoteComparable);
       publication.remoteUpdatedAt = remote.updated_at;
       publication.remoteUrl = remote.url || publication.remoteUrl;
-      publication.status = publication.remoteContentHash === publication.contentHash ? (remote.status === 'scheduled' ? 'scheduled' : 'published') : 'remote_changed';
+      const local = ghostReconciliationSnapshot(publication);
+      const remoteSnapshot = ghostReconciliationSnapshot(remoteComparable);
+      const baseline = this.reconciliationBaselines.get(publication.publicationId) || local;
+      const status = reconciliationStatus(diffReconciliationSnapshots(baseline, local, remoteSnapshot));
+      publication.status = status === 'in_sync' ? (remote.status === 'scheduled' ? 'scheduled' : 'published') : 'remote_changed';
     } catch (error) {
       if (error instanceof GhostRequestError && error.status === 404) publication.status = 'missing';
       else throw error;
