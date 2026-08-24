@@ -8,7 +8,7 @@ import { InMemoryStore } from './inMemoryStore';
 import { processExternalSyncJob } from './externalSyncWorker';
 import { createInProcessExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 import { createInProcessCommunityDeliveryQueue, type CommunityDeliveryQueue } from './communityDeliveryQueue';
-import { processDiscordDelivery } from './discordCommunity';
+import { processAnnouncementDelivery } from './discordCommunity';
 import { runAdminBootstrap } from './adminBootstrap';
 import { SmugMugCanonicalOutboundSource, SmugMugCanonicalSink, SmugMugImageScanner } from './smugMugCanonicalSink';
 import { EncryptedInMemorySmugMugCredentialVault, SmugMugHttpGateway } from './smugMugGateway';
@@ -144,7 +144,7 @@ process.once('SIGINT', persistLocalStore);
 let externalSyncQueue: ExternalSyncQueue;
 externalSyncQueue = createInProcessExternalSyncQueue((externalSyncJobId) => processExternalSyncJob(store, config, externalSyncJobId, externalSyncQueue));
 let communityDeliveryQueue: CommunityDeliveryQueue;
-communityDeliveryQueue = createInProcessCommunityDeliveryQueue((communityDeliveryId) => processDiscordDelivery(store, config, communityDeliveryId, communityDeliveryQueue.enqueue.bind(communityDeliveryQueue)));
+communityDeliveryQueue = createInProcessCommunityDeliveryQueue((communityDeliveryId) => processAnnouncementDelivery(store, config, communityDeliveryId, communityDeliveryQueue.enqueue.bind(communityDeliveryQueue)));
 
 let retrySweepRunning = false;
 const retrySweep = async () => {

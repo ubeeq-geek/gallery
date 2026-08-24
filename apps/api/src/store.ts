@@ -55,7 +55,8 @@ import type {
   CommunityInstallation,
   CommunityDestination,
   CommunityEvent,
-  CommunityDelivery
+  CommunityDelivery,
+  AnnouncementPublication
 } from './domain';
 import type { CanonicalStore } from './canonicalStore';
 import type { WordPressIntegrationState } from './wordpressIntegration';
@@ -315,6 +316,10 @@ export interface DataStore extends CanonicalStore {
   getCommunityDelivery(communityDeliveryId: string): Promise<CommunityDelivery | null>;
   listCommunityDeliveriesByCreator(creatorIdentityId: string, limit?: number): Promise<CommunityDelivery[]>;
   upsertCommunityDelivery(delivery: CommunityDelivery): Promise<void>;
+  getAnnouncementPublication(announcementPublicationId: string): Promise<AnnouncementPublication | null>;
+  getAnnouncementPublicationByIdempotency(tenantId: string, idempotencyKey: string): Promise<AnnouncementPublication | null>;
+  listAnnouncementPublicationsByCreator(creatorIdentityId: string, limit?: number): Promise<AnnouncementPublication[]>;
+  upsertAnnouncementPublication(publication: AnnouncementPublication): Promise<void>;
 
   getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null>;
   putIdempotencyRecord(record: IdempotencyRecord): Promise<void>;

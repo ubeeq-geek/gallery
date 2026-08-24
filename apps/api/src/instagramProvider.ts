@@ -23,6 +23,8 @@ export interface InstagramContainerRequest {
   children?: string[];
   carouselItem?: boolean;
   video?: boolean;
+  /** Maps to Meta's self-disclosure flag on a top-level media container. */
+  isAiGenerated?: boolean;
 }
 
 export interface InstagramRemoteMedia {
@@ -32,6 +34,8 @@ export interface InstagramRemoteMedia {
   mediaType?: string;
   placement?: string;
   timestamp?: string;
+  /** Undefined means the field was unavailable; it must not be treated as false. */
+  isAiGenerated?: boolean;
 }
 
 export interface InstagramMediaPage { items: InstagramRemoteMedia[]; nextCursor?: string }
@@ -39,6 +43,7 @@ export interface InstagramProviderInsight { metric: string; value: number; title
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
 const string = (value: unknown): string | undefined => typeof value === 'string' && value ? value : undefined;
+const boolean = (value: unknown): boolean | undefined => typeof value === 'boolean' ? value : undefined;
 
 export class InstagramProviderError extends Error {
   constructor(message: string, readonly code: 'AUTHENTICATION_REQUIRED' | 'RATE_LIMITED' | 'PLATFORM_REJECTED' | 'NOT_FOUND' | 'INVALID_RESPONSE' | 'UNKNOWN', readonly retryAfterSeconds?: number) { super(message); }
@@ -86,6 +91,9 @@ export class InstagramProvider {
   }
 
   async createContainer(accessToken: string, accountId: string, input: InstagramContainerRequest): Promise<string> {
+    if (input.carouselItem && input.isAiGenerated !== undefined) {
+      throw new Error('Meta does not accept is_ai_generated on carousel child containers');
+    }
     const params: Record<string, string> = { caption: input.caption || '' };
     if (input.children?.length) { params.media_type = 'CAROUSEL'; params.children = input.children.join(','); }
     else if (input.placement === 'REEL') { params.media_type = 'REELS'; params.video_url = input.mediaUrl; }
@@ -93,6 +101,9 @@ export class InstagramProvider {
     else params.image_url = input.mediaUrl;
     if (input.carouselItem) params.is_carousel_item = 'true';
     if (input.accessibilityText) params.alt_text = input.accessibilityText;
+    // Meta documents this as a top-level self-disclosure. Omit false so an
+    // unavailable/unknown local assertion is never converted into a claim.
+    if (input.isAiGenerated === true) params.is_ai_generated = 'true';
     const result = await this.call<{ id?: string }>(`/${accountId}/media`, accessToken, params, 'POST');
     if (!result.id) throw new InstagramProviderError('Meta did not return a container id', 'INVALID_RESPONSE');
     return result.id;
@@ -115,19 +126,19 @@ export class InstagramProvider {
   }
 
   async getMedia(accessToken: string, mediaId: string): Promise<InstagramRemoteMedia> {
-    const result = await this.call<Record<string, unknown>>(`/${mediaId}`, accessToken, { fields: 'id,permalink,caption,media_type,media_product_type,timestamp' });
+    const result = await this.call<Record<string, unknown>>(`/${mediaId}`, accessToken, { fields: 'id,permalink,caption,media_type,media_product_type,timestamp,is_ai_generated' });
     const id = string(result.id);
     if (!id) throw new InstagramProviderError('Meta did not return a media id', 'INVALID_RESPONSE');
-    return { id, permalink: string(result.permalink), caption: string(result.caption), mediaType: string(result.media_type), placement: string(result.media_product_type), timestamp: string(result.timestamp) };
+    return { id, permalink: string(result.permalink), caption: string(result.caption), mediaType: string(result.media_type), placement: string(result.media_product_type), timestamp: string(result.timestamp), isAiGenerated: boolean(result.is_ai_generated) };
   }
 
   async listMedia(accessToken: string, accountId: string, cursor?: string, limit = 25): Promise<InstagramMediaPage> {
     const result = await this.call<{ data?: unknown[]; paging?: { cursors?: { after?: string } } }>(`/${accountId}/media`, accessToken, {
-      fields: 'id,permalink,caption,media_type,media_product_type,timestamp', limit: String(Math.max(1, Math.min(50, Math.trunc(limit)))), ...(cursor ? { after: cursor } : {})
+      fields: 'id,permalink,caption,media_type,media_product_type,timestamp,is_ai_generated', limit: String(Math.max(1, Math.min(50, Math.trunc(limit)))), ...(cursor ? { after: cursor } : {})
     });
     const items = (result.data || []).flatMap((value) => {
       const item = record(value); const id = string(item.id);
-      return id ? [{ id, permalink: string(item.permalink), caption: string(item.caption), mediaType: string(item.media_type), placement: string(item.media_product_type), timestamp: string(item.timestamp) }] : [];
+      return id ? [{ id, permalink: string(item.permalink), caption: string(item.caption), mediaType: string(item.media_type), placement: string(item.media_product_type), timestamp: string(item.timestamp), isAiGenerated: boolean(item.is_ai_generated) }] : [];
     });
     return { items, nextCursor: string(result.paging?.cursors?.after) };
   }

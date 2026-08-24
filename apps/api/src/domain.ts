@@ -1138,7 +1138,7 @@ export interface IntegrationReviewHold {
  * already gather. They are deliberately separate from ExternalPublication:
  * a Discord message announces a Work, but is never a copy of that Work.
  */
-export type CommunityProvider = 'discord';
+export type CommunityProvider = 'discord' | 'bluesky';
 export type CommunityIntegrationStatus = 'connected' | 'needs_attention' | 'disabled';
 export type CommunityDestinationStatus = 'active' | 'needs_attention' | 'disabled';
 export type CommunityEventType = 'work_published' | 'works_published';
@@ -1155,9 +1155,41 @@ export type AnnouncementPresetId =
   | 'compact_link'
   | 'text_only'
   | 'collection_digest'
-  | 'series_digest';
+  | 'series_digest'
+  | 'single_work'
+  | 'gallery'
+  | 'collection'
+  | 'story_chapter'
+  | 'video'
+  | 'album'
+  | 'bulk_publish';
 export type AnnouncementDeliveryMode = 'default' | 'per_work' | 'digest' | 'none';
 export type CommunityDeliveryStatus = 'queued' | 'sending' | 'sent' | 'retry_scheduled' | 'failed' | 'cancelled';
+
+/**
+ * An announcement is an audience notification, never a canonical-content
+ * publication. Discord and Bluesky adapters share this contract and presets.
+ */
+export interface AnnouncementPublication {
+  announcementPublicationId: string;
+  tenantId: string;
+  userId: string;
+  creatorIdentityId: string;
+  provider: CommunityProvider;
+  preset: AnnouncementPresetId;
+  subject: { type: 'work' | 'gallery' | 'collection' | 'story_chapter' | 'video' | 'album' | 'bulk_publish'; ids: string[] };
+  /** A draft can be prepared even when a provider delivery adapter is not enabled. */
+  status: 'draft' | CommunityDeliveryStatus;
+  idempotencyKey: string;
+  payload: Record<string, unknown>;
+  destinationId?: string;
+  attemptCount: number;
+  remoteId?: string;
+  remoteUrl?: string;
+  scheduledAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface CommunityInstallation {
   communityInstallationId: string;
@@ -1201,6 +1233,7 @@ export interface CommunityEvent {
   type: CommunityEventType;
   idempotencyKey: string;
   payload: Record<string, unknown>;
+  announcementPublicationId?: string;
   createdAt: string;
 }
 
@@ -1212,6 +1245,8 @@ export interface CommunityDelivery {
   communityEventId: string;
   communityDestinationId: string;
   provider: CommunityProvider;
+  /** Provider-neutral immutable announcement request rendered at delivery time. */
+  announcementPublication?: import('./announcementPublication').AnnouncementPublication;
   status: CommunityDeliveryStatus;
   attemptCount: number;
   nextAttemptAt?: string;

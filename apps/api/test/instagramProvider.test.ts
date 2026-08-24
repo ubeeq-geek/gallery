@@ -77,4 +77,27 @@ describe('Instagram provider adapter', () => {
     expect(String(calls[0][1].body)).toContain('video_url=https%3A%2F%2Fdelivery.test%2Fvideo');
     expect(String(calls[0][1].body)).not.toContain('image_url');
   });
+  it('sets AI self-disclosure on a top-level container', async () => {
+    const request = jest.fn(() => response({ id: 'container' }));
+    await new InstagramProvider(config, request as typeof fetch).createContainer('token', 'ig-1', { placement: 'IMAGE', mediaUrl: 'https://delivery.test/image', isAiGenerated: true });
+    const calls = request.mock.calls as unknown as Array<[URL, RequestInit]>;
+    expect(String(calls[0][1].body)).toContain('is_ai_generated=true');
+  });
+  it('keeps carousel AI disclosure on the parent and rejects it on children', async () => {
+    const request = jest.fn(() => response({ id: 'parent' }));
+    const provider = new InstagramProvider(config, request as typeof fetch);
+    await expect(provider.createContainer('token', 'ig-1', { placement: 'IMAGE', mediaUrl: 'https://delivery.test/child', carouselItem: true, isAiGenerated: true })).rejects.toThrow('carousel child');
+    await provider.createContainer('token', 'ig-1', { placement: 'CAROUSEL', mediaUrl: 'https://delivery.test/first', children: ['child-1', 'child-2'], isAiGenerated: true });
+    const calls = request.mock.calls as unknown as Array<[URL, RequestInit]>;
+    expect(String(calls[0][1].body)).toContain('media_type=CAROUSEL');
+    expect(String(calls[0][1].body)).toContain('is_ai_generated=true');
+  });
+  it('imports the provider AI label while preserving an unavailable value', async () => {
+    const request = jest.fn()
+      .mockImplementationOnce(() => response({ data: [{ id: 'ai', is_ai_generated: true }, { id: 'unknown' }] }))
+      .mockImplementationOnce(() => response({ id: 'ai', is_ai_generated: true }));
+    const provider = new InstagramProvider(config, request as typeof fetch);
+    await expect(provider.listMedia('token', 'ig-1')).resolves.toMatchObject({ items: [{ id: 'ai', isAiGenerated: true }, { id: 'unknown', isAiGenerated: undefined }] });
+    await expect(provider.getMedia('token', 'ai')).resolves.toMatchObject({ id: 'ai', isAiGenerated: true });
+  });
 });

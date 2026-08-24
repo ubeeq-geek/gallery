@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import { assertPublicationDisclosureHistoryImmutable } from './aiProvenance';
+import { assertAnnouncementPublicationImmutable } from './announcementPublication';
 import type {
   Creator,
   CreatorMember,
@@ -59,7 +61,8 @@ import type {
   CommunityInstallation,
   CommunityDestination,
   CommunityEvent,
-  CommunityDelivery
+  CommunityDelivery,
+  AnnouncementPublication
 } from './domain';
 import type { DataStore, TrendingFeedQueryOptions } from './store';
 import type { WordPressIntegrationState } from './wordpressIntegration';
@@ -163,6 +166,7 @@ export class InMemoryStore implements DataStore {
   communityDestinations: CommunityDestination[] = [];
   communityEvents: CommunityEvent[] = [];
   communityDeliveries: CommunityDelivery[] = [];
+  announcementPublications: AnnouncementPublication[] = [];
   idempotency: IdempotencyRecord[] = [];
   auditEvents: AuditEvent[] = [];
   works: Work[] = [];
@@ -248,6 +252,7 @@ export class InMemoryStore implements DataStore {
   }
 
   async upsertPublication(publication: Publication): Promise<void> {
+    assertPublicationDisclosureHistoryImmutable(await this.getPublication(publication.tenantId, publication.publicationId), publication);
     this.publications = this.publications.filter((item) => !(item.tenantId === publication.tenantId && item.publicationId === publication.publicationId));
     this.publications.push(publication);
   }
@@ -1399,8 +1404,30 @@ export class InMemoryStore implements DataStore {
   }
 
   async upsertCommunityDelivery(delivery: CommunityDelivery): Promise<void> {
+    const previous = await this.getCommunityDelivery(delivery.communityDeliveryId);
+    if (previous?.announcementPublication) {
+      if (!delivery.announcementPublication) throw new Error('Queued announcement publication content is immutable.');
+      assertAnnouncementPublicationImmutable(previous.announcementPublication, delivery.announcementPublication);
+    }
     this.communityDeliveries = this.communityDeliveries.filter((item) => item.communityDeliveryId !== delivery.communityDeliveryId);
     this.communityDeliveries.push(delivery);
+  }
+
+  async getAnnouncementPublication(announcementPublicationId: string): Promise<AnnouncementPublication | null> {
+    return this.announcementPublications.find((item) => item.announcementPublicationId === announcementPublicationId) || null;
+  }
+
+  async getAnnouncementPublicationByIdempotency(tenantId: string, idempotencyKey: string): Promise<AnnouncementPublication | null> {
+    return this.announcementPublications.find((item) => item.tenantId === tenantId && item.idempotencyKey === idempotencyKey) || null;
+  }
+
+  async listAnnouncementPublicationsByCreator(creatorIdentityId: string, limit = 100): Promise<AnnouncementPublication[]> {
+    return this.announcementPublications.filter((item) => item.creatorIdentityId === creatorIdentityId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);
+  }
+
+  async upsertAnnouncementPublication(publication: AnnouncementPublication): Promise<void> {
+    this.announcementPublications = this.announcementPublications.filter((item) => item.announcementPublicationId !== publication.announcementPublicationId);
+    this.announcementPublications.push(publication);
   }
 
   async getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null> {

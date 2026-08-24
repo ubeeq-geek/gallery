@@ -1668,6 +1668,10 @@ export class DynamoStore implements DataStore {
   async getCommunityDelivery(communityDeliveryId: string): Promise<CommunityDelivery | null> { return this.community().getCommunityDelivery(communityDeliveryId); }
   async listCommunityDeliveriesByCreator(creatorIdentityId: string, limit?: number): Promise<CommunityDelivery[]> { return this.community().listCommunityDeliveriesByCreator(creatorIdentityId, limit); }
   async upsertCommunityDelivery(delivery: CommunityDelivery): Promise<void> { await this.community().upsertCommunityDelivery(delivery); }
+  async getAnnouncementPublication(announcementPublicationId: string) { return this.community().getAnnouncementPublication(announcementPublicationId); }
+  async getAnnouncementPublicationByIdempotency(tenantId: string, idempotencyKey: string) { return this.community().getAnnouncementPublicationByIdempotency(tenantId, idempotencyKey); }
+  async listAnnouncementPublicationsByCreator(creatorIdentityId: string, limit?: number) { return this.community().listAnnouncementPublicationsByCreator(creatorIdentityId, limit); }
+  async upsertAnnouncementPublication(publication: Parameters<CommunityRepository['upsertAnnouncementPublication']>[0]) { await this.community().upsertAnnouncementPublication(publication); }
 
   async getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null> {
     if (this.coreRepo) {
