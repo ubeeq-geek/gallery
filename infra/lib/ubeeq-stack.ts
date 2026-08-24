@@ -557,6 +557,8 @@ export class UbeeqStack extends Stack {
         PRODUCT_BRAND: productBrand,
         TENANT_ID: process.env.TENANT_ID || productBrand,
         EXTERNAL_OAUTH_REDIRECT_URI: process.env.EXTERNAL_OAUTH_REDIRECT_URI || '',
+        SOUNDCLOUD_ENABLED: process.env.SOUNDCLOUD_ENABLED || 'false',
+        SOUNDCLOUD_OAUTH_REDIRECT_URI: process.env.SOUNDCLOUD_OAUTH_REDIRECT_URI || '',
         EXTERNAL_TOKEN_ENCRYPTION_KEY: externalTokenEncryptionKey,
         // The Bluesky broker is separately deployed so DPoP refresh tokens do
         // not enter the main product API. These are public endpoints only.

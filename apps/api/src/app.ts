@@ -1173,7 +1173,8 @@ export const createApp = ({
     minimumRequestIntervalMs: credential.platform === 'youtube'
       ? config.youtubeMinimumRequestIntervalMs
       : config.deviantArtMinimumRequestIntervalMs,
-    ...(credential.platform === 'youtube' ? { apiBaseUrl: config.youtubeApiBaseUrl } : {})
+    ...(credential.platform === 'youtube' ? { apiBaseUrl: config.youtubeApiBaseUrl } : {}),
+    enabled: credential.platform !== 'soundcloud' || config.soundCloudEnabled
   });
 
   /** Resolve and refresh a connected DeviantArt account for a one-shot native
@@ -6359,6 +6360,213 @@ export const createApp = ({
     )));
     auditLog(req, 'youtube.account.removed', { externalAccountId: account.externalAccountId });
     return res.status(204).end();
+  });
+
+  app.get('/studio/integrations/soundcloud/configuration', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const credentials = creatorIdentityId
+      ? await store.listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId)
+      : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId);
+    const soundCloudCredentials = credentials.filter((item) => item.platform === 'soundcloud');
+    return res.json({
+      platform: 'soundcloud',
+      enabled: config.soundCloudEnabled,
+      configured: Boolean(config.soundCloudEnabled && config.externalTokenEncryptionKey && config.soundCloudOAuthRedirectUri && soundCloudCredentials.length),
+      callbackUrl: config.soundCloudOAuthRedirectUri,
+      credentials: soundCloudCredentials.map(toExternalPlatformCredentialResponse),
+      sourceControlNotice: 'This connection does not back up your original audio. Upload the original file directly to Ubeeq if you want it retained under your control.',
+      requiredConfiguration: [
+        ...(config.soundCloudEnabled ? [] : ['SOUNDCLOUD_ENABLED compliance approval']),
+        ...(config.externalTokenEncryptionKey ? [] : ['EXTERNAL_TOKEN_ENCRYPTION_KEY']),
+        ...(config.soundCloudOAuthRedirectUri ? [] : ['SOUNDCLOUD_OAUTH_REDIRECT_URI']),
+        ...(soundCloudCredentials.length ? [] : ['your SoundCloud client ID and client secret'])
+      ]
+    });
+  });
+
+  app.put('/studio/integrations/soundcloud/credentials', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud is disabled pending provider and compliance approval.' });
+    if (!config.externalTokenEncryptionKey || !config.soundCloudOAuthRedirectUri) return res.status(503).json({ message: 'SoundCloud callback or encrypted credential storage is not configured.' });
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.trim().slice(0, 512) : '';
+    const clientSecret = typeof req.body?.clientSecret === 'string' ? req.body.clientSecret.trim() : '';
+    const applicationLabel = typeof req.body?.applicationLabel === 'string' ? req.body.applicationLabel.trim().slice(0, 120) : '';
+    if (!clientId || !clientSecret) return res.status(400).json({ message: 'SoundCloud client ID and client secret are required.' });
+    const now = new Date().toISOString();
+    const credential: ExternalPlatformCredential = {
+      externalPlatformCredentialId: randomUUID(), userId: req.authUser!.userId,
+      creatorIdentityId: creatorIdentityId || undefined, platform: 'soundcloud',
+      applicationLabel: applicationLabel || undefined, clientId,
+      clientSecretEncrypted: encryptExternalCredential(clientSecret, config.externalTokenEncryptionKey),
+      redirectUri: config.soundCloudOAuthRedirectUri, createdAt: now, updatedAt: now
+    };
+    await store.createExternalPlatformCredential(credential);
+    auditLog(req, 'soundcloud.application.created', { externalPlatformCredentialId: credential.externalPlatformCredentialId, creatorIdentityId: credential.creatorIdentityId });
+    return res.status(201).json(toExternalPlatformCredentialResponse(credential));
+  });
+
+  app.post('/studio/integrations/soundcloud/connect', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud is disabled pending provider and compliance approval.' });
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const credentialId = typeof req.body?.externalPlatformCredentialId === 'string' ? req.body.externalPlatformCredentialId.trim() : '';
+    const credential = await store.getExternalPlatformCredential(credentialId);
+    if (!credential || credential.userId !== req.authUser!.userId || credential.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud application not found.' });
+    if (credential.creatorIdentityId && credential.creatorIdentityId !== creatorIdentityId) return res.status(403).json({ message: 'This SoundCloud application is assigned to another creator.' });
+    const returnPath = typeof req.body?.returnPath === 'string' && req.body.returnPath.startsWith('/studio/') ? req.body.returnPath : '/studio/workspace?section=integrations';
+    const issued = issueExternalOAuthState(config, { userId: req.authUser!.userId, creatorIdentityId: creatorIdentityId || undefined, externalPlatformCredentialId: credential.externalPlatformCredentialId, platform: 'soundcloud', returnPath, syncContentOnInitialImport: req.body?.syncContentOnInitialImport === true });
+    return res.json({
+      authorizationUrl: providerForCredential(credential).createAuthorizationUrl(issued.state, externalOAuthPkce(config, issued.nonce)),
+      sourceControlNotice: 'Connecting SoundCloud does not create a backup. Upload the original directly to Ubeeq if you want the source retained under your control.'
+    });
+  });
+
+  app.get('/integrations/soundcloud/callback', async (req, res) => {
+    const stateValue = typeof req.query.state === 'string' ? req.query.state : '';
+    let state: ReturnType<typeof verifyExternalOAuthState>;
+    try {
+      state = verifyExternalOAuthState(config, stateValue);
+      if (state.platform !== 'soundcloud') throw new Error('Wrong OAuth platform');
+    } catch {
+      return res.status(400).json({ message: 'The SoundCloud connection request is invalid or has expired.' });
+    }
+    const redirect = (params: Record<string, string>) => res.redirect(302, resolveExternalOAuthReturnUrl(config, state.returnPath, params));
+    if (!config.soundCloudEnabled) return redirect({ soundcloud: 'failed', reason: 'compliance_disabled' });
+    if (typeof req.query.error === 'string') return redirect({ soundcloud: req.query.error === 'access_denied' ? 'cancelled' : 'failed', reason: req.query.error.slice(0, 120) });
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!code) return redirect({ soundcloud: 'failed', reason: 'missing_authorization_code' });
+    if (state.creatorIdentityId && !(await store.hasCreatorAccess(state.userId, state.creatorIdentityId))) return redirect({ soundcloud: 'failed', reason: 'creator_access_changed' });
+    try {
+      const credential = await store.getExternalPlatformCredential(state.externalPlatformCredentialId);
+      if (!credential || credential.userId !== state.userId || credential.platform !== 'soundcloud') return redirect({ soundcloud: 'failed', reason: 'creator_application_unavailable' });
+      const provider = providerForCredential(credential);
+      const tokens = await provider.exchangeAuthorizationCode(code, externalOAuthPkce(config, state.nonce));
+      const remote = await provider.getAccount(tokens.accessToken);
+      const existing = (await store.listExternalAccountsByUser(state.userId)).find((item) => item.platform === 'soundcloud' && item.externalUserId === remote.externalUserId);
+      const now = new Date().toISOString();
+      const account: ExternalAccount = {
+        externalAccountId: existing?.externalAccountId || randomUUID(), userId: state.userId,
+        creatorIdentityId: state.creatorIdentityId, primaryCreatorIdentityId: state.creatorIdentityId,
+        externalPlatformCredentialId: credential.externalPlatformCredentialId, platform: 'soundcloud',
+        externalUserId: remote.externalUserId, externalUsername: remote.externalUsername,
+        accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
+        refreshTokenEncrypted: tokens.refreshToken ? encryptExternalCredential(tokens.refreshToken, config.externalTokenEncryptionKey) : existing?.refreshTokenEncrypted,
+        tokenExpiresAt: tokens.expiresAt, connectionStatus: 'connected',
+        initialContentSyncRequested: state.syncContentOnInitialImport === true, includeSourceFilesOnSync: false,
+        createdAt: existing?.createdAt || now, updatedAt: now
+      };
+      if (existing) await store.updateExternalAccount(account); else await store.createExternalAccount(account);
+      if (state.creatorIdentityId) await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, [{ externalAccountId: account.externalAccountId, creatorIdentityId: state.creatorIdentityId, userId: state.userId, createdAt: now, updatedAt: now }]);
+      return redirect({ soundcloud: 'connected', account: account.externalAccountId });
+    } catch (error) {
+      logServerError('soundcloud.callback', error);
+      return redirect({ soundcloud: 'failed', reason: error instanceof ExternalProviderError ? error.code : 'connection_failed' });
+    }
+  });
+
+  app.get('/studio/integrations/soundcloud/accounts', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const accounts = creatorIdentityId ? await store.listExternalAccountsByCreatorIdentity(creatorIdentityId) : await store.listExternalAccountsByUser(req.authUser!.userId);
+    return res.json(accounts.filter((item) => item.platform === 'soundcloud' && item.connectionStatus !== 'disabled').map(toExternalAccountResponse));
+  });
+
+  app.post('/studio/integrations/soundcloud/accounts/:externalAccountId/import', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud is disabled pending provider and compliance approval.' });
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    if (!account.primaryCreatorIdentityId && !account.creatorIdentityId) return res.status(409).json({ message: 'Assign this SoundCloud account to a creator before importing tracks.' });
+    if (req.body?.sourceControlNoticeAccepted !== true) return res.status(400).json({ message: 'Confirm that SoundCloud metadata import does not back up the original audio.' });
+    try {
+      const job = await enqueueExternalSyncJob(account.externalAccountId, 'account_import', { syncContent: false });
+      auditLog(req, 'soundcloud.import.requested', { externalAccountId: account.externalAccountId, jobId: job.externalSyncJobId, sourceAudioDownload: false });
+      return res.status(202).json({ ...job, sourceAudioDownload: false });
+    } catch (error) {
+      logServerError('soundcloud.import.enqueue', error);
+      return res.status(503).json({ message: 'The import queue is unavailable. The account remains connected.' });
+    }
+  });
+
+  app.delete('/studio/integrations/soundcloud/accounts/:externalAccountId', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    if (req.body?.confirm !== 'disconnect_and_purge_soundcloud') return res.status(400).json({ message: 'Explicitly confirm SoundCloud disconnect and provider-data purge.' });
+    const now = new Date().toISOString();
+    await store.updateExternalAccount({ ...account, accessTokenEncrypted: '', refreshTokenEncrypted: undefined, tokenExpiresAt: undefined, connectionStatus: 'disabled', updatedAt: now });
+    const jobs = await store.listExternalSyncJobs(account.externalAccountId, 500);
+    await Promise.all(jobs.filter((job) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status)).map((job) => store.updateExternalSyncJob({ ...job, status: 'cancelled', errorCode: 'ACCOUNT_REMOVED', errorMessage: 'SoundCloud disconnected and provider data purged', updatedAt: now })));
+    const publications = await store.listExternalPublications(account.externalAccountId);
+    for (const publication of publications) {
+      await store.updateExternalPublication({ ...publication, rawMetadataJson: { purgedAt: now }, updatedAt: now });
+      const comments = await store.listExternalComments(publication.externalPublicationId, 5000);
+      await Promise.all(comments.map((comment) => store.updateExternalComment({ ...comment, externalAuthorId: undefined, externalAuthorName: undefined, externalAuthorAvatarUrl: undefined, body: '', rawPayload: undefined, lastSeenAt: now, lastSyncedAt: now })));
+    }
+    const activities = await store.listExternalActivitiesByAccount(account.externalAccountId, 5000);
+    await Promise.all(activities.map((activity) => store.upsertExternalActivity({ ...activity, externalActorId: undefined, externalActorName: undefined, externalActorAvatarUrl: undefined, body: undefined, rawPayload: undefined, updatedAt: now })));
+    const profile = await store.getExternalAccountProfile(account.externalAccountId);
+    if (profile) await store.upsertExternalAccountProfile({ ...profile, realName: undefined, country: undefined, website: undefined, bio: undefined, rawPayload: undefined, capturedAt: now });
+    auditLog(req, 'soundcloud.account.disconnected_and_purged', { externalAccountId: account.externalAccountId, publications: publications.length, activities: activities.length });
+    return res.status(204).end();
+  });
+
+  app.get('/studio/integrations/soundcloud/accounts/:externalAccountId/publications/:externalContentId/comments', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication) return res.status(404).json({ message: 'SoundCloud publication not found.' });
+    const comments = await store.listExternalComments(publication.externalPublicationId, 100);
+    return res.json(comments.map(({ rawPayload: _rawPayload, ...comment }) => comment));
+  });
+
+  app.post('/studio/integrations/soundcloud/accounts/:externalAccountId/publications/:externalContentId/comments/sync', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud is disabled pending provider and compliance approval.' });
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication || publication.syncStatus !== 'active') return res.status(404).json({ message: 'Active SoundCloud publication not found.' });
+    return res.status(202).json(await enqueueExternalSyncJob(account.externalAccountId, 'comment_sync', { externalContentId: publication.externalContentId }));
+  });
+
+  app.post('/studio/integrations/soundcloud/accounts/:externalAccountId/publications/:externalContentId/actions/:action', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud interactions are disabled pending provider and compliance approval.' });
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication || publication.syncStatus !== 'active') return res.status(404).json({ message: 'Active SoundCloud publication not found.' });
+    const action = ['comment', 'like', 'unlike', 'repost', 'unrepost'].includes(req.params.action) ? req.params.action : '';
+    if (!action) return res.status(400).json({ message: 'Choose a supported SoundCloud action.' });
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim().slice(0, 2000) : '';
+    if (action === 'comment' && !body) return res.status(400).json({ message: 'A SoundCloud comment cannot be empty.' });
+    const idempotencyKey = typeof req.get('idempotency-key') === 'string' ? req.get('idempotency-key')!.trim().slice(0, 200) : '';
+    if (!idempotencyKey) return res.status(400).json({ message: 'An Idempotency-Key header is required for SoundCloud interactions.' });
+    const existing = (await store.listExternalSyncJobs(account.externalAccountId, 200)).find((job) => job.type === 'user_action' && job.payload?.idempotencyKey === idempotencyKey);
+    if (existing) return res.status(existing.status === 'successful' ? 200 : 202).json(existing);
+    const job = await enqueueExternalSyncJob(account.externalAccountId, 'user_action', { action, targetId: publication.externalContentId, idempotencyKey, ...(body ? { body } : {}), ...(Number.isFinite(Number(req.body?.timestampMs)) ? { timestampMs: Math.max(0, Math.floor(Number(req.body.timestampMs))) } : {}) });
+    auditLog(req, `soundcloud.${action}.requested`, { externalAccountId: account.externalAccountId, externalContentId: publication.externalContentId, jobId: job.externalSyncJobId });
+    return res.status(202).json(job);
+  });
+
+  app.post('/studio/integrations/soundcloud/accounts/:externalAccountId/users/:externalUserId/actions/:action', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud interactions are disabled pending provider and compliance approval.' });
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    const action = req.params.action === 'follow' || req.params.action === 'unfollow' ? req.params.action : '';
+    if (!action) return res.status(400).json({ message: 'Choose follow or unfollow.' });
+    const idempotencyKey = typeof req.get('idempotency-key') === 'string' ? req.get('idempotency-key')!.trim().slice(0, 200) : '';
+    if (!idempotencyKey) return res.status(400).json({ message: 'An Idempotency-Key header is required for SoundCloud interactions.' });
+    const existing = (await store.listExternalSyncJobs(account.externalAccountId, 200)).find((job) => job.type === 'user_action' && job.payload?.idempotencyKey === idempotencyKey);
+    if (existing) return res.status(existing.status === 'successful' ? 200 : 202).json(existing);
+    const job = await enqueueExternalSyncJob(account.externalAccountId, 'user_action', { action, targetId: req.params.externalUserId, idempotencyKey });
+    auditLog(req, `soundcloud.${action}.requested`, { externalAccountId: account.externalAccountId, externalUserId: req.params.externalUserId, jobId: job.externalSyncJobId });
+    return res.status(202).json(job);
   });
 
   app.get('/studio/integrations/deviantart/configuration', requireAuth, async (req, res) => {

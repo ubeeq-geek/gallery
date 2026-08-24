@@ -68,6 +68,12 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     capabilities: ['connect', 'catalogue_import', 'engagement_read', 'reconcile'],
     credentialCustody: 'application'
   },
+  soundcloud: {
+    platform: 'soundcloud',
+    label: 'SoundCloud',
+    capabilities: ['connect', 'catalogue_import', 'engagement_read', 'engagement_write', 'reconcile'],
+    credentialCustody: 'application'
+  },
   fanvue: {
     platform: 'fanvue',
     label: 'FanVue',

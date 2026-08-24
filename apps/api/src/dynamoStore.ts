@@ -1576,6 +1576,8 @@ export class DynamoStore implements DataStore {
   async listExternalAccountCreatorAssignments(externalAccountId: string): Promise<ExternalAccountCreatorAssignment[]> { return this.externalPlatform().listExternalAccountCreatorAssignments(externalAccountId); }
   async replaceExternalAccountCreatorAssignments(externalAccountId: string, assignments: ExternalAccountCreatorAssignment[]): Promise<void> { await this.externalPlatform().replaceExternalAccountCreatorAssignments(externalAccountId, assignments); }
   async listExternalAccountsForScheduledScan(limit?: number): Promise<ExternalAccount[]> { return this.externalPlatform().listExternalAccountsForScheduledScan(limit); }
+  async acquireExternalAccountRefreshLease(externalAccountId: string, leaseId: string, expiresAtEpochSeconds: number): Promise<boolean> { return this.externalPlatform().acquireExternalAccountRefreshLease(externalAccountId, leaseId, expiresAtEpochSeconds); }
+  async releaseExternalAccountRefreshLease(externalAccountId: string, leaseId: string): Promise<void> { return this.externalPlatform().releaseExternalAccountRefreshLease(externalAccountId, leaseId); }
   async getExternalAccount(externalAccountId: string): Promise<ExternalAccount | null> { return this.externalPlatform().getExternalAccount(externalAccountId); }
   async createExternalAccount(account: ExternalAccount): Promise<void> { await this.externalPlatform().createExternalAccount(account); }
   async updateExternalAccount(account: ExternalAccount): Promise<void> { await this.externalPlatform().updateExternalAccount(account); }
