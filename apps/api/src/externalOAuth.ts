@@ -6,7 +6,7 @@ interface OAuthStatePayload {
   userId: string;
   creatorIdentityId?: string;
   externalPlatformCredentialId: string;
-  platform: 'deviantart';
+  platform: 'deviantart' | 'youtube';
   returnPath: string;
   syncContentOnInitialImport?: boolean;
   nonce: string;
@@ -61,7 +61,7 @@ export const verifyExternalOAuthState = (config: AppConfig, value: string): OAut
   if (
     typeof state.userId !== 'string'
     || typeof state.externalPlatformCredentialId !== 'string'
-    || state.platform !== 'deviantart'
+    || (state.platform !== 'deviantart' && state.platform !== 'youtube')
     || typeof state.returnPath !== 'string'
     || typeof state.nonce !== 'string'
   ) {

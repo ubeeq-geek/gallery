@@ -1649,15 +1649,30 @@ function AuthPage({ user, setUser }: { user: CurrentUser; setUser: (u: CurrentUs
                   {usernameStatus === 'checking' ? 'Checking…' : usernameStatus === 'available' ? 'Available' : ''}
                 </span>
               </div>
+              {/* A public handle is a nickname, not an authentication username.
+                  Using autocomplete="username" makes browsers/password managers
+                  copy the email address into this field. */}
               <input
-                name="preferred_username"
-                autoComplete="username"
+                name="profile_handle"
+                autoComplete="nickname"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
                 placeholder="your-profile-handle"
                 data-lpignore="true"
+                data-1p-ignore="true"
+                data-bwignore="true"
                 value={username}
+                onFocus={(e) => {
+                  // Some password managers ignore autocomplete hints and
+                  // paint an email into the field without firing onChange.
+                  // Clear that value before the member starts entering a
+                  // handle; email addresses are not valid handles anyway.
+                  if (e.currentTarget.value.includes('@')) {
+                    e.currentTarget.value = '';
+                    setUsername('');
+                  }
+                }}
                 onChange={(e) => setUsername(e.target.value)}
                 aria-invalid={usernameStatus === 'unavailable'}
               />

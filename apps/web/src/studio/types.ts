@@ -2,6 +2,7 @@ import type { PostBlock } from '../domainTypes';
 
 export const studioIntegrationPlatforms = [
   { id: 'deviantart', label: 'DeviantArt' },
+  { id: 'youtube', label: 'YouTube' },
   { id: 'bluesky', label: 'Bluesky' },
   { id: 'discord', label: 'Discord' }
 ] as const;
@@ -178,6 +179,11 @@ export type StudioDeviantArtAccount = {
     noAi: boolean;
     sourceFileMode: 'original';
   };
+};
+
+export type StudioYouTubeAccount = Omit<StudioDeviantArtAccount, 'platform' | 'includeSourceFilesOnSync' | 'deviantArtPublishingPreset'> & {
+  platform: 'youtube';
+  channelTitle?: string;
 };
 
 export type StudioExternalSyncJob = {

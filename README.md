@@ -77,6 +77,11 @@ The API reads environment variables from the shell that starts it; it does **not
 | `DISCORD_SECRETS_NAME` | unset | Optional Secrets Manager JSON secret for the Discord client secret and bot token. Use this for every shared AWS environment, including development. |
 | `DISCORD_OAUTH_REDIRECT_URI` | `https://fanadmin.top:4000/integrations/discord/callback` | Register this exact URL in the Discord application’s OAuth2 Redirects list. The Ubeeq local API should use port `4001`. |
 | `DISCORD_API_BASE_URL` | `https://discord.com/api/v10` | Optional API base override for controlled testing. |
+| `YOUTUBE_OAUTH_CLIENT_ID` | unset | Google OAuth web-client ID for the optional YouTube import/embed integration. |
+| `YOUTUBE_OAUTH_CLIENT_SECRET` | unset | Google OAuth web-client secret. Keep it in `YOUTUBE_SECRETS_NAME` for shared AWS deployments. |
+| `YOUTUBE_OAUTH_REDIRECT_URI` | `https://fanadmin.top:4000/integrations/youtube/callback` | Register this exact redirect URI in Google Cloud. The Ubeeq local API uses port `4001`. |
+| `YOUTUBE_SECRETS_NAME` | unset | Optional Secrets Manager JSON secret containing `youtubeOAuthClientSecret`; recommended for every deployed environment. |
+| `YOUTUBE_MIN_REQUEST_INTERVAL_MS` | `1000` | Minimum interval between YouTube Data API requests for one worker. |
 
 For a stable local encryption key, run this once and export the result before starting the API:
 
@@ -88,6 +93,23 @@ npm run dev:api
 Each local API has its own in-memory database. Restarting or hot-reloading it clears that edition's local creator workspaces, DeviantArt credentials, connected accounts, and imports; files in the edition-specific media directory are not automatically deleted.
 
 Canonical uploads are stored below `works/<tenant>/<creator>/<asset>/` in the configured media directory or S3 bucket. Work lifecycle, Space visibility, discovery participation, and destination synchronization are intentionally separate records. The accepted contract is documented in [ADR 0001](docs/adr/0001-canonical-content-publication-model.md).
+
+## YouTube video import (read-only v1)
+
+YouTube is an optional import-and-embed integration. Ubeeq/Eversally remains the canonical Work manager; this first release does **not** upload, edit, delete, or download original YouTube videos.
+
+1. In Google Cloud, enable **YouTube Data API v3** and create an OAuth 2.0 **Web application** client.
+2. Register the exact callback URL for the environment:
+   - Eversally local: `https://fanadmin.top:4000/integrations/youtube/callback`
+   - Ubeeq local: `https://fanadmin.top:4001/integrations/youtube/callback`
+   - Deployed: `https://<your-api-host>/integrations/youtube/callback`
+3. Set `YOUTUBE_OAUTH_CLIENT_ID`, `YOUTUBE_OAUTH_CLIENT_SECRET`, and `YOUTUBE_OAUTH_REDIRECT_URI`. In AWS, put the secret in a Secrets Manager JSON value named by `YOUTUBE_SECRETS_NAME`:
+
+   ```json
+   { "youtubeOAuthClientSecret": "your-google-oauth-client-secret" }
+   ```
+
+The connection requests only `https://www.googleapis.com/auth/youtube.readonly`, uses Authorization Code + PKCE and incremental consent, and retains a refresh token only in encrypted server-side storage. Imports use the channel uploads playlist plus batched Videos lookups rather than the expensive Search endpoint. The worker spaces requests by `YOUTUBE_MIN_REQUEST_INTERVAL_MS` (one second by default) and backs off on Google quota/rate-limit responses. Google controls the actual project quota; a new standard project commonly starts with 10,000 units per day, so operators should monitor quota use in Google Cloud before enabling large backfills.
 
 ## Build and Test
 

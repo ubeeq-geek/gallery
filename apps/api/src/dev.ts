@@ -1,6 +1,7 @@
 import fs from 'fs';
 import https from 'https';
 import path from 'path';
+import { randomBytes } from 'crypto';
 import { createApp } from './app';
 import { loadConfig } from './config';
 import { InMemoryStore } from './inMemoryStore';
@@ -12,10 +13,30 @@ import { runAdminBootstrap } from './adminBootstrap';
 
 // A local seed is useful for offline UI work, but it must not override real
 // Cognito identities when the paired web app has an auth configuration.
+const localStateDirectory = process.env.LOCAL_API_STATE_DIRECTORY
+  || path.join('/tmp', `${process.env.PRODUCT_BRAND || 'eversally'}-api`);
+const localStatePath = path.join(localStateDirectory, 'state.json');
+const localEncryptionKeyPath = path.join(localStateDirectory, 'external-token-encryption-key');
+
+const localEncryptionKey = (configured?: string): string => {
+  if (configured) return configured;
+  fs.mkdirSync(localStateDirectory, { recursive: true, mode: 0o700 });
+  if (fs.existsSync(localEncryptionKeyPath)) {
+    const existing = fs.readFileSync(localEncryptionKeyPath, 'utf8').trim();
+    if (existing) return existing;
+  }
+  const generated = randomBytes(48).toString('base64url');
+  fs.writeFileSync(localEncryptionKeyPath, `${generated}\n`, { mode: 0o600 });
+  return generated;
+};
+
 const loadedConfig = loadConfig();
 const localAdminMode = !loadedConfig.cognitoUserPoolId && Boolean(loadedConfig.adminEmail && loadedConfig.adminPassword);
 const config = {
   ...loadedConfig,
+  // Keep local integration credentials decryptable across ts-node-dev reloads.
+  // The key and encrypted development state stay in /tmp, never in source control.
+  externalTokenEncryptionKey: localEncryptionKey(loadedConfig.externalTokenEncryptionKey),
   localAuthUserId: process.env.LOCAL_AUTH_USER_ID || (localAdminMode ? 'local-admin' : undefined),
   localAuthRole: localAdminMode ? 'admin' as const : loadedConfig.localAuthRole,
   localAuthEmail: localAdminMode ? loadedConfig.adminEmail : loadedConfig.localAuthEmail,
@@ -24,21 +45,82 @@ const config = {
 void runAdminBootstrap(config);
 const store = new InMemoryStore();
 
-const now = new Date().toISOString();
-store.creators.push({ creatorId: 'creator-1', name: 'Featured Creator', slug: 'featured-creator', status: 'active', sortOrder: 1, createdAt: now });
-if (config.localAuthUserId) {
-  store.creatorMembers.push({ creatorId: 'creator-1', userId: config.localAuthUserId, role: 'owner', createdAt: now });
+type LocalStoreSnapshot = {
+  version: 1;
+  savedAt: string;
+  data: Record<string, unknown>;
+  maps: Record<string, Array<[unknown, unknown]>>;
+};
+
+const storeRecord = store as unknown as Record<string, unknown>;
+const restoreLocalStore = (): boolean => {
+  try {
+    const snapshot = JSON.parse(fs.readFileSync(localStatePath, 'utf8')) as LocalStoreSnapshot;
+    if (snapshot.version !== 1 || !snapshot.data) return false;
+    for (const [key, value] of Object.entries(snapshot.data)) storeRecord[key] = value;
+    for (const [key, entries] of Object.entries(snapshot.maps || {})) {
+      storeRecord[key] = new Map(entries);
+    }
+    console.log(`Restored local API state from ${localStatePath}`);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`Unable to restore local API state: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return false;
+  }
+};
+
+const createLocalStoreSnapshot = (): LocalStoreSnapshot => {
+  const data: Record<string, unknown> = {};
+  const maps: Record<string, Array<[unknown, unknown]>> = {};
+  for (const [key, value] of Object.entries(storeRecord)) {
+    if (value instanceof Map) maps[key] = [...value.entries()];
+    else data[key] = value;
+  }
+  return { version: 1, savedAt: new Date().toISOString(), data, maps };
+};
+
+let lastPersistedLocalState = '';
+const persistLocalStore = (): void => {
+  try {
+    fs.mkdirSync(localStateDirectory, { recursive: true, mode: 0o700 });
+    const serialised = JSON.stringify(createLocalStoreSnapshot());
+    if (serialised === lastPersistedLocalState) return;
+    const temporaryPath = `${localStatePath}.next`;
+    fs.writeFileSync(temporaryPath, serialised, { mode: 0o600 });
+    fs.renameSync(temporaryPath, localStatePath);
+    lastPersistedLocalState = serialised;
+  } catch (error) {
+    console.warn(`Unable to persist local API state: ${error instanceof Error ? error.message : String(error)}`);
+  }
+};
+
+const restoredLocalStore = restoreLocalStore();
+
+if (!restoredLocalStore) {
+  const now = new Date().toISOString();
+  store.creators.push({ creatorId: 'creator-1', name: 'Featured Creator', slug: 'featured-creator', status: 'active', sortOrder: 1, createdAt: now });
+  if (config.localAuthUserId) {
+    store.creatorMembers.push({ creatorId: 'creator-1', userId: config.localAuthUserId, role: 'owner', createdAt: now });
+  }
+  store.groupings.push({
+    groupingId: 'grouping-1',
+    creatorId: 'creator-1',
+    creatorSlug: 'featured-creator',
+    title: 'Free Preview Grouping',
+    slug: 'free-preview-grouping',
+    visibility: 'free',
+    status: 'published',
+    createdAt: now
+  });
+  persistLocalStore();
 }
-store.groupings.push({
-  groupingId: 'grouping-1',
-  creatorId: 'creator-1',
-  creatorSlug: 'featured-creator',
-  title: 'Free Preview Grouping',
-  slug: 'free-preview-grouping',
-  visibility: 'free',
-  status: 'published',
-  createdAt: now
-});
+
+const localStateTimer = setInterval(persistLocalStore, 250);
+localStateTimer.unref();
+process.once('SIGTERM', persistLocalStore);
+process.once('SIGINT', persistLocalStore);
 
 let externalSyncQueue: ExternalSyncQueue;
 externalSyncQueue = createInProcessExternalSyncQueue((externalSyncJobId) => processExternalSyncJob(store, config, externalSyncJobId, externalSyncQueue));

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import { siYoutube } from 'simple-icons';
 import { api, type AnnouncementPresetId } from '../../api';
 import { brand } from '../../brand';
 import { Card } from '../components/Card';
@@ -12,7 +13,8 @@ import type {
   StudioExternalCollectionMapping,
   StudioExternalSyncJob,
   StudioUbeeqCollection,
-  StudioIntegrationPlatform
+  StudioIntegrationPlatform,
+  StudioYouTubeAccount
 } from '../types';
 
 const deviantArtDisplayWidths = [400, 600, 800, 900, 1024, 1280, 1600, 1920];
@@ -47,6 +49,9 @@ const normalizeVisibleIntegrationPlatforms = (values?: readonly string[]): Studi
     .map((platform) => platform.id)
     .filter((platform) => values.includes(platform)) as StudioIntegrationPlatform[];
 };
+
+const integrationPlatformLabelOrder = (a: { label: string }, b: { label: string }): number =>
+  a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
 
 type CollectionResponse = {
   ubeeqCollections: StudioUbeeqCollection[];
@@ -92,7 +97,7 @@ const formatCountdown = (value: string | undefined, now: number): string => {
   return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
 };
 
-const accountTone = (status: StudioDeviantArtAccount['connectionStatus']): 'success' | 'warning' | 'danger' | 'default' => {
+const accountTone = (status: StudioDeviantArtAccount['connectionStatus'] | StudioYouTubeAccount['connectionStatus']): 'success' | 'warning' | 'danger' | 'default' => {
   if (status === 'connected') return 'success';
   if (status === 'authentication_required') return 'danger';
   if (status === 'rate_limited' || status === 'temporarily_unavailable') return 'warning';
@@ -144,6 +149,15 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [blueskyConfiguration, setBlueskyConfiguration] = useState<{ configured: boolean; requiredConfiguration: string[] } | null>(null);
   const [blueskyAccounts, setBlueskyAccounts] = useState<Array<{ externalAccountId: string; externalUsername: string; externalUserId: string }>>([]);
   const [blueskyHandle, setBlueskyHandle] = useState('');
+  const [youtubeConfiguration, setYoutubeConfiguration] = useState<{
+    configured: boolean;
+    callbackUrl?: string;
+    scope?: string;
+    quotaGuidance?: string;
+    requiredConfiguration: string[];
+  } | null>(null);
+  const [youtubeAccounts, setYoutubeAccounts] = useState<StudioYouTubeAccount[]>([]);
+  const [youtubeBusy, setYoutubeBusy] = useState('');
   const [discordConfiguration, setDiscordConfiguration] = useState<{
     configured: boolean;
     installations: Array<{ communityInstallationId: string; displayName: string; iconUrl?: string; status: 'connected' | 'needs_attention' | 'disabled'; lastError?: string }>;
@@ -204,6 +218,11 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [connectionError, setConnectionError] = useState('');
+  // Keep YouTube OAuth feedback with the integration that produced it.  The
+  // general connection notice is rendered much lower in this page, which made
+  // a successful (or failed) return from Google look like it had done nothing.
+  const [youtubeConnectionNotice, setYoutubeConnectionNotice] = useState('');
+  const [youtubeConnectionError, setYoutubeConnectionError] = useState('');
   const [visibleIntegrationPlatforms, setVisibleIntegrationPlatforms] = useState<StudioIntegrationPlatform[]>(defaultVisibleIntegrationPlatforms);
   const [visibleIntegrationPlatformsByCreator, setVisibleIntegrationPlatformsByCreator] = useState<Record<string, StudioIntegrationPlatform[]>>({});
   const [savingIntegrationVisibility, setSavingIntegrationVisibility] = useState(false);
@@ -225,6 +244,18 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       : currentCreator.visibleIntegrations;
     setVisibleIntegrationPlatforms(normalizeVisibleIntegrationPlatforms(configuredPlatforms));
   }, [creatorId, creators, visibleIntegrationPlatformsByCreator]);
+
+  // Keep the platform chooser useful as integrations grow: enabled platforms
+  // are grouped first, with alphabetical ordering within each group.
+  const orderedIntegrationPlatforms = useMemo(() => {
+    const selected = new Set(visibleIntegrationPlatforms);
+    return [...studioIntegrationPlatforms].sort((a, b) => {
+      const aSelected = selected.has(a.id);
+      const bSelected = selected.has(b.id);
+      if (aSelected !== bSelected) return aSelected ? -1 : 1;
+      return integrationPlatformLabelOrder(a, b);
+    });
+  }, [visibleIntegrationPlatforms]);
 
   const toggleIntegrationVisibility = async (platform: StudioIntegrationPlatform) => {
     if (!creatorId) return;
@@ -304,6 +335,80 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
 
   useEffect(() => {
     const url = new URL(window.location.href);
+    const connectionState = url.searchParams.get('youtube');
+    const connectedAccountId = url.searchParams.get('account') || '';
+    if (!connectionState) return;
+    const detail = url.searchParams.get('detail') || url.searchParams.get('reason') || '';
+    const callbackStage = url.searchParams.get('stage') || '';
+    const connectionSucceeded = connectionState === 'connected_destination_defaulted' || connectionState === 'connected';
+
+    // A successful callback needs the selected Creator before its newly stored
+    // channel can be loaded. Leave the callback query intact until that context
+    // exists so an OAuth-return remount cannot silently discard the result.
+    if (connectionSucceeded && !creatorId) return;
+
+    let cancelled = false;
+    const clearCallbackQuery = () => {
+      if (cancelled) return;
+      url.searchParams.delete('youtube');
+      url.searchParams.delete('account');
+      url.searchParams.delete('detail');
+      url.searchParams.delete('reason');
+      url.searchParams.delete('stage');
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    };
+
+    const refreshAfterCallback = async () => {
+      if (!creatorId) return;
+      // The callback writes the account before redirecting, but a local API
+      // process may still be flushing its backing store when the Studio page
+      // mounts. Refresh once more after a short settling interval so a valid
+      // Google authorization is visible instead of looking like a no-op.
+      await load(creatorId);
+      if (!cancelled && connectedAccountId && !youtubeAccounts.some((account) => account.externalAccountId === connectedAccountId)) {
+        await new Promise((resolve) => window.setTimeout(resolve, 350));
+        if (!cancelled) await load(creatorId);
+      }
+    };
+
+    setYoutubeConnectionNotice('');
+    setYoutubeConnectionError('');
+    if (connectionState === 'connected_destination_defaulted' || connectionState === 'connected') {
+      setYoutubeConnectionNotice('YouTube channel connected. Choose Sync videos to import its catalogue for this Creator.');
+      void refreshAfterCallback().catch((refreshError) => {
+        if (!cancelled) setYoutubeConnectionError(refreshError instanceof Error ? refreshError.message : 'The YouTube channel connected, but Studio could not refresh its account list.');
+      }).finally(clearCallbackQuery);
+    } else if (connectionState === 'connected_assignment_required') {
+      setYoutubeConnectionError('YouTube channel connected, but it must be assigned to a Creator before its videos can be imported.');
+      void refreshAfterCallback().catch((refreshError) => {
+        if (!cancelled) setYoutubeConnectionError(refreshError instanceof Error ? refreshError.message : 'Studio could not refresh the connected YouTube account.');
+      }).finally(clearCallbackQuery);
+    } else if (connectionState === 'cancelled') {
+      setYoutubeConnectionError('YouTube authorization was cancelled before access was granted.');
+      clearCallbackQuery();
+    } else if (detail === 'youtube_data_api_disabled') {
+      setYoutubeConnectionError('Google sign-in succeeded, but YouTube Data API v3 is not enabled for this Google Cloud project. Enable it in Google Cloud Console under APIs & Services, wait a few minutes, then connect the channel again.');
+      clearCallbackQuery();
+    } else if (detail === 'youtube_channel_unavailable') {
+      setYoutubeConnectionError('The OAuth callback reached Eversally and Google granted access, but YouTube returned no channel for the selected Google account. Create or select a YouTube channel for that account—or reconnect with the Google or Brand identity that owns the channel—then try again.');
+      clearCallbackQuery();
+    } else if (detail === 'authentication_required') {
+      setYoutubeConnectionError('Google authorized the request, but YouTube rejected the channel lookup. Confirm that this Google account owns the channel and try connecting it again.');
+      clearCallbackQuery();
+    } else {
+      setYoutubeConnectionError(`YouTube authorization reached Eversally but could not be completed${callbackStage ? ` during ${callbackStage.replace(/_/g, ' ')}` : ''}. Try connecting the channel again.`);
+      clearCallbackQuery();
+    }
+
+    return () => { cancelled = true; };
+
+    // The callback state has already been validated by the API. `load` is kept
+    // out of the dependency list because it is recreated for the current view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creatorId]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
     const state = url.searchParams.get('state');
     const proof = url.searchParams.get('proof');
     if (url.searchParams.get('bluesky') !== 'connected' || !state || !proof) return;
@@ -326,9 +431,11 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     setLoading(true);
     setError('');
     try {
-      const [nextConfiguration, nextAccounts, nextBlueskyConfiguration, nextBlueskyAccounts, nextDiscordConfiguration, nextDiscordDestinations] = await Promise.all([
+      const [nextConfiguration, nextAccounts, nextYoutubeConfiguration, nextYoutubeAccounts, nextBlueskyConfiguration, nextBlueskyAccounts, nextDiscordConfiguration, nextDiscordDestinations] = await Promise.all([
         api.studioGetDeviantArtConfiguration(),
         api.studioListDeviantArtAccounts(),
+        api.studioGetYoutubeConfiguration(),
+        api.studioListYoutubeAccounts(nextCreatorId),
         api.studioGetBlueskyConfiguration(),
         api.studioListBlueskyAccounts(nextCreatorId),
         api.studioGetDiscordConfiguration(),
@@ -349,6 +456,8 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
         account.primaryCreatorIdentityId || account.creatorIdentityId || nextCreatorId
       ])));
       setCollections(nextCollections as CollectionResponse);
+      setYoutubeConfiguration(nextYoutubeConfiguration);
+      setYoutubeAccounts((nextYoutubeAccounts || []) as StudioYouTubeAccount[]);
       setBlueskyConfiguration(nextBlueskyConfiguration);
       setBlueskyAccounts((nextBlueskyAccounts || []) as Array<{ externalAccountId: string; externalUsername: string; externalUserId: string }>);
       setDiscordConfiguration(nextDiscordConfiguration);
@@ -494,6 +603,63 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       window.location.assign(result.authorizationUrl);
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : 'Unable to begin Bluesky authorization.');
+    }
+  };
+
+  const connectYoutube = async () => {
+    if (!creatorId) return;
+    setError('');
+    setYoutubeConnectionError('');
+    setYoutubeConnectionNotice('');
+    try {
+      const result = await api.studioStartYoutubeConnection(creatorId, '/studio/workspace?section=integrations');
+      window.location.assign(result.authorizationUrl);
+    } catch (connectError) {
+      setError(connectError instanceof Error ? connectError.message : 'Unable to begin YouTube authorization.');
+    }
+  };
+
+  const syncYoutubeAccount = async (externalAccountId: string) => {
+    setYoutubeBusy(`sync:${externalAccountId}`);
+    setError('');
+    try {
+      await api.studioSyncYoutubeAccount(externalAccountId);
+      setMessage('YouTube video import queued. The catalogue will refresh as the channel is scanned.');
+      await load();
+    } catch (syncError) {
+      setError(syncError instanceof Error ? syncError.message : 'Unable to queue the YouTube video import.');
+    } finally {
+      setYoutubeBusy('');
+    }
+  };
+
+  const refreshYoutubeAccounts = async () => {
+    if (!creatorId) return;
+    setYoutubeBusy('refresh');
+    setError('');
+    try {
+      const nextAccounts = await api.studioListYoutubeAccounts(creatorId);
+      setYoutubeAccounts((nextAccounts || []) as StudioYouTubeAccount[]);
+      setMessage('YouTube channel list refreshed.');
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : 'Unable to refresh YouTube channels.');
+    } finally {
+      setYoutubeBusy('');
+    }
+  };
+
+  const removeYoutubeAccount = async (externalAccount: StudioYouTubeAccount) => {
+    if (!window.confirm(`Disconnect YouTube channel “${externalAccount.channelTitle || externalAccount.externalUsername}”? Imported Works stay in the local catalogue.`)) return;
+    setYoutubeBusy(`remove:${externalAccount.externalAccountId}`);
+    setError('');
+    try {
+      await api.studioRemoveYoutubeAccount(externalAccount.externalAccountId);
+      setMessage('YouTube channel disconnected. Existing imported Works were retained.');
+      await load();
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : 'Unable to disconnect the YouTube channel.');
+    } finally {
+      setYoutubeBusy('');
     }
   };
 
@@ -897,7 +1063,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
           <p className="small">Choose which connected-platform tools appear here. You can add more platforms later.</p>
         </div>
         <div className="studio-integration-platform-filter__options">
-          {studioIntegrationPlatforms.map((platform) => {
+          {orderedIntegrationPlatforms.map((platform) => {
             const selected = visibleIntegrationPlatforms.includes(platform.id);
             return <button
               type="button"
@@ -915,10 +1081,71 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
           })}
         </div>
       </div>
+      {visibleIntegrationPlatforms.includes('youtube') && <Card
+        title="YouTube video library"
+        eyebrow="Platform integration"
+        className="studio-integration-accounts studio-youtube-integration studio-integration-pane--youtube"
+        actions={<div className="studio-youtube-card-actions">
+          <span className="studio-integration-account-count">{youtubeAccounts.length} connected channel{youtubeAccounts.length === 1 ? '' : 's'}</span>
+          <button type="button" className="auth-secondary-btn" disabled={!creatorId || Boolean(youtubeBusy)} onClick={() => void refreshYoutubeAccounts()}>
+            {youtubeBusy === 'refresh' ? 'Refreshing…' : 'Refresh channels'}
+          </button>
+        </div>}
+      >
+        <div className="studio-youtube-introduction">
+          <span className="studio-youtube-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d={siYoutube.path} /></svg>
+          </span>
+          <div>
+            <p className="studio-youtube-description">Connect a channel to bring existing YouTube videos into this Creator’s catalogue as YouTube-hosted Works. Titles, descriptions, thumbnails, and embed references are imported while the original video remains on YouTube.</p>
+            <div className="studio-youtube-facts" aria-label="YouTube connection details">
+              <span>Read-only access</span>
+              <span>Incremental Google consent</span>
+              <span>Quota-aware synchronization</span>
+            </div>
+            {youtubeConfiguration?.configured && <p className="studio-youtube-quota-note">{youtubeConfiguration.quotaGuidance}</p>}
+          </div>
+        </div>
+        {youtubeConfiguration && !youtubeConfiguration.configured && <p className="studio-integration-setup-notice">YouTube is not yet configured. Add a Google OAuth web client to connect a channel.</p>}
+        {youtubeConnectionNotice && <p className="success" role="status" aria-live="polite">{youtubeConnectionNotice}</p>}
+        {youtubeConnectionError && <p className="error" role="alert">{youtubeConnectionError}</p>}
+        {youtubeAccounts.length ? <div className="studio-integration-account-list">
+          <div className="studio-youtube-connected-actions">
+            <p>Connect another channel to this Creator, or manage the channels already connected below.</p>
+            <button type="button" className="auth-primary-btn" disabled={!creatorId || !youtubeConfiguration?.configured || Boolean(youtubeBusy)} onClick={() => void connectYoutube()}>
+              Connect another channel
+            </button>
+          </div>
+          {youtubeAccounts.map((account) => <div key={account.externalAccountId} className="studio-integration-account">
+            <div>
+              <p className="auth-eyebrow">YouTube channel</p>
+              <h3>{account.channelTitle || account.externalUsername}</h3>
+              <p className="small">@{account.externalUsername} · Video metadata, thumbnails, and embeds import into this Creator’s catalogue.</p>
+            </div>
+            <div className="studio-integration-row-actions">
+              <Pill tone={accountTone(account.connectionStatus)} label={account.connectionStatus.replace(/_/g, ' ')} />
+              <button type="button" className="auth-secondary-btn" disabled={Boolean(youtubeBusy)} onClick={() => void syncYoutubeAccount(account.externalAccountId)}>{youtubeBusy === `sync:${account.externalAccountId}` ? 'Queueing…' : 'Sync videos'}</button>
+              <button type="button" className="auth-secondary-btn" disabled={Boolean(youtubeBusy)} onClick={() => void removeYoutubeAccount(account)}>{youtubeBusy === `remove:${account.externalAccountId}` ? 'Disconnecting…' : 'Disconnect channel'}</button>
+            </div>
+          </div>)}
+        </div> : !loading && <div className="studio-youtube-empty-state">
+          <div>
+            <h4>No YouTube channel connected</h4>
+            <p>Choose the Google or Brand identity that owns the channel you want this Creator to manage.</p>
+          </div>
+          <button type="button" className="auth-primary-btn" disabled={!creatorId || !youtubeConfiguration?.configured || Boolean(youtubeBusy)} onClick={() => void connectYoutube()}>
+            Connect YouTube channel
+          </button>
+        </div>}
+        <aside className="studio-youtube-release-note">
+          <strong>Available in this release</strong>
+          <p>Import and embed existing videos. Video upload, publishing, and remote metadata editing will be added after the import workflow is proven.</p>
+        </aside>
+      </Card>}
       {visibleIntegrationPlatforms.includes('bluesky') && <Card
         title="Bluesky announcements"
         eyebrow="Platform integration"
-        className="studio-integration-accounts"
+        className="studio-integration-accounts studio-integration-pane--bluesky"
       >
         <p className="small">Connect the account that can announce eligible Space publications. The secure DPoP session stays in the OAuth service and is never stored in your browser or creator records.</p>
         <div className="studio-integration-toolbar">
@@ -949,7 +1176,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       {visibleIntegrationPlatforms.includes('discord') && <Card
         title="Discord community"
         eyebrow="Community delivery"
-        className="studio-integration-accounts"
+        className="studio-integration-accounts studio-integration-pane--discord"
         actions={<span className="studio-integration-account-count">{discordConfiguration?.installations.length || 0} connected server{(discordConfiguration?.installations.length || 0) === 1 ? '' : 's'}</span>}
       >
         <p className="small studio-integration-account-availability">Install the Discord app once for a server, then choose the channels each Creator should use. Discord messages announce a Space Work; they never become a separate Work publication.</p>
@@ -1010,7 +1237,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       {visibleIntegrationPlatforms.includes('deviantart') && <Card
         title="DeviantArt integration"
         eyebrow="Platform integration"
-        className="studio-integration-accounts"
+        className="studio-integration-accounts studio-integration-pane--deviantart"
         actions={<span className="studio-integration-account-count">{accounts.length} connected account{accounts.length === 1 ? '' : 's'}</span>}
       >
         <p className="small studio-integration-account-availability">DeviantArt applications and connected accounts are available for use with all creator accounts belonging to your user account.</p>

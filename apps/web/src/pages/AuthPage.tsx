@@ -203,14 +203,22 @@ export default function AuthPage({ user, setUser }: { user: CurrentUser; setUser
           {authMode === 'register' && (
             <>
               <input
-                name="preferred_username"
-                autoComplete="new-password"
+                name="profile_handle"
+                autoComplete="nickname"
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
                 placeholder="Profile URL"
                 data-lpignore="true"
+                data-1p-ignore="true"
+                data-bwignore="true"
                 value={username}
+                onFocus={(e) => {
+                  if (e.currentTarget.value.includes('@')) {
+                    e.currentTarget.value = '';
+                    setUsername('');
+                  }
+                }}
                 onChange={(e) => setUsername(e.target.value)}
               />
               {usernameReason && <p className="error">{usernameReason}</p>}
