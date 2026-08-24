@@ -80,6 +80,12 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     capabilities: ['connect'],
     credentialCustody: 'isolated_broker'
   },
+  tumblr: {
+    platform: 'tumblr',
+    label: 'Tumblr',
+    capabilities: ['connect', 'publish', 'remote_update', 'remote_delete'],
+    credentialCustody: 'application'
+  },
   discord: {
     platform: 'discord',
     label: 'Discord',

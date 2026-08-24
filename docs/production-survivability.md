@@ -22,11 +22,12 @@ Create the Secrets Manager secret outside the application stack so deleting or r
   "unlockJwtSecret": "a separate stable high-entropy value",
   "googleClientSecret": "optional; required when GOOGLE_CLIENT_ID is set",
   "applePrivateKey": "optional; required when Apple sign-in variables are set",
+  "tumblrClientSecret": "optional; required when TUMBLR_CLIENT_ID is set",
   "cloudFrontPrivateKey": "optional; required when premium signed media is configured"
 }
 ```
 
-The DeviantArt client secrets and OAuth tokens supplied by Creators remain encrypted in DynamoDB. `externalTokenEncryptionKey` is the managed root key for that encryption. Rotating it requires re-encrypting existing credential records; replacing it without migration makes those records unreadable.
+The DeviantArt and creator-owned Tumblr client secrets and OAuth tokens supplied by Creators remain encrypted in DynamoDB. `externalTokenEncryptionKey` is the managed root key for that encryption. Rotating it requires re-encrypting existing credential records; replacing it without migration makes those records unreadable. The managed Tumblr application secret is read from `tumblrClientSecret` in this production secret rather than from the deployment shell.
 
 Production does not read `GOOGLE_CLIENT_SECRET`, `APPLE_PRIVATE_KEY`, `CLOUDFRONT_PRIVATE_KEY`, `EXTERNAL_TOKEN_ENCRYPTION_KEY`, or `UNLOCK_JWT_SECRET` from the deployment shell. Non-production may continue to use those environment values.
 

@@ -142,5 +142,10 @@ const requireRole = (role: AppRole, message: string) => (req: Request, res: Resp
 };
 
 export const requireAdmin = requireRole('admin', 'Admin role required');
+export const requireSafetyReviewer = (req: Request, res: Response, next: NextFunction) => {
+  if (!req.authUser) return res.status(401).json({ message: 'Authentication required' });
+  if (!req.authUser.groups.includes('SafetyReviewers')) return res.status(403).json({ message: 'Authorized safety reviewer role required' });
+  return next();
+};
 export const requireCreatorOrAdmin = requireRole('creator', 'Creator or admin role required');
 export const requireArtistOrAdmin = requireCreatorOrAdmin;
