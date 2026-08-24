@@ -660,7 +660,7 @@ export interface TrendingFeedItem {
 }
 
 /** Platforms with a creator-owned connected account. OAuth custody can differ by platform. */
-export type ExternalPlatform = 'deviantart' | 'youtube' | 'bluesky';
+export type ExternalPlatform = 'bluesky' | 'deviantart' | 'flickr' | 'youtube';
 export type ExternalAccountConnectionStatus =
   | 'connected'
   | 'authentication_required'
