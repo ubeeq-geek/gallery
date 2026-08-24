@@ -38,6 +38,9 @@ const buildConfig = (): AppConfig => ({
   discordApiBaseUrl: 'https://discord.com/api/v10',
   youtubeMinimumRequestIntervalMs: 1000,
   youtubeApiBaseUrl: 'https://www.googleapis.com/youtube/v3',
+  wordpressApprovedEmbedHosts: [],
+  wordpressManagedSiteHosts: [],
+  wordpressBlockedSiteHosts: [],
   externalScheduledScansEnabled: false
 });
 
