@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import type { AppConfig } from './config';
 import type { AnnouncementPresetId, CommunityDelivery, CommunityDestination, CommunityEvent, CommunityInstallation } from './domain';
 import type { DataStore } from './store';
+import { announcementIdempotencyKey, announcementPresetOptions as sharedAnnouncementPresetOptions, createAnnouncementPublication } from './announcementPublication';
 import { createStoreIntegrationPolicyGate, requireIntegrationOperation } from './integrationStandard';
 import { deliveryRetryDelaySeconds, shouldRetryIntegrationDelivery, type IntegrationDeliveryErrorCode } from './integrationDelivery';
 
@@ -104,17 +105,8 @@ export const sendDiscordMessage = async (
   return response.json() as Promise<{ id: string }>;
 };
 
-export const announcementPresetOptions: Array<{ id: AnnouncementPresetId; label: string; description: string; kinds: string[] }> = [
-  { id: 'recommended', label: 'Recommended', description: 'A polished announcement matched to the Work type.', kinds: ['all'] },
-  { id: 'image_showcase', label: 'Image showcase', description: 'Lead with the image preview and title.', kinds: ['image', 'multiple_images', 'gallery'] },
-  { id: 'writing_release', label: 'Post or story', description: 'A reading-focused title and excerpt.', kinds: ['post', 'story', 'literature', 'article', 'multi_chapter_post'] },
-  { id: 'video_premiere', label: 'Video premiere', description: 'A video-first announcement.', kinds: ['video', 'video_series'] },
-  { id: 'audio_release', label: 'Audio release', description: 'A track, album, or audio collection announcement.', kinds: ['audio', 'album', 'audio_collection'] },
-  { id: 'compact_link', label: 'Compact link', description: 'A short message and direct link.', kinds: ['all'] },
-  { id: 'text_only', label: 'Text only', description: 'No rich preview or media.', kinds: ['all'] },
-  { id: 'collection_digest', label: 'Collection digest', description: 'One announcement for an image gallery or collection.', kinds: ['gallery', 'multiple_images', 'collection'] },
-  { id: 'series_digest', label: 'Series or album digest', description: 'One announcement for a story series, video series, or album.', kinds: ['multi_chapter_post', 'video_series', 'audio_collection', 'album'] }
-];
+/** @deprecated Import from announcementPublication for provider-neutral presets. */
+export const announcementPresetOptions = sharedAnnouncementPresetOptions;
 
 type AnnouncementPayload = {
   title?: string;
@@ -202,10 +194,15 @@ export const queueDiscordWorkPublished = async (
   const existing = await store.getCommunityEventByIdempotency(config.tenantId, input.idempotencyKey);
   if (existing) return;
   const now = new Date().toISOString();
+  const preset = input.preset || 'single_work';
+  const announcement = createAnnouncementPublication({
+    tenantId: config.tenantId, creatorIdentityId: input.creatorIdentityId, provider: 'discord', preset,
+    subject: { type: 'work', ids: [input.workId] }, idempotencyKey: announcementIdempotencyKey('discord', input.creatorIdentityId, preset, [input.workId]), now
+  });
   const event: CommunityEvent = {
     communityEventId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId,
     workId: input.workId, type: 'work_published', idempotencyKey: input.idempotencyKey,
-    payload: { title: input.title, description: input.description, url: input.url, creatorName: input.creatorName, kind: input.kind, imageUrl: input.imageUrl, preset: input.preset, includePrimaryMedia: input.includePrimaryMedia }, createdAt: now
+    payload: { title: input.title, description: input.description, url: input.url, creatorName: input.creatorName, kind: input.kind, imageUrl: input.imageUrl, preset, includePrimaryMedia: input.includePrimaryMedia, announcement }, createdAt: now
   };
   await store.createCommunityEvent(event);
   for (const destination of destinations) {
@@ -230,10 +227,15 @@ export const queueDiscordWorksPublished = async (
     .filter((destination) => destination.provider === 'discord' && destination.status === 'active' && (destination.eventTypes.includes('works_published') || destination.eventTypes.includes('work_published')));
   if (!destinations.length || await store.getCommunityEventByIdempotency(config.tenantId, input.idempotencyKey)) return;
   const now = new Date().toISOString();
+  const preset = input.preset || 'bulk_publish';
+  const announcement = createAnnouncementPublication({
+    tenantId: config.tenantId, creatorIdentityId: input.creatorIdentityId, provider: 'discord', preset,
+    subject: { type: 'bulk_publish', ids: input.works.map((work) => work.workId) }, idempotencyKey: announcementIdempotencyKey('discord', input.creatorIdentityId, preset, input.works.map((work) => work.workId)), now
+  });
   const event: CommunityEvent = {
     communityEventId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId,
     type: 'works_published', idempotencyKey: input.idempotencyKey,
-    payload: { creatorName: input.creatorName, works: input.works, preset: input.preset || 'collection_digest', includePrimaryMedia: input.includePrimaryMedia }, createdAt: now
+    payload: { creatorName: input.creatorName, works: input.works, preset, includePrimaryMedia: input.includePrimaryMedia, announcement }, createdAt: now
   };
   await store.createCommunityEvent(event);
   for (const destination of destinations) {

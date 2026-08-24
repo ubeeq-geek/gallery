@@ -77,4 +77,14 @@ describe('Instagram provider adapter', () => {
     expect(String(calls[0][1].body)).toContain('video_url=https%3A%2F%2Fdelivery.test%2Fvideo');
     expect(String(calls[0][1].body)).not.toContain('image_url');
   });
+  it('writes the AI label only to a supported parent container and imports it back', async () => {
+    const request = jest.fn()
+      .mockImplementationOnce(() => response({ id: 'parent' }))
+      .mockImplementationOnce(() => response({ id: 'media-1', is_ai_generated: true }));
+    const provider = new InstagramProvider(config, request as typeof fetch);
+    await provider.createContainer('token', 'ig-1', { placement: 'CAROUSEL', mediaUrl: 'https://delivery.test/parent', children: ['child'], aiGeneratedDisclosure: true });
+    expect(String(request.mock.calls[0][1].body)).toContain('is_ai_generated=true');
+    await expect(provider.getMedia('token', 'media-1')).resolves.toMatchObject({ aiGeneratedLabel: true });
+    await expect(provider.createContainer('token', 'ig-1', { placement: 'IMAGE', mediaUrl: 'https://delivery.test/child', carouselItem: true, aiGeneratedDisclosure: true })).rejects.toThrow('carousel parent');
+  });
 });
