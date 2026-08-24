@@ -3,10 +3,16 @@ import { loadConfig } from './config';
 import { createApp } from './app';
 import { DynamoStore } from './dynamoStore';
 import { runAdminBootstrap } from './adminBootstrap';
+import { DynamoSupportSafetyRepository } from './supportSafetyRepository';
 
 const config = loadConfig();
 const store = new DynamoStore(config);
-const app = createApp({ config, store, tumblrRepository: store.tumblrRepository });
+const app = createApp({
+  config,
+  store,
+  tumblrRepository: store.tumblrRepository,
+  supportSafetyRepository: DynamoSupportSafetyRepository.fromConfig(config)
+});
 const bootstrapPromise = runAdminBootstrap(config);
 
 const appHandler = serverless(app);

@@ -112,6 +112,9 @@ import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getD
 import { registerTumblrRoutes } from './tumblrRoutes';
 import { InMemoryTumblrRepository, type TumblrRepository } from './tumblrRepository';
 import { createTumblrPublishQueue, type TumblrPublishQueue } from './tumblrPublishQueue';
+import { createSupportRouter } from './supportRoutes';
+import { SupportSafetyService } from './supportSafety';
+import type { SupportSafetyRepository } from './supportSafetyRepository';
 
 interface CreateAppOptions {
   config: AppConfig;
@@ -120,6 +123,7 @@ interface CreateAppOptions {
   communityDeliveryQueue?: CommunityDeliveryQueue;
   tumblrRepository?: TumblrRepository;
   tumblrPublishQueue?: TumblrPublishQueue;
+  supportSafetyRepository?: SupportSafetyRepository;
 }
 
 let hasHandledInvocation = false;
@@ -957,7 +961,15 @@ const parsePassthroughCursor = (token?: string): string | undefined => {
 const encodePassthroughCursor = (value: string): string =>
   encodeCursorToken({ v: 1, type: 'passthrough', value });
 
-export const createApp = ({ config, store, externalSyncQueue: injectedExternalSyncQueue, communityDeliveryQueue: injectedCommunityDeliveryQueue, tumblrRepository: injectedTumblrRepository, tumblrPublishQueue: injectedTumblrPublishQueue }: CreateAppOptions) => {
+export const createApp = ({
+  config,
+  store,
+  externalSyncQueue: injectedExternalSyncQueue,
+  communityDeliveryQueue: injectedCommunityDeliveryQueue,
+  tumblrRepository: injectedTumblrRepository,
+  tumblrPublishQueue: injectedTumblrPublishQueue,
+  supportSafetyRepository
+}: CreateAppOptions) => {
   const brand = brandForConfig(config);
   const app = express();
   const s3Client = new S3Client({ region: config.awsRegion });
@@ -967,6 +979,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   const communityDeliveryQueue = injectedCommunityDeliveryQueue || createCommunityDeliveryQueue(config);
   const tumblrRepository = injectedTumblrRepository || new InMemoryTumblrRepository();
   const tumblrPublishQueue = injectedTumblrPublishQueue || createTumblrPublishQueue(config);
+  const supportSafetyService = new SupportSafetyService(supportSafetyRepository);
   const mediaCdnDomain = (config.mediaCdnDomain || '')
     .trim()
     .replace(/^https?:\/\//i, '')
@@ -2603,6 +2616,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     publishQueue: tumblrPublishQueue,
     audit: auditLog
   });
+  app.use('/support', createSupportRouter(supportSafetyService));
   if (config.localMediaDirectory) app.use('/media/local', express.static(config.localMediaDirectory));
 
   const resolvePlatformRole = async (userId: string): Promise<PlatformRole> => {
@@ -2814,7 +2828,24 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return previewRequested && previewAllowed;
   };
 
+  const creatorSafetyTargets = async (creatorId: string) => {
+    const [members, externalAccounts] = await Promise.all([
+      store.listCreatorMembers(creatorId),
+      store.listExternalAccountsByCreatorIdentity(creatorId)
+    ]);
+    return [
+      { type: 'creator' as const, id: creatorId },
+      ...members.flatMap((member) => [
+        { type: 'user' as const, id: member.userId },
+        { type: 'account' as const, id: member.userId }
+      ]),
+      ...externalAccounts.map((account) => ({ type: 'account' as const, id: account.externalAccountId }))
+    ];
+  };
+
   const canAccessCreatorSpace = async (req: express.Request, creator: Creator): Promise<boolean> => {
+    const holdDecision = await supportSafetyService.accessPolicy(await creatorSafetyTargets(creator.creatorId));
+    if (!holdDecision.public) return false;
     const visibility = creator.space?.visibility || 'public-discoverable';
     if (visibility !== 'private') return true;
     if (req.authUser?.userId && await store.hasCreatorAccess(req.authUser.userId, creator.creatorId)) return true;
@@ -2826,13 +2857,34 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return Boolean(shareCode) && String(req.query.access || '') === shareCode;
   };
 
+  const workIsPubliclyAvailable = async (work: Work): Promise<boolean> => {
+    const assets = await store.listCanonicalAssetsByWork(work.tenantId, work.workId);
+    const decision = await supportSafetyService.accessPolicy([
+      ...await creatorSafetyTargets(work.creatorId),
+      { type: 'work', id: work.workId },
+      ...assets.map((asset) => ({ type: 'asset' as const, id: asset.assetId }))
+    ]);
+    return decision.public;
+  };
+
+  const ensureWorkPublicationAllowed = async (work: Work, res: express.Response): Promise<boolean> => {
+    if (await workIsPubliclyAvailable(work)) return true;
+    res.status(423).json({ message: 'Publishing is unavailable while a review hold is active.' });
+    return false;
+  };
+
   app.get('/creators', async (req, res) => {
-    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120');
+    // Do not let intermediary caches preserve creator pages after an immediate
+    // creator/account safety hold.
+    res.setHeader('Cache-Control', 'private, no-store');
     try {
       const result = await getDiscoveryCached(req, 'discovery:creators', async () => {
         const creators = await store.listCreators();
-        const active = creators
-          .filter((creator) => creator.status === 'active' && (creator.space?.visibility || 'public-discoverable') === 'public-discoverable')
+        const eligible = creators.filter((creator) => creator.status === 'active' && (creator.space?.visibility || 'public-discoverable') === 'public-discoverable');
+        const active = (await Promise.all(eligible.map(async (creator) => ({
+          creator,
+          available: (await supportSafetyService.accessPolicy(await creatorSafetyTargets(creator.creatorId))).public
+        })))).filter(({ available }) => available).map(({ creator }) => creator)
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         return Promise.all(active.map(async (creator) => {
           const creatorGroupings = (await store.listGroupingsByCreatorSlug(creator.slug))
@@ -2855,7 +2907,13 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         }));
       });
       res.setHeader('x-discovery-cache', result.cacheStatus);
-      const payload = result.payload;
+      // Holds must take effect immediately even when discovery data was built
+      // before the hold. Re-check every cached creator at response time.
+      const cachedPayload = Array.isArray(result.payload) ? result.payload as Creator[] : [];
+      const payload = (await Promise.all(cachedPayload.map(async (creator) => ({
+        creator,
+        available: (await supportSafetyService.accessPolicy(await creatorSafetyTargets(creator.creatorId))).public
+      })))).filter(({ available }) => available).map(({ creator }) => creator);
       res.json(payload);
     } catch (error) {
       logServerError('GET /creators', error);
@@ -3044,8 +3102,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const works = await listWorksForPublicCreator(creator.creatorId);
     const visible = (await Promise.all(works.map(async (work) => ({
       work,
-      space: await eversallyPublicationForWork(work)
-    })))).filter(({ work, space }) => work.status !== 'archived' && work.status !== 'deleted' && space?.status === 'live' && space.visibility === 'public');
+      space: await eversallyPublicationForWork(work),
+      holdAvailable: await workIsPubliclyAvailable(work)
+    })))).filter(({ work, space, holdAvailable }) => holdAvailable && work.status !== 'archived' && work.status !== 'deleted' && space?.status === 'live' && space.visibility === 'public');
     const origin = `${req.protocol}://${req.get('host')}`;
     return res.json({ creator: await publicCanonicalCreator(creator, origin), items: await Promise.all(visible.map(({ work }) => publicCanonicalWork(work, origin))) });
   });
@@ -3056,6 +3115,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const workSlug = String(req.params.workSlug || '').trim().toLowerCase();
     const work = (await listWorksForPublicCreator(creator.creatorId)).find((item) => item.slug === workSlug || item.slugHistory.includes(workSlug));
     if (!work || work.status === 'deleted') return res.status(404).json({ message: 'Work not found' });
+    if (!(await workIsPubliclyAvailable(work))) return res.status(404).json({ message: 'Work not found' });
     const canManage = isLocalCreatorPreview(req)
       || (req.authUser?.userId ? await store.hasCreatorAccess(req.authUser.userId, creator.creatorId) : false);
     if (!canManage && work.status === 'archived') return res.status(404).json({ message: 'Work not found' });
@@ -3096,7 +3156,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const works = (await Promise.all(memberships.map((membership) => store.getWork(config.tenantId, membership.workId))))
       .filter((work): work is Work => Boolean(work));
     const origin = `${req.protocol}://${req.get('host')}`;
-    const visibleWorks = canManage ? works : (await Promise.all(works.map(async (work) => ({
+    const holdFilteredWorks = (await Promise.all(works.map(async (work) => ({ work, available: await workIsPubliclyAvailable(work) })))).filter(({ available }) => available).map(({ work }) => work);
+    const visibleWorks = canManage ? holdFilteredWorks : (await Promise.all(holdFilteredWorks.map(async (work) => ({
       work,
       space: await eversallyPublicationForWork(work)
     })))).filter(({ work, space }) => work.status !== 'archived' && work.status !== 'deleted' && space?.status === 'live' && space.visibility === 'public').map(({ work }) => work);
@@ -3114,10 +3175,12 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const works = await listWorksForPublicCreator(creator.creatorId);
     const visible = await Promise.all(works.map(async (work) => ({
       work,
-      publication: await eversallyPublicationForWork(work)
+      publication: await eversallyPublicationForWork(work),
+      holdAvailable: await workIsPubliclyAvailable(work)
     })));
     return visible
-      .filter(({ work, publication }) => work.status !== 'archived'
+      .filter(({ work, publication, holdAvailable }) => holdAvailable
+        && work.status !== 'archived'
         && work.status !== 'deleted'
         && publication?.status === 'live'
         && publication.visibility === 'public')
@@ -3131,7 +3194,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.get('/creators/:slug/rss.xml', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
     const creator = await resolveCreatorFromSlug(requestedSlug);
-    if (!creator || creator.status !== 'active') return res.status(404).type('text/plain').send('Creator not found');
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) return res.status(404).type('text/plain').send('Creator not found');
     if (creator.slug !== requestedSlug) return res.redirect(302, `/creators/${creator.slug}/rss.xml`);
     const baseUrl = canonicalSpaceBaseUrl(creator);
     const feedUrl = `${baseUrl}/rss.xml`;
@@ -3144,14 +3207,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       const summary = work.description || (work.body || []).map((block) => block.text || block.quote || '').filter(Boolean).join('\n\n');
       return `<item>\n<title>${xmlEscape(work.title)}</title>\n<link>${xmlEscape(url)}</link>\n<guid isPermaLink="false">urn:ubeeq:work:${xmlEscape(work.workId)}</guid>\n<pubDate>${new Date(work.publishedAt || work.updatedAt).toUTCString()}</pubDate>\n<description>${xmlEscape(summary)}</description>${preview ? `\n<media:content url="${xmlEscape(preview)}" medium="image" />` : ''}\n</item>`;
     }).join('\n')}\n</channel>\n</rss>`;
-    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300');
+    res.setHeader('Cache-Control', 'private, no-store');
     return res.type('application/rss+xml').send(xml);
   });
 
   app.get('/creators/:slug/atom.xml', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
     const creator = await resolveCreatorFromSlug(requestedSlug);
-    if (!creator || creator.status !== 'active') return res.status(404).type('text/plain').send('Creator not found');
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) return res.status(404).type('text/plain').send('Creator not found');
     if (creator.slug !== requestedSlug) return res.redirect(302, `/creators/${creator.slug}/atom.xml`);
     const baseUrl = canonicalSpaceBaseUrl(creator);
     const feedUrl = `${baseUrl}/atom.xml`;
@@ -3164,7 +3227,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       const summary = work.description || (work.body || []).map((block) => block.text || block.quote || '').filter(Boolean).join('\n\n');
       return `<entry>\n<title>${xmlEscape(work.title)}</title>\n<id>urn:ubeeq:work:${xmlEscape(work.workId)}</id>\n<link href="${xmlEscape(url)}" />\n<published>${xmlEscape(new Date(work.publishedAt || work.updatedAt).toISOString())}</published>\n<updated>${xmlEscape(new Date(work.updatedAt).toISOString())}</updated>\n<summary type="text">${xmlEscape(summary)}</summary>\n</entry>`;
     }).join('\n')}\n</feed>`;
-    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300');
+    res.setHeader('Cache-Control', 'private, no-store');
     return res.type('application/atom+xml').send(xml);
   });
 
@@ -6696,6 +6759,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.post('/studio/works/:workId/destinations/deviantart/literature', requireAuth, async (req, res) => {
     const context = await resolveNativeDeviantArtContext(req, res);
     if (!context) return;
+    if (!(await ensureWorkPublicationAllowed(context.work, res))) return;
     const content: ExternalLiteraturePublish = {
       title: sanitizeOptional(req.body?.title, 300) || context.work.title,
       body: sanitizeOptional(req.body?.body, 200_000) || canonicalWorkBodyText(context.work),
@@ -6757,6 +6821,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.post('/studio/works/:workId/destinations/deviantart/journal', requireAuth, async (req, res) => {
     const context = await resolveNativeDeviantArtContext(req, res);
     if (!context) return;
+    if (!(await ensureWorkPublicationAllowed(context.work, res))) return;
     const content: ExternalJournalPublish = {
       title: sanitizeOptional(req.body?.title, 300) || context.work.title,
       body: sanitizeOptional(req.body?.body, 200_000) || context.work.description || '',
@@ -6787,6 +6852,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.post('/studio/works/:workId/destinations/deviantart/status', requireAuth, async (req, res) => {
     const context = await resolveNativeDeviantArtContext(req, res);
     if (!context) return;
+    if (!(await ensureWorkPublicationAllowed(context.work, res))) return;
     const content: ExternalStatusPublish = {
       body: sanitizeOptional(req.body?.body, 10_000) || '',
       parentExternalId: sanitizeOptional(req.body?.parentExternalId, 100),
@@ -7612,6 +7678,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
     if (!work) return res.status(404).json({ message: 'Work not found' });
     if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    if (!(await ensureWorkPublicationAllowed(work, res))) return;
     if (!asset) {
       const now = new Date().toISOString();
       asset = {
@@ -7894,6 +7961,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const work = await store.getWork(config.tenantId, req.params.assetId);
     if (!work) return res.status(404).json({ message: 'Work not found' });
     if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    if (!(await ensureWorkPublicationAllowed(work, res))) return;
     const asset = await store.getAsset(work.workId);
     if (!asset) return res.status(404).json({ message: 'Work destination compatibility record not found' });
     const publication = (await store.listExternalPublications(req.params.externalAccountId))
@@ -8082,6 +8150,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
     const existing = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'eversally');
     const shouldPublish = req.body?.published !== false;
+    if (shouldPublish && !(await ensureWorkPublicationAllowed(work, res))) return;
     const visibility = req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' ? req.body.visibility : 'private';
     const newlyPublicInSpace = shouldPublish && visibility === 'public' && !(existing?.status === 'live' && existing.visibility === 'public');
     const now = new Date().toISOString();
@@ -8364,6 +8433,10 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
     const creator = (await store.listCreators()).find((item) => item.creatorId === creatorId);
     if (!creator) return res.status(404).json({ message: 'Creator not found.' });
+    const creatorExportDecision = await supportSafetyService.accessPolicy(await creatorSafetyTargets(creatorId));
+    if (!creatorExportDecision.export) {
+      return res.status(423).json({ message: 'Creator export is unavailable while restricted safety review is active.' });
+    }
 
     const works = await store.listWorksByCreator(config.tenantId, creatorId);
     const collections = await store.listCreatorCollections(config.tenantId, creatorId);
@@ -8376,13 +8449,21 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
           store.listPublicationIntentsByWork(config.tenantId, work.workId),
           store.getWorkDiscoveryParticipation(config.tenantId, work.workId)
         ]);
-        return { work, assets, publications, publicationIntents, discovery };
+        const workDecision = await supportSafetyService.accessPolicy([{ type: 'work', id: work.workId }]);
+        if (!workDecision.export) return null;
+        const exportableAssets = (await Promise.all(assets.map(async (asset) => ({
+          asset,
+          decision: await supportSafetyService.accessPolicy([{ type: 'asset', id: asset.assetId }])
+        })))).filter(({ decision }) => decision.export).map(({ asset }) => asset);
+        return { work, assets: exportableAssets, publications, publicationIntents, discovery };
       })),
       Promise.all(collections.map(async (collection) => ({
         collection,
         works: await store.listCollectionWorks(config.tenantId, collection.collectionId)
       })))
     ]);
+    const exportableWorkRecords = workRecords.filter((record): record is NonNullable<typeof record> => Boolean(record));
+    const exportableWorkIds = new Set(exportableWorkRecords.map(({ work }) => work.workId));
     const generatedAt = new Date().toISOString();
     const manifest = {
       schema: 'https://ubeeq.site/schemas/creator-export/v1',
@@ -8393,8 +8474,11 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         tenantId: config.tenantId
       },
       creator,
-      works: workRecords,
-      collections: collectionRecords,
+      works: exportableWorkRecords,
+      collections: collectionRecords.map(({ collection, works: memberships }) => ({
+        collection,
+        works: memberships.filter((membership) => exportableWorkIds.has(membership.workId))
+      })),
       integrationAccounts: integrationAccounts.map(toExternalAccountResponse)
     };
     const filename = `${slugify(creator.slug || creator.name)}-ubeeq-export-${generatedAt.slice(0, 10)}.json`;
