@@ -74,6 +74,12 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     capabilities: ['connect'],
     credentialCustody: 'isolated_broker'
   },
+  patreon: {
+    platform: 'patreon',
+    label: 'Patreon',
+    capabilities: ['connect', 'catalogue_import', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
   discord: {
     platform: 'discord',
     label: 'Discord',
