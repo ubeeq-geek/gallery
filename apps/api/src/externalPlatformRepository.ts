@@ -200,6 +200,34 @@ export class ExternalPlatformRepository {
     await this.createExternalAccount(account);
   }
 
+  async acquireExternalAccountRefreshLease(externalAccountId: string, leaseId: string, expiresAtEpochSeconds: number): Promise<boolean> {
+    try {
+      await this.client.send(new PutCommand({
+        TableName: this.tableName,
+        Item: { PK: `EXTERNAL_ACCOUNT#${externalAccountId}`, SK: 'TOKEN_REFRESH_LEASE', entityType: 'EXTERNAL_ACCOUNT_REFRESH_LEASE', leaseId, expiresAt: expiresAtEpochSeconds },
+        ConditionExpression: 'attribute_not_exists(PK) OR expiresAt < :now',
+        ExpressionAttributeValues: { ':now': Math.floor(Date.now() / 1000) }
+      }));
+      return true;
+    } catch (error) {
+      if (error && typeof error === 'object' && (error as { name?: string }).name === 'ConditionalCheckFailedException') return false;
+      throw error;
+    }
+  }
+
+  async releaseExternalAccountRefreshLease(externalAccountId: string, leaseId: string): Promise<void> {
+    try {
+      await this.client.send(new DeleteCommand({
+        TableName: this.tableName,
+        Key: { PK: `EXTERNAL_ACCOUNT#${externalAccountId}`, SK: 'TOKEN_REFRESH_LEASE' },
+        ConditionExpression: 'leaseId = :leaseId',
+        ExpressionAttributeValues: { ':leaseId': leaseId }
+      }));
+    } catch (error) {
+      if (!error || typeof error !== 'object' || (error as { name?: string }).name !== 'ConditionalCheckFailedException') throw error;
+    }
+  }
+
   async getExternalAccountProfile(externalAccountId: string): Promise<ExternalAccountProfile | null> {
     return this.get(`EXTERNAL_ACCOUNT#${externalAccountId}`, 'PROFILE#CURRENT');
   }
@@ -280,12 +308,12 @@ export class ExternalPlatformRepository {
   }
 
   async listExternalAccountsForScheduledScan(limit = 100): Promise<ExternalAccount[]> {
-    const schedule = await this.listByPartition<{ externalAccountId: string }>(
-      'EXTERNAL_ACCOUNT_SCHEDULE#deviantart',
+    const schedule = (await Promise.all(['deviantart', 'soundcloud'].map((platform) => this.listByPartition<{ externalAccountId: string }>(
+      `EXTERNAL_ACCOUNT_SCHEDULE#${platform}`,
       'ACCOUNT#',
       'EXTERNAL_ACCOUNT_SCHEDULE',
       limit
-    );
+    )))).flat().slice(0, limit);
     const accounts = await Promise.all(schedule.map((item) => this.getExternalAccount(item.externalAccountId)));
     return accounts.filter((account): account is ExternalAccount => Boolean(account));
   }
