@@ -1,4 +1,4 @@
-import { recordRemotePublicationState, schedulePublicationRetry } from '../src/integrationSync';
+import { recordExternalPublicationLifecycle, recordRemotePublicationState, schedulePublicationRetry } from '../src/integrationSync';
 import type { Publication } from '../src/canonicalDomain';
 
 const publication: Publication = {
@@ -18,5 +18,10 @@ describe('shared integration synchronization contract', () => {
     const first = schedulePublicationRetry(publication, { idempotencyKey: 'key-1', accountCooldownUntil: '2026-08-24T02:00:00.000Z' });
     const retry = schedulePublicationRetry(first, { idempotencyKey: 'different-key' });
     expect(retry.sync.retry).toEqual(expect.objectContaining({ idempotencyKey: 'key-1', attempt: 2, accountCooldownUntil: '2026-08-24T02:00:00.000Z' }));
+  });
+
+  it('uses the same lifecycle vocabulary for a DeviantArt-style external publication', () => {
+    const external = recordExternalPublicationLifecycle({ externalPublicationId: 'external', assetId: 'asset', externalAccountId: 'account', platform: 'deviantart', externalContentId: 'remote', syncStatus: 'active', rawMetadataJson: {}, createdAt: '2026-08-24T00:00:00.000Z', updatedAt: '2026-08-24T00:00:00.000Z' }, 'restricted', { reason: 'Subscriber-only' });
+    expect(external).toMatchObject({ syncStatus: 'restricted', remoteStateReason: 'Subscriber-only' });
   });
 });

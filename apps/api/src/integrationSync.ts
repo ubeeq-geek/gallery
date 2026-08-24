@@ -1,4 +1,5 @@
 import type { Publication, PublicationStatus, PublicationSyncStatus } from './canonicalDomain';
+import type { ExternalPublication, ExternalPublicationSyncStatus } from './domain';
 
 export type RemotePublicationState = 'active' | 'missing' | 'restricted' | 'deleted' | 'unknown';
 
@@ -47,4 +48,20 @@ export const schedulePublicationRetry = (publication: Publication, input: { idem
     }
   },
   updatedAt: input.now || new Date().toISOString()
+});
+
+export const externalSyncStatusForRemoteState = (state: RemotePublicationState): ExternalPublicationSyncStatus =>
+  state === 'active' ? 'active' : state === 'deleted' ? 'deleted' : state === 'restricted' ? 'restricted' : state === 'missing' ? 'missing' : 'unknown';
+
+/** Reusable lifecycle transition used by DeviantArt scans and future adapters. */
+export const recordExternalPublicationLifecycle = (
+  publication: ExternalPublication,
+  state: RemotePublicationState,
+  input: { observedAt?: string; reason?: string }
+): ExternalPublication => ({
+  ...publication,
+  syncStatus: externalSyncStatusForRemoteState(state),
+  remoteStateReason: input.reason || publication.remoteStateReason,
+  lastSyncedAt: input.observedAt || new Date().toISOString(),
+  updatedAt: input.observedAt || new Date().toISOString()
 });

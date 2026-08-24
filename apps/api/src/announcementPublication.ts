@@ -23,9 +23,9 @@ export const announcementPresetOptions: Array<{ id: AnnouncementPresetId; label:
 const presetIds = new Set(announcementPresetOptions.map((preset) => preset.id));
 export const isAnnouncementPreset = (value: unknown): value is AnnouncementPresetId => typeof value === 'string' && presetIds.has(value as AnnouncementPresetId);
 
-export const createAnnouncementPublication = (input: Omit<AnnouncementPublication, 'announcementPublicationId' | 'status' | 'createdAt' | 'updatedAt'> & { now?: string }): AnnouncementPublication => {
+export const createAnnouncementPublication = (input: Omit<AnnouncementPublication, 'announcementPublicationId' | 'status' | 'attemptCount' | 'createdAt' | 'updatedAt'> & { status?: AnnouncementPublication['status']; now?: string }): AnnouncementPublication => {
   const now = input.now || new Date().toISOString();
-  return { ...input, announcementPublicationId: randomUUID(), status: 'queued', createdAt: now, updatedAt: now };
+  return { ...input, announcementPublicationId: randomUUID(), status: input.status || 'queued', attemptCount: 0, createdAt: now, updatedAt: now };
 };
 
 /** Both Discord and Bluesky announcement adapters use this shape, never Publication. */

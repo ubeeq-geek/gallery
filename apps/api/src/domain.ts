@@ -1173,12 +1173,17 @@ export type CommunityDeliveryStatus = 'queued' | 'sending' | 'sent' | 'retry_sch
 export interface AnnouncementPublication {
   announcementPublicationId: string;
   tenantId: string;
+  userId: string;
   creatorIdentityId: string;
   provider: CommunityProvider;
   preset: AnnouncementPresetId;
   subject: { type: 'work' | 'gallery' | 'collection' | 'story_chapter' | 'video' | 'album' | 'bulk_publish'; ids: string[] };
-  status: CommunityDeliveryStatus;
+  /** A draft can be prepared even when a provider delivery adapter is not enabled. */
+  status: 'draft' | CommunityDeliveryStatus;
   idempotencyKey: string;
+  payload: Record<string, unknown>;
+  destinationId?: string;
+  attemptCount: number;
   remoteId?: string;
   remoteUrl?: string;
   scheduledAt?: string;
@@ -1228,6 +1233,7 @@ export interface CommunityEvent {
   type: CommunityEventType;
   idempotencyKey: string;
   payload: Record<string, unknown>;
+  announcementPublicationId?: string;
   createdAt: string;
 }
 

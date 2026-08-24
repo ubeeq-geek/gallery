@@ -1,6 +1,6 @@
 import { DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { CommunityDelivery, CommunityDestination, CommunityEvent, CommunityInstallation } from './domain';
+import type { AnnouncementPublication, CommunityDelivery, CommunityDestination, CommunityEvent, CommunityInstallation } from './domain';
 
 const clean = <T>(item: Record<string, unknown>): T => {
   const value = { ...item };
@@ -174,6 +174,33 @@ export class CommunityRepository {
       GSI2SK: `DELIVERY#${delivery.updatedAt}#${delivery.communityDeliveryId}`,
       entityType: 'COMMUNITY_DELIVERY',
       ...delivery
+    });
+  }
+
+  async getAnnouncementPublication(announcementPublicationId: string): Promise<AnnouncementPublication | null> {
+    const result = await this.list<AnnouncementPublication>('GSI1', `ANNOUNCEMENT#${announcementPublicationId}`, 'PROFILE', 'ANNOUNCEMENT_PUBLICATION', 1);
+    return result[0] || null;
+  }
+
+  async getAnnouncementPublicationByIdempotency(tenantId: string, idempotencyKey: string): Promise<AnnouncementPublication | null> {
+    return this.get<AnnouncementPublication>(`TENANT#${tenantId}#ANNOUNCEMENT_KEY#${idempotencyKey}`, 'PROFILE');
+  }
+
+  async listAnnouncementPublicationsByCreator(creatorIdentityId: string, limit = 100): Promise<AnnouncementPublication[]> {
+    return (await this.list<AnnouncementPublication>('GSI2', `ANNOUNCEMENT_CREATOR#${creatorIdentityId}`, 'ANNOUNCEMENT#', 'ANNOUNCEMENT_PUBLICATION', limit))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async upsertAnnouncementPublication(publication: AnnouncementPublication): Promise<void> {
+    await this.put({
+      PK: `TENANT#${publication.tenantId}#ANNOUNCEMENT_KEY#${publication.idempotencyKey}`,
+      SK: 'PROFILE',
+      GSI1PK: `ANNOUNCEMENT#${publication.announcementPublicationId}`,
+      GSI1SK: 'PROFILE',
+      GSI2PK: `ANNOUNCEMENT_CREATOR#${publication.creatorIdentityId}`,
+      GSI2SK: `ANNOUNCEMENT#${publication.updatedAt}#${publication.announcementPublicationId}`,
+      entityType: 'ANNOUNCEMENT_PUBLICATION',
+      ...publication
     });
   }
 }

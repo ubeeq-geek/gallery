@@ -22,7 +22,7 @@ import { INSTAGRAM_PILOT_INSIGHT_METRICS, INSTAGRAM_PILOT_MEDIA_CONSTRAINTS, ins
 import { InstagramProviderError } from './instagramProvider';
 import { instagramDisclosureSnapshot, parseAiProvenance, parseAiTrainingPreference, requiresInstagramCarouselDisclosureChoice } from './aiProvenance';
 import { integrationCapabilities } from './integrationCapabilities';
-import { isAnnouncementPreset } from './announcementPublication';
+import { announcementIdempotencyKey, createAnnouncementPublication, isAnnouncementPreset } from './announcementPublication';
 import { recordRemotePublicationState } from './integrationSync';
 import { issueInstagramOAuthState, verifyInstagramOAuthState } from './externalOAuth';
 import { evaluateInstagramEligibility, instagramIdempotencyKey, instagramPublishingLimitAvailable, issueInstagramDeliveryCapability, validateInstagramMedia, verifyInstagramDeliveryCapability, verifyInstagramWebhookSignature, type InstagramCapabilities, type InstagramPlacement } from './instagramIntegration';
@@ -6071,6 +6071,40 @@ export const createApp = ({
     return res.json(accounts
       .filter((account) => account.platform === 'bluesky' && account.connectionStatus !== 'disabled')
       .map(toExternalAccountResponse));
+  });
+
+  // A Bluesky announcement is deliberately durable but remains a draft until
+  // the managed OAuth service exposes a posting operation. It is not a Work
+  // Publication and therefore cannot alter canonical content-host state.
+  app.post('/studio/integrations/bluesky/announcements', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const account = (await store.listExternalAccountsByCreatorIdentity(creatorIdentityId)).find((item) => item.platform === 'bluesky' && item.userId === req.authUser!.userId && item.connectionStatus === 'connected');
+    if (!account) return res.status(409).json({ code: 'CONNECTION_REQUIRED', message: 'Connect a Bluesky account before preparing an announcement.' });
+    const type = ['work', 'gallery', 'collection', 'story_chapter', 'video', 'album', 'bulk_publish'].includes(req.body?.subject?.type)
+      ? req.body.subject.type as 'work' | 'gallery' | 'collection' | 'story_chapter' | 'video' | 'album' | 'bulk_publish'
+      : undefined;
+    const ids = Array.isArray(req.body?.subject?.ids) ? req.body.subject.ids.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0) : [];
+    if (!type || !ids.length) return res.status(422).json({ message: 'Choose an announcement subject and at least one source id.' });
+    const preset = isAnnouncementPreset(req.body?.preset) ? req.body.preset : type === 'work' ? 'single_work' : type;
+    const idempotencyKey = announcementIdempotencyKey('bluesky', creatorIdentityId, preset, ids);
+    const existing = await store.getAnnouncementPublicationByIdempotency(config.tenantId, idempotencyKey);
+    if (existing) return res.json({ announcement: existing, idempotentReplay: true });
+    const announcement = createAnnouncementPublication({
+      tenantId: config.tenantId, userId: req.authUser!.userId, creatorIdentityId, provider: 'bluesky', preset,
+      subject: { type, ids }, payload: { title: sanitizeOptional(req.body?.title, 300), text: sanitizeOptional(req.body?.text, 3_000), url: sanitizeOptional(req.body?.url, 2_000), accountId: account.externalAccountId },
+      idempotencyKey, status: 'draft'
+    });
+    await store.upsertAnnouncementPublication(announcement);
+    auditLog(req, 'bluesky.announcement.draft.created', { announcementPublicationId: announcement.announcementPublicationId, creatorIdentityId, preset, subject: type });
+    return res.status(201).json({ announcement, deliveryAvailable: false });
+  });
+
+  app.get('/studio/announcements', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const items = (await store.listAnnouncementPublicationsByCreator(creatorIdentityId, 100)).filter((item) => item.userId === req.authUser!.userId);
+    return res.json({ items });
   });
 
   // Discord is a native community delivery integration.  It deliberately does

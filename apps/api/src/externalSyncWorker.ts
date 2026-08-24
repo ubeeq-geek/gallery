@@ -6,6 +6,7 @@ import { brandForConfig } from './brand';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
 import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation } from './integrationStandard';
 import { recordPublicationReconciliation } from './integrationReconciliation';
+import { recordExternalPublicationLifecycle, type RemotePublicationState } from './integrationSync';
 import { deliveryRetryDelaySeconds, shouldRetryIntegrationDelivery } from './integrationDelivery';
 import { createExternalPlatformProvider, DEVIANTART_METADATA_BATCH_SIZE, ExternalProviderError, type ExternalContentPublish, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteActivity, type ExternalRemoteComment, type ExternalRemoteContent, type ExternalRemoteEngagement } from './externalPlatformProvider';
 import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalCollection, ExternalCollectionMapping, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, IntegrationActivity, SpacePublication, UbeeqCollection, UbeeqCollectionAsset } from './domain';
@@ -1388,31 +1389,25 @@ const reconcilePublicationLifecycle = async (
   let restricted = 0;
   for (const publication of publications) {
     if (seenExternalContentIds.has(publication.externalContentId)) continue;
-    let syncStatus: ExternalPublication['syncStatus'] = 'missing';
+    let remoteState: RemotePublicationState = 'missing';
     let remoteStateReason = 'No longer present in the connected DeviantArt gallery';
     try {
       const remote = await provider.getContent(accessToken, publication.externalContentId);
       if (remote.remoteState === 'deleted') {
-        syncStatus = 'deleted';
+        remoteState = 'deleted';
         remoteStateReason = remote.remoteStateReason || 'Deleted on DeviantArt';
       } else if (remote.remoteState === 'restricted') {
-        syncStatus = 'restricted';
+        remoteState = 'restricted';
         remoteStateReason = remote.remoteStateReason || 'Restricted on DeviantArt';
       }
     } catch (error) {
       if (!(error instanceof ExternalProviderError) || error.code !== 'invalid_response') throw error;
       remoteStateReason = error.message;
     }
-    if (syncStatus === 'deleted') deleted += 1;
-    else if (syncStatus === 'restricted') restricted += 1;
+    if (remoteState === 'deleted') deleted += 1;
+    else if (remoteState === 'restricted') restricted += 1;
     else missing += 1;
-    const updatedPublication: ExternalPublication = {
-      ...publication,
-      syncStatus,
-      remoteStateReason,
-      lastSyncedAt: now,
-      updatedAt: now
-    };
+    const updatedPublication = recordExternalPublicationLifecycle(publication, remoteState, { observedAt: now, reason: remoteStateReason });
     await store.updateExternalPublication(updatedPublication);
     const work = await store.getWork(config.tenantId, publication.assetId);
     if (work) await syncCanonicalPublication(store, config, account, work, updatedPublication, now);

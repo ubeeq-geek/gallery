@@ -59,7 +59,8 @@ import type {
   CommunityInstallation,
   CommunityDestination,
   CommunityEvent,
-  CommunityDelivery
+  CommunityDelivery,
+  AnnouncementPublication
 } from './domain';
 import type { DataStore, TrendingFeedQueryOptions } from './store';
 import type { WordPressIntegrationState } from './wordpressIntegration';
@@ -163,6 +164,7 @@ export class InMemoryStore implements DataStore {
   communityDestinations: CommunityDestination[] = [];
   communityEvents: CommunityEvent[] = [];
   communityDeliveries: CommunityDelivery[] = [];
+  announcementPublications: AnnouncementPublication[] = [];
   idempotency: IdempotencyRecord[] = [];
   auditEvents: AuditEvent[] = [];
   works: Work[] = [];
@@ -1401,6 +1403,23 @@ export class InMemoryStore implements DataStore {
   async upsertCommunityDelivery(delivery: CommunityDelivery): Promise<void> {
     this.communityDeliveries = this.communityDeliveries.filter((item) => item.communityDeliveryId !== delivery.communityDeliveryId);
     this.communityDeliveries.push(delivery);
+  }
+
+  async getAnnouncementPublication(announcementPublicationId: string): Promise<AnnouncementPublication | null> {
+    return this.announcementPublications.find((item) => item.announcementPublicationId === announcementPublicationId) || null;
+  }
+
+  async getAnnouncementPublicationByIdempotency(tenantId: string, idempotencyKey: string): Promise<AnnouncementPublication | null> {
+    return this.announcementPublications.find((item) => item.tenantId === tenantId && item.idempotencyKey === idempotencyKey) || null;
+  }
+
+  async listAnnouncementPublicationsByCreator(creatorIdentityId: string, limit = 100): Promise<AnnouncementPublication[]> {
+    return this.announcementPublications.filter((item) => item.creatorIdentityId === creatorIdentityId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, limit);
+  }
+
+  async upsertAnnouncementPublication(publication: AnnouncementPublication): Promise<void> {
+    this.announcementPublications = this.announcementPublications.filter((item) => item.announcementPublicationId !== publication.announcementPublicationId);
+    this.announcementPublications.push(publication);
   }
 
   async getIdempotencyRecord(scopeKey: string, idempotencyKey: string): Promise<IdempotencyRecord | null> {

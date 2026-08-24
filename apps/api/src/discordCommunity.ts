@@ -196,13 +196,14 @@ export const queueDiscordWorkPublished = async (
   const now = new Date().toISOString();
   const preset = input.preset || 'single_work';
   const announcement = createAnnouncementPublication({
-    tenantId: config.tenantId, creatorIdentityId: input.creatorIdentityId, provider: 'discord', preset,
-    subject: { type: 'work', ids: [input.workId] }, idempotencyKey: announcementIdempotencyKey('discord', input.creatorIdentityId, preset, [input.workId]), now
+    tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId, provider: 'discord', preset,
+    subject: { type: 'work', ids: [input.workId] }, payload: { title: input.title, description: input.description, url: input.url, creatorName: input.creatorName, kind: input.kind, imageUrl: input.imageUrl, includePrimaryMedia: input.includePrimaryMedia }, idempotencyKey: announcementIdempotencyKey('discord', input.creatorIdentityId, preset, [input.workId]), now
   });
+  await store.upsertAnnouncementPublication(announcement);
   const event: CommunityEvent = {
     communityEventId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId,
     workId: input.workId, type: 'work_published', idempotencyKey: input.idempotencyKey,
-    payload: { title: input.title, description: input.description, url: input.url, creatorName: input.creatorName, kind: input.kind, imageUrl: input.imageUrl, preset, includePrimaryMedia: input.includePrimaryMedia, announcement }, createdAt: now
+    payload: { title: input.title, description: input.description, url: input.url, creatorName: input.creatorName, kind: input.kind, imageUrl: input.imageUrl, preset, includePrimaryMedia: input.includePrimaryMedia, announcement }, announcementPublicationId: announcement.announcementPublicationId, createdAt: now
   };
   await store.createCommunityEvent(event);
   for (const destination of destinations) {
@@ -229,13 +230,14 @@ export const queueDiscordWorksPublished = async (
   const now = new Date().toISOString();
   const preset = input.preset || 'bulk_publish';
   const announcement = createAnnouncementPublication({
-    tenantId: config.tenantId, creatorIdentityId: input.creatorIdentityId, provider: 'discord', preset,
-    subject: { type: 'bulk_publish', ids: input.works.map((work) => work.workId) }, idempotencyKey: announcementIdempotencyKey('discord', input.creatorIdentityId, preset, input.works.map((work) => work.workId)), now
+    tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId, provider: 'discord', preset,
+    subject: { type: 'bulk_publish', ids: input.works.map((work) => work.workId) }, payload: { creatorName: input.creatorName, works: input.works, includePrimaryMedia: input.includePrimaryMedia }, idempotencyKey: announcementIdempotencyKey('discord', input.creatorIdentityId, preset, input.works.map((work) => work.workId)), now
   });
+  await store.upsertAnnouncementPublication(announcement);
   const event: CommunityEvent = {
     communityEventId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId,
     type: 'works_published', idempotencyKey: input.idempotencyKey,
-    payload: { creatorName: input.creatorName, works: input.works, preset, includePrimaryMedia: input.includePrimaryMedia, announcement }, createdAt: now
+    payload: { creatorName: input.creatorName, works: input.works, preset, includePrimaryMedia: input.includePrimaryMedia, announcement }, announcementPublicationId: announcement.announcementPublicationId, createdAt: now
   };
   await store.createCommunityEvent(event);
   for (const destination of destinations) {
@@ -299,6 +301,10 @@ export const processDiscordDelivery = async (store: DataStore, config: AppConfig
     const announcement = renderDiscordAnnouncement(destination, event);
     const sent = await sendDiscordMessage(config, destination.remoteChannelId, announcement.content, announcement.embed);
     await store.upsertCommunityDelivery({ ...delivery, status: 'sent', attemptCount: delivery.attemptCount + 1, remoteMessageId: sent.id, sentAt: now, updatedAt: now, nextAttemptAt: undefined, errorCode: undefined, errorMessage: undefined });
+    if (event.announcementPublicationId) {
+      const publication = await store.getAnnouncementPublication(event.announcementPublicationId);
+      if (publication) await store.upsertAnnouncementPublication({ ...publication, status: 'sent', attemptCount: publication.attemptCount + 1, remoteId: sent.id, updatedAt: now });
+    }
   } catch (error) {
     const apiError = error instanceof DiscordApiError ? error : undefined;
     const attempts = delivery.attemptCount + 1;
@@ -317,6 +323,10 @@ export const processDiscordDelivery = async (store: DataStore, config: AppConfig
       errorCode: apiError ? `discord_${apiError.status}` : 'discord_delivery_error', errorMessage: error instanceof Error ? error.message : String(error), updatedAt: new Date().toISOString()
     };
     await store.upsertCommunityDelivery(failed);
+    if (event.announcementPublicationId) {
+      const publication = await store.getAnnouncementPublication(event.announcementPublicationId);
+      if (publication) await store.upsertAnnouncementPublication({ ...publication, status: failed.status === 'retry_scheduled' ? 'retry_scheduled' : 'failed', attemptCount: publication.attemptCount + 1, updatedAt: failed.updatedAt });
+    }
     // Missing-channel and permission responses generally mean the bot was
     // removed or lost access. Keep the destination record for diagnosis, but
     // stop automatic attempts until the Creator deliberately resumes it.
