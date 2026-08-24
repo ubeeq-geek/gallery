@@ -67,6 +67,9 @@ The API reads environment variables from the shell that starts it; it does **not
 | `EXTERNAL_CONTENT_MAX_BYTES` | `52428800` | Maximum downloaded external source-file size (50 MiB). |
 | `DEVIANTART_MIN_REQUEST_INTERVAL_MS` | `2000` | Minimum spacing between DeviantArt API requests. The conservative default caps a single worker at roughly 30 calls per minute before response time. |
 | `DEVIANTART_PUBLISHED_DESCRIPTION_UPDATE` | `true` | Enables supported published-description updates through retained Sta.sh IDs. |
+| `FLICKR_API_KEY` / `FLICKR_API_SECRET` | unset | Flickr OAuth 1.0a application credentials for creator-authorized catalogue migration. The secret remains server-side. |
+| `FLICKR_OAUTH_CALLBACK_URL` | unset | Registered callback for `/api/integrations/flickr/oauth/callback`. Flickr connections request read access only. |
+| `FLICKR_MIN_REQUEST_INTERVAL_MS` | `1000` | Minimum per-process spacing between Flickr API calls. Provider throttling also honors `Retry-After` with bounded retries. |
 | `COGNITO_USER_POOL_ID` / `COGNITO_CLIENT_ID` | unset / read from `apps/web/.env.local` when present | Local-header auth remains available without a pool ID. For real local account testing, set `VITE_COGNITO_USER_POOL_ID` and `VITE_COGNITO_CLIENT_ID`; the paired launcher copies both values to the API so each Cognito user receives their own local profile. |
 | `BLUESKY_OAUTH_CLIENT_METADATA_URL` / `BLUESKY_OAUTH_CALLBACK_URL` | unset | Public HTTPS URLs for the AT Protocol OAuth client metadata and API callback. These cannot use a plain local host. |
 | `BLUESKY_OAUTH_JWKS_JSON` | unset | Public JWKS JSON advertised to Bluesky. Never include private JWK fields here. |
@@ -82,6 +85,18 @@ The API reads environment variables from the shell that starts it; it does **not
 | `YOUTUBE_OAUTH_REDIRECT_URI` | `https://fanadmin.top:4000/integrations/youtube/callback` | Register this exact redirect URI in Google Cloud. The Ubeeq local API uses port `4001`. |
 | `YOUTUBE_SECRETS_NAME` | unset | Optional Secrets Manager JSON secret containing `youtubeOAuthClientSecret`; recommended for every deployed environment. |
 | `YOUTUBE_MIN_REQUEST_INTERVAL_MS` | `1000` | Minimum interval between YouTube Data API requests for one worker. |
+| `FANVUE_CLIENT_ID` / `FANVUE_CLIENT_SECRET` | unset | Studio-pilot Fanvue OAuth application credentials. Store the secret in managed application secrets. |
+| `FANVUE_OAUTH_REDIRECT_URI` | unset | Exact HTTPS `/api/integrations/fanvue/oauth/callback` URL registered with Fanvue. |
+| `FANVUE_WEBHOOK_SECRET` | unset | Fanvue webhook signature secret; never expose it to Studio clients. |
+| `FANVUE_API_VERSION` | `2026-08-01` | Explicit API version pinned for Fanvue requests. Revalidate before release. |
+| `TUMBLR_CLIENT_ID` / `TUMBLR_CLIENT_SECRET` | unset | Managed Tumblr OAuth 2 application credentials. Keep the secret server-side and load it from managed secret storage in deployments. |
+| `TUMBLR_OAUTH_REDIRECT_URI` | unset | HTTPS OAuth callback registered with Tumblr for the managed connector. Creator-managed applications must register the same deployment callback. |
+| `TUMBLR_API_BASE_URL` | `https://api.tumblr.com` | Optional Tumblr API base override for controlled testing. |
+| `TUMBLR_MEDIA_BLOCK_LIMIT` | `10` | Runtime-configurable NPF media-block validation limit; verify it against current Tumblr documentation before deployment. |
+| `TUMBLR_POLICY_RULES_JSON` | `[]` | Versioned deployment policy rules that map creator declarations to `creator_owned_required` or `platform_ineligible`; callers cannot override these rules. |
+| `TUMBLR_PUBLISH_QUEUE_URL` | unset | SQS queue used for asynchronous Tumblr delivery. Required by deployed publishing workers. |
+| `TUMBLR_HOURLY_REQUEST_LIMIT` / `TUMBLR_DAILY_REQUEST_LIMIT` | `1000` / `5000` | Runtime quota ceilings tracked independently for each managed or creator-owned consumer key. |
+| `TUMBLR_PUBLISH_MAX_ATTEMPTS` / `TUMBLR_RETRY_BASE_DELAY_SECONDS` | `5` / `60` | Retry ceiling and exponential-backoff base for transient Tumblr publishing failures. |
 
 For a stable local encryption key, run this once and export the result before starting the API:
 

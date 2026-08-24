@@ -58,6 +58,7 @@ import type {
   CommunityDelivery
 } from './domain';
 import type { CanonicalStore } from './canonicalStore';
+import type { WordPressIntegrationState } from './wordpressIntegration';
 
 export interface TrendingFeedQueryOptions {
   source?: 'media' | 'post' | 'combined';
@@ -70,6 +71,8 @@ export interface TrendingFeedQueryOptions {
 }
 
 export interface DataStore extends CanonicalStore {
+  getWordPressIntegrationState(tenantId: string): Promise<WordPressIntegrationState>;
+  putWordPressIntegrationState(tenantId: string, state: WordPressIntegrationState): Promise<void>;
   getSiteSettings(): Promise<SiteSettings>;
   updateSiteSettings(settings: SiteSettings): Promise<void>;
 
@@ -238,6 +241,8 @@ export interface DataStore extends CanonicalStore {
   getExternalAccount(externalAccountId: string): Promise<ExternalAccount | null>;
   createExternalAccount(account: ExternalAccount): Promise<void>;
   updateExternalAccount(account: ExternalAccount): Promise<void>;
+  acquireExternalAccountRefreshLease(externalAccountId: string, leaseId: string, expiresAtEpochSeconds: number): Promise<boolean>;
+  releaseExternalAccountRefreshLease(externalAccountId: string, leaseId: string): Promise<void>;
   getExternalAccountProfile(externalAccountId: string): Promise<ExternalAccountProfile | null>;
   upsertExternalAccountProfile(profile: ExternalAccountProfile): Promise<void>;
   listExternalAccountProfileSnapshots(externalAccountId: string, limit?: number): Promise<ExternalAccountProfileSnapshot[]>;

@@ -1,12 +1,15 @@
 import { createHash, createHmac, randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
 import type { AppConfig } from './config';
+import type { ExternalPlatform } from './domain';
+
+type OAuthExternalPlatform = Extract<ExternalPlatform, 'deviantart' | 'soundcloud' | 'youtube'>;
 
 interface OAuthStatePayload {
   userId: string;
   creatorIdentityId?: string;
   externalPlatformCredentialId: string;
-  platform: 'deviantart' | 'youtube';
+  platform: OAuthExternalPlatform;
   returnPath: string;
   syncContentOnInitialImport?: boolean;
   nonce: string;
@@ -23,6 +26,14 @@ interface BlueskyOAuthStatePayload {
 interface DiscordOAuthStatePayload {
   userId: string;
   platform: 'discord';
+  returnPath: string;
+  nonce: string;
+}
+
+interface InstagramOAuthStatePayload {
+  userId: string;
+  creatorIdentityId: string;
+  platform: 'instagram';
   returnPath: string;
   nonce: string;
 }
@@ -61,7 +72,7 @@ export const verifyExternalOAuthState = (config: AppConfig, value: string): OAut
   if (
     typeof state.userId !== 'string'
     || typeof state.externalPlatformCredentialId !== 'string'
-    || (state.platform !== 'deviantart' && state.platform !== 'youtube')
+    || (state.platform !== 'deviantart' && state.platform !== 'soundcloud' && state.platform !== 'youtube')
     || typeof state.returnPath !== 'string'
     || typeof state.nonce !== 'string'
   ) {
@@ -119,6 +130,24 @@ export const verifyDiscordOAuthState = (config: AppConfig, value: string): Disco
     throw new Error('OAuth state is invalid');
   }
   return state as DiscordOAuthStatePayload;
+};
+
+export const issueInstagramOAuthState = (
+  config: AppConfig,
+  value: Omit<InstagramOAuthStatePayload, 'nonce'>
+): { state: string; nonce: string } => {
+  const nonce = randomUUID();
+  return { state: jwt.sign({ ...value, nonce }, stateSecret(config), { expiresIn: '10m' }), nonce };
+};
+
+export const verifyInstagramOAuthState = (config: AppConfig, value: string): InstagramOAuthStatePayload => {
+  const payload = jwt.verify(value, stateSecret(config));
+  if (!payload || typeof payload !== 'object') throw new Error('OAuth state is invalid');
+  const state = payload as Partial<InstagramOAuthStatePayload>;
+  if (typeof state.userId !== 'string' || typeof state.creatorIdentityId !== 'string' || state.platform !== 'instagram' || typeof state.returnPath !== 'string' || typeof state.nonce !== 'string') {
+    throw new Error('OAuth state is invalid');
+  }
+  return state as InstagramOAuthStatePayload;
 };
 
 export const resolveExternalOAuthReturnUrl = (config: AppConfig, returnPath: string, query: Record<string, string>): string => {

@@ -12,6 +12,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import type { AppConfig } from './config';
 import type { DataStore, TrendingFeedQueryOptions } from './store';
+import type { WordPressIntegrationState } from './wordpressIntegration';
 import type {
   Creator,
   CreatorMember,
@@ -74,6 +75,7 @@ import { CommunityRepository } from './communityRepository';
 import { CanonicalContentRepository } from './canonicalContentRepository';
 import { normalizeContentRating } from './contentRating';
 import { normalizeAiDisclosure, normalizeHeavyTopics } from './disclosures';
+import { DynamoTumblrRepository } from './tumblrRepository';
 import type {
   CanonicalAsset,
   CollectionWork,
@@ -86,11 +88,26 @@ import type {
 } from './canonicalDomain';
 
 export class DynamoStore implements DataStore {
+  private localWordPressStates = new Map<string, WordPressIntegrationState>();
+
+  async getWordPressIntegrationState(tenantId: string): Promise<WordPressIntegrationState> {
+    if (!this.config.useContentCoreTable) return structuredClone(this.localWordPressStates.get(tenantId) || { connections: [], publications: [], externalReferences: [], mediaMappings: [], audits: [] });
+    const result = await this.client.send(new GetCommand({ TableName: this.config.contentCoreTable, Key: { PK: `TENANT#${tenantId}#WORDPRESS`, SK: 'STATE' } }));
+    const state = result.Item?.state as WordPressIntegrationState | undefined;
+    return state || { connections: [], publications: [], externalReferences: [], mediaMappings: [], audits: [] };
+  }
+
+  async putWordPressIntegrationState(tenantId: string, state: WordPressIntegrationState): Promise<void> {
+    if (!this.config.useContentCoreTable) { this.localWordPressStates.set(tenantId, structuredClone(state)); return; }
+    await this.client.send(new PutCommand({ TableName: this.config.contentCoreTable, Item: { PK: `TENANT#${tenantId}#WORDPRESS`, SK: 'STATE', entityType: 'WORDPRESS_STATE', state, updatedAt: new Date().toISOString() } }));
+  }
+
   private readonly client: DynamoDBDocumentClient;
   private readonly coreRepo?: ContentCoreRepository;
   private readonly externalPlatformRepo?: ExternalPlatformRepository;
   private readonly communityRepo?: CommunityRepository;
   private readonly canonicalContentRepo?: CanonicalContentRepository;
+  readonly tumblrRepository?: DynamoTumblrRepository;
   private readonly localUsernameReservations = new Map<string, { username: string; email: string }>();
   private readonly localUserProfiles = new Map<string, UserProfile>();
   private readonly localCreatorMembers = new Map<string, CreatorMember>();
@@ -109,6 +126,7 @@ export class DynamoStore implements DataStore {
       this.externalPlatformRepo = new ExternalPlatformRepository(this.client, config.contentCoreTable);
       this.communityRepo = new CommunityRepository(this.client, config.contentCoreTable);
       this.canonicalContentRepo = new CanonicalContentRepository(this.client, config.contentCoreTable);
+      this.tumblrRepository = new DynamoTumblrRepository(this.client, config.contentCoreTable);
     }
   }
 
@@ -1573,6 +1591,8 @@ export class DynamoStore implements DataStore {
   async listExternalAccountCreatorAssignments(externalAccountId: string): Promise<ExternalAccountCreatorAssignment[]> { return this.externalPlatform().listExternalAccountCreatorAssignments(externalAccountId); }
   async replaceExternalAccountCreatorAssignments(externalAccountId: string, assignments: ExternalAccountCreatorAssignment[]): Promise<void> { await this.externalPlatform().replaceExternalAccountCreatorAssignments(externalAccountId, assignments); }
   async listExternalAccountsForScheduledScan(limit?: number): Promise<ExternalAccount[]> { return this.externalPlatform().listExternalAccountsForScheduledScan(limit); }
+  async acquireExternalAccountRefreshLease(externalAccountId: string, leaseId: string, expiresAtEpochSeconds: number): Promise<boolean> { return this.externalPlatform().acquireExternalAccountRefreshLease(externalAccountId, leaseId, expiresAtEpochSeconds); }
+  async releaseExternalAccountRefreshLease(externalAccountId: string, leaseId: string): Promise<void> { return this.externalPlatform().releaseExternalAccountRefreshLease(externalAccountId, leaseId); }
   async getExternalAccount(externalAccountId: string): Promise<ExternalAccount | null> { return this.externalPlatform().getExternalAccount(externalAccountId); }
   async createExternalAccount(account: ExternalAccount): Promise<void> { await this.externalPlatform().createExternalAccount(account); }
   async updateExternalAccount(account: ExternalAccount): Promise<void> { await this.externalPlatform().updateExternalAccount(account); }

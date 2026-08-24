@@ -1,6 +1,8 @@
 import { createHash } from 'crypto';
+import { createReadStream } from 'fs';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
+import { Readable } from 'stream';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { AppConfig } from './config';
 import { brandForConfig } from './brand';
@@ -95,6 +97,20 @@ export const readStoredUbeeqWorkImage = async (config: AppConfig, objectKey: str
   const response = await new S3Client({ region: config.awsRegion }).send(new GetObjectCommand({ Bucket: config.mediaBucket, Key: objectKey }));
   if (!response.Body) throw new Error('The stored work image is unavailable.');
   return Buffer.from(await response.Body.transformToByteArray());
+};
+
+/** Opens canonical storage without materializing large audio/video files. */
+export const openStoredUbeeqWorkStream = async (config: AppConfig, objectKey: string): Promise<NodeJS.ReadableStream> => {
+  if (config.localMediaDirectory) {
+    const base = path.resolve(config.localMediaDirectory);
+    const target = path.resolve(base, objectKey);
+    if (target !== base && !target.startsWith(`${base}${path.sep}`)) throw new Error('The stored work key is invalid.');
+    return createReadStream(target);
+  }
+  const response = await new S3Client({ region: config.awsRegion }).send(new GetObjectCommand({ Bucket: config.mediaBucket, Key: objectKey }));
+  if (!response.Body) throw new Error('The stored work is unavailable.');
+  if (response.Body instanceof Readable) return response.Body;
+  return Readable.fromWeb(response.Body.transformToWebStream() as never);
 };
 
 export const storeExternalContent = async (

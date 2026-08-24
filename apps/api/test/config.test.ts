@@ -30,7 +30,8 @@ describe('production API configuration', () => {
       deploymentStage: 'development',
       unlockJwtSecret: 'dev-secret',
       deviantArtMinimumRequestIntervalMs: 2_000,
-      externalScheduledScansEnabled: false
+      externalScheduledScansEnabled: false,
+      flickrMinimumRequestIntervalMs: 1_000
     });
   });
 

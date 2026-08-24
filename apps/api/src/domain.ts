@@ -660,14 +660,24 @@ export interface TrendingFeedItem {
 }
 
 /** Platforms with a creator-owned connected account. OAuth custody can differ by platform. */
-export type ExternalPlatform = 'deviantart' | 'youtube' | 'bluesky';
+export type ExternalPlatform =
+  | 'bluesky'
+  | 'deviantart'
+  | 'flickr'
+  | 'instagram'
+  | 'soundcloud'
+  | 'youtube'
+  | 'fanvue'
+  | 'patreon'
+  | 'tumblr'
+  | 'wordpress';
 export type ExternalAccountConnectionStatus =
   | 'connected'
   | 'authentication_required'
   | 'rate_limited'
   | 'temporarily_unavailable'
   | 'disabled';
-export type ExternalAssetType = 'image' | 'literature' | 'video' | 'animation' | 'other';
+export type ExternalAssetType = 'image' | 'literature' | 'video' | 'audio' | 'animation' | 'other';
 export type AssetVisibility = 'private' | 'unlisted' | 'public';
 export type UbeeqCollectionType = 'collection' | 'gallery' | 'series';
 export type MetadataSyncPolicy = 'mirrored' | 'independent' | 'initially_mirrored' | 'manual';
@@ -687,6 +697,8 @@ export type ExternalSyncJobType =
   | 'comment_sync'
   | 'full_reconciliation'
   | 'publish'
+  | 'remote_delete'
+  | 'user_action'
   | 'remote_update';
 export type ExternalSyncJobStatus =
   | 'queued'
@@ -748,6 +760,12 @@ export interface ExternalAccount {
   /** Whether subsequent synchronizations should also copy available source files into the local creator workspace. */
   includeSourceFilesOnSync?: boolean;
   deviantArtPublishingPreset?: DeviantArtPublishingPreset;
+  instagram?: {
+    accountType: 'BUSINESS' | 'CREATOR';
+    apiVersion: string;
+    policyProfileVersion: string;
+    enabledCapabilities: Array<'metadata_import' | 'publish_images' | 'publish_reels' | 'publish_stories' | 'insights' | 'comment_management'>;
+  };
   createdAt: string;
   updatedAt: string;
 }
@@ -974,6 +992,7 @@ export interface ExternalComment {
   body: string;
   createdAtRemote?: string;
   parentExternalCommentExternalId?: string;
+  positionMilliseconds?: number;
   replyCount?: number;
   likeCount?: number;
   isLiked?: boolean;
