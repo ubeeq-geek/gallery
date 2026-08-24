@@ -14,6 +14,8 @@ import { checkRateLimit } from './rateLimit';
 import { issueRememberAccessToken, issueUnlockToken, verifyPassword, verifyUnlockToken } from './unlock';
 import type { AppConfig } from './config';
 import { brandForConfig } from './brand';
+import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation, type IntegrationPlatform, type IntegrationPolicyTarget } from './integrationStandard';
+import { resolvePublicationReconciliation } from './integrationReconciliation';
 import type { DataStore } from './store';
 import { hashPassword } from './unlock';
 import type {
@@ -1192,6 +1194,26 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     type: ExternalSyncJob['type'],
     payload?: Record<string, unknown>
   ): Promise<ExternalSyncJob> => {
+    const account = await store.getExternalAccount(externalAccountId);
+    const operation: IntegrationOperation = type === 'publish'
+      ? 'publish'
+      : type === 'remote_update'
+        ? 'update_remote'
+        : type === 'account_import' || type === 'account_scan' || type === 'full_reconciliation' || type === 'content_sync'
+          ? 'import'
+        : 'read_engagement';
+    if (!account) throw new Error('Connected account not found.');
+    requireIntegrationOperation(account.platform, operation);
+    const policy = await createStoreIntegrationPolicyGate(store).evaluate({
+      operation,
+      targets: [
+        { type: 'external_account', id: externalAccountId },
+        ...(typeof payload?.assetId === 'string' ? [{ type: 'asset' as const, id: payload.assetId }] : []),
+        ...(typeof payload?.externalPublicationId === 'string' ? [{ type: 'publication' as const, id: payload.externalPublicationId }] : []),
+        ...(account?.primaryCreatorIdentityId || account?.creatorIdentityId ? [{ type: 'creator' as const, id: account.primaryCreatorIdentityId || account.creatorIdentityId! }] : [])
+      ]
+    });
+    if (!policy.allowed) throw new Error(policy.reason || 'This integration operation is blocked by an active safety hold.');
     const now = new Date().toISOString();
     const job: ExternalSyncJob = {
       externalSyncJobId: randomUUID(),
@@ -1219,6 +1241,20 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       throw error;
     }
     return job;
+  };
+
+  const integrationAdmissionReason = async (
+    platform: IntegrationPlatform,
+    operation: IntegrationOperation,
+    targets: IntegrationPolicyTarget[]
+  ): Promise<string | undefined> => {
+    try {
+      requireIntegrationOperation(platform, operation);
+    } catch (error) {
+      return error instanceof Error ? error.message : 'This integration operation is unavailable.';
+    }
+    const policy = await createStoreIntegrationPolicyGate(store).evaluate({ operation, targets });
+    return policy.allowed ? undefined : policy.reason || 'This integration operation is blocked by an active safety hold.';
   };
 
   const allowedHeaders = [
@@ -5658,6 +5694,11 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
     const handle = typeof req.body?.handle === 'string' ? req.body.handle.trim().toLowerCase() : '';
     if (!(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    requireIntegrationOperation('bluesky', 'connect');
+    const policy = await createStoreIntegrationPolicyGate(store).evaluate({
+      operation: 'connect', targets: [{ type: 'creator', id: creatorIdentityId }]
+    });
+    if (!policy.allowed) return res.status(409).json({ message: policy.reason });
     if (!config.externalTokenEncryptionKey || !config.blueskyOAuthServiceUrl || !config.blueskyOAuthServiceJwksUrl) {
       return res.status(503).json({ message: 'Bluesky OAuth is not configured for this deployment.' });
     }
@@ -5695,6 +5736,11 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (state.userId !== req.authUser!.userId || !(await ensureCreatorAccountAccess(req, res, state.creatorIdentityId))) {
       return res.status(403).json({ message: 'This Bluesky connection is no longer authorized for the selected creator.' });
     }
+    requireIntegrationOperation('bluesky', 'connect');
+    const policy = await createStoreIntegrationPolicyGate(store).evaluate({
+      operation: 'connect', targets: [{ type: 'creator', id: state.creatorIdentityId }]
+    });
+    if (!policy.allowed) return res.status(409).json({ message: policy.reason });
     const now = new Date().toISOString();
     const existing = (await store.listExternalAccountsByUser(state.userId)).find((account) => (
       account.platform === 'bluesky' && account.externalUserId === connection.did
@@ -5756,6 +5802,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   });
 
   app.post('/studio/integrations/discord/connect', requireAuth, async (req, res) => {
+    const admissionReason = await integrationAdmissionReason('discord', 'connect', []);
+    if (admissionReason) return res.status(409).json({ message: admissionReason });
     if (!discordConfigured(config)) {
       return res.status(503).json({ message: 'Discord is not yet configured for this deployment.' });
     }
@@ -5997,6 +6045,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.post('/studio/integrations/youtube/connect', requireAuth, async (req, res) => {
     const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
     if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const admissionReason = await integrationAdmissionReason('youtube', 'connect', creatorIdentityId ? [{ type: 'creator', id: creatorIdentityId }] : []);
+    if (admissionReason) return res.status(409).json({ message: admissionReason });
     if (!youtubeConfigurationReady()) {
       return res.status(409).json({ message: 'YouTube is not yet configured for this deployment.' });
     }
@@ -6059,6 +6109,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (state.creatorIdentityId && !(await store.hasCreatorAccess(state.userId, state.creatorIdentityId))) {
       return redirect({ youtube: 'failed', reason: 'creator_access_changed' });
     }
+    const admissionReason = await integrationAdmissionReason('youtube', 'connect', state.creatorIdentityId ? [{ type: 'creator', id: state.creatorIdentityId }] : []);
+    if (admissionReason) return redirect({ youtube: 'failed', reason: 'safety_hold' });
     try {
       const credential = await store.getExternalPlatformCredential(state.externalPlatformCredentialId);
       if (!credential || credential.userId !== state.userId || credential.platform !== 'youtube') {
@@ -6288,6 +6340,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.post('/studio/integrations/deviantart/connect', requireAuth, async (req, res) => {
     const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
     if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const admissionReason = await integrationAdmissionReason('deviantart', 'connect', creatorIdentityId ? [{ type: 'creator', id: creatorIdentityId }] : []);
+    if (admissionReason) return res.status(409).json({ message: admissionReason });
     const requestedCredentialId = typeof req.body?.externalPlatformCredentialId === 'string' ? req.body.externalPlatformCredentialId.trim() : '';
     const credentials = (creatorIdentityId
       ? await store.listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId)
@@ -6318,6 +6372,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.get('/studio/integrations/deviantart/connect', requireAuth, async (req, res) => {
     const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
     if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const admissionReason = await integrationAdmissionReason('deviantart', 'connect', creatorIdentityId ? [{ type: 'creator', id: creatorIdentityId }] : []);
+    if (admissionReason) return res.status(409).json({ message: admissionReason });
     const credential = (creatorIdentityId
       ? await store.listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId)
       : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId))
@@ -6370,6 +6426,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (state.creatorIdentityId && !(await store.hasCreatorAccess(state.userId, state.creatorIdentityId))) {
       return redirect({ deviantart: 'failed', reason: 'creator_access_changed' });
     }
+    const admissionReason = await integrationAdmissionReason('deviantart', 'connect', state.creatorIdentityId ? [{ type: 'creator', id: state.creatorIdentityId }] : []);
+    if (admissionReason) return redirect({ deviantart: 'failed', reason: 'safety_hold' });
     try {
       const credential = await store.getExternalPlatformCredential(state.externalPlatformCredentialId);
       if (!credential || credential.userId !== state.userId || credential.platform !== 'deviantart') {
@@ -7917,6 +7975,38 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     } catch (error) {
       logServerError('deviantart.publication.resolve.enqueue', error);
       return res.status(503).json({ message: 'The reconciliation job could not be queued. No remote changes were made.' });
+    }
+  });
+
+  /** Provider-neutral confirmation-gated resolution for a persisted field diff. */
+  app.post('/studio/works/:workId/publications/:publicationId/reconciliation/resolve', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.workId !== work.workId) return res.status(404).json({ message: 'Publication not found' });
+    const action = req.body?.action;
+    if (action !== 'accept_remote' && action !== 'keep_local' && action !== 'create_detached_copy') {
+      return res.status(400).json({ message: 'Choose a valid reconciliation action.' });
+    }
+    if (req.body?.confirm !== true) return res.status(400).json({ message: 'Explicit reconciliation confirmation is required.' });
+    try {
+      const result = resolvePublicationReconciliation(publication, { action, confirmed: true });
+      await store.upsertPublication(result.publication);
+      let detachedPublication: Publication | undefined;
+      if (result.detachedPublication) {
+        detachedPublication = { ...result.detachedPublication, publicationId: randomUUID() };
+        await store.upsertPublication(detachedPublication);
+      }
+      auditLog(req, 'integration.publication.reconciliation.resolved', {
+        workId: work.workId,
+        publicationId: publication.publicationId,
+        reconciliationAction: action,
+        ...(detachedPublication ? { detachedPublicationId: detachedPublication.publicationId } : {})
+      });
+      return res.json({ publication: result.publication, detachedPublication });
+    } catch (error) {
+      return res.status(409).json({ message: error instanceof Error ? error.message : 'Unable to resolve reconciliation.' });
     }
   });
 

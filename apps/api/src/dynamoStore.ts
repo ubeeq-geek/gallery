@@ -1631,6 +1631,8 @@ export class DynamoStore implements DataStore {
   async updateExternalSyncJob(job: ExternalSyncJob): Promise<void> { await this.externalPlatform().updateExternalSyncJob(job); }
   async listExternalSyncLogs(externalSyncJobId: string, limit?: number): Promise<ExternalSyncLog[]> { return this.externalPlatform().listExternalSyncLogs(externalSyncJobId, limit); }
   async appendExternalSyncLog(log: ExternalSyncLog): Promise<void> { await this.externalPlatform().appendExternalSyncLog(log); }
+  async listActiveIntegrationReviewHolds(targets: Parameters<ExternalPlatformRepository['listActiveIntegrationReviewHolds']>[0]) { return this.externalPlatform().listActiveIntegrationReviewHolds(targets); }
+  async upsertIntegrationReviewHold(hold: Parameters<ExternalPlatformRepository['upsertIntegrationReviewHold']>[0]) { await this.externalPlatform().upsertIntegrationReviewHold(hold); }
 
   async listCommunityInstallationsByUser(userId: string): Promise<CommunityInstallation[]> { return this.community().listCommunityInstallationsByUser(userId); }
   async getCommunityInstallation(communityInstallationId: string): Promise<CommunityInstallation | null> { return this.community().getCommunityInstallation(communityInstallationId); }

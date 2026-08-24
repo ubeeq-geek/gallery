@@ -358,6 +358,8 @@ export interface YouTubeComment {
   updatedAt?: string;
   likeCount?: number;
   canReply?: boolean;
+  replyCount?: number;
+  replies?: YouTubeComment[];
   rawPayload: Record<string, unknown>;
 }
 
@@ -1779,8 +1781,9 @@ export class YouTubeProvider implements ExternalPlatformProvider, YouTubeManagem
   }
   private playlistItemFromPayload(payload: Record<string, unknown>): YouTubePlaylistItem {
     const item = asRecord(Array.isArray(payload.items) ? payload.items[0] : payload); const snippet = asRecord(item.snippet); const resource = asRecord(snippet.resourceId);
-    if (!asString(item.id)) throw new ExternalProviderError('YouTube returned an invalid playlist item response', 'invalid_response');
-    return { id: asString(item.id)!, playlistId: asString(snippet.playlistId), videoId: asString(resource.videoId), position: asNumber(snippet.position), title: asString(snippet.title), rawPayload: item };
+    const id = asString(item.id); const playlistId = asString(snippet.playlistId); const videoId = asString(resource.videoId);
+    if (!id || !playlistId || !videoId) throw new ExternalProviderError('YouTube returned an invalid playlist item response', 'invalid_response');
+    return { id, playlistId, videoId, position: asNumber(snippet.position), title: asString(snippet.title), rawPayload: item };
   }
   private commentFromThread(item: Record<string, unknown>, videoId?: string): YouTubeComment | undefined {
     const threadSnippet = asRecord(item.snippet); const top = asRecord(threadSnippet.topLevelComment); const mapped = this.commentFromPayload(top);

@@ -2,6 +2,8 @@ import { randomUUID } from 'crypto';
 import type { AppConfig } from './config';
 import type { AnnouncementPresetId, CommunityDelivery, CommunityDestination, CommunityEvent, CommunityInstallation } from './domain';
 import type { DataStore } from './store';
+import { createStoreIntegrationPolicyGate, requireIntegrationOperation } from './integrationStandard';
+import { deliveryRetryDelaySeconds, shouldRetryIntegrationDelivery, type IntegrationDeliveryErrorCode } from './integrationDelivery';
 
 export const DISCORD_INSTALL_PERMISSIONS = 1024 + 2048 + 16384; // View Channels, Send Messages, Embed Links
 
@@ -259,6 +261,38 @@ export const processDiscordDelivery = async (store: DataStore, config: AppConfig
   if (!event) return;
   const now = new Date().toISOString();
   try {
+    requireIntegrationOperation('discord', 'publish');
+    const policy = await createStoreIntegrationPolicyGate(store).evaluate({
+      operation: 'publish',
+      targets: [
+        { type: 'creator', id: delivery.creatorIdentityId },
+        { type: 'integration_connection', id: destination.communityDestinationId },
+        ...(event.workId ? [{ type: 'work' as const, id: event.workId }] : [])
+      ]
+    });
+    if (!policy.allowed) {
+      await store.upsertCommunityDelivery({
+        ...delivery,
+        status: 'failed',
+        errorCode: 'SAFETY_HOLD',
+        errorMessage: policy.reason,
+        nextAttemptAt: undefined,
+        updatedAt: now
+      });
+      return;
+    }
+  } catch (error) {
+    await store.upsertCommunityDelivery({
+      ...delivery,
+      status: 'failed',
+      errorCode: 'UNSUPPORTED_OPERATION',
+      errorMessage: error instanceof Error ? error.message : 'Discord delivery is unsupported.',
+      nextAttemptAt: undefined,
+      updatedAt: now
+    });
+    return;
+  }
+  try {
     await store.upsertCommunityDelivery({ ...delivery, status: 'sending', updatedAt: now, errorCode: undefined, errorMessage: undefined });
     const announcement = renderDiscordAnnouncement(destination, event);
     const sent = await sendDiscordMessage(config, destination.remoteChannelId, announcement.content, announcement.embed);
@@ -266,8 +300,15 @@ export const processDiscordDelivery = async (store: DataStore, config: AppConfig
   } catch (error) {
     const apiError = error instanceof DiscordApiError ? error : undefined;
     const attempts = delivery.attemptCount + 1;
-    const retrySeconds = apiError?.retryAfterSeconds ?? Math.min(60 * 60, 30 * (2 ** Math.min(attempts, 6)));
-    const retryable = !apiError || apiError.status === 429 || apiError.status >= 500;
+    const deliveryErrorCode: IntegrationDeliveryErrorCode = apiError?.status === 429
+      ? 'rate_limited'
+      : !apiError || apiError.status >= 500
+        ? 'temporarily_unavailable'
+        : apiError.status === 403
+          ? 'permission_denied'
+          : 'invalid_request';
+    const retryable = shouldRetryIntegrationDelivery('publish', deliveryErrorCode, attempts, 6);
+    const retrySeconds = apiError?.retryAfterSeconds ?? deliveryRetryDelaySeconds(attempts, 30);
     const failed: CommunityDelivery = {
       ...delivery, status: retryable && attempts < 6 ? 'retry_scheduled' : 'failed', attemptCount: attempts,
       nextAttemptAt: retryable && attempts < 6 ? new Date(Date.now() + retrySeconds * 1000).toISOString() : undefined,

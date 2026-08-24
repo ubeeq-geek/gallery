@@ -55,6 +55,7 @@ import type {
   ExternalSyncCheckpoint,
   ExternalSyncJob,
   ExternalSyncLog,
+  IntegrationReviewHold,
   CommunityInstallation,
   CommunityDestination,
   CommunityEvent,
@@ -145,6 +146,7 @@ export class InMemoryStore implements DataStore {
   externalSyncCheckpoints: ExternalSyncCheckpoint[] = [];
   externalSyncJobs: ExternalSyncJob[] = [];
   externalSyncLogs: ExternalSyncLog[] = [];
+  integrationReviewHolds: IntegrationReviewHold[] = [];
   communityInstallations: CommunityInstallation[] = [];
   communityDestinations: CommunityDestination[] = [];
   communityEvents: CommunityEvent[] = [];
@@ -1305,6 +1307,15 @@ export class InMemoryStore implements DataStore {
 
   async appendExternalSyncLog(log: ExternalSyncLog): Promise<void> {
     this.externalSyncLogs.push(log);
+  }
+
+  async listActiveIntegrationReviewHolds(targets: Array<{ targetType: IntegrationReviewHold['targetType']; targetId: string }>): Promise<IntegrationReviewHold[]> {
+    return this.integrationReviewHolds.filter((hold) => hold.active && targets.some((target) => target.targetType === hold.targetType && target.targetId === hold.targetId));
+  }
+
+  async upsertIntegrationReviewHold(hold: IntegrationReviewHold): Promise<void> {
+    this.integrationReviewHolds = this.integrationReviewHolds.filter((item) => item.integrationReviewHoldId !== hold.integrationReviewHoldId);
+    this.integrationReviewHolds.push(hold);
   }
 
   async listCommunityInstallationsByUser(userId: string): Promise<CommunityInstallation[]> {

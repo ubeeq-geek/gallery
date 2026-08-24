@@ -37,7 +37,8 @@ const buildConfig = (): AppConfig => ({
   externalOAuthRedirectUri: 'http://localhost:4000/integrations/deviantart/callback',
   discordApiBaseUrl: 'https://discord.com/api/v10',
   youtubeMinimumRequestIntervalMs: 1000,
-  youtubeApiBaseUrl: 'https://www.googleapis.com/youtube/v3'
+  youtubeApiBaseUrl: 'https://www.googleapis.com/youtube/v3',
+  externalScheduledScansEnabled: false
 });
 
 describe('API contract', () => {
@@ -485,6 +486,26 @@ describe('API contract', () => {
     expect(creators[0].space?.coverPreset).toBe('eversally-cover-7');
   });
 
+  it('blocks Creator-held provider connection attempts before OAuth starts', async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ config: buildConfig(), store });
+    const now = new Date().toISOString();
+    await store.createCreator({ creatorId: 'held-creator', name: 'Held Creator', slug: 'held-creator', status: 'active', sortOrder: 0, createdAt: now });
+    await store.addCreatorMember({ creatorId: 'held-creator', userId: 'held-user', role: 'owner', createdAt: now });
+    await store.upsertIntegrationReviewHold({
+      integrationReviewHoldId: 'held-creator-connect', targetType: 'creator', targetId: 'held-creator',
+      holdType: 'MANUAL_REVIEW', reason: 'Connection is awaiting review.', active: true, createdAt: now
+    });
+    for (const platform of ['deviantart', 'youtube', 'bluesky']) {
+      const response = await request(app)
+        .post(`/studio/integrations/${platform}/connect`)
+        .set('x-user-id', 'held-user')
+        .send({ creatorId: 'held-creator', handle: 'held.bsky.social' });
+      expect(response.status).toBe(409);
+      expect(response.body.message).toContain('Connection is awaiting review.');
+    }
+  });
+
   it('deletes a DeviantArt application only after its connected accounts are removed', async () => {
     const store = new InMemoryStore();
     const app = createApp({ config: buildConfig(), store });
@@ -847,6 +868,39 @@ describe('API contract', () => {
     expect(resolvePull.body.strategy).toBe('pull');
     expect((await store.getPublication('test', 'publication-da'))?.sync.status).toBe('remote_newer');
     expect(await store.getExternalSyncJob(resolvePull.body.job.externalSyncJobId)).toMatchObject({ type: 'full_reconciliation', status: 'queued' });
+
+    const publicationForReconciliation = await store.getPublication('test', 'publication-da');
+    await store.upsertPublication({
+      ...publicationForReconciliation!,
+      metadataOverrides: { title: 'Local title', description: 'Local description', tags: ['local'] },
+      sync: {
+        ...publicationForReconciliation!.sync,
+        status: 'conflict',
+        reconciliation: {
+          baseline: { title: 'Original title', description: 'Original description', tags: ['original'], visibility: 'public' },
+          remote: { title: 'Remote title', description: 'Remote description', tags: ['remote'], visibility: 'public', remoteId: 'deviation-uuid' },
+          status: 'conflict',
+          fields: [{ field: 'title', lastSynced: 'Original title', local: 'Local title', remote: 'Remote title', localChanged: true, remoteChanged: true, conflict: true }],
+          updatedAt: now
+        }
+      }
+    });
+    const unconfirmedResolution = await request(app)
+      .post('/studio/works/asset-da/publications/publication-da/reconciliation/resolve')
+      .set('x-user-id', 'u-da')
+      .send({ action: 'accept_remote' });
+    expect(unconfirmedResolution.status).toBe(400);
+
+    const reconciliationResolution = await request(app)
+      .post('/studio/works/asset-da/publications/publication-da/reconciliation/resolve')
+      .set('x-user-id', 'u-da')
+      .send({ action: 'accept_remote', confirm: true });
+    expect(reconciliationResolution.status).toBe(200);
+    expect(reconciliationResolution.body.publication).toMatchObject({
+      publicationId: 'publication-da',
+      metadataOverrides: { title: 'Remote title', description: 'Remote description', tags: ['remote'] },
+      sync: { status: 'in_sync', reconciliation: { status: 'in_sync', fields: [] } }
+    });
 
     const spaceResponse = await request(app)
       .put('/studio/integrations/assets/asset-da/space-publication')

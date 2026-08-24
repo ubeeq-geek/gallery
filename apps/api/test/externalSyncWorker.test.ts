@@ -60,6 +60,33 @@ describe('external metadata update verification', () => {
     expect(retryDelaySeconds(2, 60, () => 0.999999)).toBe(120);
   });
 
+  it('blocks a job before provider access when the owning Creator has an active review hold', async () => {
+    const store = new InMemoryStore();
+    const now = new Date().toISOString();
+    await store.createExternalAccount({
+      externalAccountId: 'account-held-creator', userId: 'user-1', creatorIdentityId: 'creator-held', primaryCreatorIdentityId: 'creator-held',
+      externalPlatformCredentialId: 'credential-held-creator', platform: 'deviantart', externalUserId: 'owner-1', externalUsername: 'owner',
+      accessTokenEncrypted: 'unused-before-policy', connectionStatus: 'connected', createdAt: now, updatedAt: now
+    });
+    await store.upsertIntegrationReviewHold({
+      integrationReviewHoldId: 'hold-creator', targetType: 'creator', targetId: 'creator-held', holdType: 'manual_review',
+      reason: 'Awaiting safety review', active: true, createdAt: now
+    });
+    await store.createExternalSyncJob({
+      externalSyncJobId: 'job-held-creator', externalAccountId: 'account-held-creator', type: 'account_scan', status: 'queued',
+      attemptCount: 0, createdAt: now, updatedAt: now
+    });
+    const fetchSpy = jest.spyOn(global, 'fetch');
+
+    await processExternalSyncJob(store, {} as AppConfig, 'job-held-creator');
+
+    expect(await store.getExternalSyncJob('job-held-creator')).toMatchObject({
+      status: 'failed', errorCode: 'SAFETY_HOLD', errorMessage: expect.stringContaining('Awaiting safety review')
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    jest.restoreAllMocks();
+  });
+
   it('retries a missing Sta.sh item ID three total times, then requires attention', async () => {
     expect(shouldRetryExternalJobFailure('publish', 'ambiguous_submission', 1)).toBe(true);
     expect(shouldRetryExternalJobFailure('publish', 'ambiguous_submission', 2)).toBe(true);

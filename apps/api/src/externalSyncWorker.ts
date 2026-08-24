@@ -4,17 +4,20 @@ import { decryptExternalCredential, encryptExternalCredential } from './external
 import { readStoredUbeeqWorkImage, storeExternalContent } from './externalContentStorage';
 import { brandForConfig } from './brand';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
+import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation } from './integrationStandard';
+import { recordPublicationReconciliation } from './integrationReconciliation';
+import { deliveryRetryDelaySeconds, shouldRetryIntegrationDelivery } from './integrationDelivery';
 import { createExternalPlatformProvider, DEVIANTART_METADATA_BATCH_SIZE, ExternalProviderError, type ExternalContentPublish, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteActivity, type ExternalRemoteComment, type ExternalRemoteContent, type ExternalRemoteEngagement } from './externalPlatformProvider';
 import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalCollection, ExternalCollectionMapping, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, IntegrationActivity, SpacePublication, UbeeqCollection, UbeeqCollectionAsset } from './domain';
 import type { CanonicalAsset, Publication, Work } from './canonicalDomain';
 import type { DataStore } from './store';
 
-export const retryDelaySeconds = (attempt: number, configuredBase: number, random = Math.random): number => {
-  const base = Math.max(1, Math.floor(configuredBase));
-  const ceiling = Math.min(60 * 60, base * (2 ** Math.min(Math.max(0, attempt - 1), 10)));
-  const floor = Math.max(base, Math.ceil(ceiling / 2));
-  return floor + Math.floor(random() * (ceiling - floor + 1));
-};
+// Preserve the existing sync-worker convention: the first retry waits at
+// least the configured base delay. Delivery jobs share the same jitter curve
+// after that first cooldown.
+export const retryDelaySeconds = (attempt: number, configuredBase: number, random = Math.random): number => (
+  Math.max(Math.max(1, Math.floor(configuredBase)), deliveryRetryDelaySeconds(attempt, configuredBase, random))
+);
 
 export const MAX_AMBIGUOUS_PUBLISH_ATTEMPTS = 3;
 
@@ -23,11 +26,14 @@ export const shouldRetryExternalJobFailure = (
   code: ExternalProviderError['code'],
   attemptCount: number
 ): boolean => {
-  if (code === 'rate_limited') return true;
-  if (code === 'temporarily_unavailable') return jobType !== 'content_sync';
-  return code === 'ambiguous_submission'
-    && jobType === 'publish'
-    && attemptCount < MAX_AMBIGUOUS_PUBLISH_ATTEMPTS;
+  if (code === 'temporarily_unavailable' && jobType === 'content_sync') return false;
+  if (code !== 'rate_limited' && code !== 'temporarily_unavailable' && code !== 'ambiguous_submission') return false;
+  return shouldRetryIntegrationDelivery(
+    jobType === 'publish' ? 'publish' : 'update',
+    code,
+    attemptCount,
+    MAX_AMBIGUOUS_PUBLISH_ATTEMPTS
+  );
 };
 
 const updateJob = async (
@@ -407,7 +413,8 @@ const syncCanonicalPublication = async (
   publication: ExternalPublication,
   now = new Date().toISOString()
 ): Promise<void> => {
-  await store.upsertPublication({
+  const existing = await store.getPublication(config.tenantId, publication.externalPublicationId);
+  const canonicalPublication: Publication = {
     publicationId: publication.externalPublicationId,
     tenantId: config.tenantId,
     creatorId: work.creatorId,
@@ -450,7 +457,25 @@ const syncCanonicalPublication = async (
     updatedAt: publication.updatedAt,
     publishedAt: publication.publishedAt,
     removedAt: publication.syncStatus === 'deleted' ? now : undefined
-  });
+  };
+  const localSnapshot = {
+    title: work.title,
+    description: work.description || '',
+    tags: work.tags,
+    visibility: canonicalPublication.visibility
+  };
+  const remoteSnapshot = {
+    title: publication.externalTitle || '',
+    description: publication.externalDescription || '',
+    tags: publication.externalTags,
+    visibility: canonicalPublication.visibility,
+    remoteId: publication.externalContentId,
+    remoteUpdatedAt: publication.remoteUpdatedAt
+  };
+  await store.upsertPublication(recordPublicationReconciliation({
+    ...canonicalPublication,
+    sync: { ...canonicalPublication.sync, reconciliation: existing?.sync.reconciliation }
+  }, localSnapshot, remoteSnapshot, now));
 };
 
 const upsertContent = async (
@@ -2291,6 +2316,44 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
   }
   if (account.connectionStatus === 'disabled') {
     await updateJob(store, job, { status: 'cancelled', errorCode: 'ACCOUNT_REMOVED', errorMessage: 'Synchronization stopped because the DeviantArt account was removed' });
+    return;
+  }
+  const operation: IntegrationOperation = job.type === 'publish'
+    ? 'publish'
+    : job.type === 'remote_update'
+      ? 'update_remote'
+      : job.type === 'content_sync' || job.type === 'account_import' || job.type === 'account_scan' || job.type === 'full_reconciliation'
+        ? 'import'
+        : 'read_engagement';
+  try {
+    requireIntegrationOperation(account.platform, operation);
+  } catch (error) {
+    await updateJob(store, job, {
+      status: 'failed',
+      errorCode: 'UNSUPPORTED_OPERATION',
+      errorMessage: error instanceof Error ? error.message : 'The integration does not support this operation.',
+      nextAttemptAt: undefined
+    });
+    return;
+  }
+  const policyTargets = [
+    { type: 'external_account' as const, id: account.externalAccountId },
+    ...(account.primaryCreatorIdentityId || account.creatorIdentityId
+      ? [{ type: 'creator' as const, id: account.primaryCreatorIdentityId || account.creatorIdentityId! }]
+      : []),
+    ...(typeof job.payload?.assetId === 'string' ? [{ type: 'asset' as const, id: job.payload.assetId }] : []),
+    ...(typeof job.payload?.externalPublicationId === 'string' ? [{ type: 'publication' as const, id: job.payload.externalPublicationId }] : []),
+    ...(typeof job.payload?.externalContentId === 'string' ? [{ type: 'external_content' as const, id: job.payload.externalContentId }] : [])
+  ];
+  const policy = await createStoreIntegrationPolicyGate(store).evaluate({ operation, targets: policyTargets });
+  if (!policy.allowed) {
+    await updateJob(store, job, {
+      status: 'failed',
+      errorCode: 'SAFETY_HOLD',
+      errorMessage: policy.reason,
+      nextAttemptAt: undefined
+    });
+    await addLog(store, job.externalSyncJobId, 'warning', 'Integration job blocked by an active safety hold', { operation, activeHoldTypes: policy.activeHoldTypes });
     return;
   }
   const rateLimitedUntilMs = account.rateLimitedUntil ? Date.parse(account.rateLimitedUntil) : NaN;

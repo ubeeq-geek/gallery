@@ -3,12 +3,16 @@ import { randomUUID } from 'crypto';
 import { loadConfig } from './config';
 import { DynamoStore } from './dynamoStore';
 import { createExternalSyncQueue } from './externalSyncQueue';
+import type { AppConfig } from './config';
+import type { DataStore } from './store';
+import type { ExternalSyncQueue } from './externalSyncQueue';
 
-export const handler: ScheduledHandler = async () => {
-  const config = loadConfig();
-  const store = new DynamoStore(config);
-  const queue = createExternalSyncQueue(config);
-  const now = new Date().toISOString();
+export const runExternalSyncSchedule = async (
+  store: DataStore,
+  config: AppConfig,
+  queue: ExternalSyncQueue,
+  now = new Date().toISOString()
+): Promise<{ retries: number; activityScans: number; catalogueScans: number }> => {
   const jobs = await store.listDueExternalSyncJobs(now, 50);
   let queued = 0;
   const resumedAccounts = new Set<string>();
@@ -29,6 +33,13 @@ export const handler: ScheduledHandler = async () => {
     } catch (error) {
       console.error(`[external-sync-scheduler] enqueue_failed job=${job.externalSyncJobId} message=${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  // Retrying already-created work remains enabled: this switch controls only
+  // autonomous provider polling, which is the variable-cost component.
+  if (!config.externalScheduledScansEnabled) {
+    console.info(`[external-sync-scheduler] retries=${queued} scheduled_scans=disabled`);
+    return { retries: queued, activityScans: 0, catalogueScans: 0 };
   }
 
   const scanBefore = new Date(Date.now() - config.externalAccountScanIntervalSeconds * 1000).toISOString();
@@ -103,4 +114,10 @@ export const handler: ScheduledHandler = async () => {
     }
   }
   console.info(`[external-sync-scheduler] retries=${queued} activity_scans=${activityScans} catalogue_scans=${scans}`);
+  return { retries: queued, activityScans, catalogueScans: scans };
+};
+
+export const handler: ScheduledHandler = async () => {
+  const config = loadConfig();
+  await runExternalSyncSchedule(new DynamoStore(config), config, createExternalSyncQueue(config));
 };
