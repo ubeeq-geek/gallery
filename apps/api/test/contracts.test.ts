@@ -5,6 +5,8 @@ import type { AppConfig } from '../src/config';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SupportSafetyService } from '../src/supportSafety';
+import { InMemorySupportSafetyRepository } from '../src/supportSafetyRepository';
 
 const buildConfig = (): AppConfig => ({
   tenantId: 'test',
@@ -29,6 +31,7 @@ const buildConfig = (): AppConfig => ({
   trendingCandidateLimit: 1500,
   externalSyncBaseDelaySeconds: 60,
   deviantArtMinimumRequestIntervalMs: 0,
+  flickrMinimumRequestIntervalMs: 0,
   externalAccountScanIntervalSeconds: 21600,
   externalActivityScanIntervalSeconds: 120,
   deviantArtPublishedDescriptionUpdate: false,
@@ -38,10 +41,52 @@ const buildConfig = (): AppConfig => ({
   discordApiBaseUrl: 'https://discord.com/api/v10',
   youtubeMinimumRequestIntervalMs: 1000,
   youtubeApiBaseUrl: 'https://www.googleapis.com/youtube/v3',
+  wordpressApprovedEmbedHosts: [],
+  wordpressManagedSiteHosts: [],
+  wordpressBlockedSiteHosts: [],
+  tumblrApiBaseUrl: 'https://api.tumblr.com',
+  tumblrMediaBlockLimit: 10,
+  tumblrHourlyRequestLimit: 1000,
+  tumblrDailyRequestLimit: 5000,
+  tumblrPublishMaxAttempts: 5,
+  tumblrRetryBaseDelaySeconds: 60,
   externalScheduledScansEnabled: false
 });
 
 describe('API contract', () => {
+  it('compliance-gates creator-owned SoundCloud credentials and connection authorization', async () => {
+    const store = new InMemoryStore();
+    const disabledApp = createApp({ config: buildConfig(), store });
+    await request(disabledApp)
+      .put('/studio/integrations/soundcloud/credentials')
+      .set('x-user-id', 'soundcloud-owner')
+      .send({ clientId: 'client', clientSecret: 'secret' })
+      .expect(403);
+
+    const config = {
+      ...buildConfig(), soundCloudEnabled: true,
+      soundCloudOAuthRedirectUri: 'https://studio.example/integrations/soundcloud/callback'
+    };
+    const app = createApp({ config, store });
+    const saved = await request(app)
+      .put('/studio/integrations/soundcloud/credentials')
+      .set('x-user-id', 'soundcloud-owner')
+      .send({ clientId: 'client', clientSecret: 'secret', applicationLabel: 'My SoundCloud app' })
+      .expect(201);
+    expect(saved.body).not.toHaveProperty('clientSecret');
+    expect(saved.body.platform).toBe('soundcloud');
+
+    const connected = await request(app)
+      .post('/studio/integrations/soundcloud/connect')
+      .set('x-user-id', 'soundcloud-owner')
+      .send({ externalPlatformCredentialId: saved.body.externalPlatformCredentialId })
+      .expect(200);
+    const authorizationUrl = new URL(connected.body.authorizationUrl);
+    expect(authorizationUrl.origin).toBe('https://secure.soundcloud.com');
+    expect(authorizationUrl.searchParams.get('code_challenge_method')).toBe('S256');
+    expect(connected.body.sourceControlNotice).toContain('does not create a backup');
+  });
+
   it('serves and updates distinct public member and Creator profiles', async () => {
     const store = new InMemoryStore();
     const app = createApp({ config: buildConfig(), store });
@@ -252,7 +297,9 @@ describe('API contract', () => {
 
   it('publishes one canonical Work through Space, discovery, and Collection contracts', async () => {
     const store = new InMemoryStore();
-    const app = createApp({ config: buildConfig(), store });
+    const supportSafetyRepository = new InMemorySupportSafetyRepository();
+    const supportSafety = new SupportSafetyService(supportSafetyRepository);
+    const app = createApp({ config: buildConfig(), store, supportSafetyRepository });
     const now = new Date().toISOString();
     await store.createCreator({
       creatorId: 'canonical-creator',
@@ -385,6 +432,17 @@ describe('API contract', () => {
     });
     expect(JSON.stringify(exported.body)).not.toContain('secret-token-must-not-export');
     expect(JSON.stringify(exported.body)).not.toContain('secret-refresh-must-not-export');
+
+    const assetLock = await supportSafety.applyHold({ type: 'CSAM_SAFETY_LOCK', targetType: 'asset', targetId: 'canonical-asset', reason: 'Restricted safety review', sourceId: 'case-asset' }, { authoredBy: 'system' });
+    expect((await request(app).get('/creators/canonical-creator/works/first-work')).status).toBe(404);
+    const safetyFilteredExport = await request(app).get('/studio/creators/canonical-creator/export').set('x-user-id', 'canonical-owner');
+    expect(safetyFilteredExport.status).toBe(200);
+    expect(safetyFilteredExport.body.works[0].assets).toEqual([]);
+    await supportSafety.releaseHold(assetLock.holdId, 'Test review complete', 'reviewer-1', true);
+
+    await supportSafety.applyHold({ type: 'CSAM_SAFETY_LOCK', targetType: 'creator', targetId: 'canonical-creator', reason: 'Account-wide restricted safety review', sourceId: 'case-creator' }, { authoredBy: 'system' });
+    expect((await request(app).get('/creators/canonical-creator/works?access=any-private-code')).status).toBe(404);
+    expect((await request(app).get('/studio/creators/canonical-creator/export').set('x-user-id', 'canonical-owner')).status).toBe(423);
   });
 
   it('returns canonical Eversally identity and domains in hosted mode', async () => {

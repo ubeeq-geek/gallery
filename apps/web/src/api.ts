@@ -1230,6 +1230,63 @@ export const api = {
       credentials?: Array<{ externalPlatformCredentialId: string; applicationLabel?: string; clientId: string; redirectUri: string; updatedAt: string }>;
     }>;
   },
+  async studioGetInstagramConfiguration() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/integrations/instagram/configuration`);
+    return handleJson(response) as Promise<{
+      configured: boolean;
+      onboardingEnabled: boolean;
+      state: 'READY' | 'APP_REVIEW_REQUIRED' | 'NOT_CONFIGURED';
+      apiVersion: string;
+      policyProfile: 'instagram_public_safe';
+      pilotCapabilities: { accountRead: boolean; mediaRead: boolean; imagePublish: boolean; carouselPublish: boolean; reelPublish: boolean; storyPublish: boolean; insightsRead: boolean };
+    }>;
+  },
+  async studioStartInstagramConnection(creatorId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/connections/start`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ creatorId })
+    });
+    return handleJson(response) as Promise<{ authorizationUrl: string }>;
+  },
+  async studioGetInstagramConnections(creatorId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/integrations/instagram/connections?creatorId=${encodeURIComponent(creatorId)}`);
+    return handleJson(response) as Promise<Array<{ id: string; username: string; accountType: 'BUSINESS' | 'CREATOR'; apiVersion: string; policyProfileVersion: string; capabilities: string[]; state: string }>>;
+  },
+  async studioDisconnectInstagram(connectionId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/connections/${encodeURIComponent(connectionId)}`, { method: 'DELETE', headers: await authHeaders() });
+    return handleJson(response);
+  },
+  async studioSetInstagramCapabilities(connectionId: string, capabilities: string[]) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/connections/${encodeURIComponent(connectionId)}/capabilities`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ capabilities }) });
+    return handleJson(response) as Promise<{ id: string; capabilities: string[] }>;
+  },
+  async studioSyncInstagramMetadata(connectionId: string, cursor?: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/connections/${encodeURIComponent(connectionId)}/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ cursor }) });
+    return handleJson(response) as Promise<{ items: Array<{ workId: string; title: string; remoteUrl?: string; contentAvailability: 'external_reference'; sourceNotice: string }>; remoteChanges: Array<{ workId: string; remoteId: string; fields: string[] }>; nextCursor?: string }>;
+  },
+  async studioResolveInstagramReference(workId: string, strategy: 'keep_local' | 'accept_remote' | 'field_by_field', fields?: Array<'title' | 'description'>) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/external-references/${encodeURIComponent(workId)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ strategy, fields }) });
+    return handleJson(response);
+  },
+  async studioMapInstagramReference(referenceWorkId: string, workId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/instagram/external-references/${encodeURIComponent(referenceWorkId)}/map`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ workId }) });
+    return handleJson(response);
+  },
+  async studioGetInstagramInsights(connectionId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/integrations/instagram/connections/${encodeURIComponent(connectionId)}/insights`);
+    return handleJson(response) as Promise<{ items: Array<{ publicationId: string; metric: string; value: number; capturedAt: string; retentionExpiresAt: string }>; definitionsVersion: string; containsAudienceIdentity: false }>;
+  },
+  async studioUpdateInstagramPublication(publicationId: string, payload: { caption?: string; accessibilityText?: string }) {
+    const response = await fetch(`${API_BASE}/api/instagram/publications/${encodeURIComponent(publicationId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async studioArchiveInstagramPublication(publicationId: string) {
+    const response = await fetch(`${API_BASE}/api/instagram/publications/${encodeURIComponent(publicationId)}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ confirm: true }) });
+    return handleJson(response);
+  },
+  async studioDeleteInstagramPublication(publicationId: string) {
+    const response = await fetch(`${API_BASE}/api/instagram/publications/${encodeURIComponent(publicationId)}?confirm=true`, { method: 'DELETE', headers: await authHeaders() });
+    return handleJson(response);
+  },
   async studioSaveDeviantArtCredentials(payload: { creatorId?: string; externalPlatformCredentialId?: string; createNew?: boolean; applicationLabel?: string; clientId: string; clientSecret?: string }) {
     const response = await fetch(`${API_BASE}/studio/integrations/deviantart/credentials`, {
       method: 'PUT',
@@ -1285,6 +1342,51 @@ export const api = {
   async studioGetBlueskyConfiguration() {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/bluesky/configuration`);
     return handleJson(response) as Promise<{ platform: 'bluesky'; configured: boolean; authorizationUrl?: string; requiredConfiguration: string[] }>;
+  },
+  async studioGetTumblrConfiguration() {
+    return handleJson(await fetch(`${API_BASE}/studio/integrations/tumblr/configuration`, { headers: await authHeaders() }));
+  },
+  async studioListTumblrConnectors(creatorId: string) {
+    return handleJson(await fetch(`${API_BASE}/studio/integrations/tumblr?creatorId=${encodeURIComponent(creatorId)}`, { headers: await authHeaders() }));
+  },
+  async studioCreateTumblrConnector(payload: { creatorId: string; ownership: 'managed' | 'creator_owned'; clientId?: string; clientSecret?: string; redirectUri?: string }) {
+    return handleJson(await fetch(`${API_BASE}/studio/integrations/tumblr`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) }));
+  },
+  async studioStartTumblrOAuth(connectorId: string) {
+    return handleJson(await fetch(`${API_BASE}/studio/integrations/tumblr/${encodeURIComponent(connectorId)}/oauth/start`, { method: 'POST', headers: await authHeaders() }));
+  },
+  async studioTestTumblrConnector(connectorId: string) {
+    return handleJson(await fetch(`${API_BASE}/studio/integrations/tumblr/${encodeURIComponent(connectorId)}/test`, { method: 'POST', headers: await authHeaders() }));
+  },
+  async studioRefreshTumblrConnector(connectorId: string) {
+    return handleJson(await fetch(`${API_BASE}/studio/integrations/tumblr/${encodeURIComponent(connectorId)}/refresh`, { method: 'POST', headers: await authHeaders() }));
+  },
+  async studioListTumblrBlogs(connectorId: string) {
+    return handleJson(await fetch(`${API_BASE}/studio/integrations/tumblr/${encodeURIComponent(connectorId)}/blogs`, { headers: await authHeaders() }));
+  },
+  async studioUpdateTumblrBlog(connectorId: string, blogId: string, payload: { enabled?: boolean; defaults?: Record<string, unknown> }) {
+    return handleJson(await fetch(`${API_BASE}/studio/integrations/tumblr/${encodeURIComponent(connectorId)}/blogs/${encodeURIComponent(blogId)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) }));
+  },
+  async studioDeleteTumblrConnector(connectorId: string) {
+    return handleJson(await fetch(`${API_BASE}/studio/integrations/tumblr/${encodeURIComponent(connectorId)}`, { method: 'DELETE', headers: await authHeaders() }));
+  },
+  async studioPreviewTumblrWork(workId: string, payload: Record<string, unknown>) {
+    return handleJson(await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/preview/tumblr`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) }));
+  },
+  async studioPublishTumblrWork(workId: string, payload: Record<string, unknown>) {
+    return handleJson(await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/publish/tumblr`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify(payload) }));
+  },
+  async studioListTumblrPublications(workId: string) {
+    return handleJson(await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/publications/tumblr`, { headers: await authHeaders() }));
+  },
+  async studioGetTumblrRemotePublication(workId: string, publicationId: string) {
+    return handleJson(await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/publications/${encodeURIComponent(publicationId)}/tumblr/remote`, { headers: await authHeaders() }));
+  },
+  async studioUpdateTumblrPublication(workId: string, publicationId: string, confirmRemoteOverwrite = false) {
+    return handleJson(await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/publications/${encodeURIComponent(publicationId)}/tumblr`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ confirmRemoteOverwrite }) }));
+  },
+  async studioDeleteTumblrPublication(workId: string, publicationId: string) {
+    return handleJson(await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/publications/${encodeURIComponent(publicationId)}/tumblr`, { method: 'DELETE', headers: await authHeaders() }));
   },
   async studioStartBlueskyConnection(creatorId: string, handle: string, returnPath = '/studio/workspace?section=integrations') {
     const response = await fetch(`${API_BASE}/studio/integrations/bluesky/connect`, {
@@ -1533,6 +1635,9 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/works?${params.toString()}`);
     const result = await handleJson(response) as { items?: CanonicalWorkResponse[]; total?: number };
     return { ...result, items: (result.items || []).map(canonicalWorkToStudioAsset) };
+  },
+  async studioGetCanonicalWork(workId: string) {
+    return handleJson(await fetchAuthGetWithRetry(`${API_BASE}/studio/works/${encodeURIComponent(workId)}`));
   },
   async studioCreateWork(payload: { creatorId: string; originalFilename?: string; title?: string; description?: string; kind?: 'image' | 'literature' | 'article'; body?: PostBlock[]; tags?: string[] }) {
     const response = await fetch(`${API_BASE}/studio/works`, {
@@ -1835,6 +1940,45 @@ export const api = {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ workIds: payload.assetIds })
+    });
+    return handleJson(response);
+  },
+  async fanvueListConnections(ownerId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/integrations/fanvue/connections?ownerId=${encodeURIComponent(ownerId)}`);
+    return handleJson(response);
+  },
+  async fanvueStartConnection(ownerId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/fanvue/connections/start`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ ownerId, ownerType: 'creator', mode: 'STUDIO_MANAGED' })
+    });
+    return handleJson(response);
+  },
+  async fanvueUpdateCapabilities(connectionId: string, capabilities: string[]) {
+    const response = await fetch(`${API_BASE}/api/integrations/fanvue/connections/${encodeURIComponent(connectionId)}/capabilities`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ capabilities })
+    });
+    return handleJson(response);
+  },
+  async fanvueSync(connectionId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/fanvue/connections/${encodeURIComponent(connectionId)}/sync`, {
+      method: 'POST', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async fanvueRefreshAccountHealth(connectionId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/fanvue/connections/${encodeURIComponent(connectionId)}/account-health`, {
+      method: 'POST', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async fanvueListPublications(connectionId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/fanvue/publications?connectionId=${encodeURIComponent(connectionId)}`);
+    return handleJson(response);
+  },
+  async fanvueDisconnect(connectionId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/fanvue/connections/${encodeURIComponent(connectionId)}`, {
+      method: 'DELETE', headers: await authHeaders()
     });
     return handleJson(response);
   },

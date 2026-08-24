@@ -3,10 +3,12 @@ import cors from 'cors';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import { AdminUpdateUserAttributesCommand, CognitoIdentityProviderClient, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSignedUrl as getCloudFrontSignedUrl } from '@aws-sdk/cloudfront-signer';
 import { createHash, createPublicKey, randomUUID } from 'crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import jwt from 'jsonwebtoken';
 import { createOptionalAuthMiddleware, requireAdmin, requireAuth, resolveRole } from './auth';
@@ -16,6 +18,10 @@ import type { AppConfig } from './config';
 import { brandForConfig } from './brand';
 import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation, type IntegrationPlatform, type IntegrationPolicyTarget } from './integrationStandard';
 import { resolvePublicationReconciliation } from './integrationReconciliation';
+import { INSTAGRAM_PILOT_INSIGHT_METRICS, INSTAGRAM_PILOT_MEDIA_CONSTRAINTS, instagramDeploymentStatus, createManagedInstagramProvider } from './instagramConfiguration';
+import { InstagramProviderError } from './instagramProvider';
+import { issueInstagramOAuthState, verifyInstagramOAuthState } from './externalOAuth';
+import { evaluateInstagramEligibility, instagramIdempotencyKey, instagramPublishingLimitAvailable, issueInstagramDeliveryCapability, validateInstagramMedia, verifyInstagramDeliveryCapability, verifyInstagramWebhookSignature, type InstagramCapabilities, type InstagramPlacement } from './instagramIntegration';
 import type { DataStore } from './store';
 import { hashPassword } from './unlock';
 import type {
@@ -55,7 +61,7 @@ import type {
   UbeeqCollectionAsset
 } from './domain';
 import { contentAvailabilityForAssets } from './canonicalDomain';
-import type { CanonicalAsset, CreatorCollection as CanonicalCollection, Publication, PublicationIntent, Work } from './canonicalDomain';
+import type { CanonicalAsset, CreatorCollection as CanonicalCollection, Publication, PublicationIntent, Work, WorkAsset } from './canonicalDomain';
 import {
   generateCreatorCoverRenditions,
   generateCreatorProfileRenditions,
@@ -111,14 +117,32 @@ import type { CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getDiscordGuild, listDiscordChannels, sendDiscordMessage, queueDiscordWorkPublished, queueDiscordWorksPublished } from './discordCommunity';
 import { createPatreonRouter, createPatreonWebhookHandler, PatreonRepository } from './patreon';
 import { PatreonDynamoPersistence } from './patreonDynamoPersistence';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { createWordPressRouter } from './wordpressIntegration';
+import { registerFlickrRoutes } from './flickrIntegration';
+import { createFlickrRepository } from './flickrRepository';
+import { SmugMugError, type SmugMugIntegrationService, type SmugMugMigrationMode } from './smugMugIntegration';
+import { installVimeoRoutes } from './vimeoIntegration';
+import { DynamoVimeoRepository } from './vimeoRepository';
+import { createVimeoQueue } from './vimeoQueue';
+import { createFanvueRouter } from './fanvueRouter';
+import type { FanvueRepository } from './fanvueRepository';
+import { registerTumblrRoutes } from './tumblrRoutes';
+import { InMemoryTumblrRepository, type TumblrRepository } from './tumblrRepository';
+import { createTumblrPublishQueue, type TumblrPublishQueue } from './tumblrPublishQueue';
+import { createSupportRouter } from './supportRoutes';
+import { SupportSafetyService } from './supportSafety';
+import type { SupportSafetyRepository } from './supportSafetyRepository';
 
 interface CreateAppOptions {
   config: AppConfig;
   store: DataStore;
   externalSyncQueue?: ExternalSyncQueue;
   communityDeliveryQueue?: CommunityDeliveryQueue;
+  smugMugService?: SmugMugIntegrationService;
+  fanvueRepository?: FanvueRepository;
+  tumblrRepository?: TumblrRepository;
+  tumblrPublishQueue?: TumblrPublishQueue;
+  supportSafetyRepository?: SupportSafetyRepository;
 }
 
 let hasHandledInvocation = false;
@@ -956,15 +980,36 @@ const parsePassthroughCursor = (token?: string): string | undefined => {
 const encodePassthroughCursor = (value: string): string =>
   encodeCursorToken({ v: 1, type: 'passthrough', value });
 
-export const createApp = ({ config, store, externalSyncQueue: injectedExternalSyncQueue, communityDeliveryQueue: injectedCommunityDeliveryQueue }: CreateAppOptions) => {
+export const createApp = ({
+  config,
+  store,
+  externalSyncQueue: injectedExternalSyncQueue,
+  communityDeliveryQueue: injectedCommunityDeliveryQueue,
+  smugMugService,
+  fanvueRepository,
+  tumblrRepository: injectedTumblrRepository,
+  tumblrPublishQueue: injectedTumblrPublishQueue,
+  supportSafetyRepository
+}: CreateAppOptions) => {
   const brand = brandForConfig(config);
   const app = express();
-  const patreonRepository = new PatreonRepository(config.patreonIntegrationTable ? new PatreonDynamoPersistence(DynamoDBDocumentClient.from(new DynamoDBClient({ region: config.awsRegion })), config.patreonIntegrationTable, config.tenantId) : undefined);
+  const patreonRepository = new PatreonRepository(
+    config.patreonIntegrationTable
+      ? new PatreonDynamoPersistence(
+        DynamoDBDocumentClient.from(new DynamoDBClient({ region: config.awsRegion })),
+        config.patreonIntegrationTable,
+        config.tenantId
+      )
+      : undefined
+  );
   const s3Client = new S3Client({ region: config.awsRegion });
   const cognitoClient = new CognitoIdentityProviderClient({ region: config.awsRegion });
   const sesClient = new SESv2Client({ region: config.awsRegion });
   const externalSyncQueue = injectedExternalSyncQueue || createExternalSyncQueue(config);
   const communityDeliveryQueue = injectedCommunityDeliveryQueue || createCommunityDeliveryQueue(config);
+  const tumblrRepository = injectedTumblrRepository || new InMemoryTumblrRepository();
+  const tumblrPublishQueue = injectedTumblrPublishQueue || createTumblrPublishQueue(config);
+  const supportSafetyService = new SupportSafetyService(supportSafetyRepository);
   const mediaCdnDomain = (config.mediaCdnDomain || '')
     .trim()
     .replace(/^https?:\/\//i, '')
@@ -1154,7 +1199,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     minimumRequestIntervalMs: credential.platform === 'youtube'
       ? config.youtubeMinimumRequestIntervalMs
       : config.deviantArtMinimumRequestIntervalMs,
-    ...(credential.platform === 'youtube' ? { apiBaseUrl: config.youtubeApiBaseUrl } : {})
+    ...(credential.platform === 'youtube' ? { apiBaseUrl: config.youtubeApiBaseUrl } : {}),
+    enabled: credential.platform !== 'soundcloud' || config.soundCloudEnabled
   });
 
   /** Resolve and refresh a connected DeviantArt account for a one-shot native
@@ -2585,14 +2631,157 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     allowedHeaders,
     exposedHeaders
   }));
+  app.post(
+    '/webhooks/patreon',
+    express.raw({ type: 'application/json', limit: '1mb' }),
+    createPatreonWebhookHandler(config, patreonRepository)
+  );
   // Writing Works use structured block documents and should not be constrained
   // by the small default JSON parser limit. External destinations still apply
   // their own limits when publishing.
-  app.post('/webhooks/patreon', express.raw({ type: 'application/json', limit: '1mb' }), createPatreonWebhookHandler(config, patreonRepository));
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({
+    limit: '10mb',
+    verify: (req, _res, body) => {
+      const request = req as express.Request;
+      if (request.url?.split('?')[0] === '/webhooks/vimeo' || request.originalUrl.startsWith('/webhooks/fanvue')) {
+        request.rawBody = Buffer.from(body);
+      }
+    }
+  }));
   app.use(createOptionalAuthMiddleware(config));
   app.use('/api', createPatreonRouter(config, patreonRepository, undefined, store));
+  app.use('/api', createWordPressRouter(config, store));
+  registerFlickrRoutes(app, config, createFlickrRepository(config), undefined, store);
+  const vimeoRepository = config.useContentCoreTable
+    ? new DynamoVimeoRepository(DynamoDBDocumentClient.from(new DynamoDBClient({ region: config.awsRegion })), config.contentCoreTable)
+    : undefined;
+  installVimeoRoutes(app, config, store, vimeoRepository, undefined, createVimeoQueue(config));
+  app.use(createFanvueRouter(config, fanvueRepository, async (userId, ownerId) => {
+    const identity = await store.getUserIdentity?.(userId);
+    return identity?.role === 'admin' || store.hasCreatorAccess(userId, ownerId);
+  }, async (workId) => {
+    const work = await store.getWork(config.tenantId, workId);
+    if (!work) return null;
+    const assets = await store.listCanonicalAssetsByWork(config.tenantId, workId);
+    return { work, assets, activeSafetyHold: assets.some((asset) => asset.metadata?.fanvueSafetyHold === true) };
+  }, async (userId) => {
+    const identity = await store.getUserIdentity?.(userId);
+    return identity?.role === 'admin';
+  }, async (asset) => {
+    if (!asset.storage.objectKey) throw new Error('The selected Asset is not hosted.');
+    if (config.localMediaDirectory) {
+      const root = resolve(config.localMediaDirectory);
+      const path = resolve(root, asset.storage.objectKey);
+      if (path !== root && !path.startsWith(`${root}/`)) throw new Error('The selected Asset path is invalid.');
+      return readFile(path);
+    }
+    const result = await s3Client.send(new GetObjectCommand({ Bucket: config.mediaBucket, Key: asset.storage.objectKey }));
+    if (!result.Body) throw new Error('The selected Asset body is unavailable.');
+    return Buffer.from(await result.Body.transformToByteArray());
+  }));
+  registerTumblrRoutes({
+    app, config, repository: tumblrRepository,
+    hasCreatorAccess: (userId, creatorId) => store.hasCreatorAccess(userId, creatorId),
+    getWork: (tenantId, workId) => store.getWork(tenantId, workId),
+    listAssets: (tenantId, workId) => store.listCanonicalAssetsByWork(tenantId, workId),
+    resolveAssetUrl: (asset, req) => asset.storage.externalUrl
+      ? Promise.resolve(asset.storage.externalUrl)
+      : publicMediaUrl(asset.storage.objectKey, `${req.protocol}://${req.get('host')}`),
+    publishQueue: tumblrPublishQueue,
+    audit: auditLog
+  });
+  app.use('/support', createSupportRouter(supportSafetyService));
   if (config.localMediaDirectory) app.use('/media/local', express.static(config.localMediaDirectory));
+
+  const handleSmugMugError = (res: express.Response, error: unknown) => {
+    if (error instanceof SmugMugError) return res.status(error.status).json({ code: error.code, message: error.message });
+    logServerError('smugmug.integration', error);
+    return res.status(502).json({ code: 'SMUGMUG_UNAVAILABLE', message: 'SmugMug could not complete the request.' });
+  };
+  const requireSmugMug = (res: express.Response) => {
+    if (smugMugService) return smugMugService;
+    res.status(503).json({ code: 'SMUGMUG_NOT_CONFIGURED', message: 'SmugMug migration is not configured.' });
+    return undefined;
+  };
+  const safeSmugMugResponse = (value: unknown) => JSON.parse(JSON.stringify(value, (key, item) => (
+    key === 'encryptedCredentialRef' || key === 'oauthState' ? undefined : item
+  )));
+
+  app.post('/api/integrations/smugmug/connections/start', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res);
+    if (!service) return;
+    const creatorId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (!creatorId) return res.status(400).json({ code: 'CREATOR_REQUIRED', message: 'Choose a creator archive.' });
+    if (!(await ensureCreatorAccountAccess(req, res, creatorId))) return;
+    try { return res.status(201).json(safeSmugMugResponse(await service.start(req.authUser!.userId, creatorId))); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.get('/api/integrations/smugmug/oauth/callback', async (req, res) => {
+    const service = requireSmugMug(res);
+    if (!service) return;
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    const verifier = typeof req.query.oauth_verifier === 'string' ? req.query.oauth_verifier : (typeof req.query.code === 'string' ? req.query.code : '');
+    if (!state || !verifier) return res.status(400).json({ code: 'INVALID_OAUTH_CALLBACK', message: 'OAuth state and verifier are required.' });
+    try { return res.json(safeSmugMugResponse(await service.callback(state, verifier))); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/connections/:id/inventory', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    try { return res.status(202).json(safeSmugMugResponse(await service.inventory(req.params.id, req.authUser!.userId))); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/migrations/:id/confirm', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    const modes = new Set<SmugMugMigrationMode>(['REFERENCE_ONLY', 'SELECTED_SOURCE_MIGRATION', 'FULL_CATALOGUE_MIGRATION']);
+    const mode = req.body?.mode as SmugMugMigrationMode;
+    if (!modes.has(mode)) return res.status(400).json({ code: 'INVALID_MIGRATION_MODE', message: 'Choose a supported migration mode.' });
+    const galleryIds = Array.isArray(req.body?.selectedGalleryIds) ? req.body.selectedGalleryIds.filter((id: unknown): id is string => typeof id === 'string') : [];
+    try { return res.status(202).json(await service.confirm(req.params.id, req.authUser!.userId, mode, galleryIds)); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/migrations/:id/resume', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    try { return res.status(202).json(await service.resume(req.params.id, req.authUser!.userId)); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/connections/:id/sync', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    try { return res.status(202).json(safeSmugMugResponse(await service.sync(req.params.id, req.authUser!.userId))); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/connections/:id/publish', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    const galleryId = typeof req.body?.galleryId === 'string' ? req.body.galleryId.trim() : '';
+    const workIds = Array.isArray(req.body?.workIds) ? req.body.workIds.filter((value: unknown): value is string => typeof value === 'string' && Boolean(value.trim())).map((value: string) => value.trim()) : [];
+    if (!galleryId) return res.status(400).json({ code: 'GALLERY_REQUIRED', message: 'Choose a SmugMug gallery.' });
+    try {
+      const result = await service.publishSelected(req.params.id, req.authUser!.userId, galleryId, workIds);
+      auditLog(req, 'smugmug.selected.publish', { externalAccountId: req.params.id, galleryId, workCount: workIds.length });
+      return res.json(result);
+    } catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.post('/api/integrations/smugmug/connections/:id/metadata-sync', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    const workIds = Array.isArray(req.body?.workIds) ? req.body.workIds.filter((value: unknown): value is string => typeof value === 'string' && Boolean(value.trim())).map((value: string) => value.trim()) : [];
+    try {
+      const result = await service.syncSelectedMetadata(req.params.id, req.authUser!.userId, workIds);
+      auditLog(req, 'smugmug.selected.metadata-sync', { externalAccountId: req.params.id, workCount: workIds.length });
+      return res.json(result);
+    } catch (error) { return handleSmugMugError(res, error); }
+  });
+
+  app.delete('/api/integrations/smugmug/connections/:id', requireAuth, async (req, res) => {
+    const service = requireSmugMug(res); if (!service) return;
+    try { await service.disconnect(req.params.id, req.authUser!.userId); return res.status(204).end(); }
+    catch (error) { return handleSmugMugError(res, error); }
+  });
 
   const resolvePlatformRole = async (userId: string): Promise<PlatformRole> => {
     if (store.getUserIdentity) {
@@ -2803,7 +2992,24 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return previewRequested && previewAllowed;
   };
 
+  const creatorSafetyTargets = async (creatorId: string) => {
+    const [members, externalAccounts] = await Promise.all([
+      store.listCreatorMembers(creatorId),
+      store.listExternalAccountsByCreatorIdentity(creatorId)
+    ]);
+    return [
+      { type: 'creator' as const, id: creatorId },
+      ...members.flatMap((member) => [
+        { type: 'user' as const, id: member.userId },
+        { type: 'account' as const, id: member.userId }
+      ]),
+      ...externalAccounts.map((account) => ({ type: 'account' as const, id: account.externalAccountId }))
+    ];
+  };
+
   const canAccessCreatorSpace = async (req: express.Request, creator: Creator): Promise<boolean> => {
+    const holdDecision = await supportSafetyService.accessPolicy(await creatorSafetyTargets(creator.creatorId));
+    if (!holdDecision.public) return false;
     const visibility = creator.space?.visibility || 'public-discoverable';
     if (visibility !== 'private') return true;
     if (req.authUser?.userId && await store.hasCreatorAccess(req.authUser.userId, creator.creatorId)) return true;
@@ -2815,13 +3021,34 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return Boolean(shareCode) && String(req.query.access || '') === shareCode;
   };
 
+  const workIsPubliclyAvailable = async (work: Work): Promise<boolean> => {
+    const assets = await store.listCanonicalAssetsByWork(work.tenantId, work.workId);
+    const decision = await supportSafetyService.accessPolicy([
+      ...await creatorSafetyTargets(work.creatorId),
+      { type: 'work', id: work.workId },
+      ...assets.map((asset) => ({ type: 'asset' as const, id: asset.assetId }))
+    ]);
+    return decision.public;
+  };
+
+  const ensureWorkPublicationAllowed = async (work: Work, res: express.Response): Promise<boolean> => {
+    if (await workIsPubliclyAvailable(work)) return true;
+    res.status(423).json({ message: 'Publishing is unavailable while a review hold is active.' });
+    return false;
+  };
+
   app.get('/creators', async (req, res) => {
-    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=120');
+    // Do not let intermediary caches preserve creator pages after an immediate
+    // creator/account safety hold.
+    res.setHeader('Cache-Control', 'private, no-store');
     try {
       const result = await getDiscoveryCached(req, 'discovery:creators', async () => {
         const creators = await store.listCreators();
-        const active = creators
-          .filter((creator) => creator.status === 'active' && (creator.space?.visibility || 'public-discoverable') === 'public-discoverable')
+        const eligible = creators.filter((creator) => creator.status === 'active' && (creator.space?.visibility || 'public-discoverable') === 'public-discoverable');
+        const active = (await Promise.all(eligible.map(async (creator) => ({
+          creator,
+          available: (await supportSafetyService.accessPolicy(await creatorSafetyTargets(creator.creatorId))).public
+        })))).filter(({ available }) => available).map(({ creator }) => creator)
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         return Promise.all(active.map(async (creator) => {
           const creatorGroupings = (await store.listGroupingsByCreatorSlug(creator.slug))
@@ -2844,7 +3071,13 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         }));
       });
       res.setHeader('x-discovery-cache', result.cacheStatus);
-      const payload = result.payload;
+      // Holds must take effect immediately even when discovery data was built
+      // before the hold. Re-check every cached creator at response time.
+      const cachedPayload = Array.isArray(result.payload) ? result.payload as Creator[] : [];
+      const payload = (await Promise.all(cachedPayload.map(async (creator) => ({
+        creator,
+        available: (await supportSafetyService.accessPolicy(await creatorSafetyTargets(creator.creatorId))).public
+      })))).filter(({ available }) => available).map(({ creator }) => creator);
       res.json(payload);
     } catch (error) {
       logServerError('GET /creators', error);
@@ -3033,8 +3266,9 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const works = await listWorksForPublicCreator(creator.creatorId);
     const visible = (await Promise.all(works.map(async (work) => ({
       work,
-      space: await eversallyPublicationForWork(work)
-    })))).filter(({ work, space }) => work.status !== 'archived' && work.status !== 'deleted' && space?.status === 'live' && space.visibility === 'public');
+      space: await eversallyPublicationForWork(work),
+      holdAvailable: await workIsPubliclyAvailable(work)
+    })))).filter(({ work, space, holdAvailable }) => holdAvailable && work.status !== 'archived' && work.status !== 'deleted' && space?.status === 'live' && space.visibility === 'public');
     const origin = `${req.protocol}://${req.get('host')}`;
     return res.json({ creator: await publicCanonicalCreator(creator, origin), items: await Promise.all(visible.map(({ work }) => publicCanonicalWork(work, origin))) });
   });
@@ -3045,6 +3279,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const workSlug = String(req.params.workSlug || '').trim().toLowerCase();
     const work = (await listWorksForPublicCreator(creator.creatorId)).find((item) => item.slug === workSlug || item.slugHistory.includes(workSlug));
     if (!work || work.status === 'deleted') return res.status(404).json({ message: 'Work not found' });
+    if (!(await workIsPubliclyAvailable(work))) return res.status(404).json({ message: 'Work not found' });
     const canManage = isLocalCreatorPreview(req)
       || (req.authUser?.userId ? await store.hasCreatorAccess(req.authUser.userId, creator.creatorId) : false);
     if (!canManage && work.status === 'archived') return res.status(404).json({ message: 'Work not found' });
@@ -3085,7 +3320,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const works = (await Promise.all(memberships.map((membership) => store.getWork(config.tenantId, membership.workId))))
       .filter((work): work is Work => Boolean(work));
     const origin = `${req.protocol}://${req.get('host')}`;
-    const visibleWorks = canManage ? works : (await Promise.all(works.map(async (work) => ({
+    const holdFilteredWorks = (await Promise.all(works.map(async (work) => ({ work, available: await workIsPubliclyAvailable(work) })))).filter(({ available }) => available).map(({ work }) => work);
+    const visibleWorks = canManage ? holdFilteredWorks : (await Promise.all(holdFilteredWorks.map(async (work) => ({
       work,
       space: await eversallyPublicationForWork(work)
     })))).filter(({ work, space }) => work.status !== 'archived' && work.status !== 'deleted' && space?.status === 'live' && space.visibility === 'public').map(({ work }) => work);
@@ -3103,10 +3339,12 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const works = await listWorksForPublicCreator(creator.creatorId);
     const visible = await Promise.all(works.map(async (work) => ({
       work,
-      publication: await eversallyPublicationForWork(work)
+      publication: await eversallyPublicationForWork(work),
+      holdAvailable: await workIsPubliclyAvailable(work)
     })));
     return visible
-      .filter(({ work, publication }) => work.status !== 'archived'
+      .filter(({ work, publication, holdAvailable }) => holdAvailable
+        && work.status !== 'archived'
         && work.status !== 'deleted'
         && publication?.status === 'live'
         && publication.visibility === 'public')
@@ -3120,7 +3358,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.get('/creators/:slug/rss.xml', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
     const creator = await resolveCreatorFromSlug(requestedSlug);
-    if (!creator || creator.status !== 'active') return res.status(404).type('text/plain').send('Creator not found');
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) return res.status(404).type('text/plain').send('Creator not found');
     if (creator.slug !== requestedSlug) return res.redirect(302, `/creators/${creator.slug}/rss.xml`);
     const baseUrl = canonicalSpaceBaseUrl(creator);
     const feedUrl = `${baseUrl}/rss.xml`;
@@ -3133,14 +3371,14 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       const summary = work.description || (work.body || []).map((block) => block.text || block.quote || '').filter(Boolean).join('\n\n');
       return `<item>\n<title>${xmlEscape(work.title)}</title>\n<link>${xmlEscape(url)}</link>\n<guid isPermaLink="false">urn:ubeeq:work:${xmlEscape(work.workId)}</guid>\n<pubDate>${new Date(work.publishedAt || work.updatedAt).toUTCString()}</pubDate>\n<description>${xmlEscape(summary)}</description>${preview ? `\n<media:content url="${xmlEscape(preview)}" medium="image" />` : ''}\n</item>`;
     }).join('\n')}\n</channel>\n</rss>`;
-    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300');
+    res.setHeader('Cache-Control', 'private, no-store');
     return res.type('application/rss+xml').send(xml);
   });
 
   app.get('/creators/:slug/atom.xml', async (req, res) => {
     const requestedSlug = String(req.params.slug || '').trim().toLowerCase();
     const creator = await resolveCreatorFromSlug(requestedSlug);
-    if (!creator || creator.status !== 'active') return res.status(404).type('text/plain').send('Creator not found');
+    if (!creator || creator.status !== 'active' || !(await canAccessCreatorSpace(req, creator))) return res.status(404).type('text/plain').send('Creator not found');
     if (creator.slug !== requestedSlug) return res.redirect(302, `/creators/${creator.slug}/atom.xml`);
     const baseUrl = canonicalSpaceBaseUrl(creator);
     const feedUrl = `${baseUrl}/atom.xml`;
@@ -3153,7 +3391,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
       const summary = work.description || (work.body || []).map((block) => block.text || block.quote || '').filter(Boolean).join('\n\n');
       return `<entry>\n<title>${xmlEscape(work.title)}</title>\n<id>urn:ubeeq:work:${xmlEscape(work.workId)}</id>\n<link href="${xmlEscape(url)}" />\n<published>${xmlEscape(new Date(work.publishedAt || work.updatedAt).toISOString())}</published>\n<updated>${xmlEscape(new Date(work.updatedAt).toISOString())}</updated>\n<summary type="text">${xmlEscape(summary)}</summary>\n</entry>`;
     }).join('\n')}\n</feed>`;
-    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300');
+    res.setHeader('Cache-Control', 'private, no-store');
     return res.type('application/atom+xml').send(xml);
   });
 
@@ -6000,6 +6238,487 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     return res.status(204).end();
   });
 
+  app.get('/api/integrations/instagram/configuration', requireAuth, (_req, res) => {
+    // This response is intentionally deployment metadata only. Secrets, app ids,
+    // redirect credentials, tokens, and provider payloads never reach Studio.
+    res.json(instagramDeploymentStatus(config));
+  });
+
+  app.get('/webhooks/instagram', (req, res) => {
+    const mode = typeof req.query['hub.mode'] === 'string' ? req.query['hub.mode'] : '';
+    const token = typeof req.query['hub.verify_token'] === 'string' ? req.query['hub.verify_token'] : '';
+    const challenge = typeof req.query['hub.challenge'] === 'string' ? req.query['hub.challenge'] : '';
+    if (mode !== 'subscribe' || !config.instagramWebhookVerifyToken || token !== config.instagramWebhookVerifyToken || !challenge) return res.status(403).end();
+    return res.status(200).type('text/plain').send(challenge);
+  });
+
+  app.post('/webhooks/instagram', async (req, res) => {
+    const rawBody = (req as express.Request & { instagramRawBody?: Buffer }).instagramRawBody;
+    const signature = req.header('x-hub-signature-256');
+    if (!rawBody || !config.instagramAppSecret || !verifyInstagramWebhookSignature(rawBody, signature, config.instagramAppSecret)) {
+      await store.appendAuditEvent({ auditId: randomUUID(), action: 'instagram.webhook.rejected', actorRole: 'public', detail: { reason: 'signature_invalid' }, createdAt: new Date().toISOString() });
+      return res.status(401).end();
+    }
+    const payload = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+    if (payload.object !== 'instagram') return res.status(202).end();
+    const entries = Array.isArray(payload.entry) ? payload.entry.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object') : [];
+    const providerTimes = entries.map((entry) => Number(entry.time) * 1000).filter(Number.isFinite);
+    const newestProviderTime = providerTimes.length ? Math.max(...providerTimes) : undefined;
+    if (newestProviderTime && Math.abs(Date.now() - newestProviderTime) > 24 * 60 * 60 * 1000) {
+      await store.appendAuditEvent({ auditId: randomUUID(), action: 'instagram.webhook.rejected', actorRole: 'public', detail: { reason: 'replay_window' }, createdAt: new Date().toISOString() });
+      return res.status(202).end();
+    }
+    const eventHash = createHash('sha256').update(rawBody).digest('hex');
+    const scopeKey = `instagram-webhook:${config.tenantId}`;
+    if (await store.getIdempotencyRecord(scopeKey, eventHash)) return res.status(200).end();
+    const now = new Date();
+    await store.putIdempotencyRecord({ scopeKey, idempotencyKey: eventHash, status: 200, createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString() });
+    const types = [...new Set(entries.flatMap((entry) => (Array.isArray(entry.changes) ? entry.changes : []).map((change) => change && typeof change === 'object' ? String((change as Record<string, unknown>).field || 'unknown') : 'unknown')))];
+    await store.appendAuditEvent({ auditId: randomUUID(), action: 'instagram.webhook.accepted', actorRole: 'public', detail: { eventHash, entryCount: entries.length, types }, createdAt: now.toISOString() });
+    return res.status(200).end();
+  });
+
+  app.post('/api/integrations/instagram/connections/start', requireAuth, async (req, res) => {
+    const creatorId = typeof req.body?.creatorId === 'string' ? req.body.creatorId : '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorId))) return;
+    const provider = createManagedInstagramProvider(config);
+    if (!provider) {
+      res.status(503).json({ code: instagramDeploymentStatus(config).state, message: 'Instagram creator onboarding is not enabled for this deployment.' });
+      return;
+    }
+    const { state } = issueInstagramOAuthState(config, {
+      userId: req.authUser!.userId, creatorIdentityId: creatorId, platform: 'instagram',
+      returnPath: `/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}`
+    });
+    res.status(201).json({ authorizationUrl: provider.createAuthorizationUrl(state) });
+  });
+
+  app.get('/api/integrations/instagram/oauth/callback', async (req, res) => {
+    const stateValue = typeof req.query.state === 'string' ? req.query.state : '';
+    let state: ReturnType<typeof verifyInstagramOAuthState>;
+    try { state = verifyInstagramOAuthState(config, stateValue); }
+    catch { return res.status(400).json({ message: 'Instagram OAuth state is invalid or expired.' }); }
+    const redirect = (values: Record<string, string>) => res.redirect(302, resolveExternalOAuthReturnUrl(config, state.returnPath, values));
+    const provider = createManagedInstagramProvider(config);
+    if (!provider) return redirect({ instagram: 'failed', reason: 'APP_REVIEW_REQUIRED' });
+    if (typeof req.query.error === 'string') return redirect({ instagram: req.query.error === 'access_denied' ? 'cancelled' : 'failed', reason: req.query.error });
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!code) return redirect({ instagram: 'failed', reason: 'missing_authorization_code' });
+    if (!(await store.hasCreatorAccess(state.userId, state.creatorIdentityId))) return redirect({ instagram: 'failed', reason: 'creator_access_changed' });
+    try {
+      const tokens = await provider.exchangeAuthorizationCode(code);
+      const remoteAccounts = await provider.getProfessionalAccounts(tokens.accessToken);
+      if (!remoteAccounts.length) return redirect({ instagram: 'failed', reason: 'UNSUPPORTED_ACCOUNT_TYPE' });
+      const existingAccounts = await store.listExternalAccountsByUser(state.userId);
+      const now = new Date().toISOString();
+      for (const remote of remoteAccounts) {
+        const existing = existingAccounts.find((account) => account.platform === 'instagram' && account.externalUserId === remote.id);
+        const account: ExternalAccount = {
+          externalAccountId: existing?.externalAccountId || randomUUID(), userId: state.userId,
+          creatorIdentityId: state.creatorIdentityId, primaryCreatorIdentityId: state.creatorIdentityId,
+          externalPlatformCredentialId: 'instagram-managed-app', platform: 'instagram', externalUserId: remote.id,
+          externalUsername: remote.username, accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
+          tokenExpiresAt: tokens.expiresIn ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString() : undefined,
+          connectionStatus: 'connected', createdAt: existing?.createdAt || now, updatedAt: now,
+          instagram: { accountType: remote.accountType, apiVersion: config.instagramGraphApiVersion || 'v24.0', policyProfileVersion: '2026-08-23.1', enabledCapabilities: ['publish_images'] }
+        };
+        if (existing) await store.updateExternalAccount(account); else await store.createExternalAccount(account);
+        await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, [{ externalAccountId: account.externalAccountId, creatorIdentityId: state.creatorIdentityId, userId: state.userId, createdAt: now, updatedAt: now }]);
+      }
+      return redirect({ instagram: 'connected', accounts: String(remoteAccounts.length) });
+    } catch (error) {
+      return redirect({ instagram: 'failed', reason: error instanceof Error ? error.name : 'provider_error' });
+    }
+  });
+
+  app.get('/api/integrations/instagram/connections', requireAuth, async (req, res) => {
+    const creatorId = typeof req.query.creatorId === 'string' ? req.query.creatorId : '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    const accounts = (await store.listExternalAccountsByCreatorIdentity(creatorId)).filter((account) => account.platform === 'instagram' && account.userId === req.authUser!.userId);
+    res.json(accounts.map((account) => ({ id: account.externalAccountId, username: account.externalUsername, accountType: account.instagram?.accountType, apiVersion: account.instagram?.apiVersion, policyProfileVersion: account.instagram?.policyProfileVersion, capabilities: account.instagram?.enabledCapabilities || [], state: account.connectionStatus })));
+  });
+
+  app.patch('/api/integrations/instagram/connections/:connectionId/capabilities', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.connectionId);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || !account.instagram) return res.status(404).json({ message: 'Instagram connection not found.' });
+    const creatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorId))) return;
+    const requested = Array.isArray(req.body?.capabilities) ? req.body.capabilities.filter((value: unknown): value is string => typeof value === 'string') : [];
+    const permitted = new Set(['publish_images', ...(config.instagramReelsEnabled ? ['publish_reels'] : []), ...(config.instagramStoriesEnabled ? ['publish_stories'] : []), ...(config.instagramMetadataImportEnabled ? ['metadata_import'] : []), ...(config.instagramInsightsEnabled ? ['insights'] : [])]);
+    if (requested.some((capability: string) => !permitted.has(capability))) return res.status(422).json({ code: 'CAPABILITY_RESTRICTED', message: 'One or more capabilities are not approved for this deployment.' });
+    const updated = { ...account, instagram: { ...account.instagram, enabledCapabilities: requested as NonNullable<ExternalAccount['instagram']>['enabledCapabilities'] }, updatedAt: new Date().toISOString() };
+    await store.updateExternalAccount(updated);
+    auditLog(req, 'instagram.connection.capabilities.updated', { connectionId: account.externalAccountId, capabilities: requested });
+    return res.json({ id: updated.externalAccountId, capabilities: updated.instagram.enabledCapabilities });
+  });
+
+  app.post('/api/integrations/instagram/connections/:connectionId/sync', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.connectionId);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || !account.instagram) return res.status(404).json({ message: 'Instagram connection not found.' });
+    const creatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    if (!config.instagramMetadataImportEnabled || !account.instagram.enabledCapabilities.includes('metadata_import')) return res.status(409).json({ code: 'CAPABILITY_RESTRICTED', message: 'Metadata-reference import is not enabled for this connection.' });
+    const provider = createManagedInstagramProvider(config);
+    if (!provider || account.connectionStatus !== 'connected') return res.status(409).json({ code: 'REAUTH_REQUIRED', message: 'The Instagram connection is unavailable.' });
+    const cursor = typeof req.body?.cursor === 'string' ? req.body.cursor : undefined;
+    const page = await provider.listMedia(decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey), account.externalUserId, cursor, 25);
+    const existingWorks = await store.listWorksByCreator(config.tenantId, creatorId);
+    const imported: Work[] = [];
+    const changed: Array<{ workId: string; remoteId: string; fields: string[] }> = [];
+    for (const media of page.items) {
+      const existing = existingWorks.find((work) => work.origin.platform === 'instagram' && work.origin.integrationAccountId === account.externalAccountId && work.origin.remoteId === media.id);
+      if (existing) {
+        const remoteCaption = media.caption?.trim() || '';
+        const fingerprint = createHash('sha256').update(remoteCaption).digest('hex');
+        const referencePublication = (await store.listPublicationsByWork(config.tenantId, existing.workId)).find((publication) => publication.destination === 'instagram' && publication.remoteId === media.id);
+        if (referencePublication && referencePublication.sync.remoteMetadataFingerprint !== fingerprint) {
+          const remoteTitle = remoteCaption.split(/\r?\n/)[0]?.trim().slice(0, 160) || existing.title;
+          const fields = [...(remoteTitle !== existing.title ? ['title'] : []), ...(remoteCaption !== (existing.description || '') ? ['description'] : [])];
+          await store.upsertPublication({ ...referencePublication, remoteUrl: media.permalink || referencePublication.remoteUrl, remoteUpdatedAt: media.timestamp || referencePublication.remoteUpdatedAt, sync: { ...referencePublication.sync, status: 'remote_newer', remoteMetadataFingerprint: fingerprint }, providerData: { ...referencePublication.providerData, pendingRemoteMetadata: { title: remoteTitle, description: remoteCaption }, pendingRemoteFields: fields }, updatedAt: new Date().toISOString() });
+          changed.push({ workId: existing.workId, remoteId: media.id, fields });
+        }
+        continue;
+      }
+      const now = new Date().toISOString();
+      const caption = media.caption?.trim() || '';
+      const title = caption.split(/\r?\n/)[0]?.trim().slice(0, 160) || `Instagram reference ${media.id.slice(-8)}`;
+      const baseSlug = slugify(title) || `instagram-${media.id.slice(-8).toLowerCase()}`;
+      const slug = existingWorks.some((work) => work.slug === baseSlug) ? `${baseSlug}-${media.id.slice(-6).toLowerCase()}` : baseSlug;
+      const work: Work = { workId: randomUUID(), tenantId: config.tenantId, creatorId, kind: media.mediaType === 'VIDEO' ? 'video' : 'image', title, slug, slugHistory: [slug], description: caption || undefined, tags: [], contentRating: 'general', aiDisclosure: 'none', heavyTopics: [], status: 'draft', origin: { type: 'import', platform: 'instagram', integrationAccountId: account.externalAccountId, remoteId: media.id, remoteUrl: media.permalink, importedAt: now }, revision: 1, createdAt: now, updatedAt: now };
+      await store.createWork(work);
+      await store.upsertPublication({ publicationId: randomUUID(), tenantId: config.tenantId, creatorId, workId: work.workId, destination: 'instagram', integrationAccountId: account.externalAccountId, status: 'live', visibility: 'public', remoteId: media.id, remoteUrl: media.permalink, remoteCreatedAt: media.timestamp, remoteUpdatedAt: media.timestamp, metadataOverrides: { description: caption }, sync: { status: 'in_sync', remoteMetadataFingerprint: createHash('sha256').update(caption).digest('hex'), lastSuccessfulAt: now }, providerData: { externalReferenceOnly: true, sourceBytesStored: false, mediaType: media.mediaType, placement: media.placement, providerVersion: account.instagram.apiVersion }, createdAt: now, updatedAt: now, publishedAt: media.timestamp } as Publication);
+      imported.push(work); existingWorks.push(work);
+    }
+    const syncedAt = new Date().toISOString();
+    await store.updateExternalAccount({ ...account, lastSuccessfulSyncAt: syncedAt, lastSyncAttemptAt: syncedAt, updatedAt: syncedAt });
+    auditLog(req, 'instagram.metadata_references.imported', { connectionId: account.externalAccountId, importedCount: imported.length });
+    return res.status(200).json({ items: imported.map((work) => ({ workId: work.workId, title: work.title, remoteId: work.origin.remoteId, remoteUrl: work.origin.remoteUrl, contentAvailability: 'external_reference', sourceNotice: 'Instagram reference only — original source is not stored in Ubeeq' })), remoteChanges: changed, nextCursor: page.nextCursor });
+  });
+
+  app.post('/api/integrations/instagram/external-references/:workId/resolve', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work || work.origin.platform !== 'instagram' || !work.origin.remoteId) return res.status(404).json({ message: 'Instagram external reference not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const publication = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'instagram' && item.remoteId === work.origin.remoteId);
+    if (!publication || publication.sync.status !== 'remote_newer') return res.status(409).json({ code: 'NO_REMOTE_CHANGE', message: 'There is no pending Instagram metadata change.' });
+    const strategy = req.body?.strategy;
+    const pending = publication.providerData?.pendingRemoteMetadata && typeof publication.providerData.pendingRemoteMetadata === 'object' ? publication.providerData.pendingRemoteMetadata as Record<string, unknown> : {};
+    const selectedFields = strategy === 'accept_remote' ? ['title', 'description'] : strategy === 'field_by_field' && Array.isArray(req.body?.fields) ? req.body.fields.filter((field: unknown) => field === 'title' || field === 'description') : [];
+    if (strategy !== 'keep_local' && strategy !== 'accept_remote' && strategy !== 'field_by_field') return res.status(422).json({ message: 'Choose keep_local, accept_remote, or field_by_field.' });
+    const updatedWork: Work = selectedFields.length ? { ...work, title: selectedFields.includes('title') && typeof pending.title === 'string' ? pending.title : work.title, description: selectedFields.includes('description') && typeof pending.description === 'string' ? pending.description : work.description, revision: work.revision + 1, updatedAt: new Date().toISOString() } : work;
+    if (updatedWork !== work) await store.updateWork(updatedWork);
+    const resolved: Publication = { ...publication, metadataOverrides: { ...publication.metadataOverrides, ...(selectedFields.includes('description') && typeof pending.description === 'string' ? { description: pending.description } : {}) }, sync: { ...publication.sync, status: 'in_sync' }, providerData: { ...publication.providerData, pendingRemoteMetadata: undefined, pendingRemoteFields: undefined, remoteResolution: strategy }, updatedAt: new Date().toISOString() };
+    await store.upsertPublication(resolved);
+    auditLog(req, 'instagram.external_reference.remote_change.resolved', { workId: work.workId, publicationId: publication.publicationId, strategy, fields: selectedFields });
+    return res.json({ work: updatedWork, publication: resolved });
+  });
+
+  app.post('/api/integrations/instagram/external-references/:referenceWorkId/map', requireAuth, async (req, res) => {
+    const reference = await store.getWork(config.tenantId, req.params.referenceWorkId);
+    const targetWorkId = typeof req.body?.workId === 'string' ? req.body.workId : '';
+    const target = await store.getWork(config.tenantId, targetWorkId);
+    if (!reference || reference.origin.platform !== 'instagram' || !reference.origin.remoteId || !target || target.creatorId !== reference.creatorId) return res.status(404).json({ message: 'Instagram reference or target Work not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, reference.creatorId))) return;
+    const publication = (await store.listPublicationsByWork(config.tenantId, reference.workId)).find((item) => item.destination === 'instagram' && item.remoteId === reference.origin.remoteId);
+    if (!publication) return res.status(404).json({ message: 'Instagram reference publication not found.' });
+    const mapped: Publication = { ...publication, workId: target.workId, providerData: { ...publication.providerData, mappedReferenceWorkId: reference.workId }, updatedAt: new Date().toISOString() };
+    await store.upsertPublication(mapped);
+    auditLog(req, 'instagram.external_reference.mapped', { referenceWorkId: reference.workId, targetWorkId: target.workId, publicationId: publication.publicationId });
+    return res.json({ referenceWorkId: reference.workId, mappedWorkId: target.workId, publication: mapped });
+  });
+
+  app.get('/api/integrations/instagram/connections/:connectionId/insights', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.connectionId);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || !account.instagram) return res.status(404).json({ message: 'Instagram connection not found.' });
+    const creatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
+    if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
+    if (!config.instagramInsightsEnabled || !account.instagram.enabledCapabilities.includes('insights')) return res.status(409).json({ code: 'CAPABILITY_RESTRICTED', message: 'Aggregate Instagram insights are not enabled for this connection.' });
+    const provider = createManagedInstagramProvider(config);
+    if (!provider || account.connectionStatus !== 'connected') return res.status(409).json({ code: 'REAUTH_REQUIRED', message: 'The Instagram connection is unavailable.' });
+    const token = decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey);
+    const publications = (await store.listPublicationsByDestination(config.tenantId, 'instagram')).filter((publication) => publication.integrationAccountId === account.externalAccountId && publication.remoteId && publication.status === 'live');
+    const capturedAt = new Date();
+    const expiresAt = new Date(capturedAt.getTime() + (config.instagramInsightRetentionDays || 90) * 24 * 60 * 60 * 1000);
+    const providerMetrics = Object.values(INSTAGRAM_PILOT_INSIGHT_METRICS);
+    const normalizedByProvider = new Map<string, string>(Object.entries(INSTAGRAM_PILOT_INSIGHT_METRICS).map(([normalized, providerMetric]) => [providerMetric, normalized]));
+    const snapshots: Array<{ publicationId: string; metric: string; value: number; providerMetric: string; providerVersion: string; capturedAt: string; retentionExpiresAt: string }> = [];
+    for (const publication of publications) {
+      try {
+        const values = await provider.getInsights(token, publication.remoteId!, providerMetrics);
+        const publicationSnapshots = values.flatMap((value) => {
+          const metric = normalizedByProvider.get(value.metric);
+          return metric ? [{ publicationId: publication.publicationId, metric, value: value.value, providerMetric: value.metric, providerVersion: account.instagram!.apiVersion, capturedAt: capturedAt.toISOString(), retentionExpiresAt: expiresAt.toISOString() }] : [];
+        });
+        const retained = Array.isArray(publication.providerData?.insightSnapshots) ? publication.providerData.insightSnapshots.filter((snapshot) => snapshot && typeof snapshot === 'object' && String((snapshot as Record<string, unknown>).retentionExpiresAt || '') > capturedAt.toISOString()) : [];
+        await store.upsertPublication({ ...publication, providerData: { ...publication.providerData, insightSnapshots: [...retained, ...publicationSnapshots] }, updatedAt: capturedAt.toISOString() });
+        snapshots.push(...publicationSnapshots);
+      } catch (error) {
+        if (error instanceof InstagramProviderError && error.code === 'AUTHENTICATION_REQUIRED') {
+          await store.updateExternalAccount({ ...account, connectionStatus: 'authentication_required', updatedAt: capturedAt.toISOString() });
+          return res.status(409).json({ code: 'REAUTH_REQUIRED', message: 'The Instagram connection must be reauthorized.' });
+        }
+      }
+    }
+    auditLog(req, 'instagram.insights.snapshots.captured', { connectionId: account.externalAccountId, publicationCount: publications.length, snapshotCount: snapshots.length });
+    return res.json({ items: snapshots, definitionsVersion: account.instagram.apiVersion, containsAudienceIdentity: false });
+  });
+
+  app.delete('/api/integrations/instagram/connections/:connectionId', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.connectionId);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId) return res.status(404).json({ message: 'Instagram connection not found.' });
+    const creatorId = account.primaryCreatorIdentityId || account.creatorIdentityId || '';
+    if (!(await ensureCreatorAccountAccess(req, res, creatorId))) return;
+    const provider = createManagedInstagramProvider(config);
+    let providerRevoked = false;
+    if (provider && account.connectionStatus === 'connected') {
+      try {
+        await provider.revokeAuthorization(decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey));
+        providerRevoked = true;
+      } catch { /* Local disconnect must still stop all future actions. */ }
+    }
+    const now = new Date().toISOString();
+    await store.updateExternalAccount({ ...account, accessTokenEncrypted: encryptExternalCredential('revoked', config.externalTokenEncryptionKey), refreshTokenEncrypted: undefined, tokenExpiresAt: now, connectionStatus: 'disabled', instagram: account.instagram ? { ...account.instagram, enabledCapabilities: [] } : undefined, updatedAt: now });
+    await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, []);
+    await store.appendAuditEvent({ auditId: randomUUID(), action: 'instagram.connection.disconnected', actorUserId: req.authUser!.userId, actorRole: resolveRole(req.authUser!) === 'admin' ? 'admin' : 'user', detail: { connectionId: account.externalAccountId, providerRevoked }, createdAt: now });
+    return res.status(204).end();
+  });
+
+  app.post('/api/works/:workId/instagram/publications', requireAuth, async (req, res) => {
+    const work = await store.getWork(config.tenantId, req.params.workId);
+    if (!work) return res.status(404).json({ message: 'Work not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    const connectionId = typeof req.body?.connectionId === 'string' ? req.body.connectionId : '';
+    const account = await store.getExternalAccount(connectionId);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || account.creatorIdentityId !== work.creatorId) return res.status(404).json({ message: 'Instagram connection not found for this Creator.' });
+    const placement = req.body?.placement as InstagramPlacement;
+    const deploymentCapabilities = instagramDeploymentStatus(config).pilotCapabilities;
+    const placementAllowed = placement === 'IMAGE' ? deploymentCapabilities.imagePublish : placement === 'CAROUSEL' ? deploymentCapabilities.carouselPublish : placement === 'REEL' ? deploymentCapabilities.reelPublish : placement === 'STORY' ? deploymentCapabilities.storyPublish : false;
+    if (!placementAllowed) return res.status(422).json({ code: 'PLACEMENT_UNSUPPORTED', message: 'This placement is not approved for the current provider adapter and deployment.' });
+    const derivativeIds = Array.isArray(req.body?.derivativeIds) ? req.body.derivativeIds.filter((value: unknown): value is string => typeof value === 'string') : [];
+    const attached = await store.listCanonicalAssetsByWork(config.tenantId, work.workId);
+    const selected: typeof attached = derivativeIds
+      .map((id: string) => attached.find((asset) => asset.assetId === id))
+      .filter((asset: (CanonicalAsset & { attachment: WorkAsset }) | undefined): asset is CanonicalAsset & { attachment: WorkAsset } => Boolean(asset));
+    if (selected.length !== derivativeIds.length || selected.some((asset) => asset.storage.mode !== 'hosted' || asset.status !== 'ready')) return res.status(422).json({ code: 'DERIVATIVE_INVALID', message: 'Every selected derivative must be a ready, hosted Asset attached to this Work.' });
+    const approved = createManagedInstagramProvider(config);
+    if (!approved) return res.status(503).json({ code: 'APP_REVIEW_REQUIRED', message: 'Instagram publishing is not enabled.' });
+    const capabilities = await approved.getCapabilities({
+      connectionId: account.externalAccountId, ownerUserId: account.userId, creatorId: work.creatorId, mode: 'EversallyManagedApp', remoteProfessionalAccountId: account.externalUserId,
+      accountType: account.instagram!.accountType, encryptedCredentialReference: account.externalAccountId, scopes: [], apiVersion: account.instagram!.apiVersion,
+      policyProfileVersion: account.instagram!.policyProfileVersion, state: account.connectionStatus === 'connected' ? 'CONNECTED' : 'REAUTH_REQUIRED',
+      capabilities: ({ accountRead: true, mediaRead: account.instagram!.enabledCapabilities.includes('metadata_import'), imagePublish: account.instagram!.enabledCapabilities.includes('publish_images'), carouselPublish: account.instagram!.enabledCapabilities.includes('publish_images'), reelPublish: account.instagram!.enabledCapabilities.includes('publish_reels'), storyPublish: account.instagram!.enabledCapabilities.includes('publish_stories'), mediaUpdate: false, mediaDeleteOrArchive: false, insightsRead: account.instagram!.enabledCapabilities.includes('insights'), commentsRead: false, commentsReply: false } satisfies InstagramCapabilities)
+    });
+    const publishingLimit = await approved.getPublishingLimit(decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey), account.externalUserId);
+    const preflight = {
+      connection: { connectionId: account.externalAccountId, ownerUserId: account.userId, creatorId: work.creatorId, mode: 'EversallyManagedApp' as const, remoteProfessionalAccountId: account.externalUserId, accountType: account.instagram!.accountType, encryptedCredentialReference: account.externalAccountId, scopes: [], capabilities, apiVersion: account.instagram!.apiVersion, policyProfileVersion: account.instagram!.policyProfileVersion, state: account.connectionStatus === 'connected' ? 'CONNECTED' as const : 'REAUTH_REQUIRED' as const },
+      placement, media: selected.map((asset) => ({ derivativeId: asset.assetId, contentType: asset.mimeType, byteSize: asset.sizeBytes || 0, width: asset.width || 0, height: asset.height || 0, durationSeconds: asset.durationSeconds })),
+      caption: typeof req.body?.caption === 'string' ? req.body.caption : '', contentRating: work.contentRating,
+      rightsAttested: req.body?.rightsAttested === true, creatorAttested: req.body?.creatorAttested === true,
+      publishingLimitAvailable: instagramPublishingLimitAvailable(publishingLimit)
+    };
+    const decision = evaluateInstagramEligibility(preflight);
+    const validationIssues = validateInstagramMedia(preflight, INSTAGRAM_PILOT_MEDIA_CONSTRAINTS);
+    if (decision.result !== 'ALLOWED_MANAGED' || validationIssues.length) return res.status(422).json({ decision, validationIssues });
+    const intentVersion = work.revision;
+    const key = instagramIdempotencyKey(work.workId, account.externalAccountId, placement, intentVersion, config.instagramDeliverySecret!);
+    const duplicate = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'instagram' && item.providerData?.idempotencyKey === key);
+    if (duplicate) return res.status(200).json({ publication: duplicate, decision, validationIssues });
+    const now = new Date().toISOString();
+    const publication: Publication = { publicationId: randomUUID(), tenantId: config.tenantId, creatorId: work.creatorId, workId: work.workId, destination: 'instagram', integrationAccountId: account.externalAccountId, status: 'draft', visibility: 'public', metadataOverrides: { description: preflight.caption, fields: { accessibilityText: typeof req.body?.accessibilityText === 'string' ? req.body.accessibilityText : '' } }, sync: { status: 'local_newer', localRevision: work.revision }, providerData: { placement, derivativeIds, derivativeHashes: selected.map((asset) => asset.checksumSha256), captionHash: createHash('sha256').update(preflight.caption).digest('hex'), providerVersion: account.instagram!.apiVersion, policyProfileVersion: decision.policyVersion, eligibilityReasonCode: decision.reasonCode, idempotencyKey: key, intentVersion: work.revision, confirmed: false }, createdAt: now, updatedAt: now };
+    await store.upsertPublication(publication);
+    auditLog(req, 'instagram.publication.draft.created', { publicationId: publication.publicationId, workId: work.workId, connectionId: account.externalAccountId, placement, policyVersion: decision.policyVersion });
+    return res.status(201).json({ publication, decision, validationIssues });
+  });
+
+  app.post('/api/instagram/publications/:publicationId/preview', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, publication.creatorId))) return;
+    return res.json({ publicationId: publication.publicationId, workId: publication.workId, placement: publication.providerData?.placement, derivativeIds: publication.providerData?.derivativeIds, caption: publication.metadataOverrides?.description || '', accessibilityText: publication.metadataOverrides?.fields?.accessibilityText || '', providerVersion: publication.providerData?.providerVersion, policyProfileVersion: publication.providerData?.policyProfileVersion, eligibilityReasonCode: publication.providerData?.eligibilityReasonCode, confirmed: publication.providerData?.confirmed === true });
+  });
+
+  app.patch('/api/instagram/publications/:publicationId', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, publication.creatorId))) return;
+    const caption = typeof req.body?.caption === 'string' ? req.body.caption : publication.metadataOverrides?.description || '';
+    const accessibilityText = typeof req.body?.accessibilityText === 'string' ? req.body.accessibilityText : String(publication.metadataOverrides?.fields?.accessibilityText || '');
+    if (caption.length > INSTAGRAM_PILOT_MEDIA_CONSTRAINTS.maximumCaptionCharacters) return res.status(422).json({ code: 'CAPTION_TOO_LONG', field: 'caption', message: `Caption must not exceed ${INSTAGRAM_PILOT_MEDIA_CONSTRAINTS.maximumCaptionCharacters} characters.` });
+    const captionChanged = caption !== (publication.metadataOverrides?.description || '');
+    const accessibilityChanged = accessibilityText !== String(publication.metadataOverrides?.fields?.accessibilityText || '');
+    const diff = [...(captionChanged ? ['caption'] : []), ...(accessibilityChanged ? ['accessibilityText'] : [])];
+    if (publication.status === 'live') return res.status(409).json({ code: 'REMOTE_UPDATE_UNSUPPORTED', diff, choices: ['CREATE_REPLACEMENT_POST', 'KEEP_REMOTE_UNCHANGED'], message: 'The approved adapter cannot update this live Instagram placement. Choose a replacement post or keep Instagram unchanged.' });
+    if (publication.status !== 'draft' && publication.status !== 'failed') return res.status(409).json({ code: 'PUBLICATION_NOT_EDITABLE', message: 'This publication cannot be edited while a provider action is in progress.' });
+    const intentVersion = Number(publication.providerData?.intentVersion || 0) + 1;
+    const placement = publication.providerData?.placement as InstagramPlacement;
+    const idempotencyKey = instagramIdempotencyKey(publication.workId, publication.integrationAccountId || '', placement, intentVersion, config.instagramDeliverySecret!);
+    const updated: Publication = { ...publication, status: 'draft', metadataOverrides: { ...publication.metadataOverrides, description: caption, fields: { ...publication.metadataOverrides?.fields, accessibilityText } }, sync: { ...publication.sync, status: 'local_newer', errorCode: undefined, errorMessage: undefined }, providerData: { ...publication.providerData, captionHash: createHash('sha256').update(caption).digest('hex'), idempotencyKey, intentVersion, confirmed: false, containerIds: undefined, containerSetComplete: undefined }, updatedAt: new Date().toISOString() };
+    await store.upsertPublication(updated);
+    auditLog(req, 'instagram.publication.draft.updated', { publicationId: publication.publicationId, diff, intentVersion });
+    return res.json({ publication: updated, diff, requiresFinalConfirmation: true });
+  });
+
+  app.post('/api/instagram/publications/:publicationId/archive', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, publication.creatorId))) return;
+    if (req.body?.confirm !== true) return res.status(422).json({ code: 'FINAL_CONFIRMATION_REQUIRED', message: 'Confirm the destination-specific archive action.' });
+    if (publication.status === 'live') return res.status(409).json({ code: 'REMOTE_ARCHIVE_UNSUPPORTED', providerEffect: 'NONE', choices: ['KEEP_REMOTE_UNCHANGED'], message: 'The approved adapter cannot archive this live Instagram post. The canonical Work remains unchanged.' });
+    const archived: Publication = { ...publication, status: 'removed', removedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    await store.upsertPublication(archived);
+    auditLog(req, 'instagram.publication.draft.archived', { publicationId: publication.publicationId });
+    return res.json({ publication: archived, providerEffect: 'NONE' });
+  });
+
+  app.delete('/api/instagram/publications/:publicationId', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, publication.creatorId))) return;
+    if (req.query.confirm !== 'true') return res.status(422).json({ code: 'FINAL_CONFIRMATION_REQUIRED', message: 'Confirm the destination-specific delete action.' });
+    if (publication.status === 'live') return res.status(409).json({ code: 'REMOTE_DELETE_UNSUPPORTED', providerEffect: 'NONE', choices: ['KEEP_REMOTE_UNCHANGED'], message: 'The approved adapter cannot delete this live Instagram post. The canonical Work and remote post remain unchanged.' });
+    const cancelled: Publication = { ...publication, status: 'removed', removedAt: new Date().toISOString(), sync: { ...publication.sync, status: 'not_applicable' }, providerData: { ...publication.providerData, confirmed: false, deliveryExpiresAt: new Date().toISOString() }, updatedAt: new Date().toISOString() };
+    await store.upsertPublication(cancelled);
+    auditLog(req, 'instagram.publication.draft.cancelled', { publicationId: publication.publicationId });
+    return res.status(200).json({ publication: cancelled, providerEffect: 'NONE', canonicalWorkDeleted: false });
+  });
+
+  app.post('/api/instagram/publications/:publicationId/publish', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorAccountAccess(req, res, publication.creatorId))) return;
+    if (publication.status === 'live' || publication.remoteId) return res.status(200).json({ publication });
+    if (publication.status === 'publishing' || publication.status === 'unknown') return res.status(409).json({ code: 'RECONCILIATION_REQUIRED', message: 'This publication has an in-flight or ambiguous provider result and must be reconciled before retry.' });
+    if (req.body?.confirm !== true) return res.status(422).json({ code: 'FINAL_CONFIRMATION_REQUIRED', message: 'Final Instagram publication confirmation is required.' });
+    const account = publication.integrationAccountId ? await store.getExternalAccount(publication.integrationAccountId) : null;
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || account.connectionStatus !== 'connected') return res.status(409).json({ code: 'REAUTH_REQUIRED', message: 'The Instagram connection must be reauthorized.' });
+    const provider = createManagedInstagramProvider(config);
+    if (!provider || !config.instagramDeliveryBaseUrl || !config.instagramDeliverySecret) return res.status(503).json({ code: 'APP_REVIEW_REQUIRED', message: 'Instagram publishing is not enabled.' });
+    const derivativeIds = Array.isArray(publication.providerData?.derivativeIds) ? publication.providerData.derivativeIds.filter((id): id is string => typeof id === 'string') : [];
+    const assets = await Promise.all(derivativeIds.map((id) => store.getCanonicalAsset(config.tenantId, id)));
+    if (assets.some((asset) => !asset || asset.storage.mode !== 'hosted' || !asset.storage.objectKey || asset.status !== 'ready')) return res.status(422).json({ code: 'DERIVATIVE_INVALID', message: 'An approved Instagram derivative is no longer available.' });
+    const startedAt = new Date().toISOString();
+    const started: Publication = { ...publication, status: 'publishing', sync: { ...publication.sync, status: 'unknown', lastAttemptAt: startedAt }, providerData: { ...publication.providerData, confirmed: true, deliveryExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString() }, updatedAt: startedAt };
+    await store.upsertPublication(started);
+    auditLog(req, 'instagram.publication.confirmed', { publicationId: publication.publicationId, workId: publication.workId, connectionId: account.externalAccountId });
+    const createdContainerIds: string[] = [];
+    try {
+      const token = decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey);
+      const deliveryUrls = assets.map((asset, slot) => {
+        const capability = issueInstagramDeliveryCapability(asset!.assetId, publication.publicationId, slot, config.instagramDeliverySecret!, 15 * 60);
+        return `${config.instagramDeliveryBaseUrl!.replace(/\/$/, '')}/api/integrations/instagram/delivery/${encodeURIComponent(publication.publicationId)}/${slot}/${encodeURIComponent(capability.pathToken)}`;
+      });
+      const placement = ['IMAGE', 'CAROUSEL', 'REEL', 'STORY'].includes(String(publication.providerData?.placement)) ? publication.providerData!.placement as InstagramPlacement : 'IMAGE';
+      let containerIds: string[];
+      if (placement === 'CAROUSEL') {
+        const children: string[] = [];
+        for (const mediaUrl of deliveryUrls) {
+          const child = await provider.createContainer(token, account.externalUserId, { placement: 'IMAGE', mediaUrl, carouselItem: true });
+          children.push(child); createdContainerIds.push(child);
+        }
+        const parent = await provider.createContainer(token, account.externalUserId, { placement: 'CAROUSEL', mediaUrl: deliveryUrls[0], caption: publication.metadataOverrides?.description, children });
+        createdContainerIds.push(parent);
+        containerIds = [...children, parent];
+      } else {
+        const container = await provider.createContainer(token, account.externalUserId, { placement, mediaUrl: deliveryUrls[0], video: assets[0]!.mimeType.startsWith('video/'), caption: publication.metadataOverrides?.description, accessibilityText: String(publication.metadataOverrides?.fields?.accessibilityText || '') });
+        createdContainerIds.push(container); containerIds = [container];
+      }
+      const queued: Publication = { ...started, providerData: { ...started.providerData, containerIds, containerSetComplete: true }, updatedAt: new Date().toISOString() };
+      await store.upsertPublication(queued);
+      auditLog(req, 'instagram.publication.containers.created', { publicationId: publication.publicationId, containerCount: containerIds.length });
+      return res.status(202).json({ publication: queued });
+    } catch (error) {
+      const providerError = error instanceof InstagramProviderError ? error : undefined;
+      if (providerError && providerError.code !== 'UNKNOWN' && createdContainerIds.length === 0) {
+        const code = providerError.code === 'AUTHENTICATION_REQUIRED' ? 'REAUTH_REQUIRED' : providerError.code === 'RATE_LIMITED' ? 'RATE_LIMITED' : 'PLATFORM_INELIGIBLE';
+        const failed: Publication = { ...started, status: providerError.code === 'RATE_LIMITED' ? 'queued' : 'failed', sync: { ...started.sync, status: providerError.code === 'RATE_LIMITED' ? 'unknown' : 'error', errorCode: code, errorMessage: providerError.message }, updatedAt: new Date().toISOString() };
+        await store.upsertPublication(failed);
+        if (providerError.code === 'AUTHENTICATION_REQUIRED') await store.updateExternalAccount({ ...account, connectionStatus: 'authentication_required', updatedAt: failed.updatedAt });
+        if (providerError.code === 'RATE_LIMITED') await store.updateExternalAccount({ ...account, connectionStatus: 'rate_limited', rateLimitedUntil: providerError.retryAfterSeconds !== undefined ? new Date(Date.now() + providerError.retryAfterSeconds * 1000).toISOString() : account.rateLimitedUntil, updatedAt: failed.updatedAt });
+        auditLog(req, 'instagram.publication.container.rejected', { publicationId: publication.publicationId, code });
+        if (providerError.code === 'RATE_LIMITED' && providerError.retryAfterSeconds !== undefined) res.setHeader('retry-after', String(providerError.retryAfterSeconds));
+        return res.status(providerError.code === 'RATE_LIMITED' ? 202 : 422).json({ publication: failed, code });
+      }
+      const unknown: Publication = { ...started, status: 'unknown', sync: { ...started.sync, status: 'unknown', errorCode: 'AMBIGUOUS_CONTAINER_CREATION', errorMessage: 'Instagram container creation must be reconciled before retry.' }, providerData: { ...started.providerData, containerIds: createdContainerIds, containerSetComplete: false }, updatedAt: new Date().toISOString() };
+      await store.upsertPublication(unknown);
+      auditLog(req, 'instagram.publication.container.unknown', { publicationId: publication.publicationId });
+      return res.status(202).json({ publication: unknown });
+    }
+  });
+
+  app.get('/api/integrations/instagram/delivery/:publicationId/:slot/:capability', async (req, res) => {
+    const slot = Number(req.params.slot);
+    if (!config.instagramDeliverySecret || !verifyInstagramDeliveryCapability(req.params.capability, req.params.publicationId, slot, config.instagramDeliverySecret)) return res.status(404).end();
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram' || publication.status !== 'publishing' || publication.providerData?.confirmed !== true) return res.status(404).end();
+    const derivativeIds = Array.isArray(publication.providerData?.derivativeIds) ? publication.providerData.derivativeIds : [];
+    const derivativeId = derivativeIds[slot];
+    if (typeof derivativeId !== 'string') return res.status(404).end();
+    const asset = await store.getCanonicalAsset(config.tenantId, derivativeId);
+    if (!asset?.storage.objectKey || asset.storage.mode !== 'hosted' || asset.status !== 'ready') return res.status(404).end();
+    const sourceUrl = await getS3SignedUrl(s3Client, new GetObjectCommand({ Bucket: config.mediaBucket, Key: asset.storage.objectKey }), { expiresIn: 60 });
+    res.setHeader('cache-control', 'private, no-store');
+    return res.redirect(302, sourceUrl);
+  });
+
+  app.post('/api/instagram/publications/:publicationId/reconcile', requireAuth, async (req, res) => {
+    const publication = await store.getPublication(config.tenantId, req.params.publicationId);
+    if (!publication || publication.destination !== 'instagram') return res.status(404).json({ message: 'Instagram publication not found.' });
+    if (!(await ensureCreatorContentAccess(req, res, publication.creatorId))) return;
+    const account = publication.integrationAccountId ? await store.getExternalAccount(publication.integrationAccountId) : null;
+    const provider = createManagedInstagramProvider(config);
+    if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || !provider) return res.status(409).json({ code: 'REAUTH_REQUIRED', message: 'The Instagram connection is unavailable.' });
+    const token = decryptExternalCredential(account.accessTokenEncrypted, config.externalTokenEncryptionKey);
+    if (publication.status === 'live' && publication.remoteId) {
+      try {
+        const remote = await provider.getMedia(token, publication.remoteId);
+        const remoteCaptionHash = createHash('sha256').update(remote.caption || '').digest('hex');
+        const changed = remoteCaptionHash !== publication.providerData?.captionHash;
+        const reconciled: Publication = { ...publication, remoteUrl: remote.permalink || publication.remoteUrl, remoteUpdatedAt: remote.timestamp || publication.remoteUpdatedAt, sync: { ...publication.sync, status: changed ? 'remote_newer' : 'in_sync', remoteMetadataFingerprint: remoteCaptionHash, lastSuccessfulAt: new Date().toISOString() }, providerData: { ...publication.providerData, remoteMediaType: remote.mediaType, remotePlacement: remote.placement }, updatedAt: new Date().toISOString() };
+        await store.upsertPublication(reconciled);
+        return res.json({ publication: reconciled, remoteState: changed ? 'REMOTE_CHANGED' : 'ACTIVE' });
+      } catch (error) {
+        if (error instanceof InstagramProviderError && error.code === 'NOT_FOUND') {
+          const missing: Publication = { ...publication, status: 'missing', sync: { ...publication.sync, status: 'remote_newer', errorCode: 'REMOTE_MISSING', errorMessage: 'The Instagram post is no longer available.' }, updatedAt: new Date().toISOString() };
+          await store.upsertPublication(missing);
+          auditLog(req, 'instagram.publication.remote_missing', { publicationId: publication.publicationId, remoteMediaId: publication.remoteId });
+          return res.status(202).json({ publication: missing, remoteState: 'REMOTE_MISSING' });
+        }
+        throw error;
+      }
+    }
+    if (publication.sync.errorCode === 'AMBIGUOUS_PUBLISH') return res.status(409).json({ code: 'UNKNOWN', message: 'Publish completion is ambiguous. Reconcile by remote media identifier before another publish request.' });
+    const containerIds = Array.isArray(publication.providerData?.containerIds) ? publication.providerData.containerIds.filter((id): id is string => typeof id === 'string') : [];
+    if (publication.providerData?.containerSetComplete !== true) return res.status(409).json({ code: 'UNKNOWN', message: 'The complete container set was not persisted. Manual provider reconciliation is required.' });
+    if (!containerIds.length) return res.status(409).json({ code: 'UNKNOWN', message: 'No safe provider identifier was persisted. Do not retry automatically; manual provider reconciliation is required.' });
+    const containerId = containerIds.at(-1)!;
+    const containerStatus = await provider.getContainerStatus(token, containerId);
+    if (containerStatus === 'IN_PROGRESS') return res.status(202).json({ publication, containerStatus });
+    if (containerStatus !== 'FINISHED') {
+      const failed: Publication = { ...publication, status: containerStatus === 'ERROR' || containerStatus === 'EXPIRED' ? 'failed' : 'unknown', sync: { ...publication.sync, status: containerStatus === 'ERROR' || containerStatus === 'EXPIRED' ? 'error' : 'unknown', errorCode: `CONTAINER_${containerStatus}` }, updatedAt: new Date().toISOString() };
+      await store.upsertPublication(failed);
+      return res.status(202).json({ publication: failed, containerStatus });
+    }
+    try {
+      const remoteId = await provider.publishContainer(token, account.externalUserId, containerId);
+      const now = new Date().toISOString();
+      const live: Publication = { ...publication, status: 'live', remoteId, publishedAt: now, sync: { ...publication.sync, status: 'in_sync', lastSuccessfulAt: now, errorCode: undefined, errorMessage: undefined }, providerData: { ...publication.providerData, deliveryExpiresAt: now }, updatedAt: now };
+      await store.upsertPublication(live);
+      auditLog(req, 'instagram.publication.published', { publicationId: publication.publicationId, remoteMediaId: remoteId, providerVersion: publication.providerData?.providerVersion });
+      try {
+        const remote = await provider.getMedia(token, remoteId);
+        const enriched: Publication = { ...live, remoteUrl: remote.permalink, remoteCreatedAt: remote.timestamp || now, remoteUpdatedAt: remote.timestamp || now, providerData: { ...live.providerData, remoteMediaType: remote.mediaType, remotePlacement: remote.placement } };
+        await store.upsertPublication(enriched);
+        return res.json({ publication: enriched, containerStatus });
+      } catch { return res.json({ publication: live, containerStatus }); }
+    } catch {
+      const unknown: Publication = { ...publication, status: 'unknown', sync: { ...publication.sync, status: 'unknown', errorCode: 'AMBIGUOUS_PUBLISH', errorMessage: 'Instagram publish completion is ambiguous and must be reconciled before retry.' }, updatedAt: new Date().toISOString() };
+      await store.upsertPublication(unknown);
+      auditLog(req, 'instagram.publication.publish.unknown', { publicationId: publication.publicationId, containerId });
+      return res.status(202).json({ publication: unknown, containerStatus });
+    }
+  });
+
+
   const youtubeConfigurationReady = () => Boolean(
     config.externalTokenEncryptionKey
     && config.youtubeOAuthClientId
@@ -6255,6 +6974,213 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     )));
     auditLog(req, 'youtube.account.removed', { externalAccountId: account.externalAccountId });
     return res.status(204).end();
+  });
+
+  app.get('/studio/integrations/soundcloud/configuration', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const credentials = creatorIdentityId
+      ? await store.listExternalPlatformCredentialsByCreatorIdentity(creatorIdentityId)
+      : await store.listExternalPlatformCredentialsByUser(req.authUser!.userId);
+    const soundCloudCredentials = credentials.filter((item) => item.platform === 'soundcloud');
+    return res.json({
+      platform: 'soundcloud',
+      enabled: config.soundCloudEnabled,
+      configured: Boolean(config.soundCloudEnabled && config.externalTokenEncryptionKey && config.soundCloudOAuthRedirectUri && soundCloudCredentials.length),
+      callbackUrl: config.soundCloudOAuthRedirectUri,
+      credentials: soundCloudCredentials.map(toExternalPlatformCredentialResponse),
+      sourceControlNotice: 'This connection does not back up your original audio. Upload the original file directly to Ubeeq if you want it retained under your control.',
+      requiredConfiguration: [
+        ...(config.soundCloudEnabled ? [] : ['SOUNDCLOUD_ENABLED compliance approval']),
+        ...(config.externalTokenEncryptionKey ? [] : ['EXTERNAL_TOKEN_ENCRYPTION_KEY']),
+        ...(config.soundCloudOAuthRedirectUri ? [] : ['SOUNDCLOUD_OAUTH_REDIRECT_URI']),
+        ...(soundCloudCredentials.length ? [] : ['your SoundCloud client ID and client secret'])
+      ]
+    });
+  });
+
+  app.put('/studio/integrations/soundcloud/credentials', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud is disabled pending provider and compliance approval.' });
+    if (!config.externalTokenEncryptionKey || !config.soundCloudOAuthRedirectUri) return res.status(503).json({ message: 'SoundCloud callback or encrypted credential storage is not configured.' });
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.trim().slice(0, 512) : '';
+    const clientSecret = typeof req.body?.clientSecret === 'string' ? req.body.clientSecret.trim() : '';
+    const applicationLabel = typeof req.body?.applicationLabel === 'string' ? req.body.applicationLabel.trim().slice(0, 120) : '';
+    if (!clientId || !clientSecret) return res.status(400).json({ message: 'SoundCloud client ID and client secret are required.' });
+    const now = new Date().toISOString();
+    const credential: ExternalPlatformCredential = {
+      externalPlatformCredentialId: randomUUID(), userId: req.authUser!.userId,
+      creatorIdentityId: creatorIdentityId || undefined, platform: 'soundcloud',
+      applicationLabel: applicationLabel || undefined, clientId,
+      clientSecretEncrypted: encryptExternalCredential(clientSecret, config.externalTokenEncryptionKey),
+      redirectUri: config.soundCloudOAuthRedirectUri, createdAt: now, updatedAt: now
+    };
+    await store.createExternalPlatformCredential(credential);
+    auditLog(req, 'soundcloud.application.created', { externalPlatformCredentialId: credential.externalPlatformCredentialId, creatorIdentityId: credential.creatorIdentityId });
+    return res.status(201).json(toExternalPlatformCredentialResponse(credential));
+  });
+
+  app.post('/studio/integrations/soundcloud/connect', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud is disabled pending provider and compliance approval.' });
+    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
+    const credentialId = typeof req.body?.externalPlatformCredentialId === 'string' ? req.body.externalPlatformCredentialId.trim() : '';
+    const credential = await store.getExternalPlatformCredential(credentialId);
+    if (!credential || credential.userId !== req.authUser!.userId || credential.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud application not found.' });
+    if (credential.creatorIdentityId && credential.creatorIdentityId !== creatorIdentityId) return res.status(403).json({ message: 'This SoundCloud application is assigned to another creator.' });
+    const returnPath = typeof req.body?.returnPath === 'string' && req.body.returnPath.startsWith('/studio/') ? req.body.returnPath : '/studio/workspace?section=integrations';
+    const issued = issueExternalOAuthState(config, { userId: req.authUser!.userId, creatorIdentityId: creatorIdentityId || undefined, externalPlatformCredentialId: credential.externalPlatformCredentialId, platform: 'soundcloud', returnPath, syncContentOnInitialImport: req.body?.syncContentOnInitialImport === true });
+    return res.json({
+      authorizationUrl: providerForCredential(credential).createAuthorizationUrl(issued.state, externalOAuthPkce(config, issued.nonce)),
+      sourceControlNotice: 'Connecting SoundCloud does not create a backup. Upload the original directly to Ubeeq if you want the source retained under your control.'
+    });
+  });
+
+  app.get('/integrations/soundcloud/callback', async (req, res) => {
+    const stateValue = typeof req.query.state === 'string' ? req.query.state : '';
+    let state: ReturnType<typeof verifyExternalOAuthState>;
+    try {
+      state = verifyExternalOAuthState(config, stateValue);
+      if (state.platform !== 'soundcloud') throw new Error('Wrong OAuth platform');
+    } catch {
+      return res.status(400).json({ message: 'The SoundCloud connection request is invalid or has expired.' });
+    }
+    const redirect = (params: Record<string, string>) => res.redirect(302, resolveExternalOAuthReturnUrl(config, state.returnPath, params));
+    if (!config.soundCloudEnabled) return redirect({ soundcloud: 'failed', reason: 'compliance_disabled' });
+    if (typeof req.query.error === 'string') return redirect({ soundcloud: req.query.error === 'access_denied' ? 'cancelled' : 'failed', reason: req.query.error.slice(0, 120) });
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!code) return redirect({ soundcloud: 'failed', reason: 'missing_authorization_code' });
+    if (state.creatorIdentityId && !(await store.hasCreatorAccess(state.userId, state.creatorIdentityId))) return redirect({ soundcloud: 'failed', reason: 'creator_access_changed' });
+    try {
+      const credential = await store.getExternalPlatformCredential(state.externalPlatformCredentialId);
+      if (!credential || credential.userId !== state.userId || credential.platform !== 'soundcloud') return redirect({ soundcloud: 'failed', reason: 'creator_application_unavailable' });
+      const provider = providerForCredential(credential);
+      const tokens = await provider.exchangeAuthorizationCode(code, externalOAuthPkce(config, state.nonce));
+      const remote = await provider.getAccount(tokens.accessToken);
+      const existing = (await store.listExternalAccountsByUser(state.userId)).find((item) => item.platform === 'soundcloud' && item.externalUserId === remote.externalUserId);
+      const now = new Date().toISOString();
+      const account: ExternalAccount = {
+        externalAccountId: existing?.externalAccountId || randomUUID(), userId: state.userId,
+        creatorIdentityId: state.creatorIdentityId, primaryCreatorIdentityId: state.creatorIdentityId,
+        externalPlatformCredentialId: credential.externalPlatformCredentialId, platform: 'soundcloud',
+        externalUserId: remote.externalUserId, externalUsername: remote.externalUsername,
+        accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
+        refreshTokenEncrypted: tokens.refreshToken ? encryptExternalCredential(tokens.refreshToken, config.externalTokenEncryptionKey) : existing?.refreshTokenEncrypted,
+        tokenExpiresAt: tokens.expiresAt, connectionStatus: 'connected',
+        initialContentSyncRequested: state.syncContentOnInitialImport === true, includeSourceFilesOnSync: false,
+        createdAt: existing?.createdAt || now, updatedAt: now
+      };
+      if (existing) await store.updateExternalAccount(account); else await store.createExternalAccount(account);
+      if (state.creatorIdentityId) await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, [{ externalAccountId: account.externalAccountId, creatorIdentityId: state.creatorIdentityId, userId: state.userId, createdAt: now, updatedAt: now }]);
+      return redirect({ soundcloud: 'connected', account: account.externalAccountId });
+    } catch (error) {
+      logServerError('soundcloud.callback', error);
+      return redirect({ soundcloud: 'failed', reason: error instanceof ExternalProviderError ? error.code : 'connection_failed' });
+    }
+  });
+
+  app.get('/studio/integrations/soundcloud/accounts', requireAuth, async (req, res) => {
+    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
+    if (creatorIdentityId && !(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
+    const accounts = creatorIdentityId ? await store.listExternalAccountsByCreatorIdentity(creatorIdentityId) : await store.listExternalAccountsByUser(req.authUser!.userId);
+    return res.json(accounts.filter((item) => item.platform === 'soundcloud' && item.connectionStatus !== 'disabled').map(toExternalAccountResponse));
+  });
+
+  app.post('/studio/integrations/soundcloud/accounts/:externalAccountId/import', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud is disabled pending provider and compliance approval.' });
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    if (!account.primaryCreatorIdentityId && !account.creatorIdentityId) return res.status(409).json({ message: 'Assign this SoundCloud account to a creator before importing tracks.' });
+    if (req.body?.sourceControlNoticeAccepted !== true) return res.status(400).json({ message: 'Confirm that SoundCloud metadata import does not back up the original audio.' });
+    try {
+      const job = await enqueueExternalSyncJob(account.externalAccountId, 'account_import', { syncContent: false });
+      auditLog(req, 'soundcloud.import.requested', { externalAccountId: account.externalAccountId, jobId: job.externalSyncJobId, sourceAudioDownload: false });
+      return res.status(202).json({ ...job, sourceAudioDownload: false });
+    } catch (error) {
+      logServerError('soundcloud.import.enqueue', error);
+      return res.status(503).json({ message: 'The import queue is unavailable. The account remains connected.' });
+    }
+  });
+
+  app.delete('/studio/integrations/soundcloud/accounts/:externalAccountId', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    if (req.body?.confirm !== 'disconnect_and_purge_soundcloud') return res.status(400).json({ message: 'Explicitly confirm SoundCloud disconnect and provider-data purge.' });
+    const now = new Date().toISOString();
+    await store.updateExternalAccount({ ...account, accessTokenEncrypted: '', refreshTokenEncrypted: undefined, tokenExpiresAt: undefined, connectionStatus: 'disabled', updatedAt: now });
+    const jobs = await store.listExternalSyncJobs(account.externalAccountId, 500);
+    await Promise.all(jobs.filter((job) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status)).map((job) => store.updateExternalSyncJob({ ...job, status: 'cancelled', errorCode: 'ACCOUNT_REMOVED', errorMessage: 'SoundCloud disconnected and provider data purged', updatedAt: now })));
+    const publications = await store.listExternalPublications(account.externalAccountId);
+    for (const publication of publications) {
+      await store.updateExternalPublication({ ...publication, rawMetadataJson: { purgedAt: now }, updatedAt: now });
+      const comments = await store.listExternalComments(publication.externalPublicationId, 5000);
+      await Promise.all(comments.map((comment) => store.updateExternalComment({ ...comment, externalAuthorId: undefined, externalAuthorName: undefined, externalAuthorAvatarUrl: undefined, body: '', rawPayload: undefined, lastSeenAt: now, lastSyncedAt: now })));
+    }
+    const activities = await store.listExternalActivitiesByAccount(account.externalAccountId, 5000);
+    await Promise.all(activities.map((activity) => store.upsertExternalActivity({ ...activity, externalActorId: undefined, externalActorName: undefined, externalActorAvatarUrl: undefined, body: undefined, rawPayload: undefined, updatedAt: now })));
+    const profile = await store.getExternalAccountProfile(account.externalAccountId);
+    if (profile) await store.upsertExternalAccountProfile({ ...profile, realName: undefined, country: undefined, website: undefined, bio: undefined, rawPayload: undefined, capturedAt: now });
+    auditLog(req, 'soundcloud.account.disconnected_and_purged', { externalAccountId: account.externalAccountId, publications: publications.length, activities: activities.length });
+    return res.status(204).end();
+  });
+
+  app.get('/studio/integrations/soundcloud/accounts/:externalAccountId/publications/:externalContentId/comments', requireAuth, async (req, res) => {
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication) return res.status(404).json({ message: 'SoundCloud publication not found.' });
+    const comments = await store.listExternalComments(publication.externalPublicationId, 100);
+    return res.json(comments.map(({ rawPayload: _rawPayload, ...comment }) => comment));
+  });
+
+  app.post('/studio/integrations/soundcloud/accounts/:externalAccountId/publications/:externalContentId/comments/sync', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud is disabled pending provider and compliance approval.' });
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication || publication.syncStatus !== 'active') return res.status(404).json({ message: 'Active SoundCloud publication not found.' });
+    return res.status(202).json(await enqueueExternalSyncJob(account.externalAccountId, 'comment_sync', { externalContentId: publication.externalContentId }));
+  });
+
+  app.post('/studio/integrations/soundcloud/accounts/:externalAccountId/publications/:externalContentId/actions/:action', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud interactions are disabled pending provider and compliance approval.' });
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    const publication = await store.getExternalPublication(account.externalAccountId, req.params.externalContentId);
+    if (!publication || publication.syncStatus !== 'active') return res.status(404).json({ message: 'Active SoundCloud publication not found.' });
+    const action = ['comment', 'like', 'unlike', 'repost', 'unrepost'].includes(req.params.action) ? req.params.action : '';
+    if (!action) return res.status(400).json({ message: 'Choose a supported SoundCloud action.' });
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim().slice(0, 2000) : '';
+    if (action === 'comment' && !body) return res.status(400).json({ message: 'A SoundCloud comment cannot be empty.' });
+    const idempotencyKey = typeof req.get('idempotency-key') === 'string' ? req.get('idempotency-key')!.trim().slice(0, 200) : '';
+    if (!idempotencyKey) return res.status(400).json({ message: 'An Idempotency-Key header is required for SoundCloud interactions.' });
+    const existing = (await store.listExternalSyncJobs(account.externalAccountId, 200)).find((job) => job.type === 'user_action' && job.payload?.idempotencyKey === idempotencyKey);
+    if (existing) return res.status(existing.status === 'successful' ? 200 : 202).json(existing);
+    const job = await enqueueExternalSyncJob(account.externalAccountId, 'user_action', { action, targetId: publication.externalContentId, idempotencyKey, ...(body ? { body } : {}), ...(Number.isFinite(Number(req.body?.timestampMs)) ? { timestampMs: Math.max(0, Math.floor(Number(req.body.timestampMs))) } : {}) });
+    auditLog(req, `soundcloud.${action}.requested`, { externalAccountId: account.externalAccountId, externalContentId: publication.externalContentId, jobId: job.externalSyncJobId });
+    return res.status(202).json(job);
+  });
+
+  app.post('/studio/integrations/soundcloud/accounts/:externalAccountId/users/:externalUserId/actions/:action', requireAuth, async (req, res) => {
+    if (!config.soundCloudEnabled) return res.status(403).json({ message: 'SoundCloud interactions are disabled pending provider and compliance approval.' });
+    const account = await store.getExternalAccount(req.params.externalAccountId);
+    if (!account || account.platform !== 'soundcloud') return res.status(404).json({ message: 'SoundCloud account not found.' });
+    if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this SoundCloud connection.' });
+    const action = req.params.action === 'follow' || req.params.action === 'unfollow' ? req.params.action : '';
+    if (!action) return res.status(400).json({ message: 'Choose follow or unfollow.' });
+    const idempotencyKey = typeof req.get('idempotency-key') === 'string' ? req.get('idempotency-key')!.trim().slice(0, 200) : '';
+    if (!idempotencyKey) return res.status(400).json({ message: 'An Idempotency-Key header is required for SoundCloud interactions.' });
+    const existing = (await store.listExternalSyncJobs(account.externalAccountId, 200)).find((job) => job.type === 'user_action' && job.payload?.idempotencyKey === idempotencyKey);
+    if (existing) return res.status(existing.status === 'successful' ? 200 : 202).json(existing);
+    const job = await enqueueExternalSyncJob(account.externalAccountId, 'user_action', { action, targetId: req.params.externalUserId, idempotencyKey });
+    auditLog(req, `soundcloud.${action}.requested`, { externalAccountId: account.externalAccountId, externalUserId: req.params.externalUserId, jobId: job.externalSyncJobId });
+    return res.status(202).json(job);
   });
 
   app.get('/studio/integrations/deviantart/configuration', requireAuth, async (req, res) => {
@@ -6685,6 +7611,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.post('/studio/works/:workId/destinations/deviantart/literature', requireAuth, async (req, res) => {
     const context = await resolveNativeDeviantArtContext(req, res);
     if (!context) return;
+    if (!(await ensureWorkPublicationAllowed(context.work, res))) return;
     const content: ExternalLiteraturePublish = {
       title: sanitizeOptional(req.body?.title, 300) || context.work.title,
       body: sanitizeOptional(req.body?.body, 200_000) || canonicalWorkBodyText(context.work),
@@ -6746,6 +7673,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.post('/studio/works/:workId/destinations/deviantart/journal', requireAuth, async (req, res) => {
     const context = await resolveNativeDeviantArtContext(req, res);
     if (!context) return;
+    if (!(await ensureWorkPublicationAllowed(context.work, res))) return;
     const content: ExternalJournalPublish = {
       title: sanitizeOptional(req.body?.title, 300) || context.work.title,
       body: sanitizeOptional(req.body?.body, 200_000) || context.work.description || '',
@@ -6776,6 +7704,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   app.post('/studio/works/:workId/destinations/deviantart/status', requireAuth, async (req, res) => {
     const context = await resolveNativeDeviantArtContext(req, res);
     if (!context) return;
+    if (!(await ensureWorkPublicationAllowed(context.work, res))) return;
     const content: ExternalStatusPublish = {
       body: sanitizeOptional(req.body?.body, 10_000) || '',
       parentExternalId: sanitizeOptional(req.body?.parentExternalId, 100),
@@ -7601,6 +8530,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
     if (!work) return res.status(404).json({ message: 'Work not found' });
     if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    if (!(await ensureWorkPublicationAllowed(work, res))) return;
     if (!asset) {
       const now = new Date().toISOString();
       asset = {
@@ -7883,6 +8813,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     const work = await store.getWork(config.tenantId, req.params.assetId);
     if (!work) return res.status(404).json({ message: 'Work not found' });
     if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
+    if (!(await ensureWorkPublicationAllowed(work, res))) return;
     const asset = await store.getAsset(work.workId);
     if (!asset) return res.status(404).json({ message: 'Work destination compatibility record not found' });
     const publication = (await store.listExternalPublications(req.params.externalAccountId))
@@ -8071,6 +9002,7 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     }
     const existing = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'eversally');
     const shouldPublish = req.body?.published !== false;
+    if (shouldPublish && !(await ensureWorkPublicationAllowed(work, res))) return;
     const visibility = req.body?.visibility === 'public' || req.body?.visibility === 'unlisted' ? req.body.visibility : 'private';
     const newlyPublicInSpace = shouldPublish && visibility === 'public' && !(existing?.status === 'live' && existing.visibility === 'public');
     const now = new Date().toISOString();
@@ -8353,6 +9285,10 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
     if (!(await ensureCreatorContentAccess(req, res, creatorId))) return;
     const creator = (await store.listCreators()).find((item) => item.creatorId === creatorId);
     if (!creator) return res.status(404).json({ message: 'Creator not found.' });
+    const creatorExportDecision = await supportSafetyService.accessPolicy(await creatorSafetyTargets(creatorId));
+    if (!creatorExportDecision.export) {
+      return res.status(423).json({ message: 'Creator export is unavailable while restricted safety review is active.' });
+    }
 
     const works = await store.listWorksByCreator(config.tenantId, creatorId);
     const collections = await store.listCreatorCollections(config.tenantId, creatorId);
@@ -8365,13 +9301,21 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
           store.listPublicationIntentsByWork(config.tenantId, work.workId),
           store.getWorkDiscoveryParticipation(config.tenantId, work.workId)
         ]);
-        return { work, assets, publications, publicationIntents, discovery };
+        const workDecision = await supportSafetyService.accessPolicy([{ type: 'work', id: work.workId }]);
+        if (!workDecision.export) return null;
+        const exportableAssets = (await Promise.all(assets.map(async (asset) => ({
+          asset,
+          decision: await supportSafetyService.accessPolicy([{ type: 'asset', id: asset.assetId }])
+        })))).filter(({ decision }) => decision.export).map(({ asset }) => asset);
+        return { work, assets: exportableAssets, publications, publicationIntents, discovery };
       })),
       Promise.all(collections.map(async (collection) => ({
         collection,
         works: await store.listCollectionWorks(config.tenantId, collection.collectionId)
       })))
     ]);
+    const exportableWorkRecords = workRecords.filter((record): record is NonNullable<typeof record> => Boolean(record));
+    const exportableWorkIds = new Set(exportableWorkRecords.map(({ work }) => work.workId));
     const generatedAt = new Date().toISOString();
     const manifest = {
       schema: 'https://ubeeq.site/schemas/creator-export/v1',
@@ -8382,8 +9326,11 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
         tenantId: config.tenantId
       },
       creator,
-      works: workRecords,
-      collections: collectionRecords,
+      works: exportableWorkRecords,
+      collections: collectionRecords.map(({ collection, works: memberships }) => ({
+        collection,
+        works: memberships.filter((membership) => exportableWorkIds.has(membership.workId))
+      })),
       integrationAccounts: integrationAccounts.map(toExternalAccountResponse)
     };
     const filename = `${slugify(creator.slug || creator.name)}-ubeeq-export-${generatedAt.slice(0, 10)}.json`;

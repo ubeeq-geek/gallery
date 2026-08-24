@@ -68,16 +68,52 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     capabilities: ['connect', 'catalogue_import', 'engagement_read', 'reconcile'],
     credentialCustody: 'application'
   },
+  instagram: {
+    platform: 'instagram',
+    label: 'Instagram',
+    capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'engagement_read', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
+  wordpress: {
+    platform: 'wordpress',
+    label: 'WordPress',
+    capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
+  flickr: {
+    platform: 'flickr',
+    label: 'Flickr',
+    capabilities: ['connect', 'catalogue_import', 'source_migration', 'reconcile'],
+    credentialCustody: 'application'
+  },
+  soundcloud: {
+    platform: 'soundcloud',
+    label: 'SoundCloud',
+    capabilities: ['connect', 'catalogue_import', 'engagement_read', 'engagement_write', 'reconcile'],
+    credentialCustody: 'application'
+  },
+  fanvue: {
+    platform: 'fanvue',
+    label: 'FanVue',
+    capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
+  patreon: {
+    platform: 'patreon',
+    label: 'Patreon',
+    capabilities: ['connect', 'catalogue_import', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
   bluesky: {
     platform: 'bluesky',
     label: 'Bluesky',
     capabilities: ['connect'],
     credentialCustody: 'isolated_broker'
   },
-  patreon: {
-    platform: 'patreon',
-    label: 'Patreon',
-    capabilities: ['connect', 'catalogue_import', 'webhook_receive', 'reconcile'],
+  tumblr: {
+    platform: 'tumblr',
+    label: 'Tumblr',
+    capabilities: ['connect', 'publish', 'remote_update', 'remote_delete'],
     credentialCustody: 'application'
   },
   discord: {

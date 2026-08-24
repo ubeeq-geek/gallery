@@ -10,7 +10,19 @@ export type CanonicalAssetStatus = 'processing' | 'ready' | 'failed' | 'replaced
 export type WorkAssetRole = 'primary' | 'content' | 'attachment' | 'source' | 'preview';
 export type CreatorCollectionType = 'collection' | 'gallery' | 'series' | 'playlist';
 export type CreatorCollectionStatus = 'draft' | 'published' | 'archived' | 'deleted';
-export type PublicationDestination = 'eversally' | 'deviantart' | 'patreon' | 'youtube' | 'soundcloud' | 'fanvue' | 'bluesky';
+export type PublicationDestination =
+  | 'eversally'
+  | 'deviantart'
+  | 'flickr'
+  | 'instagram'
+  | 'smugmug'
+  | 'youtube'
+  | 'soundcloud'
+  | 'fanvue'
+  | 'patreon'
+  | 'bluesky'
+  | 'tumblr'
+  | 'wordpress';
 export type PublicationStatus = 'draft' | 'scheduled' | 'queued' | 'publishing' | 'live' | 'updating' | 'failed' | 'missing' | 'removed' | 'unknown';
 export type PublicationVisibility = 'private' | 'unlisted' | 'public';
 export type PublicationSyncStatus = 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'conflict' | 'error' | 'unknown';
@@ -195,8 +207,8 @@ export interface CanonicalWorkView extends Work {
   discovery: WorkDiscoveryParticipation;
 }
 
-export const contentAvailabilityForAssets = (assets: CanonicalWorkView['assets']): ContentAvailability => {
-  if (!assets.length) return 'metadata_only';
+export const contentAvailabilityForAssets = (assets: CanonicalWorkView['assets'], origin?: Work['origin']): ContentAvailability => {
+  if (!assets.length) return origin?.type === 'import' && origin.remoteId ? 'external_reference' : 'metadata_only';
   const hosted = assets.filter((asset) => asset.storage.mode === 'hosted' && asset.status === 'ready');
   if (hosted.some((asset) => asset.metadata?.sourceCopyQuality !== 'display_copy')) return 'original_hosted';
   if (hosted.length) return 'display_copy';
