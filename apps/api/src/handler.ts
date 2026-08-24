@@ -10,6 +10,7 @@ const store = new DynamoStore(config);
 const app = createApp({
   config,
   store,
+  tumblrRepository: store.tumblrRepository,
   supportSafetyRepository: DynamoSupportSafetyRepository.fromConfig(config)
 });
 const bootstrapPromise = runAdminBootstrap(config);

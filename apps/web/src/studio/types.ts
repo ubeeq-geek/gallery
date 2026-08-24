@@ -4,7 +4,8 @@ export const studioIntegrationPlatforms = [
   { id: 'deviantart', label: 'DeviantArt' },
   { id: 'youtube', label: 'YouTube' },
   { id: 'bluesky', label: 'Bluesky' },
-  { id: 'discord', label: 'Discord' }
+  { id: 'discord', label: 'Discord' },
+  { id: 'tumblr', label: 'Tumblr' }
 ] as const;
 
 export type StudioIntegrationPlatform = typeof studioIntegrationPlatforms[number]['id'];

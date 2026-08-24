@@ -69,6 +69,19 @@ export interface AppConfig {
   discordOAuthRedirectUri?: string;
   discordCommunityQueueUrl?: string;
   discordApiBaseUrl: string;
+  /** Managed Tumblr OAuth 2 application; creator-owned credentials are encrypted per connector. */
+  tumblrClientId?: string;
+  tumblrClientSecret?: string;
+  tumblrOAuthRedirectUri?: string;
+  tumblrApiBaseUrl: string;
+  tumblrMediaBlockLimit: number;
+  /** Versioned, deployment-owned destination policy rules; never supplied by publish callers. */
+  tumblrPolicyRulesJson?: string;
+  tumblrPublishQueueUrl?: string;
+  tumblrHourlyRequestLimit: number;
+  tumblrDailyRequestLimit: number;
+  tumblrPublishMaxAttempts: number;
+  tumblrRetryBaseDelaySeconds: number;
   localAuthUserId?: string;
   /** Email used for the optional first-admin bootstrap. */
   adminEmail?: string;
@@ -154,6 +167,17 @@ export const loadConfig = (): AppConfig => {
   discordOAuthRedirectUri: process.env.DISCORD_OAUTH_REDIRECT_URI,
   discordCommunityQueueUrl: process.env.DISCORD_COMMUNITY_QUEUE_URL,
   discordApiBaseUrl: process.env.DISCORD_API_BASE_URL || 'https://discord.com/api/v10',
+  tumblrClientId: process.env.TUMBLR_CLIENT_ID,
+  tumblrClientSecret: process.env.TUMBLR_CLIENT_SECRET,
+  tumblrOAuthRedirectUri: process.env.TUMBLR_OAUTH_REDIRECT_URI,
+  tumblrApiBaseUrl: process.env.TUMBLR_API_BASE_URL || 'https://api.tumblr.com',
+  tumblrMediaBlockLimit: Number(process.env.TUMBLR_MEDIA_BLOCK_LIMIT || 10),
+  tumblrPolicyRulesJson: process.env.TUMBLR_POLICY_RULES_JSON,
+  tumblrPublishQueueUrl: process.env.TUMBLR_PUBLISH_QUEUE_URL,
+  tumblrHourlyRequestLimit: Number(process.env.TUMBLR_HOURLY_REQUEST_LIMIT || 1000),
+  tumblrDailyRequestLimit: Number(process.env.TUMBLR_DAILY_REQUEST_LIMIT || 5000),
+  tumblrPublishMaxAttempts: Number(process.env.TUMBLR_PUBLISH_MAX_ATTEMPTS || 5),
+  tumblrRetryBaseDelaySeconds: Number(process.env.TUMBLR_RETRY_BASE_DELAY_SECONDS || 60),
   localAuthUserId: process.env.LOCAL_AUTH_USER_ID,
   adminEmail: process.env.ADMIN_EMAIL || (
     process.env.PRODUCT_BRAND === 'eversally' ? 'admin@eversally.com' : 'admin@ubeeq.site'

@@ -16,6 +16,7 @@ import type {
   StudioIntegrationPlatform,
   StudioYouTubeAccount
 } from '../types';
+import { TumblrIntegrationPanel } from './TumblrIntegrationPanel';
 
 const deviantArtDisplayWidths = [400, 600, 800, 900, 1024, 1280, 1600, 1920];
 type MatureClassification = 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology';
@@ -1142,6 +1143,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
           <p>Import and embed existing videos. Video upload, publishing, and remote metadata editing will be added after the import workflow is proven.</p>
         </aside>
       </Card>}
+      {visibleIntegrationPlatforms.includes('tumblr') && <TumblrIntegrationPanel creatorId={creatorId} />}
       {visibleIntegrationPlatforms.includes('bluesky') && <Card
         title="Bluesky announcements"
         eyebrow="Platform integration"

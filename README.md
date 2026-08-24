@@ -82,6 +82,14 @@ The API reads environment variables from the shell that starts it; it does **not
 | `YOUTUBE_OAUTH_REDIRECT_URI` | `https://fanadmin.top:4000/integrations/youtube/callback` | Register this exact redirect URI in Google Cloud. The Ubeeq local API uses port `4001`. |
 | `YOUTUBE_SECRETS_NAME` | unset | Optional Secrets Manager JSON secret containing `youtubeOAuthClientSecret`; recommended for every deployed environment. |
 | `YOUTUBE_MIN_REQUEST_INTERVAL_MS` | `1000` | Minimum interval between YouTube Data API requests for one worker. |
+| `TUMBLR_CLIENT_ID` / `TUMBLR_CLIENT_SECRET` | unset | Managed Tumblr OAuth 2 application credentials. Keep the secret server-side and load it from managed secret storage in deployments. |
+| `TUMBLR_OAUTH_REDIRECT_URI` | unset | HTTPS OAuth callback registered with Tumblr for the managed connector. Creator-managed applications must register the same deployment callback. |
+| `TUMBLR_API_BASE_URL` | `https://api.tumblr.com` | Optional Tumblr API base override for controlled testing. |
+| `TUMBLR_MEDIA_BLOCK_LIMIT` | `10` | Runtime-configurable NPF media-block validation limit; verify it against current Tumblr documentation before deployment. |
+| `TUMBLR_POLICY_RULES_JSON` | `[]` | Versioned deployment policy rules that map creator declarations to `creator_owned_required` or `platform_ineligible`; callers cannot override these rules. |
+| `TUMBLR_PUBLISH_QUEUE_URL` | unset | SQS queue used for asynchronous Tumblr delivery. Required by deployed publishing workers. |
+| `TUMBLR_HOURLY_REQUEST_LIMIT` / `TUMBLR_DAILY_REQUEST_LIMIT` | `1000` / `5000` | Runtime quota ceilings tracked independently for each managed or creator-owned consumer key. |
+| `TUMBLR_PUBLISH_MAX_ATTEMPTS` / `TUMBLR_RETRY_BASE_DELAY_SECONDS` | `5` / `60` | Retry ceiling and exponential-backoff base for transient Tumblr publishing failures. |
 
 For a stable local encryption key, run this once and export the result before starting the API:
 

@@ -109,6 +109,9 @@ import { dismissExternalActivity, replyToExternalComment } from './externalSyncW
 import { createCommunityDeliveryQueue } from './communityDeliveryQueue';
 import type { CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getDiscordGuild, listDiscordChannels, sendDiscordMessage, queueDiscordWorkPublished, queueDiscordWorksPublished } from './discordCommunity';
+import { registerTumblrRoutes } from './tumblrRoutes';
+import { InMemoryTumblrRepository, type TumblrRepository } from './tumblrRepository';
+import { createTumblrPublishQueue, type TumblrPublishQueue } from './tumblrPublishQueue';
 import { createSupportRouter } from './supportRoutes';
 import { SupportSafetyService } from './supportSafety';
 import type { SupportSafetyRepository } from './supportSafetyRepository';
@@ -118,6 +121,8 @@ interface CreateAppOptions {
   store: DataStore;
   externalSyncQueue?: ExternalSyncQueue;
   communityDeliveryQueue?: CommunityDeliveryQueue;
+  tumblrRepository?: TumblrRepository;
+  tumblrPublishQueue?: TumblrPublishQueue;
   supportSafetyRepository?: SupportSafetyRepository;
 }
 
@@ -956,7 +961,15 @@ const parsePassthroughCursor = (token?: string): string | undefined => {
 const encodePassthroughCursor = (value: string): string =>
   encodeCursorToken({ v: 1, type: 'passthrough', value });
 
-export const createApp = ({ config, store, externalSyncQueue: injectedExternalSyncQueue, communityDeliveryQueue: injectedCommunityDeliveryQueue, supportSafetyRepository }: CreateAppOptions) => {
+export const createApp = ({
+  config,
+  store,
+  externalSyncQueue: injectedExternalSyncQueue,
+  communityDeliveryQueue: injectedCommunityDeliveryQueue,
+  tumblrRepository: injectedTumblrRepository,
+  tumblrPublishQueue: injectedTumblrPublishQueue,
+  supportSafetyRepository
+}: CreateAppOptions) => {
   const brand = brandForConfig(config);
   const app = express();
   const s3Client = new S3Client({ region: config.awsRegion });
@@ -964,6 +977,8 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   const sesClient = new SESv2Client({ region: config.awsRegion });
   const externalSyncQueue = injectedExternalSyncQueue || createExternalSyncQueue(config);
   const communityDeliveryQueue = injectedCommunityDeliveryQueue || createCommunityDeliveryQueue(config);
+  const tumblrRepository = injectedTumblrRepository || new InMemoryTumblrRepository();
+  const tumblrPublishQueue = injectedTumblrPublishQueue || createTumblrPublishQueue(config);
   const supportSafetyService = new SupportSafetyService(supportSafetyRepository);
   const mediaCdnDomain = (config.mediaCdnDomain || '')
     .trim()
@@ -2590,6 +2605,17 @@ export const createApp = ({ config, store, externalSyncQueue: injectedExternalSy
   // their own limits when publishing.
   app.use(express.json({ limit: '10mb' }));
   app.use(createOptionalAuthMiddleware(config));
+  registerTumblrRoutes({
+    app, config, repository: tumblrRepository,
+    hasCreatorAccess: (userId, creatorId) => store.hasCreatorAccess(userId, creatorId),
+    getWork: (tenantId, workId) => store.getWork(tenantId, workId),
+    listAssets: (tenantId, workId) => store.listCanonicalAssetsByWork(tenantId, workId),
+    resolveAssetUrl: (asset, req) => asset.storage.externalUrl
+      ? Promise.resolve(asset.storage.externalUrl)
+      : publicMediaUrl(asset.storage.objectKey, `${req.protocol}://${req.get('host')}`),
+    publishQueue: tumblrPublishQueue,
+    audit: auditLog
+  });
   app.use('/support', createSupportRouter(supportSafetyService));
   if (config.localMediaDirectory) app.use('/media/local', express.static(config.localMediaDirectory));
 
