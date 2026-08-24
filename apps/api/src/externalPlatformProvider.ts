@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import type { ExternalActivityType, ExternalAssetType, ExternalPlatform } from './domain';
 
 /** DeviantArt rejects /deviation/metadata requests containing more than ten IDs. */
@@ -45,6 +46,8 @@ export interface ExternalPlatformApplicationCredentials {
   apiBaseUrl?: string;
   /** Space-separated OAuth scopes requested for this provider. */
   oauthScopes?: string;
+  /** Deployment/compliance kill switch. A disabled provider cannot authorize or call APIs. */
+  enabled?: boolean;
 }
 
 export interface ExternalOAuthPkce {
@@ -159,6 +162,8 @@ export interface ExternalContentUpdateOptions {
 
 export interface ExternalContentPublish {
   body: Buffer;
+  /** Streamed canonical source used by providers that accept large media. */
+  uploadSource?: AssetUploadSource;
   filename: string;
   contentType: string;
   title: string;
@@ -174,6 +179,17 @@ export interface ExternalContentPublish {
   addWatermark?: boolean;
   isAiGenerated?: boolean;
   noAi?: boolean;
+  artist?: string;
+  visibility?: 'public' | 'private' | 'unlisted';
+  providerFields?: Record<string, string | number | boolean | undefined>;
+}
+
+export interface AssetUploadSource {
+  assetId: string;
+  filename: string;
+  contentType: string;
+  byteSize?: number;
+  openReadStream(): Promise<NodeJS.ReadableStream>;
 }
 
 /** Native text publication payloads. These bypass Sta.sh because DeviantArt
@@ -236,6 +252,8 @@ export interface ExternalRemoteComment {
   body: string;
   createdAt?: string;
   parentExternalCommentId?: string;
+  /** Provider-neutral media position for timed comments. */
+  positionMilliseconds?: number;
   replyCount?: number;
   likeCount?: number;
   isLiked?: boolean;
@@ -314,7 +332,15 @@ export interface ExternalPlatformProvider {
   deleteMessage(accessToken: string, message: { messageId?: string; stackId?: string; folderId?: string }): Promise<void>;
   listFavourites(accessToken: string, externalContentId: string, cursor?: string): Promise<{ items: ExternalRemoteFavourite[]; nextCursor?: string }>;
   postComment(accessToken: string, externalContentId: string, body: string, parentExternalCommentId?: string): Promise<ExternalRemoteComment>;
+  postTimedComment?(accessToken: string, externalContentId: string, body: string, timestampMs?: number): Promise<ExternalRemoteComment>;
+  likeContent?(accessToken: string, externalContentId: string): Promise<void>;
+  unlikeContent?(accessToken: string, externalContentId: string): Promise<void>;
+  repostContent?(accessToken: string, externalContentId: string): Promise<void>;
+  unrepostContent?(accessToken: string, externalContentId: string): Promise<void>;
+  followUser?(accessToken: string, externalUserId: string): Promise<void>;
+  unfollowUser?(accessToken: string, externalUserId: string): Promise<void>;
   updateContent(accessToken: string, externalContentId: string, update: ExternalContentUpdate, options?: ExternalContentUpdateOptions): Promise<void>;
+  deleteContent?(accessToken: string, externalContentId: string): Promise<void>;
   submitContent(accessToken: string, content: ExternalContentPublish, existingDraftId?: string): Promise<ExternalDraftContent>;
   publishDraft(accessToken: string, externalDraftId: string, content: ExternalContentPublish): Promise<ExternalPublishedContent>;
   publishContent(accessToken: string, content: ExternalContentPublish): Promise<ExternalPublishedContent>;
@@ -688,7 +714,7 @@ export const parseDeviantArtPublicAiLabels = (
 };
 
 export class DeviantArtProvider implements ExternalPlatformProvider {
-  readonly platform = 'deviantart' as const;
+  readonly platform: ExternalPlatform = 'deviantart';
   private static readonly oauthBaseUrl = 'https://www.deviantart.com/oauth2';
   private static readonly apiBaseUrl = 'https://www.deviantart.com/api/v1/oauth2';
   // user.manage is required for owner-only editing data, including the original
@@ -1852,8 +1878,425 @@ const withProviderOperation = (
   return new ExternalProviderError(error.message, error.code, error.retryAfterSeconds, operation);
 };
 
+/**
+ * Read-only first-phase SoundCloud adapter. Imported tracks deliberately omit
+ * `content`: SoundCloud is an external publication reference, never an audio
+ * download source for canonical storage.
+ */
+abstract class CapabilityScopedExternalProvider implements ExternalPlatformProvider {
+  abstract readonly platform: ExternalPlatform;
+  abstract isConfigured(): boolean;
+  abstract createAuthorizationUrl(state: string, pkce?: ExternalOAuthPkce): string;
+  abstract exchangeAuthorizationCode(code: string, pkce?: ExternalOAuthPkce): Promise<ExternalAuthTokens>;
+  abstract refreshAuthentication(refreshToken: string): Promise<ExternalAuthTokens>;
+  abstract getAccount(accessToken: string): Promise<ExternalRemoteAccount>;
+  abstract getProfile(accessToken: string, username: string): Promise<ExternalRemoteProfile>;
+  abstract listContent(accessToken: string, options: { username: string; cursor?: string; limit?: number }): Promise<ExternalContentPage>;
+  abstract getContent(accessToken: string, externalContentId: string): Promise<ExternalRemoteContent>;
+
+  protected unsupported(capability: string): Promise<never> {
+    return Promise.reject(new ExternalProviderError(`${this.platform} does not support ${capability}`, 'unsupported'));
+  }
+
+  getOriginalDownload(): Promise<ExternalRemoteDownload> { return this.unsupported('source downloads'); }
+  getEngagement(_accessToken: string, _externalContentIds: string[]): Promise<ExternalRemoteEngagement[]> { return this.unsupported('engagement'); }
+  listCollections(_accessToken: string, _username: string): Promise<ExternalRemoteCollection[]> { return this.unsupported('collections'); }
+  createGalleryFolder(): Promise<ExternalRemoteCollection> { return this.unsupported('gallery folders'); }
+  listCollectionContent(_accessToken: string, _externalCollectionId: string, _username: string, _cursor?: string): Promise<ExternalContentPage> { return this.unsupported('collection content'); }
+  listComments(_accessToken: string, _externalContentId: string, _cursor?: string): Promise<{ items: ExternalRemoteComment[]; nextCursor?: string }> { return this.unsupported('comments'); }
+  listFeedback(): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }> { return this.unsupported('feedback'); }
+  listMessages(_accessToken: string, _source: 'feed' | 'mentions', _cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }> { return this.unsupported('messages'); }
+  listMessageStack(): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }> { return this.unsupported('message stacks'); }
+  listWatchers(): Promise<{ items: ExternalRemoteWatcher[]; nextCursor?: string; truncated?: boolean }> { return this.unsupported('watchers'); }
+  deleteMessage(): Promise<void> { return this.unsupported('message deletion'); }
+  listFavourites(_accessToken: string, _externalContentId: string, _cursor?: string): Promise<{ items: ExternalRemoteFavourite[]; nextCursor?: string }> { return this.unsupported('favourites'); }
+  postComment(): Promise<ExternalRemoteComment> { return this.unsupported('comment posting'); }
+  postTimedComment(_accessToken: string, _externalContentId: string, _body: string, _timestampMs?: number): Promise<ExternalRemoteComment> { return this.unsupported('timed comment posting'); }
+  likeContent(_accessToken: string, _externalContentId: string): Promise<void> { return this.unsupported('likes'); }
+  unlikeContent(_accessToken: string, _externalContentId: string): Promise<void> { return this.unsupported('unlikes'); }
+  repostContent(_accessToken: string, _externalContentId: string): Promise<void> { return this.unsupported('reposts'); }
+  unrepostContent(_accessToken: string, _externalContentId: string): Promise<void> { return this.unsupported('unreposts'); }
+  followUser(_accessToken: string, _externalUserId: string): Promise<void> { return this.unsupported('follows'); }
+  unfollowUser(_accessToken: string, _externalUserId: string): Promise<void> { return this.unsupported('unfollows'); }
+  updateContent(_accessToken: string, _externalContentId: string, _update: ExternalContentUpdate, _options?: ExternalContentUpdateOptions): Promise<void> { return this.unsupported('content updates'); }
+  deleteContent(_accessToken: string, _externalContentId: string): Promise<void> { return this.unsupported('content deletion'); }
+  submitContent(): Promise<ExternalDraftContent> { return this.unsupported('draft submission'); }
+  publishDraft(): Promise<ExternalPublishedContent> { return this.unsupported('draft publication'); }
+  publishContent(_accessToken: string, _content: ExternalContentPublish): Promise<ExternalPublishedContent> { return this.unsupported('content publication'); }
+  createLiterature(): Promise<ExternalPublishedContent> { return this.unsupported('literature publication'); }
+  updateLiterature(): Promise<ExternalPublishedContent> { return this.unsupported('literature updates'); }
+  createJournal(): Promise<ExternalPublishedContent> { return this.unsupported('journal publication'); }
+  postStatus(): Promise<ExternalPublishedPost> { return this.unsupported('status publication'); }
+  moveContent(): Promise<never> { return this.unsupported('content moves'); }
+}
+
+export class SoundCloudProvider extends CapabilityScopedExternalProvider {
+  readonly platform = 'soundcloud' as const;
+  private static readonly authBaseUrl = 'https://secure.soundcloud.com';
+  private static readonly soundCloudApiBaseUrl = 'https://api.soundcloud.com';
+
+  constructor(private readonly soundCloudCredentials?: ExternalPlatformApplicationCredentials) {
+    super();
+  }
+
+  override isConfigured(): boolean {
+    return this.soundCloudCredentials?.enabled !== false && Boolean(
+      this.soundCloudCredentials?.clientId
+      && this.soundCloudCredentials.clientSecret
+      && this.soundCloudCredentials.redirectUri
+    );
+  }
+
+  override createAuthorizationUrl(state: string, pkce?: ExternalOAuthPkce): string {
+    this.assertConfigured();
+    if (!pkce) throw new ExternalProviderError('SoundCloud OAuth requires PKCE', 'unsupported');
+    const url = new URL(`${SoundCloudProvider.authBaseUrl}/authorize`);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('client_id', this.soundCloudCredentials!.clientId);
+    url.searchParams.set('redirect_uri', this.soundCloudCredentials!.redirectUri);
+    url.searchParams.set('state', state);
+    url.searchParams.set('code_challenge', pkce.codeChallenge);
+    url.searchParams.set('code_challenge_method', 'S256');
+    return url.toString();
+  }
+
+  override async exchangeAuthorizationCode(code: string, pkce?: ExternalOAuthPkce): Promise<ExternalAuthTokens> {
+    if (!pkce) throw new ExternalProviderError('SoundCloud OAuth requires PKCE', 'unsupported', undefined, 'token_exchange');
+    try {
+      return await this.exchangeSoundCloudToken({
+        grant_type: 'authorization_code', code, code_verifier: pkce.codeVerifier,
+        redirect_uri: this.soundCloudCredentials?.redirectUri || ''
+      });
+    } catch (error) {
+      throw withProviderOperation(error, 'token_exchange');
+    }
+  }
+
+  override refreshAuthentication(refreshToken: string): Promise<ExternalAuthTokens> {
+    return this.exchangeSoundCloudToken({ grant_type: 'refresh_token', refresh_token: refreshToken });
+  }
+
+  override async getAccount(accessToken: string): Promise<ExternalRemoteAccount> {
+    try {
+      const payload = await this.requestSoundCloud('/me', accessToken);
+      const externalUserId = asString(payload.urn) || asIdentifier(payload.id);
+      const externalUsername = asString(payload.username);
+      if (!externalUserId || !externalUsername) throw new ExternalProviderError('SoundCloud account identity response was incomplete', 'invalid_response');
+      return { externalUserId, externalUsername };
+    } catch (error) {
+      throw withProviderOperation(error, 'account_lookup');
+    }
+  }
+
+  override async getProfile(accessToken: string, userUrn: string): Promise<ExternalRemoteProfile> {
+    const payload = await this.requestSoundCloud(`/users/${encodeURIComponent(userUrn)}`, accessToken);
+    return {
+      profileUrl: asString(payload.permalink_url), avatarUrl: asString(payload.avatar_url),
+      realName: asString(payload.full_name), country: asString(payload.country),
+      website: asString(payload.website), bio: asString(payload.description),
+      stats: {
+        watchers: asNumber(payload.followers_count), friends: asNumber(payload.followings_count),
+        deviations: asNumber(payload.track_count), favourites: asNumber(payload.public_favorites_count),
+        comments: asNumber(payload.comments_count)
+      },
+      rawPayload: payload
+    };
+  }
+
+  override async listContent(accessToken: string, options: { username: string; cursor?: string; limit?: number }): Promise<ExternalContentPage> {
+    const path = options.cursor || `/me/tracks?linked_partitioning=true&limit=${Math.max(1, Math.min(200, options.limit || 50))}`;
+    const payload = await this.requestSoundCloud(path, accessToken);
+    const collection = Array.isArray(payload.collection) ? payload.collection : [];
+    return { items: collection.map((item) => this.normalizeTrack(item)).filter((item): item is ExternalRemoteContent => Boolean(item)), nextCursor: this.safeNextHref(payload.next_href) };
+  }
+
+  override async getContent(accessToken: string, trackUrn: string): Promise<ExternalRemoteContent> {
+    const result = this.normalizeTrack(await this.requestSoundCloud(`/tracks/${encodeURIComponent(trackUrn)}`, accessToken));
+    if (!result) throw new ExternalProviderError('SoundCloud track response was incomplete', 'invalid_response');
+    return result;
+  }
+
+  override async listCollections(accessToken: string): Promise<ExternalRemoteCollection[]> {
+    const collections: ExternalRemoteCollection[] = [];
+    let cursor: string | undefined = '/me/playlists?linked_partitioning=true&limit=50';
+    for (let page = 0; cursor && page < 20; page += 1) {
+      const payload = await this.requestSoundCloud(cursor, accessToken);
+      const items = Array.isArray(payload.collection) ? payload.collection : [];
+      for (const value of items) {
+        const playlist = asRecord(value);
+        const id = asString(playlist.urn) || asIdentifier(playlist.id);
+        if (!id) continue;
+        collections.push({
+          externalCollectionId: id,
+          name: asString(playlist.title) || 'Untitled SoundCloud playlist',
+          description: asString(playlist.description),
+          size: asNumber(playlist.track_count),
+          rawMetadata: playlist
+        });
+      }
+      cursor = this.safeNextHref(payload.next_href);
+    }
+    return collections;
+  }
+
+  override async listCollectionContent(accessToken: string, playlistUrn: string, _username: string, cursor?: string): Promise<ExternalContentPage> {
+    const payload = await this.requestSoundCloud(cursor || `/playlists/${encodeURIComponent(playlistUrn)}`, accessToken);
+    const tracks = Array.isArray(payload.collection)
+      ? payload.collection
+      : Array.isArray(payload.tracks) ? payload.tracks : [];
+    return {
+      items: tracks.map((item) => this.normalizeTrack(item)).filter((item): item is ExternalRemoteContent => Boolean(item)),
+      nextCursor: this.safeNextHref(payload.next_href)
+    };
+  }
+
+  override async listComments(accessToken: string, trackUrn: string, cursor?: string): Promise<{ items: ExternalRemoteComment[]; nextCursor?: string }> {
+    const payload = await this.requestSoundCloud(cursor || `/tracks/${encodeURIComponent(trackUrn)}/comments?linked_partitioning=true&limit=100`, accessToken);
+    const collection = Array.isArray(payload.collection) ? payload.collection : [];
+    return {
+      items: collection.map((value) => this.normalizeComment(value)).filter((item): item is ExternalRemoteComment => Boolean(item)),
+      nextCursor: this.safeNextHref(payload.next_href)
+    };
+  }
+
+  override async listFavourites(accessToken: string, trackUrn: string, cursor?: string): Promise<{ items: ExternalRemoteFavourite[]; nextCursor?: string }> {
+    const payload = await this.requestSoundCloud(cursor || `/tracks/${encodeURIComponent(trackUrn)}/favoriters?linked_partitioning=true&limit=100`, accessToken);
+    const collection = Array.isArray(payload.collection) ? payload.collection : [];
+    return {
+      items: collection.map((value): ExternalRemoteFavourite | null => {
+        const user = asRecord(value);
+        const id = asString(user.urn) || asIdentifier(user.id);
+        const username = asString(user.username);
+        return id && username ? { externalUserId: id, username, avatarUrl: asString(user.avatar_url), rawPayload: user } : null;
+      }).filter((item): item is ExternalRemoteFavourite => Boolean(item)),
+      nextCursor: this.safeNextHref(payload.next_href)
+    };
+  }
+
+  override async getEngagement(accessToken: string, trackUrns: string[]): Promise<ExternalRemoteEngagement[]> {
+    const items: ExternalRemoteEngagement[] = [];
+    for (const trackUrn of trackUrns.slice(0, 50)) {
+      const content = await this.getContent(accessToken, trackUrn);
+      items.push({ externalContentId: content.externalContentId, metrics: content.metrics || {}, rawPayload: content.rawMetadata });
+    }
+    return items;
+  }
+
+  override async listMessages(accessToken: string, source: 'feed' | 'mentions', cursor?: string): Promise<{ items: ExternalRemoteActivity[]; nextCursor?: string }> {
+    if (source === 'mentions') return { items: [] };
+    const payload = await this.requestSoundCloud(cursor || '/me/feed?linked_partitioning=true&limit=50', accessToken);
+    const collection = Array.isArray(payload.collection) ? payload.collection : [];
+    return {
+      items: collection.map((value) => this.normalizeActivity(value)).filter((item): item is ExternalRemoteActivity => Boolean(item)),
+      nextCursor: this.safeNextHref(payload.next_href)
+    };
+  }
+
+  override async publishContent(accessToken: string, content: ExternalContentPublish): Promise<ExternalPublishedContent> {
+    this.assertConfigured();
+    if (!content.uploadSource) throw new ExternalProviderError('SoundCloud publication requires a streamed canonical audio source', 'invalid_response');
+    const boundary = `----ubeeq-soundcloud-${Date.now().toString(16)}`;
+    const field = (name: string, value: string) => Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`);
+    const safeFilename = content.uploadSource.filename.replace(/["\r\n]/g, '_');
+    const source = await content.uploadSource.openReadStream();
+    const parts: Array<Buffer | NodeJS.ReadableStream> = [
+      field('track[title]', content.title),
+      ...(content.artist ? [field('track[artist]', content.artist)] : []),
+      ...(content.description ? [field('track[description]', content.description)] : []),
+      ...(content.tags?.length ? [field('track[tag_list]', content.tags.join(' '))] : []),
+      field('track[sharing]', content.visibility === 'public' ? 'public' : 'private'),
+      ...Object.entries(content.providerFields || {}).filter(([, value]) => value !== undefined).map(([name, value]) => field(`track[${name}]`, String(value))),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="track[asset_data]"; filename="${safeFilename}"\r\nContent-Type: ${content.uploadSource.contentType}\r\n\r\n`),
+      source,
+      Buffer.from(`\r\n--${boundary}--\r\n`)
+    ];
+    async function* multipart() {
+      for (const part of parts) {
+        if (Buffer.isBuffer(part)) yield part;
+        else for await (const chunk of part as AsyncIterable<Uint8Array | string>) yield chunk;
+      }
+    }
+    let response: Response;
+    try {
+      response = await fetch(`${SoundCloudProvider.soundCloudApiBaseUrl}/tracks`, {
+        method: 'POST',
+        headers: { Authorization: `OAuth ${accessToken}`, Accept: 'application/json', 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+        body: Readable.from(multipart()),
+        duplex: 'half'
+      } as unknown as RequestInit & { duplex: 'half' });
+    } catch {
+      // The provider may have accepted the bytes before the connection failed.
+      // Never retry POST /tracks blindly; require account reconciliation.
+      throw new ExternalProviderError('SoundCloud upload outcome is unknown; reconcile the account before retrying', 'ambiguous_submission');
+    }
+    const payload = asRecord(await response.json().catch(() => ({})));
+    if (!response.ok) throw this.soundCloudError(response.status, payload, response.headers.get('retry-after'));
+    const externalContentId = asString(payload.urn) || asIdentifier(payload.id);
+    if (!externalContentId) throw new ExternalProviderError('SoundCloud upload response did not identify the track', 'ambiguous_submission');
+    return { externalContentId, externalUrl: asString(payload.permalink_url), rawMetadata: payload };
+  }
+
+  override async updateContent(accessToken: string, trackUrn: string, update: ExternalContentUpdate): Promise<void> {
+    const form = new URLSearchParams();
+    if (update.title !== undefined) form.set('track[title]', update.title);
+    if (update.description !== undefined) form.set('track[description]', update.description);
+    if (update.tags !== undefined) form.set('track[tag_list]', update.tags.join(' '));
+    if (update.allowComments !== undefined) form.set('track[commentable]', String(update.allowComments));
+    if (!form.size) return;
+    await this.requestSoundCloud(`/tracks/${encodeURIComponent(trackUrn)}`, accessToken, { method: 'PUT', body: form });
+  }
+
+  override async deleteContent(accessToken: string, trackUrn: string): Promise<void> {
+    await this.requestSoundCloud(`/tracks/${encodeURIComponent(trackUrn)}`, accessToken, { method: 'DELETE', emptyResponse: true, ignoreNotFound: true });
+  }
+
+  override async postTimedComment(accessToken: string, trackUrn: string, body: string, timestampMs?: number): Promise<ExternalRemoteComment> {
+    const form = new URLSearchParams({ 'comment[body]': body });
+    if (timestampMs !== undefined) form.set('comment[timestamp]', String(Math.max(0, Math.floor(timestampMs))));
+    let payload: Record<string, unknown>;
+    try {
+      payload = await this.requestSoundCloud(`/tracks/${encodeURIComponent(trackUrn)}/comments`, accessToken, { method: 'POST', body: form });
+    } catch (error) {
+      if (error instanceof ExternalProviderError) throw error;
+      throw new ExternalProviderError('SoundCloud comment outcome is unknown; reconcile comments before retrying', 'ambiguous_submission');
+    }
+    const comment = this.normalizeComment(payload);
+    if (!comment) throw new ExternalProviderError('SoundCloud comment response was incomplete', 'ambiguous_submission');
+    return comment;
+  }
+
+  override likeContent(accessToken: string, trackUrn: string): Promise<void> { return this.soundCloudStateAction(accessToken, `/likes/tracks/${encodeURIComponent(trackUrn)}`, 'PUT'); }
+  override unlikeContent(accessToken: string, trackUrn: string): Promise<void> { return this.soundCloudStateAction(accessToken, `/likes/tracks/${encodeURIComponent(trackUrn)}`, 'DELETE'); }
+  override repostContent(accessToken: string, trackUrn: string): Promise<void> { return this.soundCloudStateAction(accessToken, `/reposts/tracks/${encodeURIComponent(trackUrn)}`, 'PUT'); }
+  override unrepostContent(accessToken: string, trackUrn: string): Promise<void> { return this.soundCloudStateAction(accessToken, `/reposts/tracks/${encodeURIComponent(trackUrn)}`, 'DELETE'); }
+  override followUser(accessToken: string, userUrn: string): Promise<void> { return this.soundCloudStateAction(accessToken, `/me/followings/${encodeURIComponent(userUrn)}`, 'PUT'); }
+  override unfollowUser(accessToken: string, userUrn: string): Promise<void> { return this.soundCloudStateAction(accessToken, `/me/followings/${encodeURIComponent(userUrn)}`, 'DELETE'); }
+
+  private async soundCloudStateAction(accessToken: string, path: string, method: 'PUT' | 'DELETE'): Promise<void> {
+    await this.requestSoundCloud(path, accessToken, { method, emptyResponse: true, ignoreNotFound: method === 'DELETE' });
+  }
+
+  override async getOriginalDownload(): Promise<ExternalRemoteDownload> {
+    return { status: 'not_downloadable', rawPayload: { reason: 'SoundCloud imports are external references; source audio is never fetched.' } };
+  }
+
+  private normalizeTrack(value: unknown): ExternalRemoteContent | null {
+    const track = asRecord(value);
+    const externalContentId = asString(track.urn) || asIdentifier(track.id);
+    if (!externalContentId) return null;
+    const tags = (asString(track.tag_list) || '').match(/"[^"]+"|\S+/g)?.map((tag) => tag.replace(/^"|"$/g, '')) || [];
+    const access = asString(track.access);
+    return {
+      externalContentId, externalUrl: asString(track.permalink_url), title: asString(track.title) || 'Untitled SoundCloud track',
+      description: asString(track.description), tags, assetType: 'audio', publishedAt: asIsoDate(track.created_at),
+      remoteCreatedAt: asIsoDate(track.created_at), remoteUpdatedAt: asIsoDate(track.last_modified), collectionExternalIds: [],
+      remoteState: access === 'blocked' ? 'restricted' : 'active', ...(access === 'blocked' ? { remoteStateReason: 'Blocked by SoundCloud' } : {}),
+      metrics: { views: asNumber(track.playback_count), favourites: asNumber(track.likes_count), comments: asNumber(track.comment_count), downloads: asNumber(track.download_count), other: { reposts: asNumber(track.reposts_count) } },
+      rawMetadata: track
+    };
+  }
+
+  private normalizeComment(value: unknown): ExternalRemoteComment | null {
+    const comment = asRecord(value);
+    const id = asString(comment.urn) || asIdentifier(comment.id);
+    if (!id) return null;
+    const user = asRecord(comment.user);
+    const authorId = asString(user.urn) || asIdentifier(user.id);
+    return {
+      externalCommentId: id,
+      authorId,
+      authorName: asString(user.username),
+      authorAvatarUrl: asString(user.avatar_url),
+      body: asString(comment.body) || '',
+      createdAt: asIsoDate(comment.created_at),
+      parentExternalCommentId: asString(comment.parent_comment_urn) || asIdentifier(comment.parent_id),
+      positionMilliseconds: asNumber(comment.timestamp),
+      rawPayload: comment
+    };
+  }
+
+  private normalizeActivity(value: unknown): ExternalRemoteActivity | null {
+    const event = asRecord(value);
+    const origin = asRecord(event.origin);
+    const track = Object.keys(asRecord(event.track)).length ? asRecord(event.track) : asRecord(origin.track);
+    const user = Object.keys(asRecord(event.user)).length ? asRecord(event.user) : asRecord(origin.user);
+    const eventId = asString(event.urn) || asIdentifier(event.id);
+    const trackId = asString(track.urn) || asIdentifier(track.id);
+    const actorId = asString(user.urn) || asIdentifier(user.id);
+    const type = asString(event.type) || 'activity';
+    const occurredAt = asIsoDate(event.created_at) || asIsoDate(event.createdAt);
+    const stableId = eventId || [type, actorId, trackId, occurredAt].filter(Boolean).join(':');
+    if (!stableId) return null;
+    return {
+      remoteActivityId: `soundcloud:${stableId}`,
+      sourceMessageId: stableId,
+      type: type.includes('like') ? 'favourite' : 'activity',
+      occurredAt,
+      actorId,
+      actorName: asString(user.username),
+      actorAvatarUrl: asString(user.avatar_url),
+      externalContentId: trackId,
+      body: asString(event.message) || asString(track.title),
+      rawPayload: event
+    };
+  }
+
+  private safeNextHref(value: unknown): string | undefined {
+    const href = asString(value);
+    if (!href) return undefined;
+    try { const url = new URL(href); return url.origin === SoundCloudProvider.soundCloudApiBaseUrl ? url.toString() : undefined; } catch { return undefined; }
+  }
+
+  private assertConfigured(): void {
+    if (!this.isConfigured()) throw new ExternalProviderError('SoundCloud is disabled or OAuth is not configured', 'unsupported');
+  }
+
+  private async exchangeSoundCloudToken(params: Record<string, string>): Promise<ExternalAuthTokens> {
+    this.assertConfigured();
+    const response = await fetch(`${SoundCloudProvider.authBaseUrl}/oauth/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ...params, client_id: this.soundCloudCredentials!.clientId, client_secret: this.soundCloudCredentials!.clientSecret }).toString() });
+    const payload = asRecord(await response.json().catch(() => ({})));
+    if (!response.ok) throw this.soundCloudError(response.status, payload, response.headers.get('retry-after'));
+    const accessToken = asString(payload.access_token);
+    if (!accessToken) throw new ExternalProviderError('SoundCloud did not return an access token', 'invalid_response');
+    const expiresIn = asNumber(payload.expires_in);
+    return { accessToken, refreshToken: asString(payload.refresh_token), expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : undefined };
+  }
+
+  private async requestSoundCloud(
+    pathOrUrl: string,
+    accessToken: string,
+    options: { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: URLSearchParams; emptyResponse?: boolean; ignoreNotFound?: boolean } = {}
+  ): Promise<Record<string, unknown>> {
+    this.assertConfigured();
+    const url = pathOrUrl.startsWith('/') ? `${SoundCloudProvider.soundCloudApiBaseUrl}${pathOrUrl}` : this.safeNextHref(pathOrUrl);
+    if (!url) throw new ExternalProviderError('SoundCloud pagination URL was invalid', 'invalid_response');
+    const response = await fetch(url, {
+      method: options.method || 'GET',
+      headers: {
+        Authorization: `OAuth ${accessToken}`,
+        Accept: 'application/json',
+        ...(options.body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {})
+      },
+      ...(options.body ? { body: options.body.toString() } : {})
+    });
+    if (options.ignoreNotFound && response.status === 404) return {};
+    const payload = options.emptyResponse && response.ok ? {} : asRecord(await response.json().catch(() => ({})));
+    if (!response.ok) throw this.soundCloudError(response.status, payload, response.headers.get('retry-after'));
+    return payload;
+  }
+
+  private soundCloudError(status: number, payload: Record<string, unknown>, retryAfter?: string | null): ExternalProviderError {
+    const message = asString(payload.message) || asString(payload.error_description) || `SoundCloud request failed (${status})`;
+    if (status === 401) return new ExternalProviderError(message, 'authentication_required');
+    if (status === 429) return new ExternalProviderError(message, 'rate_limited', parseRetryAfterSeconds(retryAfter));
+    if (status >= 500) return new ExternalProviderError(message, 'temporarily_unavailable');
+    return new ExternalProviderError(message, 'invalid_response');
+  }
+}
+
 export const createExternalPlatformProvider = (platform: ExternalPlatform, credentials?: ExternalPlatformApplicationCredentials): ExternalPlatformProvider => {
   if (platform === 'deviantart') return new DeviantArtProvider(credentials);
   if (platform === 'youtube') return new YouTubeProvider(credentials);
+  if (platform === 'soundcloud') return new SoundCloudProvider(credentials);
   throw new Error(`Unsupported external platform: ${platform}`);
 };

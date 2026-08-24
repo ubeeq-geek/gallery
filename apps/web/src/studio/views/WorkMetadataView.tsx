@@ -12,6 +12,7 @@ import type { PostBlock } from '../../domainTypes';
 import { Card } from '../components/Card';
 import { worksWorkspacePath } from '../workListNavigation';
 import type { StudioCreator, StudioDeviantArtAccount, StudioExternalAsset, StudioExternalCollection, StudioExternalPublication, StudioExternalSyncJob } from '../types';
+import { TumblrWorkPublishingPanel } from './TumblrWorkPublishingPanel';
 
 const sourceLabel = (publication?: StudioExternalPublication): string => {
   if (publication?.platform === 'deviantart') return 'DeviantArt';
@@ -682,6 +683,8 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
               </article>)}
             </div> : <p className="small">No destinations yet. {accounts.length ? 'Choose the DeviantArt account above to prepare this work for synchronization.' : `You can continue editing the ${brand.productName} metadata while you manage the creator’s connected platforms.`}</p>}
           </section>
+
+          <TumblrWorkPublishingPanel creatorId={creatorId} workId={workId} />
 
           {accounts.length > 0 && <section className="studio-work-native-da">
             <div>

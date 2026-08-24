@@ -13,6 +13,9 @@ import { runAdminBootstrap } from './adminBootstrap';
 import { SmugMugCanonicalOutboundSource, SmugMugCanonicalSink, SmugMugImageScanner } from './smugMugCanonicalSink';
 import { EncryptedInMemorySmugMugCredentialVault, SmugMugHttpGateway } from './smugMugGateway';
 import { SmugMugIntegrationService } from './smugMugIntegration';
+import { InMemoryTumblrRepository } from './tumblrRepository';
+import { createInProcessTumblrPublishQueue } from './tumblrPublishQueue';
+import { processTumblrPublication } from './tumblrPublishing';
 
 // A local seed is useful for offline UI work, but it must not override real
 // Cognito identities when the paired web app has an auth configuration.
@@ -58,6 +61,8 @@ const smugMugService = config.smugMugApiKey && config.smugMugApiSecret && config
     new SmugMugCanonicalOutboundSource(store, config)
   )
   : undefined;
+const tumblrRepository = new InMemoryTumblrRepository();
+let tumblrPublishQueue = createInProcessTumblrPublishQueue((publicationId) => processTumblrPublication(tumblrRepository, config, publicationId, tumblrPublishQueue));
 
 type LocalStoreSnapshot = {
   version: 1;
@@ -169,7 +174,9 @@ const app = createApp({
   store,
   externalSyncQueue,
   communityDeliveryQueue,
-  smugMugService
+  smugMugService,
+  tumblrRepository,
+  tumblrPublishQueue
 });
 const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || '127.0.0.1';

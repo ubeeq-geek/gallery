@@ -1,12 +1,15 @@
 import { createHash, createHmac, randomUUID } from 'crypto';
 import jwt from 'jsonwebtoken';
 import type { AppConfig } from './config';
+import type { ExternalPlatform } from './domain';
+
+type OAuthExternalPlatform = Extract<ExternalPlatform, 'deviantart' | 'soundcloud' | 'youtube'>;
 
 interface OAuthStatePayload {
   userId: string;
   creatorIdentityId?: string;
   externalPlatformCredentialId: string;
-  platform: 'deviantart' | 'youtube';
+  platform: OAuthExternalPlatform;
   returnPath: string;
   syncContentOnInitialImport?: boolean;
   nonce: string;
@@ -61,7 +64,7 @@ export const verifyExternalOAuthState = (config: AppConfig, value: string): OAut
   if (
     typeof state.userId !== 'string'
     || typeof state.externalPlatformCredentialId !== 'string'
-    || (state.platform !== 'deviantart' && state.platform !== 'youtube')
+    || (state.platform !== 'deviantart' && state.platform !== 'soundcloud' && state.platform !== 'youtube')
     || typeof state.returnPath !== 'string'
     || typeof state.nonce !== 'string'
   ) {

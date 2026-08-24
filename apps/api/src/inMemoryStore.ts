@@ -126,6 +126,7 @@ export class InMemoryStore implements DataStore {
   challengeLaurels: ChallengeLaurelDefinition[] = [];
   challengeLaurelAwards: ChallengeLaurelAward[] = [];
   externalAccounts: ExternalAccount[] = [];
+  private externalAccountRefreshLeases = new Map<string, { leaseId: string; expiresAt: number }>();
   externalAccountProfiles: ExternalAccountProfile[] = [];
   externalAccountProfileSnapshots: ExternalAccountProfileSnapshot[] = [];
   externalAccountCreatorAssignments: ExternalAccountCreatorAssignment[] = [];
@@ -986,13 +987,24 @@ export class InMemoryStore implements DataStore {
 
   async listExternalAccountsForScheduledScan(limit = 100): Promise<ExternalAccount[]> {
     return this.externalAccounts
-      .filter((item) => item.platform === 'deviantart')
+      .filter((item) => item.platform === 'deviantart' || item.platform === 'soundcloud')
       .sort((a, b) => String(a.lastSuccessfulSyncAt || a.createdAt).localeCompare(String(b.lastSuccessfulSyncAt || b.createdAt)))
       .slice(0, limit);
   }
 
   async getExternalAccount(externalAccountId: string): Promise<ExternalAccount | null> {
     return this.externalAccounts.find((item) => item.externalAccountId === externalAccountId) || null;
+  }
+
+  async acquireExternalAccountRefreshLease(externalAccountId: string, leaseId: string, expiresAtEpochSeconds: number): Promise<boolean> {
+    const current = this.externalAccountRefreshLeases.get(externalAccountId);
+    if (current && current.expiresAt >= Math.floor(Date.now() / 1000)) return false;
+    this.externalAccountRefreshLeases.set(externalAccountId, { leaseId, expiresAt: expiresAtEpochSeconds });
+    return true;
+  }
+
+  async releaseExternalAccountRefreshLease(externalAccountId: string, leaseId: string): Promise<void> {
+    if (this.externalAccountRefreshLeases.get(externalAccountId)?.leaseId === leaseId) this.externalAccountRefreshLeases.delete(externalAccountId);
   }
 
   async createExternalAccount(account: ExternalAccount): Promise<void> {
