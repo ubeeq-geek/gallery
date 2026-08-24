@@ -31,7 +31,7 @@ describe('production survivability profile', () => {
   it('keeps development stacks disposable and free of production operations resources', () => {
     const template = synthTemplate('DevelopmentStack');
     const tables = Object.values(template.findResources('AWS::DynamoDB::Table')) as Array<Record<string, unknown>>;
-    expect(tables).toHaveLength(4);
+    expect(tables).toHaveLength(5);
     tables.forEach((table) => {
       expect(table.DeletionPolicy).toBe('Delete');
       expect((table.Properties as Record<string, unknown>).PointInTimeRecoverySpecification).toBeUndefined();
@@ -57,7 +57,7 @@ describe('production survivability profile', () => {
     process.env.APP_SECRETS_NAME = 'eversally/production/application';
     const template = synthTemplate('ProductionStack');
     const tables = Object.values(template.findResources('AWS::DynamoDB::Table')) as Array<Record<string, unknown>>;
-    expect(tables).toHaveLength(4);
+    expect(tables).toHaveLength(5);
     tables.forEach((table) => {
       expect(table.DeletionPolicy).toBe('Retain');
       expect((table.Properties as Record<string, unknown>).PointInTimeRecoverySpecification).toEqual({ PointInTimeRecoveryEnabled: true });

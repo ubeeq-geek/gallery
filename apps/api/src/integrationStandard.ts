@@ -98,6 +98,12 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'webhook_receive', 'reconcile'],
     credentialCustody: 'application'
   },
+  patreon: {
+    platform: 'patreon',
+    label: 'Patreon',
+    capabilities: ['connect', 'catalogue_import', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
   bluesky: {
     platform: 'bluesky',
     label: 'Bluesky',

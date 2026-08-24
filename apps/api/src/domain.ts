@@ -668,6 +668,7 @@ export type ExternalPlatform =
   | 'soundcloud'
   | 'youtube'
   | 'fanvue'
+  | 'patreon'
   | 'tumblr'
   | 'wordpress';
 export type ExternalAccountConnectionStatus =

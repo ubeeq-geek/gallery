@@ -115,6 +115,8 @@ import { dismissExternalActivity, replyToExternalComment } from './externalSyncW
 import { createCommunityDeliveryQueue } from './communityDeliveryQueue';
 import type { CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getDiscordGuild, listDiscordChannels, sendDiscordMessage, queueDiscordWorkPublished, queueDiscordWorksPublished } from './discordCommunity';
+import { createPatreonRouter, createPatreonWebhookHandler, PatreonRepository } from './patreon';
+import { PatreonDynamoPersistence } from './patreonDynamoPersistence';
 import { createWordPressRouter } from './wordpressIntegration';
 import { registerFlickrRoutes } from './flickrIntegration';
 import { createFlickrRepository } from './flickrRepository';
@@ -991,6 +993,15 @@ export const createApp = ({
 }: CreateAppOptions) => {
   const brand = brandForConfig(config);
   const app = express();
+  const patreonRepository = new PatreonRepository(
+    config.patreonIntegrationTable
+      ? new PatreonDynamoPersistence(
+        DynamoDBDocumentClient.from(new DynamoDBClient({ region: config.awsRegion })),
+        config.patreonIntegrationTable,
+        config.tenantId
+      )
+      : undefined
+  );
   const s3Client = new S3Client({ region: config.awsRegion });
   const cognitoClient = new CognitoIdentityProviderClient({ region: config.awsRegion });
   const sesClient = new SESv2Client({ region: config.awsRegion });
@@ -2620,6 +2631,11 @@ export const createApp = ({
     allowedHeaders,
     exposedHeaders
   }));
+  app.post(
+    '/webhooks/patreon',
+    express.raw({ type: 'application/json', limit: '1mb' }),
+    createPatreonWebhookHandler(config, patreonRepository)
+  );
   // Writing Works use structured block documents and should not be constrained
   // by the small default JSON parser limit. External destinations still apply
   // their own limits when publishing.
@@ -2633,6 +2649,7 @@ export const createApp = ({
     }
   }));
   app.use(createOptionalAuthMiddleware(config));
+  app.use('/api', createPatreonRouter(config, patreonRepository, undefined, store));
   app.use('/api', createWordPressRouter(config, store));
   registerFlickrRoutes(app, config, createFlickrRepository(config), undefined, store);
   const vimeoRepository = config.useContentCoreTable

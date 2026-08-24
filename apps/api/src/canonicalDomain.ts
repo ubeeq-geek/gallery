@@ -19,6 +19,7 @@ export type PublicationDestination =
   | 'youtube'
   | 'soundcloud'
   | 'fanvue'
+  | 'patreon'
   | 'bluesky'
   | 'tumblr'
   | 'wordpress';
