@@ -33,6 +33,11 @@ export interface AppConfig {
   /** Compliance approval gate; SoundCloud remains unavailable unless explicitly enabled. */
   soundCloudEnabled?: boolean;
   externalTokenEncryptionKey?: string;
+  /** Flickr OAuth 1.0a application credentials. The secret is server-only. */
+  flickrApiKey?: string;
+  flickrApiSecret?: string;
+  flickrOAuthCallbackUrl?: string;
+  flickrMinimumRequestIntervalMs: number;
   externalSyncQueueUrl?: string;
   externalSyncBaseDelaySeconds: number;
   /** Minimum spacing between DeviantArt API calls. Keep this conservative: DA applies adaptive limits. */
@@ -156,6 +161,10 @@ export const loadConfig = (): AppConfig => {
   soundCloudOAuthRedirectUri: process.env.SOUNDCLOUD_OAUTH_REDIRECT_URI,
   soundCloudEnabled: (process.env.SOUNDCLOUD_ENABLED || 'false') === 'true',
   externalTokenEncryptionKey: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY,
+  flickrApiKey: process.env.FLICKR_API_KEY,
+  flickrApiSecret: process.env.FLICKR_API_SECRET,
+  flickrOAuthCallbackUrl: process.env.FLICKR_OAUTH_CALLBACK_URL,
+  flickrMinimumRequestIntervalMs: Number(process.env.FLICKR_MIN_REQUEST_INTERVAL_MS || 1000),
   externalSyncQueueUrl: process.env.EXTERNAL_SYNC_QUEUE_URL,
   externalSyncBaseDelaySeconds: Number(process.env.EXTERNAL_SYNC_BASE_DELAY_SECONDS || 60),
   deviantArtMinimumRequestIntervalMs: Number(process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || 2000),

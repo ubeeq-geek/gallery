@@ -68,6 +68,12 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     capabilities: ['connect', 'catalogue_import', 'engagement_read', 'reconcile'],
     credentialCustody: 'application'
   },
+  flickr: {
+    platform: 'flickr',
+    label: 'Flickr',
+    capabilities: ['connect', 'catalogue_import', 'source_migration', 'reconcile'],
+    credentialCustody: 'application'
+  },
   soundcloud: {
     platform: 'soundcloud',
     label: 'SoundCloud',
