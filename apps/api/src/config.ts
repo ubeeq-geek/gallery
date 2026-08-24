@@ -29,6 +29,9 @@ export interface AppConfig {
   cognitoClientId?: string;
   cognitoTokenUse?: 'id' | 'access';
   externalOAuthRedirectUri?: string;
+  soundCloudOAuthRedirectUri?: string;
+  /** Compliance approval gate; SoundCloud remains unavailable unless explicitly enabled. */
+  soundCloudEnabled?: boolean;
   externalTokenEncryptionKey?: string;
   /** Flickr OAuth 1.0a application credentials. The secret is server-only. */
   flickrApiKey?: string;
@@ -51,6 +54,10 @@ export interface AppConfig {
   externalAccountScanIntervalSeconds: number;
   externalActivityScanIntervalSeconds: number;
   deviantArtPublishedDescriptionUpdate: boolean;
+  /** SmugMug OAuth 1.0a application credentials. Kept server-side. */
+  smugMugApiKey?: string;
+  smugMugApiSecret?: string;
+  smugMugOAuthCallbackUrl?: string;
   externalContentMaxBytes: number;
   localMediaDirectory?: string;
   appOrigin?: string;
@@ -74,6 +81,27 @@ export interface AppConfig {
   discordOAuthRedirectUri?: string;
   discordCommunityQueueUrl?: string;
   discordApiBaseUrl: string;
+  /** Fanvue studio-pilot OAuth and API configuration. Secrets must come from managed application secrets. */
+  fanvueClientId?: string;
+  fanvueClientSecret?: string;
+  fanvueOAuthRedirectUri?: string;
+  fanvueWebhookSecret?: string;
+  fanvueApiBaseUrl?: string;
+  fanvueAuthorizeUrl?: string;
+  fanvueApiVersion?: string;
+  /** Managed Tumblr OAuth 2 application; creator-owned credentials are encrypted per connector. */
+  tumblrClientId?: string;
+  tumblrClientSecret?: string;
+  tumblrOAuthRedirectUri?: string;
+  tumblrApiBaseUrl: string;
+  tumblrMediaBlockLimit: number;
+  /** Versioned, deployment-owned destination policy rules; never supplied by publish callers. */
+  tumblrPolicyRulesJson?: string;
+  tumblrPublishQueueUrl?: string;
+  tumblrHourlyRequestLimit: number;
+  tumblrDailyRequestLimit: number;
+  tumblrPublishMaxAttempts: number;
+  tumblrRetryBaseDelaySeconds: number;
   localAuthUserId?: string;
   /** Email used for the optional first-admin bootstrap. */
   adminEmail?: string;
@@ -87,6 +115,11 @@ export interface AppConfig {
   sesFromAddress?: string;
   /** Brand inbox that receives creator integration requests. */
   integrationRequestToAddress?: string;
+  vimeoClientId?: string;
+  vimeoClientSecret?: string;
+  vimeoOAuthRedirectUri?: string;
+  vimeoWebhookSecret?: string;
+  vimeoUploadQueueUrl?: string;
 }
 
 export const loadConfig = (): AppConfig => {
@@ -125,6 +158,8 @@ export const loadConfig = (): AppConfig => {
   cognitoClientId: process.env.COGNITO_CLIENT_ID || process.env.VITE_COGNITO_CLIENT_ID,
   cognitoTokenUse: (process.env.COGNITO_TOKEN_USE as 'id' | 'access') || 'id',
   externalOAuthRedirectUri: process.env.EXTERNAL_OAUTH_REDIRECT_URI,
+  soundCloudOAuthRedirectUri: process.env.SOUNDCLOUD_OAUTH_REDIRECT_URI,
+  soundCloudEnabled: (process.env.SOUNDCLOUD_ENABLED || 'false') === 'true',
   externalTokenEncryptionKey: process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY,
   flickrApiKey: process.env.FLICKR_API_KEY,
   flickrApiSecret: process.env.FLICKR_API_SECRET,
@@ -148,6 +183,9 @@ export const loadConfig = (): AppConfig => {
     || process.env.DEVIANTART_EXPERIMENTAL_PUBLISHED_DESCRIPTION_UPDATE
     || 'true'
   ) === 'true',
+  smugMugApiKey: process.env.SMUGMUG_API_KEY,
+  smugMugApiSecret: process.env.SMUGMUG_API_SECRET,
+  smugMugOAuthCallbackUrl: process.env.SMUGMUG_OAUTH_CALLBACK_URL,
   externalContentMaxBytes: Number(process.env.EXTERNAL_CONTENT_MAX_BYTES || 50 * 1024 * 1024),
   localMediaDirectory: process.env.LOCAL_MEDIA_DIRECTORY || (process.env.LOCAL_AUTH_USER_ID ? '/tmp/ubeeq-media' : undefined),
   appOrigin: process.env.APP_ORIGIN,
@@ -163,6 +201,24 @@ export const loadConfig = (): AppConfig => {
   discordOAuthRedirectUri: process.env.DISCORD_OAUTH_REDIRECT_URI,
   discordCommunityQueueUrl: process.env.DISCORD_COMMUNITY_QUEUE_URL,
   discordApiBaseUrl: process.env.DISCORD_API_BASE_URL || 'https://discord.com/api/v10',
+  fanvueClientId: process.env.FANVUE_CLIENT_ID,
+  fanvueClientSecret: process.env.FANVUE_CLIENT_SECRET,
+  fanvueOAuthRedirectUri: process.env.FANVUE_OAUTH_REDIRECT_URI,
+  fanvueWebhookSecret: process.env.FANVUE_WEBHOOK_SECRET,
+  fanvueApiBaseUrl: process.env.FANVUE_API_BASE_URL || 'https://api.fanvue.com',
+  fanvueAuthorizeUrl: process.env.FANVUE_AUTHORIZE_URL || 'https://auth.fanvue.com/oauth/authorize',
+  fanvueApiVersion: process.env.FANVUE_API_VERSION || '2026-08-01',
+  tumblrClientId: process.env.TUMBLR_CLIENT_ID,
+  tumblrClientSecret: process.env.TUMBLR_CLIENT_SECRET,
+  tumblrOAuthRedirectUri: process.env.TUMBLR_OAUTH_REDIRECT_URI,
+  tumblrApiBaseUrl: process.env.TUMBLR_API_BASE_URL || 'https://api.tumblr.com',
+  tumblrMediaBlockLimit: Number(process.env.TUMBLR_MEDIA_BLOCK_LIMIT || 10),
+  tumblrPolicyRulesJson: process.env.TUMBLR_POLICY_RULES_JSON,
+  tumblrPublishQueueUrl: process.env.TUMBLR_PUBLISH_QUEUE_URL,
+  tumblrHourlyRequestLimit: Number(process.env.TUMBLR_HOURLY_REQUEST_LIMIT || 1000),
+  tumblrDailyRequestLimit: Number(process.env.TUMBLR_DAILY_REQUEST_LIMIT || 5000),
+  tumblrPublishMaxAttempts: Number(process.env.TUMBLR_PUBLISH_MAX_ATTEMPTS || 5),
+  tumblrRetryBaseDelaySeconds: Number(process.env.TUMBLR_RETRY_BASE_DELAY_SECONDS || 60),
   localAuthUserId: process.env.LOCAL_AUTH_USER_ID,
   adminEmail: process.env.ADMIN_EMAIL || (
     process.env.PRODUCT_BRAND === 'eversally' ? 'admin@eversally.com' : 'admin@ubeeq.site'
@@ -173,7 +229,12 @@ export const loadConfig = (): AppConfig => {
   localAuthDisplayName: process.env.LOCAL_AUTH_DISPLAY_NAME,
   sesFromAddress: process.env.SES_FROM_ADDRESS?.trim(),
   integrationRequestToAddress: process.env.INTEGRATION_REQUEST_TO_ADDRESS?.trim()
-    || (process.env.PRODUCT_BRAND === 'eversally' ? 'hello@eversally.com' : 'hello@ubeeq.site')
+    || (process.env.PRODUCT_BRAND === 'eversally' ? 'hello@eversally.com' : 'hello@ubeeq.site'),
+  vimeoClientId: process.env.VIMEO_CLIENT_ID,
+  vimeoClientSecret: process.env.VIMEO_CLIENT_SECRET,
+  vimeoOAuthRedirectUri: process.env.VIMEO_OAUTH_REDIRECT_URI,
+  vimeoWebhookSecret: process.env.VIMEO_WEBHOOK_SECRET,
+  vimeoUploadQueueUrl: process.env.VIMEO_UPLOAD_QUEUE_URL
   };
   if (deploymentStage === 'production' || deploymentStage === 'prod') {
     const missing = [

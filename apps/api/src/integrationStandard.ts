@@ -74,11 +74,29 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     capabilities: ['connect', 'catalogue_import', 'source_migration', 'reconcile'],
     credentialCustody: 'application'
   },
+  soundcloud: {
+    platform: 'soundcloud',
+    label: 'SoundCloud',
+    capabilities: ['connect', 'catalogue_import', 'engagement_read', 'engagement_write', 'reconcile'],
+    credentialCustody: 'application'
+  },
+  fanvue: {
+    platform: 'fanvue',
+    label: 'FanVue',
+    capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
   bluesky: {
     platform: 'bluesky',
     label: 'Bluesky',
     capabilities: ['connect'],
     credentialCustody: 'isolated_broker'
+  },
+  tumblr: {
+    platform: 'tumblr',
+    label: 'Tumblr',
+    capabilities: ['connect', 'publish', 'remote_update', 'remote_delete'],
+    credentialCustody: 'application'
   },
   discord: {
     platform: 'discord',

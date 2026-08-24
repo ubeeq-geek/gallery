@@ -6,6 +6,7 @@ import { brand } from '../../brand';
 import { Card } from '../components/Card';
 import { Pill } from '../components/Pill';
 import { studioIntegrationPlatforms } from '../types';
+import { FanvueView } from './FanvueView';
 import type {
   StudioCreator,
   StudioDeviantArtAccount,
@@ -16,6 +17,7 @@ import type {
   StudioIntegrationPlatform,
   StudioYouTubeAccount
 } from '../types';
+import { TumblrIntegrationPanel } from './TumblrIntegrationPanel';
 
 const deviantArtDisplayWidths = [400, 600, 800, 900, 1024, 1280, 1600, 1920];
 type MatureClassification = 'nudity' | 'sexual' | 'gore' | 'language' | 'ideology';
@@ -27,7 +29,7 @@ const matureClassificationOptions: Array<{ value: MatureClassification; label: s
   { value: 'ideology', label: 'Ideology' }
 ];
 
-const defaultVisibleIntegrationPlatforms: StudioIntegrationPlatform[] = ['deviantart', 'bluesky'];
+const defaultVisibleIntegrationPlatforms: StudioIntegrationPlatform[] = ['deviantart', 'fanvue', 'bluesky'];
 
 const discordAnnouncementPresets: Array<{ id: AnnouncementPresetId; label: string; description: string }> = [
   { id: 'recommended', label: 'Recommended', description: 'Matches the announcement to each Work type.' },
@@ -1142,6 +1144,8 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
           <p>Import and embed existing videos. Video upload, publishing, and remote metadata editing will be added after the import workflow is proven.</p>
         </aside>
       </Card>}
+{visibleIntegrationPlatforms.includes('fanvue') && <FanvueView creatorId={creatorId} creatorName={creators.find((creator) => creator.creatorId === creatorId)?.name || brand.creatorName} />}
+{visibleIntegrationPlatforms.includes('tumblr') && <TumblrIntegrationPanel creatorId={creatorId} />}
       {visibleIntegrationPlatforms.includes('bluesky') && <Card
         title="Bluesky announcements"
         eyebrow="Platform integration"
