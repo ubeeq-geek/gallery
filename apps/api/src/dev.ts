@@ -10,6 +10,9 @@ import { createInProcessExternalSyncQueue, type ExternalSyncQueue } from './exte
 import { createInProcessCommunityDeliveryQueue, type CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { processDiscordDelivery } from './discordCommunity';
 import { runAdminBootstrap } from './adminBootstrap';
+import { SmugMugCanonicalOutboundSource, SmugMugCanonicalSink, SmugMugImageScanner } from './smugMugCanonicalSink';
+import { EncryptedInMemorySmugMugCredentialVault, SmugMugHttpGateway } from './smugMugGateway';
+import { SmugMugIntegrationService } from './smugMugIntegration';
 import { InMemoryTumblrRepository } from './tumblrRepository';
 import { createInProcessTumblrPublishQueue } from './tumblrPublishQueue';
 import { processTumblrPublication } from './tumblrPublishing';
@@ -47,6 +50,17 @@ const config = {
 };
 void runAdminBootstrap(config);
 const store = new InMemoryStore();
+const smugMugService = config.smugMugApiKey && config.smugMugApiSecret && config.smugMugOAuthCallbackUrl && config.externalTokenEncryptionKey
+  ? new SmugMugIntegrationService(
+    new SmugMugHttpGateway({
+      apiKey: config.smugMugApiKey, apiSecret: config.smugMugApiSecret, callbackUrl: config.smugMugOAuthCallbackUrl,
+      vault: new EncryptedInMemorySmugMugCredentialVault(config.externalTokenEncryptionKey)
+    }),
+    new SmugMugCanonicalSink(store, config, new SmugMugImageScanner()),
+    undefined,
+    new SmugMugCanonicalOutboundSource(store, config)
+  )
+  : undefined;
 const tumblrRepository = new InMemoryTumblrRepository();
 let tumblrPublishQueue = createInProcessTumblrPublishQueue((publicationId) => processTumblrPublication(tumblrRepository, config, publicationId, tumblrPublishQueue));
 
@@ -160,6 +174,7 @@ const app = createApp({
   store,
   externalSyncQueue,
   communityDeliveryQueue,
+  smugMugService,
   tumblrRepository,
   tumblrPublishQueue
 });

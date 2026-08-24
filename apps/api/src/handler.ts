@@ -3,6 +3,7 @@ import { loadConfig } from './config';
 import { createApp } from './app';
 import { DynamoStore } from './dynamoStore';
 import { runAdminBootstrap } from './adminBootstrap';
+import { createSmugMugService } from './smugMugFactory';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { DynamoFanvueRepository } from './fanvueRepository';
@@ -17,6 +18,7 @@ const fanvueRepository = new DynamoFanvueRepository(
 const app = createApp({
   config,
   store,
+  smugMugService: createSmugMugService(config, store),
   fanvueRepository,
   tumblrRepository: store.tumblrRepository,
   supportSafetyRepository: DynamoSupportSafetyRepository.fromConfig(config)
