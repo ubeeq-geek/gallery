@@ -8,6 +8,8 @@ import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type Int
 import { recordPublicationReconciliation } from './integrationReconciliation';
 import { recordExternalPublicationLifecycle, type RemotePublicationState } from './integrationSync';
 import { deliveryRetryDelaySeconds, shouldRetryIntegrationDelivery } from './integrationDelivery';
+import { integrationRecoveryDecision } from './integrationSyncRecovery';
+import { appendPublicationDisclosureSnapshot, createPublicationDisclosureSnapshot } from './aiProvenance';
 import { createExternalPlatformProvider, DEVIANTART_METADATA_BATCH_SIZE, ExternalProviderError, type ExternalContentPublish, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteActivity, type ExternalRemoteComment, type ExternalRemoteContent, type ExternalRemoteEngagement } from './externalPlatformProvider';
 import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalCollection, ExternalCollectionMapping, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, IntegrationActivity, SpacePublication, UbeeqCollection, UbeeqCollectionAsset } from './domain';
 import type { CanonicalAsset, Publication, Work } from './canonicalDomain';
@@ -28,6 +30,9 @@ export const shouldRetryExternalJobFailure = (
   attemptCount: number
 ): boolean => {
   if (code === 'temporarily_unavailable' && jobType === 'content_sync') return false;
+  const operation: IntegrationOperation = jobType === 'publish' ? 'publish' : jobType === 'remote_delete' ? 'delete_remote' : 'update_remote';
+  const recovery = integrationRecoveryDecision({ operation, code: code === 'invalid_response' || code === 'unsupported' ? 'invalid_request' : code });
+  if (recovery.disposition !== 'retry' && recovery.disposition !== 'reconcile_before_retry') return false;
   if (code !== 'rate_limited' && code !== 'temporarily_unavailable' && code !== 'ambiguous_submission') return false;
   return shouldRetryIntegrationDelivery(
     jobType === 'publish' ? 'publish' : 'update',
@@ -493,6 +498,8 @@ const syncCanonicalPublication = async (
       targetStatus: publication.targetStatus,
       externalCollectionIds: publication.externalCollectionIds
     },
+    disclosureSnapshots: existing?.disclosureSnapshots,
+    activeDisclosureSnapshotId: existing?.activeDisclosureSnapshotId,
     createdAt: publication.createdAt,
     updatedAt: publication.updatedAt,
     publishedAt: publication.publishedAt,
@@ -1191,6 +1198,22 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
     : undefined;
   if (!pendingPublication) throw new ExternalProviderError('The selected destination is no longer available for publishing', 'invalid_response');
   const savedSettings = pendingPublication.rawMetadataJson || {};
+  const canonicalWork = await store.getWork(config.tenantId, asset.assetId);
+  if (canonicalWork) {
+    await syncCanonicalPublication(store, config, session.account, canonicalWork, pendingPublication);
+    const canonicalPublication = await store.getPublication(config.tenantId, pendingPublication.externalPublicationId);
+    if (canonicalPublication) {
+      await store.upsertPublication(appendPublicationDisclosureSnapshot(
+        canonicalPublication,
+        createPublicationDisclosureSnapshot({
+          publicationId: canonicalPublication.publicationId,
+          attemptKey: `external-publish:${job.externalSyncJobId}`,
+          work: canonicalWork,
+          assetChecksumsSha256: [spacePublication.hostedChecksumSha256]
+        })
+      ));
+    }
+  }
   const tags = Array.isArray(job.payload?.tags)
     ? job.payload.tags.filter((tag): tag is string => typeof tag === 'string')
     : pendingPublication.externalTags;
@@ -1219,7 +1242,7 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
     ? job.payload.originalFilename.trim()
     : `${asset.assetId}.jpg`;
   if (account.platform === 'soundcloud') {
-    const work = await store.getWork(config.tenantId, asset.assetId);
+    const work = canonicalWork;
     if (!work || work.kind !== 'audio') throw new ExternalProviderError('Only canonical audio Works can be published to SoundCloud', 'invalid_response');
     if (!spacePublication.hostedContentType.startsWith('audio/')) throw new ExternalProviderError('The SoundCloud source Asset must be audio', 'invalid_response');
     const visibility = job.payload?.visibility === 'public' || job.payload?.visibility === 'unlisted' ? job.payload.visibility : 'private';
@@ -1320,7 +1343,7 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
     updatedAt: now
   };
   await store.updateExternalPublication(submittedDraftPublication, pendingPublication.externalContentId);
-  const work = await store.getWork(config.tenantId, asset.assetId);
+  const work = canonicalWork;
   if (work) await syncCanonicalPublication(store, config, session.account, work, submittedDraftPublication, now);
   if (targetStatus === 'draft') {
     await updateJob(store, job, {

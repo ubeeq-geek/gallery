@@ -1245,6 +1245,8 @@ export interface CommunityDelivery {
   communityEventId: string;
   communityDestinationId: string;
   provider: CommunityProvider;
+  /** Provider-neutral immutable announcement request rendered at delivery time. */
+  announcementPublication?: import('./announcementPublication').AnnouncementPublication;
   status: CommunityDeliveryStatus;
   attemptCount: number;
   nextAttemptAt?: string;

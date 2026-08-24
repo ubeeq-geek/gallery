@@ -23,8 +23,8 @@ export interface InstagramContainerRequest {
   children?: string[];
   carouselItem?: boolean;
   video?: boolean;
-  /** Meta's `is_ai_generated`; only valid on a carousel parent, never a child. */
-  aiGeneratedDisclosure?: boolean;
+  /** Maps to Meta's self-disclosure flag on a top-level media container. */
+  isAiGenerated?: boolean;
 }
 
 export interface InstagramRemoteMedia {
@@ -34,7 +34,8 @@ export interface InstagramRemoteMedia {
   mediaType?: string;
   placement?: string;
   timestamp?: string;
-  aiGeneratedLabel?: boolean;
+  /** Undefined means the field was unavailable; it must not be treated as false. */
+  isAiGenerated?: boolean;
 }
 
 export interface InstagramMediaPage { items: InstagramRemoteMedia[]; nextCursor?: string }
@@ -90,16 +91,19 @@ export class InstagramProvider {
   }
 
   async createContainer(accessToken: string, accountId: string, input: InstagramContainerRequest): Promise<string> {
+    if (input.carouselItem && input.isAiGenerated !== undefined) {
+      throw new Error('Meta does not accept is_ai_generated on carousel child containers');
+    }
     const params: Record<string, string> = { caption: input.caption || '' };
     if (input.children?.length) { params.media_type = 'CAROUSEL'; params.children = input.children.join(','); }
     else if (input.placement === 'REEL') { params.media_type = 'REELS'; params.video_url = input.mediaUrl; }
     else if (input.placement === 'STORY') { params.media_type = 'STORIES'; params[input.video ? 'video_url' : 'image_url'] = input.mediaUrl; }
     else params.image_url = input.mediaUrl;
     if (input.carouselItem) params.is_carousel_item = 'true';
-    if (input.carouselItem && input.aiGeneratedDisclosure) throw new Error('Instagram AI disclosure must be set on the carousel parent, not a child container');
-    // Meta only documents a true value; omission is the explicit no-label path.
-    if (input.aiGeneratedDisclosure) params.is_ai_generated = 'true';
     if (input.accessibilityText) params.alt_text = input.accessibilityText;
+    // Meta documents this as a top-level self-disclosure. Omit false so an
+    // unavailable/unknown local assertion is never converted into a claim.
+    if (input.isAiGenerated === true) params.is_ai_generated = 'true';
     const result = await this.call<{ id?: string }>(`/${accountId}/media`, accessToken, params, 'POST');
     if (!result.id) throw new InstagramProviderError('Meta did not return a container id', 'INVALID_RESPONSE');
     return result.id;
@@ -125,7 +129,7 @@ export class InstagramProvider {
     const result = await this.call<Record<string, unknown>>(`/${mediaId}`, accessToken, { fields: 'id,permalink,caption,media_type,media_product_type,timestamp,is_ai_generated' });
     const id = string(result.id);
     if (!id) throw new InstagramProviderError('Meta did not return a media id', 'INVALID_RESPONSE');
-    return { id, permalink: string(result.permalink), caption: string(result.caption), mediaType: string(result.media_type), placement: string(result.media_product_type), timestamp: string(result.timestamp), aiGeneratedLabel: boolean(result.is_ai_generated) };
+    return { id, permalink: string(result.permalink), caption: string(result.caption), mediaType: string(result.media_type), placement: string(result.media_product_type), timestamp: string(result.timestamp), isAiGenerated: boolean(result.is_ai_generated) };
   }
 
   async listMedia(accessToken: string, accountId: string, cursor?: string, limit = 25): Promise<InstagramMediaPage> {
@@ -134,7 +138,7 @@ export class InstagramProvider {
     });
     const items = (result.data || []).flatMap((value) => {
       const item = record(value); const id = string(item.id);
-      return id ? [{ id, permalink: string(item.permalink), caption: string(item.caption), mediaType: string(item.media_type), placement: string(item.media_product_type), timestamp: string(item.timestamp), aiGeneratedLabel: boolean(item.is_ai_generated) }] : [];
+      return id ? [{ id, permalink: string(item.permalink), caption: string(item.caption), mediaType: string(item.media_type), placement: string(item.media_product_type), timestamp: string(item.timestamp), isAiGenerated: boolean(item.is_ai_generated) }] : [];
     });
     return { items, nextCursor: string(result.paging?.cursors?.after) };
   }

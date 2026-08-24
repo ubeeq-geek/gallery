@@ -75,6 +75,7 @@ The API reads environment variables from the shell that starts it; it does **not
 | `BLUESKY_OAUTH_JWKS_JSON` | unset | Public JWKS JSON advertised to Bluesky. Never include private JWK fields here. |
 | `BLUESKY_OAUTH_PRIVATE_JWK` | unset | Confidential ES256 signing JWK. Load from managed secret storage in production; never commit it. |
 | `BLUESKY_OAUTH_SERVICE_URL` / `BLUESKY_OAUTH_SERVICE_JWKS_URL` | unset | The dedicated OAuth broker and its public JWKS. Studio uses these to issue and verify Creator-scoped Bluesky connection proofs without receiving a refresh token. |
+| `BLUESKY_OAUTH_INTERNAL_SECRET` | unset | Shared 256-bit HMAC secret used only for signed API-to-broker announcement publication requests. Use the same value in the application secret and Bluesky OAuth secret. |
 | `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | unset | Discord application OAuth credentials for native community delivery. Keep the client secret out of source control. |
 | `DISCORD_BOT_TOKEN` | unset | Bot token used only by the API/worker to enumerate permitted channels and send announcements. Never expose it to the web client. |
 | `DISCORD_SECRETS_NAME` | unset | Optional Secrets Manager JSON secret for the Discord client secret and bot token. Use this for every shared AWS environment, including development. |
@@ -248,7 +249,7 @@ Route 53 hosted zones and ACM certificates are created/validated outside CDK. Th
 
 The full stack does not claim the public root/API domains unless `ENABLE_FULL_PRODUCT_DOMAINS=true` is deliberately set. This avoids a CloudFormation ownership collision while the launch stacks are live; moving the full product onto these domains is an explicit future cutover.
 
-The public target needs a Secrets Manager secret whose JSON contains a single `blueskyOAuthPrivateJwk` field holding a P-256 / ES256 private JWK. This is the confidential OAuth client signing key; never commit it or put it in a shell history. The service derives and publishes a public JWKS automatically.
+The public target needs a Secrets Manager secret whose JSON contains `blueskyOAuthPrivateJwk` (a P-256 / ES256 private JWK) and `blueskyOAuthInternalSecret` (a random 256-bit HMAC secret). The HMAC value must also be present under the same key in the main application secret. Never commit either value or put it in shell history. The service derives and publishes a public JWKS automatically.
 
 Generate the secret payload locally, save it directly into Secrets Manager, and securely discard the temporary file afterward:
 

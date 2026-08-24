@@ -18,7 +18,7 @@ export const instagramDeploymentStatus = (config: AppConfig): InstagramDeploymen
     configured,
     onboardingEnabled: configured && config.instagramAppReviewComplete === true,
     state: !configured ? 'NOT_CONFIGURED' : config.instagramAppReviewComplete ? 'READY' : 'APP_REVIEW_REQUIRED',
-    apiVersion: config.instagramGraphApiVersion || 'v24.0',
+    apiVersion: config.instagramGraphApiVersion || 'v26.0',
     policyProfile: 'instagram_public_safe',
     pilotCapabilities: { accountRead: true, mediaRead: config.instagramMetadataImportEnabled === true, imagePublish: true, carouselPublish: true, reelPublish: config.instagramReelsEnabled === true, storyPublish: config.instagramStoriesEnabled === true, insightsRead: config.instagramInsightsEnabled === true }
   };
@@ -29,7 +29,7 @@ export const createManagedInstagramProvider = (config: AppConfig): InstagramProv
   if (!deployment.onboardingEnabled) return undefined;
   return new InstagramProvider({
     appId: config.instagramAppId!, appSecret: config.instagramAppSecret!, redirectUri: config.instagramOAuthRedirectUri!,
-    apiVersion: config.instagramGraphApiVersion || 'v24.0',
+    apiVersion: config.instagramGraphApiVersion || 'v26.0',
     approvedCapabilities: {
       accountRead: true, imagePublish: true, carouselPublish: true,
       mediaRead: config.instagramMetadataImportEnabled === true, reelPublish: config.instagramReelsEnabled === true, storyPublish: config.instagramStoriesEnabled === true, mediaUpdate: false,

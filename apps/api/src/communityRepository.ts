@@ -1,6 +1,7 @@
 import { DeleteCommand, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { AnnouncementPublication, CommunityDelivery, CommunityDestination, CommunityEvent, CommunityInstallation } from './domain';
+import { assertAnnouncementPublicationImmutable } from './announcementPublication';
 
 const clean = <T>(item: Record<string, unknown>): T => {
   const value = { ...item };
@@ -165,6 +166,11 @@ export class CommunityRepository {
   }
 
   async upsertCommunityDelivery(delivery: CommunityDelivery): Promise<void> {
+    const previous = await this.getCommunityDelivery(delivery.communityDeliveryId);
+    if (previous?.announcementPublication) {
+      if (!delivery.announcementPublication) throw new Error('Queued announcement publication content is immutable.');
+      assertAnnouncementPublicationImmutable(previous.announcementPublication, delivery.announcementPublication);
+    }
     await this.put({
       PK: `COMMUNITY_EVENT#${delivery.communityEventId}`,
       SK: `DELIVERY#${delivery.communityDeliveryId}`,
@@ -194,13 +200,10 @@ export class CommunityRepository {
   async upsertAnnouncementPublication(publication: AnnouncementPublication): Promise<void> {
     await this.put({
       PK: `TENANT#${publication.tenantId}#ANNOUNCEMENT_KEY#${publication.idempotencyKey}`,
-      SK: 'PROFILE',
-      GSI1PK: `ANNOUNCEMENT#${publication.announcementPublicationId}`,
-      GSI1SK: 'PROFILE',
+      SK: 'PROFILE', GSI1PK: `ANNOUNCEMENT#${publication.announcementPublicationId}`, GSI1SK: 'PROFILE',
       GSI2PK: `ANNOUNCEMENT_CREATOR#${publication.creatorIdentityId}`,
       GSI2SK: `ANNOUNCEMENT#${publication.updatedAt}#${publication.announcementPublicationId}`,
-      entityType: 'ANNOUNCEMENT_PUBLICATION',
-      ...publication
+      entityType: 'ANNOUNCEMENT_PUBLICATION', ...publication
     });
   }
 }

@@ -1,5 +1,4 @@
 import type { AiDisclosure, ContentRating, HeavyTopic, PostBlock } from './domain';
-import type { AiProvenance, AiTrainingPreference, PublicationDisclosureSnapshot } from './aiProvenance';
 
 export type TenantId = string;
 export type WorkKind = 'image' | 'gallery' | 'video' | 'audio' | 'literature' | 'article' | 'animation' | 'mixed';
@@ -30,6 +29,43 @@ export type PublicationSyncStatus = 'not_applicable' | 'in_sync' | 'local_newer'
 export type PublicationIntentStatus = 'draft' | 'live' | 'scheduled';
 export type DiscoveryParticipationState = 'none' | 'eligible' | 'opted_in' | 'removed';
 
+/**
+ * Provider-neutral provenance for a Work's AI disclosure. `unknown` is
+ * intentionally distinct from `none`: an imported provider record without an
+ * AI label is not evidence that no AI was used.
+ */
+export type AiProvenanceAssertion = AiDisclosure | 'unknown';
+export type AiProvenanceSourceKind = 'creator' | 'moderator' | 'provider' | 'import' | 'content-credentials' | 'system';
+export interface AiProvenanceSource {
+  kind: AiProvenanceSourceKind;
+  assertion: AiProvenanceAssertion;
+  assertedAt: string;
+  platform?: PublicationDestination;
+  remoteId?: string;
+  /** Stable provider field or internal rule identifier; never a raw payload. */
+  basis?: string;
+}
+export interface AiProvenance {
+  assertion: AiProvenanceAssertion;
+  sources: readonly AiProvenanceSource[];
+  updatedAt: string;
+}
+
+/** An append-only record of exactly what was disclosed for one remote attempt. */
+export interface PublicationDisclosureSnapshot {
+  version: 1;
+  snapshotId: string;
+  attemptKey: string;
+  capturedAt: string;
+  workRevision: number;
+  contentRating: ContentRating;
+  aiDisclosure: AiDisclosure;
+  aiProvenance: AiProvenance;
+  heavyTopics: readonly HeavyTopic[];
+  assetChecksumsSha256: readonly string[];
+  fingerprintSha256: string;
+}
+
 export interface Work {
   workId: string;
   tenantId: TenantId;
@@ -43,9 +79,7 @@ export interface Work {
   body?: PostBlock[];
   contentRating: ContentRating;
   aiDisclosure: AiDisclosure;
-  /** Provenance is distinct from the legacy viewer-facing disclosure taxonomy. */
   aiProvenance?: AiProvenance;
-  aiTrainingPreference?: AiTrainingPreference;
   heavyTopics: HeavyTopic[];
   status: WorkStatus;
   origin: {
@@ -85,7 +119,6 @@ export interface CanonicalAsset {
   };
   metadata?: Record<string, string | number | boolean | null>;
   aiProvenance?: AiProvenance;
-  aiTrainingPreference?: AiTrainingPreference;
   createdAt: string;
   updatedAt: string;
   replacedByAssetId?: string;
@@ -152,12 +185,9 @@ export interface Publication {
     localRevision?: number;
     remoteMetadataFingerprint?: string;
     remoteContentFingerprint?: string;
-    /** Immutable source binding captured before a provider mutation. */
-    sourceRevision?: number;
-    sourceChecksumSha256?: string;
     remoteCursor?: string;
     remoteState?: 'active' | 'missing' | 'restricted' | 'unknown';
-    retry?: { idempotencyKey?: string; attempt: number; nextAttemptAt?: string; accountCooldownUntil?: string };
+    retry?: { idempotencyKey: string; attempt: number; nextAttemptAt?: string; accountCooldownUntil?: string };
     errorCode?: string;
     errorMessage?: string;
     /** Provider-neutral reconciliation state; raw provider payloads never belong here. */
@@ -177,9 +207,10 @@ export interface Publication {
       updatedAt: string;
     };
   };
-  /** Immutable evidence used to decide provider disclosure on this attempt. */
-  disclosureSnapshot?: PublicationDisclosureSnapshot;
   providerData?: Record<string, unknown>;
+  /** Immutable history. A new remote attempt appends; prior entries never change. */
+  disclosureSnapshots?: readonly PublicationDisclosureSnapshot[];
+  activeDisclosureSnapshotId?: string;
   createdAt: string;
   updatedAt: string;
   publishedAt?: string;

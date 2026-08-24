@@ -11,6 +11,7 @@ import type {
   WorkAsset,
   WorkDiscoveryParticipation
 } from './canonicalDomain';
+import { assertPublicationDisclosureHistoryImmutable } from './aiProvenance';
 
 const clean = <T>(item: Record<string, unknown>): T => {
   const value = { ...item };
@@ -177,7 +178,9 @@ export class CanonicalContentRepository implements CanonicalStore {
   }
 
   async upsertPublication(publication: Publication): Promise<void> {
-    await this.put({
+    const previous = await this.getPublication(publication.tenantId, publication.publicationId);
+    assertPublicationDisclosureHistoryImmutable(previous, publication);
+    const item = {
       PK: `${tenantPrefix(publication.tenantId)}#PUBLICATION#${publication.publicationId}`,
       SK: 'PROFILE',
       GSI1PK: `${tenantPrefix(publication.tenantId)}#WORK_PUBLICATION#${publication.workId}`,
@@ -188,7 +191,26 @@ export class CanonicalContentRepository implements CanonicalStore {
       GSI2SK: `PUBLICATION#${publication.updatedAt}#${publication.publicationId}`,
       entityType: 'PUBLICATION',
       ...publication
-    });
+    };
+    try {
+      await this.client.send(new PutCommand({
+        TableName: this.tableName,
+        Item: item,
+        // Compare the complete prior history so concurrent attempts can append
+        // but can never replace one another or mutate an earlier snapshot.
+        ConditionExpression: previous?.disclosureSnapshots?.length
+          ? 'disclosureSnapshots = :previousDisclosureSnapshots'
+          : 'attribute_not_exists(disclosureSnapshots)',
+        ...(previous?.disclosureSnapshots?.length
+          ? { ExpressionAttributeValues: { ':previousDisclosureSnapshots': previous.disclosureSnapshots } }
+          : {})
+      }));
+    } catch (error) {
+      if ((error as { name?: string }).name === 'ConditionalCheckFailedException') {
+        throw new Error('Publication disclosure history changed concurrently; reload before retrying.');
+      }
+      throw error;
+    }
   }
 
   async listPublicationIntentsByWork(tenantId: string, workId: string): Promise<PublicationIntent[]> {

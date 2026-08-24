@@ -443,6 +443,9 @@ export class UbeeqStack extends Stack {
     const externalTokenEncryptionKey = isProduction
       ? appSecrets!.secretValueFromJson('externalTokenEncryptionKey').unsafeUnwrap()
       : (process.env.EXTERNAL_TOKEN_ENCRYPTION_KEY || '');
+    const blueskyOAuthInternalSecret = isProduction
+      ? appSecrets!.secretValueFromJson('blueskyOAuthInternalSecret').unsafeUnwrap()
+      : (process.env.BLUESKY_OAUTH_INTERNAL_SECRET || '');
     const unlockJwtSecret = isProduction
       ? appSecrets!.secretValueFromJson('unlockJwtSecret').unsafeUnwrap()
       : (process.env.UNLOCK_JWT_SECRET || 'dev-secret');
@@ -598,6 +601,7 @@ export class UbeeqStack extends Stack {
         // not enter the main product API. These are public endpoints only.
         BLUESKY_OAUTH_SERVICE_URL: process.env.BLUESKY_OAUTH_SERVICE_URL || '',
         BLUESKY_OAUTH_SERVICE_JWKS_URL: process.env.BLUESKY_OAUTH_SERVICE_JWKS_URL || '',
+        BLUESKY_OAUTH_INTERNAL_SECRET: blueskyOAuthInternalSecret,
         UNLOCK_JWT_SECRET: unlockJwtSecret,
         // Keep the API's browser origin aligned with the deployed web host in
         // development as well as production.  Without this fallback, a

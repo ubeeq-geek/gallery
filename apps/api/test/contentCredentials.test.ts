@@ -9,7 +9,7 @@ describe('Content Credentials inspection', () => {
   it('stores bounded evidence when a credential declares generative media', () => {
     expect(inspectContentCredentials(Buffer.from('C2PA trainedAlgorithmicMedia assertion'))).toMatchObject({
       present: true,
-      provenance: { kind: 'ai-generated', source: 'content-credentials', evidence: 'c2pa:generative-assertion' }
+      provenance: { assertion: 'ai-generated', sources: [{ kind: 'content-credentials', assertion: 'ai-generated', basis: 'c2pa:generative-assertion' }] }
     });
   });
 });

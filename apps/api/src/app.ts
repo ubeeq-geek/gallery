@@ -18,14 +18,11 @@ import type { AppConfig } from './config';
 import { brandForConfig } from './brand';
 import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation, type IntegrationPlatform, type IntegrationPolicyTarget } from './integrationStandard';
 import { resolvePublicationReconciliation } from './integrationReconciliation';
+import { appendPublicationDisclosureSnapshot, createPublicationDisclosureSnapshot, creatorAiProvenance, providerAiProvenance, unknownAiProvenance } from './aiProvenance';
 import { INSTAGRAM_PILOT_INSIGHT_METRICS, INSTAGRAM_PILOT_MEDIA_CONSTRAINTS, instagramDeploymentStatus, createManagedInstagramProvider } from './instagramConfiguration';
 import { InstagramProviderError } from './instagramProvider';
-import { instagramDisclosureSnapshot, parseAiProvenance, parseAiTrainingPreference, requiresInstagramCarouselDisclosureChoice } from './aiProvenance';
-import { integrationCapabilities } from './integrationCapabilities';
 import { inspectContentCredentials } from './contentCredentials';
-import { integrationActivitySplit } from './integrationActivity';
-import { announcementIdempotencyKey, createAnnouncementPublication, isAnnouncementPreset } from './announcementPublication';
-import { recordRemotePublicationState } from './integrationSync';
+import { integrationCapabilities } from './integrationCapabilities';
 import { issueInstagramOAuthState, verifyInstagramOAuthState } from './externalOAuth';
 import { evaluateInstagramEligibility, instagramIdempotencyKey, instagramPublishingLimitAvailable, issueInstagramDeliveryCapability, validateInstagramMedia, verifyInstagramDeliveryCapability, verifyInstagramWebhookSignature, type InstagramCapabilities, type InstagramPlacement } from './instagramIntegration';
 import type { DataStore } from './store';
@@ -5964,23 +5961,11 @@ export const createApp = ({
 
   app.get('/studio/integrations/capabilities', requireAuth, async (_req, res) => {
     const instagram = instagramDeploymentStatus(config);
-    return res.json({
-      items: Object.values(integrationCapabilities).map((capability) => capability.platform === 'instagram'
-        ? {
-            ...capability,
-            publish: {
-              ...capability.publish,
-              image: instagram.pilotCapabilities.imagePublish,
-              carousel: instagram.pilotCapabilities.carouselPublish,
-              video: instagram.pilotCapabilities.reelPublish,
-              story: instagram.pilotCapabilities.storyPublish
-            },
-            import: instagram.pilotCapabilities.mediaRead,
-            analytics: instagram.pilotCapabilities.insightsRead,
-            limits: { ...capability.limits, rollout: { state: instagram.onboardingEnabled ? 'controlled_pilot' : 'configuration_required', note: instagram.state } }
-          }
-        : capability)
-    });
+    return res.json({ items: Object.values(integrationCapabilities).map((capability) => capability.platform === 'instagram'
+      ? { ...capability, import: instagram.pilotCapabilities.mediaRead, analytics: instagram.pilotCapabilities.insightsRead,
+        publish: { ...capability.publish, image: instagram.pilotCapabilities.imagePublish, carousel: instagram.pilotCapabilities.carouselPublish, video: instagram.pilotCapabilities.reelPublish, story: instagram.pilotCapabilities.storyPublish },
+        limits: { ...capability.limits, rollout: { state: instagram.onboardingEnabled ? 'controlled_pilot' as const : 'configuration_required' as const, note: instagram.state } } }
+      : capability) });
   });
 
   app.get('/studio/integrations/bluesky/configuration', requireAuth, async (_req, res) => {
@@ -6094,40 +6079,6 @@ export const createApp = ({
     return res.json(accounts
       .filter((account) => account.platform === 'bluesky' && account.connectionStatus !== 'disabled')
       .map(toExternalAccountResponse));
-  });
-
-  // A Bluesky announcement is deliberately durable but remains a draft until
-  // the managed OAuth service exposes a posting operation. It is not a Work
-  // Publication and therefore cannot alter canonical content-host state.
-  app.post('/studio/integrations/bluesky/announcements', requireAuth, async (req, res) => {
-    const creatorIdentityId = typeof req.body?.creatorId === 'string' ? req.body.creatorId.trim() : '';
-    if (!(await ensureCreatorAccountAccess(req, res, creatorIdentityId))) return;
-    const account = (await store.listExternalAccountsByCreatorIdentity(creatorIdentityId)).find((item) => item.platform === 'bluesky' && item.userId === req.authUser!.userId && item.connectionStatus === 'connected');
-    if (!account) return res.status(409).json({ code: 'CONNECTION_REQUIRED', message: 'Connect a Bluesky account before preparing an announcement.' });
-    const type = ['work', 'gallery', 'collection', 'story_chapter', 'video', 'album', 'bulk_publish'].includes(req.body?.subject?.type)
-      ? req.body.subject.type as 'work' | 'gallery' | 'collection' | 'story_chapter' | 'video' | 'album' | 'bulk_publish'
-      : undefined;
-    const ids = Array.isArray(req.body?.subject?.ids) ? req.body.subject.ids.filter((id: unknown): id is string => typeof id === 'string' && id.trim().length > 0) : [];
-    if (!type || !ids.length) return res.status(422).json({ message: 'Choose an announcement subject and at least one source id.' });
-    const preset = isAnnouncementPreset(req.body?.preset) ? req.body.preset : type === 'work' ? 'single_work' : type;
-    const idempotencyKey = announcementIdempotencyKey('bluesky', creatorIdentityId, preset, ids);
-    const existing = await store.getAnnouncementPublicationByIdempotency(config.tenantId, idempotencyKey);
-    if (existing) return res.json({ announcement: existing, idempotentReplay: true });
-    const announcement = createAnnouncementPublication({
-      tenantId: config.tenantId, userId: req.authUser!.userId, creatorIdentityId, provider: 'bluesky', preset,
-      subject: { type, ids }, payload: { title: sanitizeOptional(req.body?.title, 300), text: sanitizeOptional(req.body?.text, 3_000), url: sanitizeOptional(req.body?.url, 2_000), accountId: account.externalAccountId },
-      idempotencyKey, status: 'draft'
-    });
-    await store.upsertAnnouncementPublication(announcement);
-    auditLog(req, 'bluesky.announcement.draft.created', { announcementPublicationId: announcement.announcementPublicationId, creatorIdentityId, preset, subject: type });
-    return res.status(201).json({ announcement, deliveryAvailable: false });
-  });
-
-  app.get('/studio/announcements', requireAuth, async (req, res) => {
-    const creatorIdentityId = typeof req.query.creatorId === 'string' ? req.query.creatorId.trim() : '';
-    if (!(await ensureCreatorContentAccess(req, res, creatorIdentityId))) return;
-    const items = (await store.listAnnouncementPublicationsByCreator(creatorIdentityId, 100)).filter((item) => item.userId === req.authUser!.userId);
-    return res.json({ items });
   });
 
   // Discord is a native community delivery integration.  It deliberately does
@@ -6252,7 +6203,7 @@ export const createApp = ({
       displayName: `#${channel.name}`,
       status: 'active' as const,
       eventTypes: ['work_published', 'works_published'] as CommunityEventType[],
-      defaultAnnouncementPreset: isAnnouncementPreset(req.body?.defaultAnnouncementPreset)
+      defaultAnnouncementPreset: ['recommended', 'image_showcase', 'writing_release', 'video_premiere', 'audio_release', 'compact_link', 'text_only', 'collection_digest', 'series_digest'].includes(req.body?.defaultAnnouncementPreset)
         ? req.body.defaultAnnouncementPreset
         : 'recommended',
       defaultIncludePrimaryMedia: req.body?.defaultIncludePrimaryMedia !== false,
@@ -6271,7 +6222,7 @@ export const createApp = ({
     if (!(await ensureCreatorAccountAccess(req, res, destination.creatorIdentityId))) return;
     const status = ['active', 'needs_attention', 'disabled'].includes(req.body?.status) ? req.body.status as 'active' | 'needs_attention' | 'disabled' : destination.status;
     const eventTypes: CommunityEventType[] = Array.isArray(req.body?.eventTypes) && req.body.eventTypes.includes('work_published') ? ['work_published', 'works_published'] : destination.eventTypes;
-    const preset = isAnnouncementPreset(req.body?.defaultAnnouncementPreset)
+    const preset = ['recommended', 'image_showcase', 'writing_release', 'video_premiere', 'audio_release', 'compact_link', 'text_only', 'collection_digest', 'series_digest'].includes(req.body?.defaultAnnouncementPreset)
       ? req.body.defaultAnnouncementPreset
       : destination.defaultAnnouncementPreset;
     const updated = { ...destination, status, eventTypes, defaultAnnouncementPreset: preset, defaultIncludePrimaryMedia: typeof req.body?.defaultIncludePrimaryMedia === 'boolean' ? req.body.defaultIncludePrimaryMedia : destination.defaultIncludePrimaryMedia, template: req.body?.template === undefined ? destination.template : sanitizeOptional(req.body.template, 2000), updatedAt: new Date().toISOString() };
@@ -6308,7 +6259,7 @@ export const createApp = ({
     const preset = ['recommended', 'collection_digest', 'series_digest', 'compact_link', 'text_only'].includes(req.body?.preset) ? req.body.preset : 'collection_digest';
     await queueDiscordWorksPublished(store, config, {
       userId: req.authUser!.userId, creatorIdentityId, creatorName: creator.name, works: items,
-      preset, includePrimaryMedia: req.body?.includePrimaryMedia !== false,
+      providers: ['discord'], preset, includePrimaryMedia: req.body?.includePrimaryMedia !== false,
       idempotencyKey: `discord:space-bulk:${creatorIdentityId}:${items.map((item) => item.workId).sort().join(':')}`
     }, communityDeliveryQueue.enqueue.bind(communityDeliveryQueue));
     return res.status(202).json({ queued: true, workCount: items.length });
@@ -6416,7 +6367,7 @@ export const createApp = ({
           externalUsername: remote.username, accessTokenEncrypted: encryptExternalCredential(tokens.accessToken, config.externalTokenEncryptionKey),
           tokenExpiresAt: tokens.expiresIn ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString() : undefined,
           connectionStatus: 'connected', createdAt: existing?.createdAt || now, updatedAt: now,
-          instagram: { accountType: remote.accountType, apiVersion: config.instagramGraphApiVersion || 'v24.0', policyProfileVersion: '2026-08-23.1', enabledCapabilities: ['publish_images'] }
+          instagram: { accountType: remote.accountType, apiVersion: config.instagramGraphApiVersion || 'v26.0', policyProfileVersion: '2026-08-23.1', enabledCapabilities: ['publish_images'] }
         };
         if (existing) await store.updateExternalAccount(account); else await store.createExternalAccount(account);
         await store.replaceExternalAccountCreatorAssignments(account.externalAccountId, [{ externalAccountId: account.externalAccountId, creatorIdentityId: state.creatorIdentityId, userId: state.userId, createdAt: now, updatedAt: now }]);
@@ -6464,8 +6415,17 @@ export const createApp = ({
     for (const media of page.items) {
       const existing = existingWorks.find((work) => work.origin.platform === 'instagram' && work.origin.integrationAccountId === account.externalAccountId && work.origin.remoteId === media.id);
       if (existing) {
-        if (media.aiGeneratedLabel !== undefined && (existing.aiProvenance?.source !== 'remote-platform-label' || existing.aiProvenance.kind !== (media.aiGeneratedLabel ? 'ai-generated' : 'unknown'))) {
-          await store.updateWork({ ...existing, aiDisclosure: media.aiGeneratedLabel ? 'ai-generated' : existing.aiDisclosure, aiProvenance: { kind: media.aiGeneratedLabel ? 'ai-generated' : 'unknown', source: 'remote-platform-label', recordedAt: new Date().toISOString(), evidence: 'instagram:is_ai_generated' }, revision: existing.revision + 1, updatedAt: new Date().toISOString() });
+        if (media.isAiGenerated === true && existing.aiDisclosure !== 'ai-generated') {
+          const detectedAt = new Date().toISOString();
+          const updated: Work = {
+            ...existing,
+            aiDisclosure: 'ai-generated',
+            aiProvenance: providerAiProvenance({ assertion: 'ai-generated', platform: 'instagram', remoteId: media.id, assertedAt: detectedAt, basis: 'is_ai_generated' }),
+            revision: existing.revision + 1,
+            updatedAt: detectedAt
+          };
+          await store.updateWork(updated);
+          existingWorks.splice(existingWorks.indexOf(existing), 1, updated);
         }
         const remoteCaption = media.caption?.trim() || '';
         const fingerprint = createHash('sha256').update(remoteCaption).digest('hex');
@@ -6473,7 +6433,7 @@ export const createApp = ({
         if (referencePublication && referencePublication.sync.remoteMetadataFingerprint !== fingerprint) {
           const remoteTitle = remoteCaption.split(/\r?\n/)[0]?.trim().slice(0, 160) || existing.title;
           const fields = [...(remoteTitle !== existing.title ? ['title'] : []), ...(remoteCaption !== (existing.description || '') ? ['description'] : [])];
-          await store.upsertPublication({ ...referencePublication, remoteUrl: media.permalink || referencePublication.remoteUrl, remoteUpdatedAt: media.timestamp || referencePublication.remoteUpdatedAt, sync: { ...referencePublication.sync, status: 'remote_newer', remoteMetadataFingerprint: fingerprint, remoteCursor: page.nextCursor }, providerData: { ...referencePublication.providerData, platformAiLabel: media.aiGeneratedLabel, pendingRemoteMetadata: { title: remoteTitle, description: remoteCaption }, pendingRemoteFields: fields }, updatedAt: new Date().toISOString() });
+          await store.upsertPublication({ ...referencePublication, remoteUrl: media.permalink || referencePublication.remoteUrl, remoteUpdatedAt: media.timestamp || referencePublication.remoteUpdatedAt, sync: { ...referencePublication.sync, status: 'remote_newer', remoteMetadataFingerprint: fingerprint }, providerData: { ...referencePublication.providerData, pendingRemoteMetadata: { title: remoteTitle, description: remoteCaption }, pendingRemoteFields: fields }, updatedAt: new Date().toISOString() });
           changed.push({ workId: existing.workId, remoteId: media.id, fields });
         }
         continue;
@@ -6483,9 +6443,13 @@ export const createApp = ({
       const title = caption.split(/\r?\n/)[0]?.trim().slice(0, 160) || `Instagram reference ${media.id.slice(-8)}`;
       const baseSlug = slugify(title) || `instagram-${media.id.slice(-8).toLowerCase()}`;
       const slug = existingWorks.some((work) => work.slug === baseSlug) ? `${baseSlug}-${media.id.slice(-6).toLowerCase()}` : baseSlug;
-      const work: Work = { workId: randomUUID(), tenantId: config.tenantId, creatorId, kind: media.mediaType === 'VIDEO' ? 'video' : 'image', title, slug, slugHistory: [slug], description: caption || undefined, tags: [], contentRating: 'general', aiDisclosure: media.aiGeneratedLabel ? 'ai-generated' : 'none', aiProvenance: { kind: media.aiGeneratedLabel ? 'ai-generated' : 'unknown', source: 'remote-platform-label', recordedAt: now, evidence: 'instagram:is_ai_generated' }, heavyTopics: [], status: 'draft', origin: { type: 'import', platform: 'instagram', integrationAccountId: account.externalAccountId, remoteId: media.id, remoteUrl: media.permalink, importedAt: now }, revision: 1, createdAt: now, updatedAt: now };
+      const aiProvenance = media.isAiGenerated === true
+        ? providerAiProvenance({ assertion: 'ai-generated', platform: 'instagram', remoteId: media.id, assertedAt: now, basis: 'is_ai_generated' })
+        : unknownAiProvenance({ kind: 'import', platform: 'instagram', remoteId: media.id, assertedAt: now, basis: 'is_ai_generated_absent_or_false' });
+      const work: Work = { workId: randomUUID(), tenantId: config.tenantId, creatorId, kind: media.mediaType === 'VIDEO' ? 'video' : 'image', title, slug, slugHistory: [slug], description: caption || undefined, tags: [], contentRating: 'general', aiDisclosure: media.isAiGenerated === true ? 'ai-generated' : 'none', aiProvenance, heavyTopics: [], status: 'draft', origin: { type: 'import', platform: 'instagram', integrationAccountId: account.externalAccountId, remoteId: media.id, remoteUrl: media.permalink, importedAt: now }, revision: 1, createdAt: now, updatedAt: now };
       await store.createWork(work);
-      await store.upsertPublication({ publicationId: randomUUID(), tenantId: config.tenantId, creatorId, workId: work.workId, destination: 'instagram', integrationAccountId: account.externalAccountId, status: 'live', visibility: 'public', remoteId: media.id, remoteUrl: media.permalink, remoteCreatedAt: media.timestamp, remoteUpdatedAt: media.timestamp, metadataOverrides: { description: caption }, sync: { status: 'in_sync', remoteMetadataFingerprint: createHash('sha256').update(caption).digest('hex'), remoteCursor: page.nextCursor, lastSuccessfulAt: now }, providerData: { externalReferenceOnly: true, sourceBytesStored: false, mediaType: media.mediaType, placement: media.placement, platformAiLabel: media.aiGeneratedLabel, providerVersion: account.instagram.apiVersion }, createdAt: now, updatedAt: now, publishedAt: media.timestamp } as Publication);
+      const importedPublication: Publication = { publicationId: randomUUID(), tenantId: config.tenantId, creatorId, workId: work.workId, destination: 'instagram', integrationAccountId: account.externalAccountId, status: 'live', visibility: 'public', remoteId: media.id, remoteUrl: media.permalink, remoteCreatedAt: media.timestamp, remoteUpdatedAt: media.timestamp, metadataOverrides: { description: caption }, sync: { status: 'in_sync', remoteMetadataFingerprint: createHash('sha256').update(caption).digest('hex'), lastSuccessfulAt: now }, providerData: { externalReferenceOnly: true, sourceBytesStored: false, mediaType: media.mediaType, placement: media.placement, providerVersion: account.instagram.apiVersion, isAiGenerated: media.isAiGenerated }, createdAt: now, updatedAt: now, publishedAt: media.timestamp };
+      await store.upsertPublication(appendPublicationDisclosureSnapshot(importedPublication, createPublicationDisclosureSnapshot({ publicationId: importedPublication.publicationId, attemptKey: `instagram-import:${media.id}`, work, capturedAt: now })));
       imported.push(work); existingWorks.push(work);
     }
     const syncedAt = new Date().toISOString();
@@ -6590,11 +6554,9 @@ export const createApp = ({
     const account = await store.getExternalAccount(connectionId);
     if (!account || account.platform !== 'instagram' || account.userId !== req.authUser!.userId || account.creatorIdentityId !== work.creatorId) return res.status(404).json({ message: 'Instagram connection not found for this Creator.' });
     const placement = req.body?.placement as InstagramPlacement;
-    const declaredCapabilities = integrationCapabilities.instagram;
     const deploymentCapabilities = instagramDeploymentStatus(config).pilotCapabilities;
     const placementAllowed = placement === 'IMAGE' ? deploymentCapabilities.imagePublish : placement === 'CAROUSEL' ? deploymentCapabilities.carouselPublish : placement === 'REEL' ? deploymentCapabilities.reelPublish : placement === 'STORY' ? deploymentCapabilities.storyPublish : false;
-    const mediaType = placement === 'IMAGE' ? 'image' : placement === 'REEL' ? 'video' : placement === 'STORY' ? 'story' : placement === 'CAROUSEL' ? 'carousel' : undefined;
-    if (!mediaType || !declaredCapabilities.publish[mediaType] || !placementAllowed) return res.status(422).json({ code: 'PLACEMENT_UNSUPPORTED', message: 'This placement is not declared as available for the current integration and deployment.' });
+    if (!placementAllowed) return res.status(422).json({ code: 'PLACEMENT_UNSUPPORTED', message: 'This placement is not approved for the current provider adapter and deployment.' });
     const derivativeIds = Array.isArray(req.body?.derivativeIds) ? req.body.derivativeIds.filter((value: unknown): value is string => typeof value === 'string') : [];
     const attached = await store.listCanonicalAssetsByWork(config.tenantId, work.workId);
     const selected: typeof attached = derivativeIds
@@ -6620,22 +6582,12 @@ export const createApp = ({
     const decision = evaluateInstagramEligibility(preflight);
     const validationIssues = validateInstagramMedia(preflight, INSTAGRAM_PILOT_MEDIA_CONSTRAINTS);
     if (decision.result !== 'ALLOWED_MANAGED' || validationIssues.length) return res.status(422).json({ decision, validationIssues });
-    const carouselDisclosureChoice = req.body?.carouselDisclosureChoice === 'disclose-all' || req.body?.carouselDisclosureChoice === 'edit-assets' || req.body?.carouselDisclosureChoice === 'cancel'
-      ? req.body.carouselDisclosureChoice
-      : undefined;
-    const disclosureSnapshot = instagramDisclosureSnapshot(work.aiProvenance, selected.map((asset) => ({ assetId: asset.assetId, provenance: asset.aiProvenance })), placement, carouselDisclosureChoice);
-    if (requiresInstagramCarouselDisclosureChoice(disclosureSnapshot)) {
-      return res.status(422).json({ code: 'CAROUSEL_AI_DISCLOSURE_CHOICE_REQUIRED', warning: disclosureSnapshot.warning, choices: ['disclose-all', 'edit-assets', 'cancel'], disclosureSnapshot });
-    }
-    if (carouselDisclosureChoice === 'edit-assets' || carouselDisclosureChoice === 'cancel') {
-      return res.status(422).json({ code: carouselDisclosureChoice === 'cancel' ? 'PUBLICATION_CANCELLED' : 'EDIT_ASSET_SET_REQUIRED', disclosureSnapshot });
-    }
     const intentVersion = work.revision;
     const key = instagramIdempotencyKey(work.workId, account.externalAccountId, placement, intentVersion, config.instagramDeliverySecret!);
     const duplicate = (await store.listPublicationsByWork(config.tenantId, work.workId)).find((item) => item.destination === 'instagram' && item.providerData?.idempotencyKey === key);
     if (duplicate) return res.status(200).json({ publication: duplicate, decision, validationIssues });
     const now = new Date().toISOString();
-    const publication: Publication = { publicationId: randomUUID(), tenantId: config.tenantId, creatorId: work.creatorId, workId: work.workId, destination: 'instagram', integrationAccountId: account.externalAccountId, status: 'draft', visibility: 'public', metadataOverrides: { description: preflight.caption, fields: { accessibilityText: typeof req.body?.accessibilityText === 'string' ? req.body.accessibilityText : '' } }, sync: { status: 'local_newer', localRevision: work.revision, sourceRevision: work.revision, sourceChecksumSha256: selected.map((asset) => asset.checksumSha256 || '').join(','), retry: { idempotencyKey: key, attempt: 0 } }, disclosureSnapshot, providerData: { placement, derivativeIds, derivativeHashes: selected.map((asset) => asset.checksumSha256), captionHash: createHash('sha256').update(preflight.caption).digest('hex'), providerVersion: account.instagram!.apiVersion, policyProfileVersion: decision.policyVersion, eligibilityReasonCode: decision.reasonCode, idempotencyKey: key, intentVersion: work.revision, confirmed: false }, createdAt: now, updatedAt: now };
+    const publication: Publication = { publicationId: randomUUID(), tenantId: config.tenantId, creatorId: work.creatorId, workId: work.workId, destination: 'instagram', integrationAccountId: account.externalAccountId, status: 'draft', visibility: 'public', metadataOverrides: { description: preflight.caption, fields: { accessibilityText: typeof req.body?.accessibilityText === 'string' ? req.body.accessibilityText : '' } }, sync: { status: 'local_newer', localRevision: work.revision }, providerData: { placement, derivativeIds, derivativeHashes: selected.map((asset) => asset.checksumSha256), captionHash: createHash('sha256').update(preflight.caption).digest('hex'), providerVersion: account.instagram!.apiVersion, policyProfileVersion: decision.policyVersion, eligibilityReasonCode: decision.reasonCode, idempotencyKey: key, intentVersion: work.revision, confirmed: false }, createdAt: now, updatedAt: now };
     await store.upsertPublication(publication);
     auditLog(req, 'instagram.publication.draft.created', { publicationId: publication.publicationId, workId: work.workId, connectionId: account.externalAccountId, placement, policyVersion: decision.policyVersion });
     return res.status(201).json({ publication, decision, validationIssues });
@@ -6707,8 +6659,16 @@ export const createApp = ({
     const derivativeIds = Array.isArray(publication.providerData?.derivativeIds) ? publication.providerData.derivativeIds.filter((id): id is string => typeof id === 'string') : [];
     const assets = await Promise.all(derivativeIds.map((id) => store.getCanonicalAsset(config.tenantId, id)));
     if (assets.some((asset) => !asset || asset.storage.mode !== 'hosted' || !asset.storage.objectKey || asset.status !== 'ready')) return res.status(422).json({ code: 'DERIVATIVE_INVALID', message: 'An approved Instagram derivative is no longer available.' });
+    const work = await store.getWork(config.tenantId, publication.workId);
+    if (!work) return res.status(409).json({ code: 'WORK_MISSING', message: 'The canonical Work is unavailable.' });
+    if (publication.sync.localRevision !== work.revision) return res.status(409).json({ code: 'WORK_CHANGED_RECONFIRM', message: 'The Work changed after Instagram preflight. Refresh the draft and confirm the updated disclosure preview.' });
+    const preflightHashes = Array.isArray(publication.providerData?.derivativeHashes) ? publication.providerData.derivativeHashes : [];
+    if (assets.some((asset, index) => asset?.checksumSha256 !== preflightHashes[index])) return res.status(409).json({ code: 'DERIVATIVE_CHANGED_RECONFIRM', message: 'A selected derivative changed after Instagram preflight. Refresh the draft before publishing.' });
+    const attemptKey = typeof publication.providerData?.idempotencyKey === 'string' ? publication.providerData.idempotencyKey : '';
     const startedAt = new Date().toISOString();
-    const started: Publication = { ...publication, status: 'publishing', sync: { ...publication.sync, status: 'unknown', lastAttemptAt: startedAt }, providerData: { ...publication.providerData, confirmed: true, deliveryExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString() }, updatedAt: startedAt };
+    const snapshotted = appendPublicationDisclosureSnapshot(publication, createPublicationDisclosureSnapshot({ publicationId: publication.publicationId, attemptKey, work, assetChecksumsSha256: assets.map((asset) => asset?.checksumSha256), capturedAt: startedAt }));
+    const activeDisclosure = snapshotted.disclosureSnapshots?.find((snapshot) => snapshot.snapshotId === snapshotted.activeDisclosureSnapshotId);
+    const started: Publication = { ...snapshotted, status: 'publishing', sync: { ...snapshotted.sync, status: 'unknown', lastAttemptAt: startedAt }, providerData: { ...snapshotted.providerData, confirmed: true, deliveryExpiresAt: new Date(Date.now() + 15 * 60_000).toISOString() }, updatedAt: startedAt };
     await store.upsertPublication(started);
     auditLog(req, 'instagram.publication.confirmed', { publicationId: publication.publicationId, workId: publication.workId, connectionId: account.externalAccountId });
     const createdContainerIds: string[] = [];
@@ -6726,11 +6686,11 @@ export const createApp = ({
           const child = await provider.createContainer(token, account.externalUserId, { placement: 'IMAGE', mediaUrl, carouselItem: true });
           children.push(child); createdContainerIds.push(child);
         }
-        const parent = await provider.createContainer(token, account.externalUserId, { placement: 'CAROUSEL', mediaUrl: deliveryUrls[0], caption: publication.metadataOverrides?.description, children, aiGeneratedDisclosure: publication.disclosureSnapshot?.platformDisclosure === true });
+        const parent = await provider.createContainer(token, account.externalUserId, { placement: 'CAROUSEL', mediaUrl: deliveryUrls[0], caption: publication.metadataOverrides?.description, children, isAiGenerated: activeDisclosure?.aiDisclosure === 'ai-generated' });
         createdContainerIds.push(parent);
         containerIds = [...children, parent];
       } else {
-        const container = await provider.createContainer(token, account.externalUserId, { placement, mediaUrl: deliveryUrls[0], video: assets[0]!.mimeType.startsWith('video/'), caption: publication.metadataOverrides?.description, accessibilityText: String(publication.metadataOverrides?.fields?.accessibilityText || ''), aiGeneratedDisclosure: publication.disclosureSnapshot?.platformDisclosure === true });
+        const container = await provider.createContainer(token, account.externalUserId, { placement, mediaUrl: deliveryUrls[0], video: assets[0]!.mimeType.startsWith('video/'), caption: publication.metadataOverrides?.description, accessibilityText: String(publication.metadataOverrides?.fields?.accessibilityText || ''), isAiGenerated: activeDisclosure?.aiDisclosure === 'ai-generated' });
         createdContainerIds.push(container); containerIds = [container];
       }
       const queued: Publication = { ...started, providerData: { ...started.providerData, containerIds, containerSetComplete: true }, updatedAt: new Date().toISOString() };
@@ -6784,13 +6744,12 @@ export const createApp = ({
         const remote = await provider.getMedia(token, publication.remoteId);
         const remoteCaptionHash = createHash('sha256').update(remote.caption || '').digest('hex');
         const changed = remoteCaptionHash !== publication.providerData?.captionHash;
-        const observed = recordRemotePublicationState(publication, 'active', { metadataFingerprint: remoteCaptionHash });
-        const reconciled: Publication = { ...observed, remoteUrl: remote.permalink || publication.remoteUrl, remoteUpdatedAt: remote.timestamp || publication.remoteUpdatedAt, sync: { ...observed.sync, status: changed ? 'remote_newer' : 'in_sync' }, providerData: { ...publication.providerData, remoteMediaType: remote.mediaType, remotePlacement: remote.placement } };
+        const reconciled: Publication = { ...publication, remoteUrl: remote.permalink || publication.remoteUrl, remoteUpdatedAt: remote.timestamp || publication.remoteUpdatedAt, sync: { ...publication.sync, status: changed ? 'remote_newer' : 'in_sync', remoteMetadataFingerprint: remoteCaptionHash, lastSuccessfulAt: new Date().toISOString() }, providerData: { ...publication.providerData, remoteMediaType: remote.mediaType, remotePlacement: remote.placement }, updatedAt: new Date().toISOString() };
         await store.upsertPublication(reconciled);
         return res.json({ publication: reconciled, remoteState: changed ? 'REMOTE_CHANGED' : 'ACTIVE' });
       } catch (error) {
         if (error instanceof InstagramProviderError && error.code === 'NOT_FOUND') {
-          const missing = recordRemotePublicationState(publication, 'missing', { reason: 'The Instagram post is no longer available.' });
+          const missing: Publication = { ...publication, status: 'missing', sync: { ...publication.sync, status: 'remote_newer', errorCode: 'REMOTE_MISSING', errorMessage: 'The Instagram post is no longer available.' }, updatedAt: new Date().toISOString() };
           await store.upsertPublication(missing);
           auditLog(req, 'instagram.publication.remote_missing', { publicationId: publication.publicationId, remoteMediaId: publication.remoteId });
           return res.status(202).json({ publication: missing, remoteState: 'REMOTE_MISSING' });
@@ -8466,6 +8425,7 @@ export const createApp = ({
       return res.status(409).json({ message: 'Work slug is already in use for this Creator.' });
     }
     const now = new Date().toISOString();
+    const aiDisclosure = parseOptionalAiDisclosure(req.body?.aiDisclosure) || 'none';
     const work: Work = {
       workId: randomUUID(),
       tenantId: config.tenantId,
@@ -8480,9 +8440,8 @@ export const createApp = ({
       body: parsePostBlocks(req.body?.body, { unbounded: true }),
       tags: parseStringArray(req.body?.tags).slice(0, 100),
       contentRating: normalizeContentRating(req.body?.contentRating || 'general'),
-      aiDisclosure: parseOptionalAiDisclosure(req.body?.aiDisclosure) || 'none',
-      aiProvenance: parseAiProvenance(req.body?.aiProvenance),
-      aiTrainingPreference: parseAiTrainingPreference(req.body?.aiTrainingPreference),
+      aiDisclosure,
+      aiProvenance: creatorAiProvenance(aiDisclosure, now),
       heavyTopics: parseOptionalHeavyTopics(req.body?.heavyTopics) || [],
       status: 'draft',
       origin: { type: 'local' },
@@ -8514,6 +8473,9 @@ export const createApp = ({
       ? req.body.status
       : work.status;
     const now = new Date().toISOString();
+    const aiDisclosure = req.body?.aiDisclosure !== undefined
+      ? (parseOptionalAiDisclosure(req.body.aiDisclosure) || 'none')
+      : work.aiDisclosure;
     const updated: Work = {
       ...work,
       title: req.body?.title !== undefined ? String(req.body.title).trim().slice(0, 300) || work.title : work.title,
@@ -8523,9 +8485,10 @@ export const createApp = ({
       body: req.body?.body !== undefined ? parsePostBlocks(req.body.body, { unbounded: true }) : work.body,
       tags: req.body?.tags !== undefined ? parseStringArray(req.body.tags).slice(0, 100) : work.tags,
       contentRating: req.body?.contentRating !== undefined ? normalizeContentRating(req.body.contentRating) : work.contentRating,
-      aiDisclosure: req.body?.aiDisclosure !== undefined ? (parseOptionalAiDisclosure(req.body.aiDisclosure) || 'none') : work.aiDisclosure,
-      aiProvenance: req.body?.aiProvenance !== undefined ? parseAiProvenance(req.body.aiProvenance) : work.aiProvenance,
-      aiTrainingPreference: req.body?.aiTrainingPreference !== undefined ? parseAiTrainingPreference(req.body.aiTrainingPreference) : work.aiTrainingPreference,
+      aiDisclosure,
+      aiProvenance: req.body?.aiDisclosure !== undefined
+        ? creatorAiProvenance(aiDisclosure, now, work.aiProvenance)
+        : work.aiProvenance,
       heavyTopics: req.body?.heavyTopics !== undefined ? (parseOptionalHeavyTopics(req.body.heavyTopics) || []) : work.heavyTopics,
       status,
       revision: work.revision + 1,
@@ -8618,21 +8581,6 @@ export const createApp = ({
       logServerError('studio.work.image-upload', error);
       return res.status(400).json({ message: error instanceof Error ? error.message : 'Unable to store this work image.' });
     }
-  });
-
-  /** Asset provenance is independently editable so a mixed Work remains representable. */
-  app.patch('/studio/works/:workId/assets/:assetId/provenance', requireAuth, async (req, res) => {
-    const work = await store.getWork(config.tenantId, req.params.workId);
-    if (!work) return res.status(404).json({ message: 'Work not found.' });
-    if (!(await ensureCreatorContentAccess(req, res, work.creatorId))) return;
-    const attached = await store.listCanonicalAssetsByWork(config.tenantId, work.workId);
-    const asset = attached.find((candidate) => candidate.assetId === req.params.assetId);
-    if (!asset) return res.status(404).json({ message: 'Asset is not attached to this Work.' });
-    const aiProvenance = req.body?.aiProvenance === undefined ? asset.aiProvenance : parseAiProvenance(req.body.aiProvenance);
-    if (req.body?.aiProvenance !== undefined && !aiProvenance) return res.status(422).json({ message: 'Provide a valid AI provenance kind and source.' });
-    const updated = { ...asset, aiProvenance, aiTrainingPreference: req.body?.aiTrainingPreference === undefined ? asset.aiTrainingPreference : parseAiTrainingPreference(req.body.aiTrainingPreference), updatedAt: new Date().toISOString() };
-    await store.updateCanonicalAsset(updated);
-    return res.json(updated);
   });
 
   app.post('/studio/works/:assetId/destinations/deviantart', requireAuth, async (req, res) => {
@@ -9261,6 +9209,9 @@ export const createApp = ({
       ? req.body.announcement.preset
       : undefined;
     const includePrimaryMedia = req.body?.announcement?.includePrimaryMedia !== false;
+    const announcementProviders = Array.isArray(req.body?.announcement?.providers)
+      ? req.body.announcement.providers.filter((provider: unknown): provider is 'discord' | 'bluesky' => provider === 'discord' || provider === 'bluesky')
+      : ['discord' as const];
     if (newlyPublicInSpace && !['digest', 'none'].includes(announcementMode)) {
       const creator = (await store.listCreators()).find((item) => item.creatorId === work.creatorId);
       if (creator) {
@@ -9276,6 +9227,8 @@ export const createApp = ({
           url: workUrl,
           creatorName: creator.name,
           kind: work.kind,
+          aiDisclosure: work.aiDisclosure,
+          providers: announcementProviders,
           // "Use channel default" must leave these undefined: the Discord
           // destination owns its recommended layout and media preference.
           ...(announcementMode === 'per_work'
@@ -9684,9 +9637,8 @@ export const createApp = ({
       .flat()
       .filter((publication) => publication.assetId === asset.assetId);
     const destinations = await Promise.all(publications.map(async (publication) => {
-      const [engagement, engagementHistory, comments, favourites, activities] = await Promise.all([
+      const [engagement, comments, favourites, activities] = await Promise.all([
         store.getExternalEngagementCurrent(publication.externalPublicationId),
-        store.listExternalEngagementSnapshots(publication.externalPublicationId, 100),
         store.listExternalComments(publication.externalPublicationId, 500),
         store.listExternalFavourites(publication.externalPublicationId, 500),
         store.listExternalActivitiesByPublication(publication.externalPublicationId, 500)
@@ -9696,8 +9648,6 @@ export const createApp = ({
       return {
         publication: { ...publicationResponse, externalUsername: account?.externalUsername || '' },
         account: account ? toExternalAccountResponse(account) : undefined,
-        activity: integrationActivitySplit(engagement ? [engagement] : [], engagementHistory, activities),
-        // Kept for existing Studio clients; new consumers should read activity.current.
         engagement,
         comments: comments.map(({ rawPayload: _rawPayload, ...comment }) => comment),
         favourites: favourites.map(({ rawPayload: _rawPayload, ...favourite }) => favourite),
@@ -9752,7 +9702,6 @@ export const createApp = ({
       Promise.all(accounts.map((account) => store.getExternalAccountProfile(account.externalAccountId)))
     ]);
     const publications = publicationLists.flat();
-    const engagementCurrent = (await Promise.all(publications.map((publication) => store.getExternalEngagementCurrent(publication.externalPublicationId)))).filter((value): value is NonNullable<typeof value> => Boolean(value));
     const publicationById = new Map(publications.map((publication) => [publication.externalPublicationId, publication]));
     const allItems = activityLists
       .flat()
@@ -9853,8 +9802,7 @@ export const createApp = ({
         };
       }),
       total: allItems.length,
-      nextCursor: offset + limit < allItems.length ? String(offset + limit) : undefined,
-      activity: integrationActivitySplit(engagementCurrent, [], allItems)
+      nextCursor: offset + limit < allItems.length ? String(offset + limit) : undefined
     });
   });
 

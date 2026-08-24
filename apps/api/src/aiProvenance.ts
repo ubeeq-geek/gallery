@@ -1,92 +1,127 @@
-/**
- * Provenance describes how a work was made.  It deliberately does not express
- * whether a creator permits model training; that is a separate usage choice.
- */
-export type AiProvenanceKind = 'unknown' | 'human-created' | 'ai-assisted' | 'ai-generated' | 'mixed';
-export type AiProvenanceSource = 'creator-declaration' | 'remote-platform-label' | 'content-credentials' | 'inference';
+import { createHash } from 'crypto';
+import type {
+  AiProvenance,
+  AiProvenanceAssertion,
+  AiProvenanceSource,
+  Publication,
+  PublicationDisclosureSnapshot,
+  Work
+} from './canonicalDomain';
 
-export interface AiProvenance {
-  kind: AiProvenanceKind;
-  source: AiProvenanceSource;
-  recordedAt?: string;
-  /** Stable provider label or credential assertion, never the complete raw payload. */
-  evidence?: string;
-}
-
-/** A usage preference, not evidence about how the work or asset was made. */
-export interface AiTrainingPreference {
-  training: 'allow' | 'disallow' | 'unspecified';
-  declaredAt?: string;
-}
-
-export type InstagramCarouselDisclosureChoice = 'disclose-all' | 'edit-assets' | 'cancel';
-
-export interface PublicationDisclosureSnapshot {
-  capturedAt: string;
-  work: AiProvenance;
-  assets: Array<{ assetId: string; provenance: AiProvenance }>;
-  effective: AiProvenance;
-  /** The exact outbound value used by Instagram's is_ai_generated field. */
-  platformDisclosure?: boolean;
-  carouselResolution?: InstagramCarouselDisclosureChoice;
-  warning?: string;
-}
-
-const unknown: AiProvenance = { kind: 'unknown', source: 'inference' };
-const aiKinds = new Set<AiProvenanceKind>(['ai-assisted', 'ai-generated']);
-
-export const parseAiProvenance = (value: unknown, fallbackSource: AiProvenanceSource = 'creator-declaration'): AiProvenance | undefined => {
-  if (!value || typeof value !== 'object') return undefined;
-  const input = value as Record<string, unknown>;
-  const kind = input.kind;
-  const source = input.source;
-  if (!['unknown', 'human-created', 'ai-assisted', 'ai-generated', 'mixed'].includes(String(kind))) return undefined;
-  if (source !== undefined && !['creator-declaration', 'remote-platform-label', 'content-credentials', 'inference'].includes(String(source))) return undefined;
-  return {
-    kind: kind as AiProvenanceKind,
-    source: (source || fallbackSource) as AiProvenanceSource,
-    ...(typeof input.evidence === 'string' && input.evidence.trim() ? { evidence: input.evidence.trim().slice(0, 500) } : {})
-  };
-};
-
-export const parseAiTrainingPreference = (value: unknown): AiTrainingPreference | undefined => {
-  if (!value || typeof value !== 'object') return undefined;
-  const training = (value as Record<string, unknown>).training;
-  return training === 'allow' || training === 'disallow' || training === 'unspecified'
-    ? { training, declaredAt: new Date().toISOString() }
-    : undefined;
-};
-
-export const effectiveProvenance = (work: AiProvenance | undefined, assets: Array<{ assetId: string; provenance?: AiProvenance }>): AiProvenance => {
-  const values = assets.length ? assets.map((asset) => asset.provenance || work || unknown) : [work || unknown];
-  const kinds = new Set(values.map((value) => value.kind));
-  if (kinds.size === 1) return values[0]!;
-  return { kind: 'mixed', source: values.some((value) => value.source === 'creator-declaration') ? 'creator-declaration' : 'inference' };
-};
-
-export const instagramDisclosureSnapshot = (
-  work: AiProvenance | undefined,
-  assets: Array<{ assetId: string; provenance?: AiProvenance }>,
-  placement: 'IMAGE' | 'CAROUSEL' | 'REEL' | 'STORY',
-  carouselResolution?: InstagramCarouselDisclosureChoice,
-  capturedAt = new Date().toISOString()
-): PublicationDisclosureSnapshot => {
-  const assetSnapshot = assets.map((asset) => ({ assetId: asset.assetId, provenance: asset.provenance || work || unknown }));
-  const effective = effectiveProvenance(work, assets);
-  if (placement !== 'CAROUSEL') {
-    return { capturedAt, work: work || unknown, assets: assetSnapshot, effective, platformDisclosure: aiKinds.has(effective.kind) };
+const stable = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, stable(item)]));
   }
-  const kinds = new Set(assetSnapshot.map((asset) => asset.provenance.kind));
-  const allAi = kinds.size > 0 && [...kinds].every((kind) => aiKinds.has(kind));
-  const allHuman = kinds.size > 0 && [...kinds].every((kind) => kind === 'human-created');
-  if (allAi) return { capturedAt, work: work || unknown, assets: assetSnapshot, effective, platformDisclosure: true };
-  if (allHuman) return { capturedAt, work: work || unknown, assets: assetSnapshot, effective, platformDisclosure: false };
-  const warning = 'Instagram only supports one AI label for a carousel; it cannot represent mixed or unknown item provenance precisely.';
+  return value;
+};
+
+const fingerprint = (value: unknown): string => createHash('sha256')
+  .update(JSON.stringify(stable(value)))
+  .digest('hex');
+
+export const unknownAiProvenance = (source: Omit<AiProvenanceSource, 'assertion'>): AiProvenance => ({
+  assertion: 'unknown',
+  sources: [{ ...source, assertion: 'unknown' }],
+  updatedAt: source.assertedAt
+});
+
+export const providerAiProvenance = (input: {
+  assertion: AiProvenanceAssertion;
+  platform: AiProvenanceSource['platform'];
+  remoteId: string;
+  assertedAt: string;
+  basis: string;
+}): AiProvenance => ({
+  assertion: input.assertion,
+  sources: [{ kind: 'provider', ...input }],
+  updatedAt: input.assertedAt
+});
+
+export const creatorAiProvenance = (
+  assertion: AiProvenanceAssertion,
+  assertedAt: string,
+  previous?: AiProvenance
+): AiProvenance => ({
+  assertion,
+  sources: [
+    ...(previous?.sources || []),
+    { kind: 'creator', assertion, assertedAt, basis: 'creator_work_disclosure' }
+  ],
+  updatedAt: assertedAt
+});
+
+export const effectiveWorkAiProvenance = (work: Pick<Work, 'aiDisclosure' | 'aiProvenance' | 'updatedAt'>): AiProvenance => (
+  work.aiProvenance || {
+    assertion: work.aiDisclosure,
+    sources: [{ kind: 'system', assertion: work.aiDisclosure, assertedAt: work.updatedAt, basis: 'legacy_work_ai_disclosure' }],
+    updatedAt: work.updatedAt
+  }
+);
+
+export const createPublicationDisclosureSnapshot = (input: {
+  publicationId: string;
+  attemptKey: string;
+  work: Pick<Work, 'revision' | 'contentRating' | 'aiDisclosure' | 'aiProvenance' | 'heavyTopics' | 'updatedAt'>;
+  assetChecksumsSha256?: Array<string | undefined>;
+  capturedAt?: string;
+}): PublicationDisclosureSnapshot => {
+  if (!input.attemptKey.trim()) throw new Error('A disclosure snapshot requires a stable attempt key.');
+  const capturedAt = input.capturedAt || new Date().toISOString();
+  const payload = {
+    version: 1 as const,
+    attemptKey: input.attemptKey,
+    workRevision: input.work.revision,
+    contentRating: input.work.contentRating,
+    aiDisclosure: input.work.aiDisclosure,
+    aiProvenance: effectiveWorkAiProvenance(input.work),
+    heavyTopics: [...input.work.heavyTopics],
+    assetChecksumsSha256: (input.assetChecksumsSha256 || []).filter((value): value is string => Boolean(value))
+  };
+  const fingerprintSha256 = fingerprint(payload);
   return {
-    capturedAt, work: work || unknown, assets: assetSnapshot, effective, carouselResolution,
-    ...(carouselResolution === 'disclose-all' ? { platformDisclosure: true } : {}), warning
+    ...payload,
+    snapshotId: fingerprint([input.publicationId, input.attemptKey, fingerprintSha256]),
+    capturedAt,
+    fingerprintSha256
   };
 };
 
-export const requiresInstagramCarouselDisclosureChoice = (snapshot: PublicationDisclosureSnapshot): boolean =>
-  Boolean(snapshot.warning) && snapshot.carouselResolution !== 'disclose-all';
+/** Append once for an attempt. Reusing an attempt key with changed disclosures fails closed. */
+export const appendPublicationDisclosureSnapshot = (
+  publication: Publication,
+  snapshot: PublicationDisclosureSnapshot
+): Publication => {
+  const history = [...(publication.disclosureSnapshots || [])];
+  const existing = history.find((item) => item.attemptKey === snapshot.attemptKey);
+  if (existing) {
+    if (existing.fingerprintSha256 !== snapshot.fingerprintSha256) {
+      throw new Error('Publication disclosure snapshot is immutable for this attempt.');
+    }
+    return { ...publication, activeDisclosureSnapshotId: existing.snapshotId };
+  }
+  if (history.some((item) => item.snapshotId === snapshot.snapshotId)) {
+    throw new Error('Publication disclosure snapshot identifier is already in use.');
+  }
+  return { ...publication, disclosureSnapshots: [...history, snapshot], activeDisclosureSnapshotId: snapshot.snapshotId };
+};
+
+export const assertPublicationDisclosureHistoryImmutable = (
+  previous: Publication | null | undefined,
+  next: Publication
+): void => {
+  if (!previous?.disclosureSnapshots?.length) return;
+  const incoming = next.disclosureSnapshots || [];
+  if (incoming.length < previous.disclosureSnapshots.length) throw new Error('Publication disclosure history cannot be removed.');
+  previous.disclosureSnapshots.forEach((snapshot, index) => {
+    if (JSON.stringify(stable(snapshot)) !== JSON.stringify(stable(incoming[index]))) {
+      throw new Error('Publication disclosure history is immutable.');
+    }
+  });
+};
+
+export const activePublicationDisclosureSnapshot = (publication: Publication): PublicationDisclosureSnapshot | undefined => (
+  publication.disclosureSnapshots?.find((snapshot) => snapshot.snapshotId === publication.activeDisclosureSnapshotId)
+);

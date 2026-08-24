@@ -2,9 +2,11 @@ import { randomUUID } from 'crypto';
 import type { AppConfig } from './config';
 import type { AnnouncementPresetId, CommunityDelivery, CommunityDestination, CommunityEvent, CommunityInstallation } from './domain';
 import type { DataStore } from './store';
-import { announcementIdempotencyKey, announcementPresetOptions as sharedAnnouncementPresetOptions, createAnnouncementPublication } from './announcementPublication';
 import { createStoreIntegrationPolicyGate, requireIntegrationOperation } from './integrationStandard';
 import { deliveryRetryDelaySeconds, shouldRetryIntegrationDelivery, type IntegrationDeliveryErrorCode } from './integrationDelivery';
+import { createAnnouncementPublication, type AnnouncementProvider } from './announcementPublication';
+import { renderAnnouncementPublication } from './announcementPublication';
+import { BlueskyAnnouncementError, blueskyAnnouncementConfigured, sendBlueskyAnnouncement } from './blueskyAnnouncement';
 
 export const DISCORD_INSTALL_PERMISSIONS = 1024 + 2048 + 16384; // View Channels, Send Messages, Embed Links
 
@@ -105,8 +107,17 @@ export const sendDiscordMessage = async (
   return response.json() as Promise<{ id: string }>;
 };
 
-/** @deprecated Import from announcementPublication for provider-neutral presets. */
-export const announcementPresetOptions = sharedAnnouncementPresetOptions;
+export const announcementPresetOptions: Array<{ id: AnnouncementPresetId; label: string; description: string; kinds: string[] }> = [
+  { id: 'recommended', label: 'Recommended', description: 'A polished announcement matched to the Work type.', kinds: ['all'] },
+  { id: 'image_showcase', label: 'Image showcase', description: 'Lead with the image preview and title.', kinds: ['image', 'multiple_images', 'gallery'] },
+  { id: 'writing_release', label: 'Post or story', description: 'A reading-focused title and excerpt.', kinds: ['post', 'story', 'literature', 'article', 'multi_chapter_post'] },
+  { id: 'video_premiere', label: 'Video premiere', description: 'A video-first announcement.', kinds: ['video', 'video_series'] },
+  { id: 'audio_release', label: 'Audio release', description: 'A track, album, or audio collection announcement.', kinds: ['audio', 'album', 'audio_collection'] },
+  { id: 'compact_link', label: 'Compact link', description: 'A short message and direct link.', kinds: ['all'] },
+  { id: 'text_only', label: 'Text only', description: 'No rich preview or media.', kinds: ['all'] },
+  { id: 'collection_digest', label: 'Collection digest', description: 'One announcement for an image gallery or collection.', kinds: ['gallery', 'multiple_images', 'collection'] },
+  { id: 'series_digest', label: 'Series or album digest', description: 'One announcement for a story series, video series, or album.', kinds: ['multi_chapter_post', 'video_series', 'audio_collection', 'album'] }
+];
 
 type AnnouncementPayload = {
   title?: string;
@@ -184,32 +195,51 @@ const renderDiscordAnnouncement = (destination: CommunityDestination, event: Com
 export const queueDiscordWorkPublished = async (
   store: DataStore,
   config: AppConfig,
-  input: { userId: string; creatorIdentityId: string; workId: string; title: string; description?: string; url: string; creatorName: string; kind?: string; imageUrl?: string; preset?: AnnouncementPresetId; includePrimaryMedia?: boolean; idempotencyKey: string },
+  input: { userId: string; creatorIdentityId: string; workId: string; title: string; description?: string; url: string; creatorName: string; kind?: string; imageUrl?: string; aiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated'; providers?: AnnouncementProvider[]; preset?: AnnouncementPresetId; includePrimaryMedia?: boolean; idempotencyKey: string },
   enqueue: (communityDeliveryId: string, delaySeconds?: number) => Promise<void>
 ): Promise<void> => {
-  if (!discordConfigured(config)) return;
-  const destinations = (await store.listCommunityDestinationsByCreator(input.creatorIdentityId))
-    .filter((destination) => destination.provider === 'discord' && destination.status === 'active' && destination.eventTypes.includes('work_published'));
-  if (!destinations.length) return;
+  const providers = new Set<AnnouncementProvider>(input.providers === undefined ? ['discord'] : input.providers);
+  const destinations = providers.has('discord') && discordConfigured(config)
+    ? (await store.listCommunityDestinationsByCreator(input.creatorIdentityId))
+      .filter((destination) => destination.provider === 'discord' && destination.status === 'active' && destination.eventTypes.includes('work_published'))
+    : [];
+  const blueskyAccounts = providers.has('bluesky') && blueskyAnnouncementConfigured(config)
+    ? (await store.listExternalAccountsByCreatorIdentity(input.creatorIdentityId))
+      .filter((account) => account.platform === 'bluesky' && account.userId === input.userId && account.connectionStatus === 'connected')
+    : [];
+  if (!destinations.length && !blueskyAccounts.length) return;
   const existing = await store.getCommunityEventByIdempotency(config.tenantId, input.idempotencyKey);
   if (existing) return;
   const now = new Date().toISOString();
-  const preset = input.preset || 'single_work';
-  const announcement = createAnnouncementPublication({
-    tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId, provider: 'discord', preset,
-    subject: { type: 'work', ids: [input.workId] }, payload: { title: input.title, description: input.description, url: input.url, creatorName: input.creatorName, kind: input.kind, imageUrl: input.imageUrl, includePrimaryMedia: input.includePrimaryMedia }, idempotencyKey: announcementIdempotencyKey('discord', input.creatorIdentityId, preset, [input.workId]), now
-  });
-  await store.upsertAnnouncementPublication(announcement);
   const event: CommunityEvent = {
     communityEventId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId,
     workId: input.workId, type: 'work_published', idempotencyKey: input.idempotencyKey,
-    payload: { title: input.title, description: input.description, url: input.url, creatorName: input.creatorName, kind: input.kind, imageUrl: input.imageUrl, preset, includePrimaryMedia: input.includePrimaryMedia, announcement }, announcementPublicationId: announcement.announcementPublicationId, createdAt: now
+    payload: { title: input.title, description: input.description, url: input.url, creatorName: input.creatorName, kind: input.kind, imageUrl: input.imageUrl, preset: input.preset, includePrimaryMedia: input.includePrimaryMedia }, createdAt: now
   };
   await store.createCommunityEvent(event);
   for (const destination of destinations) {
     const delivery: CommunityDelivery = {
       communityDeliveryId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId,
       communityEventId: event.communityEventId, communityDestinationId: destination.communityDestinationId, provider: 'discord',
+      announcementPublication: createAnnouncementPublication({
+        provider: 'discord', connectionId: destination.communityInstallationId, targetId: destination.remoteChannelId,
+        workId: input.workId, idempotencyKey: `${input.idempotencyKey}:${destination.communityDestinationId}`,
+        content: { version: 1, title: input.title, text: input.description, url: input.url, creatorName: input.creatorName, imageUrl: input.imageUrl, aiDisclosure: input.aiDisclosure, capturedAt: now }
+      }),
+      status: 'queued', attemptCount: 0, createdAt: now, updatedAt: now
+    };
+    await store.upsertCommunityDelivery(delivery);
+    await enqueue(delivery.communityDeliveryId);
+  }
+  for (const account of blueskyAccounts) {
+    const announcementPublication = createAnnouncementPublication({
+      provider: 'bluesky', connectionId: account.externalAccountId, targetId: account.externalUserId,
+      workId: input.workId, idempotencyKey: `${input.idempotencyKey}:${account.externalAccountId}`,
+      content: { version: 1, title: input.title, text: input.description, url: input.url, creatorName: input.creatorName, imageUrl: input.imageUrl, aiDisclosure: input.aiDisclosure, capturedAt: now }
+    });
+    const delivery: CommunityDelivery = {
+      communityDeliveryId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId,
+      communityEventId: event.communityEventId, communityDestinationId: account.externalAccountId, provider: 'bluesky', announcementPublication,
       status: 'queued', attemptCount: 0, createdAt: now, updatedAt: now
     };
     await store.upsertCommunityDelivery(delivery);
@@ -220,34 +250,62 @@ export const queueDiscordWorkPublished = async (
 export const queueDiscordWorksPublished = async (
   store: DataStore,
   config: AppConfig,
-  input: { userId: string; creatorIdentityId: string; creatorName: string; works: Array<{ workId: string; title: string; description?: string; url: string; imageUrl?: string }>; preset?: AnnouncementPresetId; includePrimaryMedia?: boolean; idempotencyKey: string },
+  input: { userId: string; creatorIdentityId: string; creatorName: string; works: Array<{ workId: string; title: string; description?: string; url: string; imageUrl?: string }>; providers?: AnnouncementProvider[]; preset?: AnnouncementPresetId; includePrimaryMedia?: boolean; idempotencyKey: string },
   enqueue: (communityDeliveryId: string, delaySeconds?: number) => Promise<void>
 ): Promise<void> => {
-  if (!discordConfigured(config) || !input.works.length) return;
-  const destinations = (await store.listCommunityDestinationsByCreator(input.creatorIdentityId))
-    .filter((destination) => destination.provider === 'discord' && destination.status === 'active' && (destination.eventTypes.includes('works_published') || destination.eventTypes.includes('work_published')));
-  if (!destinations.length || await store.getCommunityEventByIdempotency(config.tenantId, input.idempotencyKey)) return;
+  if (!input.works.length) return;
+  const providers = new Set<AnnouncementProvider>(input.providers === undefined ? ['discord'] : input.providers);
+  const destinations = providers.has('discord') && discordConfigured(config)
+    ? (await store.listCommunityDestinationsByCreator(input.creatorIdentityId))
+      .filter((destination) => destination.provider === 'discord' && destination.status === 'active' && (destination.eventTypes.includes('works_published') || destination.eventTypes.includes('work_published')))
+    : [];
+  const blueskyAccounts = providers.has('bluesky') && blueskyAnnouncementConfigured(config)
+    ? (await store.listExternalAccountsByCreatorIdentity(input.creatorIdentityId))
+      .filter((account) => account.platform === 'bluesky' && account.userId === input.userId && account.connectionStatus === 'connected')
+    : [];
+  if ((!destinations.length && !blueskyAccounts.length) || await store.getCommunityEventByIdempotency(config.tenantId, input.idempotencyKey)) return;
   const now = new Date().toISOString();
-  const preset = input.preset || 'bulk_publish';
-  const announcement = createAnnouncementPublication({
-    tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId, provider: 'discord', preset,
-    subject: { type: 'bulk_publish', ids: input.works.map((work) => work.workId) }, payload: { creatorName: input.creatorName, works: input.works, includePrimaryMedia: input.includePrimaryMedia }, idempotencyKey: announcementIdempotencyKey('discord', input.creatorIdentityId, preset, input.works.map((work) => work.workId)), now
-  });
-  await store.upsertAnnouncementPublication(announcement);
   const event: CommunityEvent = {
     communityEventId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId,
     type: 'works_published', idempotencyKey: input.idempotencyKey,
-    payload: { creatorName: input.creatorName, works: input.works, preset, includePrimaryMedia: input.includePrimaryMedia, announcement }, announcementPublicationId: announcement.announcementPublicationId, createdAt: now
+    payload: { creatorName: input.creatorName, works: input.works, preset: input.preset || 'collection_digest', includePrimaryMedia: input.includePrimaryMedia }, createdAt: now
   };
   await store.createCommunityEvent(event);
   for (const destination of destinations) {
-    const delivery: CommunityDelivery = { communityDeliveryId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId, communityEventId: event.communityEventId, communityDestinationId: destination.communityDestinationId, provider: 'discord', status: 'queued', attemptCount: 0, createdAt: now, updatedAt: now };
+    const delivery: CommunityDelivery = {
+      communityDeliveryId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId,
+      communityEventId: event.communityEventId, communityDestinationId: destination.communityDestinationId, provider: 'discord',
+      announcementPublication: createAnnouncementPublication({
+        provider: 'discord', connectionId: destination.communityInstallationId, targetId: destination.remoteChannelId,
+        idempotencyKey: `${input.idempotencyKey}:${destination.communityDestinationId}`,
+        content: {
+          version: 1,
+          title: `${input.works.length} new Works`,
+          text: input.works.map((work) => `${work.title} — ${work.url}`).join('\n'),
+          url: input.works[0]?.url,
+          creatorName: input.creatorName,
+          imageUrl: input.includePrimaryMedia ? input.works[0]?.imageUrl : undefined,
+          capturedAt: now
+        }
+      }),
+      status: 'queued', attemptCount: 0, createdAt: now, updatedAt: now
+    };
+    await store.upsertCommunityDelivery(delivery);
+    await enqueue(delivery.communityDeliveryId);
+  }
+  for (const account of blueskyAccounts) {
+    const announcementPublication = createAnnouncementPublication({
+      provider: 'bluesky', connectionId: account.externalAccountId, targetId: account.externalUserId,
+      idempotencyKey: `${input.idempotencyKey}:${account.externalAccountId}`,
+      content: { version: 1, title: `${input.works.length} new Works`, text: input.works.map((work) => `${work.title} — ${work.url}`).join('\n'), url: input.works[0]?.url, creatorName: input.creatorName, capturedAt: now }
+    });
+    const delivery: CommunityDelivery = { communityDeliveryId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId, communityEventId: event.communityEventId, communityDestinationId: account.externalAccountId, provider: 'bluesky', announcementPublication, status: 'queued', attemptCount: 0, createdAt: now, updatedAt: now };
     await store.upsertCommunityDelivery(delivery);
     await enqueue(delivery.communityDeliveryId);
   }
 };
 
-export const processDiscordDelivery = async (store: DataStore, config: AppConfig, communityDeliveryId: string, enqueue: (id: string, delaySeconds?: number) => Promise<void>): Promise<void> => {
+export const processAnnouncementDelivery = async (store: DataStore, config: AppConfig, communityDeliveryId: string, enqueue: (id: string, delaySeconds?: number) => Promise<void>): Promise<void> => {
   const delivery = await store.getCommunityDelivery(communityDeliveryId);
   if (!delivery || ['sent', 'cancelled'].includes(delivery.status)) return;
   // SQS can delay a message for at most 15 minutes. Persisted schedules may
@@ -259,18 +317,20 @@ export const processDiscordDelivery = async (store: DataStore, config: AppConfig
       return;
     }
   }
-  const destination = await store.getCommunityDestination(delivery.communityDestinationId);
-  if (!destination || destination.status !== 'active') return;
+  const destination = delivery.provider === 'discord' ? await store.getCommunityDestination(delivery.communityDestinationId) : null;
+  const blueskyAccount = delivery.provider === 'bluesky' ? await store.getExternalAccount(delivery.communityDestinationId) : null;
+  if (delivery.provider === 'discord' && (!destination || destination.status !== 'active')) return;
+  if (delivery.provider === 'bluesky' && (!blueskyAccount || blueskyAccount.platform !== 'bluesky' || blueskyAccount.connectionStatus !== 'connected')) return;
   const event = await store.getCommunityEvent(delivery.communityEventId);
   if (!event) return;
   const now = new Date().toISOString();
   try {
-    requireIntegrationOperation('discord', 'publish');
+    requireIntegrationOperation(delivery.provider, 'publish');
     const policy = await createStoreIntegrationPolicyGate(store).evaluate({
       operation: 'publish',
       targets: [
         { type: 'creator', id: delivery.creatorIdentityId },
-        { type: 'integration_connection', id: destination.communityDestinationId },
+        { type: 'integration_connection', id: delivery.communityDestinationId },
         ...(event.workId ? [{ type: 'work' as const, id: event.workId }] : [])
       ]
     });
@@ -290,7 +350,7 @@ export const processDiscordDelivery = async (store: DataStore, config: AppConfig
       ...delivery,
       status: 'failed',
       errorCode: 'UNSUPPORTED_OPERATION',
-      errorMessage: error instanceof Error ? error.message : 'Discord delivery is unsupported.',
+      errorMessage: error instanceof Error ? error.message : 'Announcement delivery is unsupported.',
       nextAttemptAt: undefined,
       updatedAt: now
     });
@@ -298,39 +358,46 @@ export const processDiscordDelivery = async (store: DataStore, config: AppConfig
   }
   try {
     await store.upsertCommunityDelivery({ ...delivery, status: 'sending', updatedAt: now, errorCode: undefined, errorMessage: undefined });
-    const announcement = renderDiscordAnnouncement(destination, event);
-    const sent = await sendDiscordMessage(config, destination.remoteChannelId, announcement.content, announcement.embed);
-    await store.upsertCommunityDelivery({ ...delivery, status: 'sent', attemptCount: delivery.attemptCount + 1, remoteMessageId: sent.id, sentAt: now, updatedAt: now, nextAttemptAt: undefined, errorCode: undefined, errorMessage: undefined });
-    if (event.announcementPublicationId) {
-      const publication = await store.getAnnouncementPublication(event.announcementPublicationId);
-      if (publication) await store.upsertAnnouncementPublication({ ...publication, status: 'sent', attemptCount: publication.attemptCount + 1, remoteId: sent.id, updatedAt: now });
+    if (delivery.provider === 'bluesky') {
+      if (!delivery.announcementPublication || !blueskyAccount) throw new Error('Bluesky announcement snapshot is unavailable');
+      const rendered = renderAnnouncementPublication(delivery.announcementPublication);
+      const sent = await sendBlueskyAnnouncement(
+        config,
+        blueskyAccount.externalUserId,
+        rendered.text,
+        delivery.announcementPublication.idempotencyKey,
+        delivery.announcementPublication.content.capturedAt
+      );
+      await store.upsertCommunityDelivery({ ...delivery, announcementPublication: { ...delivery.announcementPublication, status: 'sent', remoteId: sent.cid, remoteUri: sent.uri }, status: 'sent', attemptCount: delivery.attemptCount + 1, remoteMessageId: sent.uri, sentAt: now, updatedAt: now, nextAttemptAt: undefined, errorCode: undefined, errorMessage: undefined });
+    } else {
+      const announcement = renderDiscordAnnouncement(destination!, event);
+      const sent = await sendDiscordMessage(config, destination!.remoteChannelId, announcement.content, announcement.embed);
+      await store.upsertCommunityDelivery({ ...delivery, announcementPublication: delivery.announcementPublication ? { ...delivery.announcementPublication, status: 'sent', remoteId: sent.id } : undefined, status: 'sent', attemptCount: delivery.attemptCount + 1, remoteMessageId: sent.id, sentAt: now, updatedAt: now, nextAttemptAt: undefined, errorCode: undefined, errorMessage: undefined });
     }
   } catch (error) {
     const apiError = error instanceof DiscordApiError ? error : undefined;
+    const blueskyError = error instanceof BlueskyAnnouncementError ? error : undefined;
     const attempts = delivery.attemptCount + 1;
-    const deliveryErrorCode: IntegrationDeliveryErrorCode = apiError?.status === 429
+    const status = apiError?.status ?? blueskyError?.status;
+    const deliveryErrorCode: IntegrationDeliveryErrorCode = status === 429
       ? 'rate_limited'
-      : !apiError || apiError.status >= 500
+      : status === undefined || status >= 500
         ? 'temporarily_unavailable'
-        : apiError.status === 403
+        : status === 401 || status === 403
           ? 'permission_denied'
           : 'invalid_request';
     const retryable = shouldRetryIntegrationDelivery('publish', deliveryErrorCode, attempts, 6);
-    const retrySeconds = apiError?.retryAfterSeconds ?? deliveryRetryDelaySeconds(attempts, 30);
+    const retrySeconds = apiError?.retryAfterSeconds ?? blueskyError?.retryAfterSeconds ?? deliveryRetryDelaySeconds(attempts, 30);
     const failed: CommunityDelivery = {
       ...delivery, status: retryable && attempts < 6 ? 'retry_scheduled' : 'failed', attemptCount: attempts,
       nextAttemptAt: retryable && attempts < 6 ? new Date(Date.now() + retrySeconds * 1000).toISOString() : undefined,
-      errorCode: apiError ? `discord_${apiError.status}` : 'discord_delivery_error', errorMessage: error instanceof Error ? error.message : String(error), updatedAt: new Date().toISOString()
+      errorCode: status ? `${delivery.provider}_${status}` : `${delivery.provider}_delivery_error`, errorMessage: error instanceof Error ? error.message : String(error), updatedAt: new Date().toISOString()
     };
     await store.upsertCommunityDelivery(failed);
-    if (event.announcementPublicationId) {
-      const publication = await store.getAnnouncementPublication(event.announcementPublicationId);
-      if (publication) await store.upsertAnnouncementPublication({ ...publication, status: failed.status === 'retry_scheduled' ? 'retry_scheduled' : 'failed', attemptCount: publication.attemptCount + 1, updatedAt: failed.updatedAt });
-    }
     // Missing-channel and permission responses generally mean the bot was
     // removed or lost access. Keep the destination record for diagnosis, but
     // stop automatic attempts until the Creator deliberately resumes it.
-    if (apiError && (apiError.status === 403 || apiError.status === 404)) {
+    if (destination && apiError && (apiError.status === 403 || apiError.status === 404)) {
       await store.upsertCommunityDestination({
         ...destination,
         status: 'needs_attention',
@@ -340,3 +407,6 @@ export const processDiscordDelivery = async (store: DataStore, config: AppConfig
     if (failed.status === 'retry_scheduled') await enqueue(delivery.communityDeliveryId, retrySeconds);
   }
 };
+
+/** Backward-compatible export for existing queue handlers and callers. */
+export const processDiscordDelivery = processAnnouncementDelivery;

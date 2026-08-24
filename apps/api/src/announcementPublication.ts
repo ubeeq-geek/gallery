@@ -1,33 +1,78 @@
-import { randomUUID } from 'crypto';
-import type { AnnouncementPresetId, AnnouncementPublication, CommunityProvider } from './domain';
+import { createHash } from 'crypto';
+import type { AiDisclosure } from './domain';
 
-export const announcementPresetOptions: Array<{ id: AnnouncementPresetId; label: string; subjectTypes: string[] }> = [
-  { id: 'single_work', label: 'Single work', subjectTypes: ['work'] },
-  { id: 'gallery', label: 'Gallery', subjectTypes: ['gallery'] },
-  { id: 'collection', label: 'Collection', subjectTypes: ['collection'] },
-  { id: 'story_chapter', label: 'Story or chapter', subjectTypes: ['story_chapter'] },
-  { id: 'video', label: 'Video', subjectTypes: ['video'] },
-  { id: 'album', label: 'Album', subjectTypes: ['album'] },
-  { id: 'bulk_publish', label: 'Bulk publish', subjectTypes: ['bulk_publish'] },
-  { id: 'recommended', label: 'Recommended', subjectTypes: ['all'] },
-  { id: 'image_showcase', label: 'Image showcase', subjectTypes: ['work', 'gallery'] },
-  { id: 'writing_release', label: 'Writing release', subjectTypes: ['story_chapter'] },
-  { id: 'video_premiere', label: 'Video premiere', subjectTypes: ['video'] },
-  { id: 'audio_release', label: 'Audio release', subjectTypes: ['album'] },
-  { id: 'compact_link', label: 'Compact link', subjectTypes: ['all'] },
-  { id: 'text_only', label: 'Text only', subjectTypes: ['all'] },
-  { id: 'collection_digest', label: 'Collection digest', subjectTypes: ['gallery', 'collection'] },
-  { id: 'series_digest', label: 'Series digest', subjectTypes: ['story_chapter', 'album'] }
-];
+export type AnnouncementProvider = 'discord' | 'bluesky';
+export type AnnouncementPublicationStatus = 'queued' | 'sending' | 'sent' | 'retry_scheduled' | 'failed' | 'cancelled';
 
-const presetIds = new Set(announcementPresetOptions.map((preset) => preset.id));
-export const isAnnouncementPreset = (value: unknown): value is AnnouncementPresetId => typeof value === 'string' && presetIds.has(value as AnnouncementPresetId);
+export interface AnnouncementContentSnapshot {
+  version: 1;
+  title: string;
+  text?: string;
+  url?: string;
+  creatorName?: string;
+  imageUrl?: string;
+  aiDisclosure?: AiDisclosure;
+  capturedAt: string;
+}
 
-export const createAnnouncementPublication = (input: Omit<AnnouncementPublication, 'announcementPublicationId' | 'status' | 'attemptCount' | 'createdAt' | 'updatedAt'> & { status?: AnnouncementPublication['status']; now?: string }): AnnouncementPublication => {
-  const now = input.now || new Date().toISOString();
-  return { ...input, announcementPublicationId: randomUUID(), status: input.status || 'queued', attemptCount: 0, createdAt: now, updatedAt: now };
+/**
+ * A Discord message and a Bluesky post are two renderings of this same
+ * announcement publication. The content snapshot and idempotency key are
+ * immutable after the publication is queued.
+ */
+export interface AnnouncementPublication {
+  announcementPublicationId: string;
+  provider: AnnouncementProvider;
+  connectionId: string;
+  targetId: string;
+  workId?: string;
+  idempotencyKey: string;
+  content: AnnouncementContentSnapshot;
+  status: AnnouncementPublicationStatus;
+  remoteId?: string;
+  remoteUri?: string;
+}
+
+const stableFingerprint = (value: unknown): string => createHash('sha256')
+  .update(JSON.stringify(value, Object.keys(value as Record<string, unknown>).sort()))
+  .digest('hex');
+
+export const createAnnouncementPublication = (input: Omit<AnnouncementPublication, 'announcementPublicationId' | 'status'>): AnnouncementPublication => {
+  if (!input.idempotencyKey.trim()) throw new Error('An announcement publication requires an idempotency key.');
+  return {
+    ...input,
+    announcementPublicationId: stableFingerprint([input.provider, input.connectionId, input.targetId, input.idempotencyKey]),
+    status: 'queued'
+  };
 };
 
-/** Both Discord and Bluesky announcement adapters use this shape, never Publication. */
-export const announcementIdempotencyKey = (provider: CommunityProvider, creatorIdentityId: string, preset: AnnouncementPresetId, subjectIds: string[]): string =>
-  `announcement:${provider}:${creatorIdentityId}:${preset}:${[...subjectIds].sort().join(':')}`;
+export const assertAnnouncementPublicationImmutable = (previous: AnnouncementPublication, next: AnnouncementPublication): void => {
+  if (previous.announcementPublicationId !== next.announcementPublicationId
+    || previous.idempotencyKey !== next.idempotencyKey
+    || JSON.stringify(previous.content) !== JSON.stringify(next.content)) {
+    throw new Error('Queued announcement publication content is immutable.');
+  }
+};
+
+const aiLabel = (value?: AiDisclosure): string => value === 'ai-generated'
+  ? 'AI-generated'
+  : value === 'ai-assisted'
+    ? 'AI-assisted'
+    : '';
+
+export const renderAnnouncementPublication = (publication: AnnouncementPublication): {
+  text: string;
+  embed?: { title: string; description?: string; url?: string; imageUrl?: string };
+} => {
+  const { content } = publication;
+  const disclosure = aiLabel(content.aiDisclosure);
+  const suffix = [content.url, disclosure].filter(Boolean).join('\n');
+  if (publication.provider === 'bluesky') {
+    const lead = `${content.creatorName ? `${content.creatorName}: ` : ''}${content.title}`;
+    return { text: [lead, content.text, suffix].filter(Boolean).join('\n\n').slice(0, 300) };
+  }
+  return {
+    text: [`New from ${content.creatorName || 'a creator'}: **${content.title}**`, suffix].filter(Boolean).join('\n'),
+    embed: { title: content.title, description: [content.text, disclosure].filter(Boolean).join('\n\n') || undefined, url: content.url, imageUrl: content.imageUrl }
+  };
+};
