@@ -69,6 +69,14 @@ export interface AppConfig {
   discordOAuthRedirectUri?: string;
   discordCommunityQueueUrl?: string;
   discordApiBaseUrl: string;
+  /** Fanvue studio-pilot OAuth and API configuration. Secrets must come from managed application secrets. */
+  fanvueClientId?: string;
+  fanvueClientSecret?: string;
+  fanvueOAuthRedirectUri?: string;
+  fanvueWebhookSecret?: string;
+  fanvueApiBaseUrl?: string;
+  fanvueAuthorizeUrl?: string;
+  fanvueApiVersion?: string;
   /** Managed Tumblr OAuth 2 application; creator-owned credentials are encrypted per connector. */
   tumblrClientId?: string;
   tumblrClientSecret?: string;
@@ -167,6 +175,13 @@ export const loadConfig = (): AppConfig => {
   discordOAuthRedirectUri: process.env.DISCORD_OAUTH_REDIRECT_URI,
   discordCommunityQueueUrl: process.env.DISCORD_COMMUNITY_QUEUE_URL,
   discordApiBaseUrl: process.env.DISCORD_API_BASE_URL || 'https://discord.com/api/v10',
+  fanvueClientId: process.env.FANVUE_CLIENT_ID,
+  fanvueClientSecret: process.env.FANVUE_CLIENT_SECRET,
+  fanvueOAuthRedirectUri: process.env.FANVUE_OAUTH_REDIRECT_URI,
+  fanvueWebhookSecret: process.env.FANVUE_WEBHOOK_SECRET,
+  fanvueApiBaseUrl: process.env.FANVUE_API_BASE_URL || 'https://api.fanvue.com',
+  fanvueAuthorizeUrl: process.env.FANVUE_AUTHORIZE_URL || 'https://auth.fanvue.com/oauth/authorize',
+  fanvueApiVersion: process.env.FANVUE_API_VERSION || '2026-08-01',
   tumblrClientId: process.env.TUMBLR_CLIENT_ID,
   tumblrClientSecret: process.env.TUMBLR_CLIENT_SECRET,
   tumblrOAuthRedirectUri: process.env.TUMBLR_OAUTH_REDIRECT_URI,

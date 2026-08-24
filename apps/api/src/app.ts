@@ -6,7 +6,7 @@ import { AdminUpdateUserAttributesCommand, CognitoIdentityProviderClient, SignUp
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSignedUrl as getCloudFrontSignedUrl } from '@aws-sdk/cloudfront-signer';
 import { createHash, createPublicKey, randomUUID } from 'crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import jwt from 'jsonwebtoken';
 import { createOptionalAuthMiddleware, requireAdmin, requireAuth, resolveRole } from './auth';
@@ -109,6 +109,8 @@ import { dismissExternalActivity, replyToExternalComment } from './externalSyncW
 import { createCommunityDeliveryQueue } from './communityDeliveryQueue';
 import type { CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { createDiscordAuthorizeUrl, discordConfigured, exchangeDiscordCode, getDiscordGuild, listDiscordChannels, sendDiscordMessage, queueDiscordWorkPublished, queueDiscordWorksPublished } from './discordCommunity';
+import { createFanvueRouter } from './fanvueRouter';
+import type { FanvueRepository } from './fanvueRepository';
 import { registerTumblrRoutes } from './tumblrRoutes';
 import { InMemoryTumblrRepository, type TumblrRepository } from './tumblrRepository';
 import { createTumblrPublishQueue, type TumblrPublishQueue } from './tumblrPublishQueue';
@@ -121,6 +123,7 @@ interface CreateAppOptions {
   store: DataStore;
   externalSyncQueue?: ExternalSyncQueue;
   communityDeliveryQueue?: CommunityDeliveryQueue;
+  fanvueRepository?: FanvueRepository;
   tumblrRepository?: TumblrRepository;
   tumblrPublishQueue?: TumblrPublishQueue;
   supportSafetyRepository?: SupportSafetyRepository;
@@ -966,6 +969,7 @@ export const createApp = ({
   store,
   externalSyncQueue: injectedExternalSyncQueue,
   communityDeliveryQueue: injectedCommunityDeliveryQueue,
+  fanvueRepository,
   tumblrRepository: injectedTumblrRepository,
   tumblrPublishQueue: injectedTumblrPublishQueue,
   supportSafetyRepository
@@ -2603,8 +2607,34 @@ export const createApp = ({
   // Writing Works use structured block documents and should not be constrained
   // by the small default JSON parser limit. External destinations still apply
   // their own limits when publishing.
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({ limit: '10mb', verify: (req, _res, buffer) => {
+    const request = req as express.Request;
+    if (request.originalUrl.startsWith('/webhooks/fanvue')) request.rawBody = Buffer.from(buffer);
+  } }));
   app.use(createOptionalAuthMiddleware(config));
+  app.use(createFanvueRouter(config, fanvueRepository, async (userId, ownerId) => {
+    const identity = await store.getUserIdentity?.(userId);
+    return identity?.role === 'admin' || store.hasCreatorAccess(userId, ownerId);
+  }, async (workId) => {
+    const work = await store.getWork(config.tenantId, workId);
+    if (!work) return null;
+    const assets = await store.listCanonicalAssetsByWork(config.tenantId, workId);
+    return { work, assets, activeSafetyHold: assets.some((asset) => asset.metadata?.fanvueSafetyHold === true) };
+  }, async (userId) => {
+    const identity = await store.getUserIdentity?.(userId);
+    return identity?.role === 'admin';
+  }, async (asset) => {
+    if (!asset.storage.objectKey) throw new Error('The selected Asset is not hosted.');
+    if (config.localMediaDirectory) {
+      const root = resolve(config.localMediaDirectory);
+      const path = resolve(root, asset.storage.objectKey);
+      if (path !== root && !path.startsWith(`${root}/`)) throw new Error('The selected Asset path is invalid.');
+      return readFile(path);
+    }
+    const result = await s3Client.send(new GetObjectCommand({ Bucket: config.mediaBucket, Key: asset.storage.objectKey }));
+    if (!result.Body) throw new Error('The selected Asset body is unavailable.');
+    return Buffer.from(await result.Body.transformToByteArray());
+  }));
   registerTumblrRoutes({
     app, config, repository: tumblrRepository,
     hasCreatorAccess: (userId, creatorId) => store.hasCreatorAccess(userId, creatorId),

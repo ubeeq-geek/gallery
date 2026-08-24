@@ -1886,6 +1886,45 @@ export const api = {
     });
     return handleJson(response);
   },
+  async fanvueListConnections(ownerId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/integrations/fanvue/connections?ownerId=${encodeURIComponent(ownerId)}`);
+    return handleJson(response);
+  },
+  async fanvueStartConnection(ownerId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/fanvue/connections/start`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ ownerId, ownerType: 'creator', mode: 'STUDIO_MANAGED' })
+    });
+    return handleJson(response);
+  },
+  async fanvueUpdateCapabilities(connectionId: string, capabilities: string[]) {
+    const response = await fetch(`${API_BASE}/api/integrations/fanvue/connections/${encodeURIComponent(connectionId)}/capabilities`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ capabilities })
+    });
+    return handleJson(response);
+  },
+  async fanvueSync(connectionId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/fanvue/connections/${encodeURIComponent(connectionId)}/sync`, {
+      method: 'POST', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async fanvueRefreshAccountHealth(connectionId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/fanvue/connections/${encodeURIComponent(connectionId)}/account-health`, {
+      method: 'POST', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
+  async fanvueListPublications(connectionId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/fanvue/publications?connectionId=${encodeURIComponent(connectionId)}`);
+    return handleJson(response);
+  },
+  async fanvueDisconnect(connectionId: string) {
+    const response = await fetch(`${API_BASE}/api/integrations/fanvue/connections/${encodeURIComponent(connectionId)}`, {
+      method: 'DELETE', headers: await authHeaders()
+    });
+    return handleJson(response);
+  },
   async studioSaveDeviantArtCollectionMapping(externalCollectionId: string, payload: {
     externalAccountId: string;
     ubeeqCollectionId: string;

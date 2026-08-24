@@ -82,6 +82,10 @@ The API reads environment variables from the shell that starts it; it does **not
 | `YOUTUBE_OAUTH_REDIRECT_URI` | `https://fanadmin.top:4000/integrations/youtube/callback` | Register this exact redirect URI in Google Cloud. The Ubeeq local API uses port `4001`. |
 | `YOUTUBE_SECRETS_NAME` | unset | Optional Secrets Manager JSON secret containing `youtubeOAuthClientSecret`; recommended for every deployed environment. |
 | `YOUTUBE_MIN_REQUEST_INTERVAL_MS` | `1000` | Minimum interval between YouTube Data API requests for one worker. |
+| `FANVUE_CLIENT_ID` / `FANVUE_CLIENT_SECRET` | unset | Studio-pilot Fanvue OAuth application credentials. Store the secret in managed application secrets. |
+| `FANVUE_OAUTH_REDIRECT_URI` | unset | Exact HTTPS `/api/integrations/fanvue/oauth/callback` URL registered with Fanvue. |
+| `FANVUE_WEBHOOK_SECRET` | unset | Fanvue webhook signature secret; never expose it to Studio clients. |
+| `FANVUE_API_VERSION` | `2026-08-01` | Explicit API version pinned for Fanvue requests. Revalidate before release. |
 | `TUMBLR_CLIENT_ID` / `TUMBLR_CLIENT_SECRET` | unset | Managed Tumblr OAuth 2 application credentials. Keep the secret server-side and load it from managed secret storage in deployments. |
 | `TUMBLR_OAUTH_REDIRECT_URI` | unset | HTTPS OAuth callback registered with Tumblr for the managed connector. Creator-managed applications must register the same deployment callback. |
 | `TUMBLR_API_BASE_URL` | `https://api.tumblr.com` | Optional Tumblr API base override for controlled testing. |

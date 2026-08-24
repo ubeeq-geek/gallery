@@ -68,6 +68,12 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     capabilities: ['connect', 'catalogue_import', 'engagement_read', 'reconcile'],
     credentialCustody: 'application'
   },
+  fanvue: {
+    platform: 'fanvue',
+    label: 'FanVue',
+    capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'webhook_receive', 'reconcile'],
+    credentialCustody: 'application'
+  },
   bluesky: {
     platform: 'bluesky',
     label: 'Bluesky',
