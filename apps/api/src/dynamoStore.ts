@@ -74,6 +74,7 @@ import { CommunityRepository } from './communityRepository';
 import { CanonicalContentRepository } from './canonicalContentRepository';
 import { normalizeContentRating } from './contentRating';
 import { normalizeAiDisclosure, normalizeHeavyTopics } from './disclosures';
+import { DynamoTumblrRepository } from './tumblrRepository';
 import type {
   CanonicalAsset,
   CollectionWork,
@@ -91,6 +92,7 @@ export class DynamoStore implements DataStore {
   private readonly externalPlatformRepo?: ExternalPlatformRepository;
   private readonly communityRepo?: CommunityRepository;
   private readonly canonicalContentRepo?: CanonicalContentRepository;
+  readonly tumblrRepository?: DynamoTumblrRepository;
   private readonly localUsernameReservations = new Map<string, { username: string; email: string }>();
   private readonly localUserProfiles = new Map<string, UserProfile>();
   private readonly localCreatorMembers = new Map<string, CreatorMember>();
@@ -109,6 +111,7 @@ export class DynamoStore implements DataStore {
       this.externalPlatformRepo = new ExternalPlatformRepository(this.client, config.contentCoreTable);
       this.communityRepo = new CommunityRepository(this.client, config.contentCoreTable);
       this.canonicalContentRepo = new CanonicalContentRepository(this.client, config.contentCoreTable);
+      this.tumblrRepository = new DynamoTumblrRepository(this.client, config.contentCoreTable);
     }
   }
 

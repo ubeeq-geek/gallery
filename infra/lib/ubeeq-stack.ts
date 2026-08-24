@@ -127,6 +127,7 @@ export class UbeeqStack extends Stack {
       partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: 'ttlEpochSeconds',
       pointInTimeRecoverySpecification: isProduction ? { pointInTimeRecoveryEnabled: true } : undefined,
       deletionProtection: isProduction,
       removalPolicy: dataRemovalPolicy
@@ -221,6 +222,12 @@ export class UbeeqStack extends Stack {
         maxReceiveCount: 5,
         queue: externalSyncDlq
       }
+    });
+    const tumblrPublishDlq = new sqs.Queue(this, 'TumblrPublishDlq', { retentionPeriod: Duration.days(isProduction ? 14 : 1) });
+    const tumblrPublishQueue = new sqs.Queue(this, 'TumblrPublishQueue', {
+      visibilityTimeout: Duration.minutes(2),
+      receiveMessageWaitTime: Duration.seconds(20),
+      deadLetterQueue: { maxReceiveCount: 5, queue: tumblrPublishDlq }
     });
     const discordCommunityDeliveryDlq = new sqs.Queue(this, 'DiscordCommunityDeliveryDlq', {
       retentionPeriod: Duration.days(isProduction ? 14 : 1)
@@ -421,6 +428,11 @@ export class UbeeqStack extends Stack {
       : (process.env.UNLOCK_JWT_SECRET || 'dev-secret');
     const discordClientId = process.env.DISCORD_CLIENT_ID?.trim() || '';
     const discordOAuthRedirectUri = process.env.DISCORD_OAUTH_REDIRECT_URI?.trim() || '';
+    const tumblrClientId = process.env.TUMBLR_CLIENT_ID?.trim() || '';
+    const tumblrClientSecret = tumblrClientId && isProduction
+      ? appSecrets!.secretValueFromJson('tumblrClientSecret').unsafeUnwrap()
+      : (process.env.TUMBLR_CLIENT_SECRET || '');
+    const tumblrOAuthRedirectUri = process.env.TUMBLR_OAUTH_REDIRECT_URI?.trim() || '';
     // A shared development Discord app is still a confidential OAuth client:
     // let any deployment use a dedicated secret rather than putting its bot
     // token or client secret in CDK configuration. Production defaults to the
@@ -533,6 +545,11 @@ export class UbeeqStack extends Stack {
         YOUTUBE_OAUTH_REDIRECT_URI: youtubeOAuthRedirectUri,
         YOUTUBE_MIN_REQUEST_INTERVAL_MS: process.env.YOUTUBE_MIN_REQUEST_INTERVAL_MS || '1000',
         YOUTUBE_API_BASE_URL: process.env.YOUTUBE_API_BASE_URL || 'https://www.googleapis.com/youtube/v3',
+        TUMBLR_CLIENT_ID: tumblrClientId,
+        TUMBLR_CLIENT_SECRET: tumblrClientSecret,
+        TUMBLR_OAUTH_REDIRECT_URI: tumblrOAuthRedirectUri,
+        TUMBLR_PUBLISH_QUEUE_URL: tumblrPublishQueue.queueUrl,
+        TUMBLR_POLICY_RULES_JSON: process.env.TUMBLR_POLICY_RULES_JSON || '[]',
         EXTERNAL_ACCOUNT_SCAN_INTERVAL_SECONDS: '21600',
         EXTERNAL_ACTIVITY_SCAN_INTERVAL_SECONDS: '120',
         DEVIANTART_MIN_REQUEST_INTERVAL_MS: process.env.DEVIANTART_MIN_REQUEST_INTERVAL_MS || '2000',
@@ -680,6 +697,40 @@ export class UbeeqStack extends Stack {
         TENANT_ID: process.env.TENANT_ID || productBrand
       }
     });
+    const tumblrPublishFn = new lambdaNodejs.NodejsFunction(this, 'TumblrPublishFunction', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      entry: path.join(__dirname, '../../apps/api/src/tumblrPublishHandler.ts'),
+      handler: 'handler',
+      timeout: Duration.minutes(2),
+      memorySize: 512,
+      reservedConcurrentExecutions: 1,
+      depsLockFilePath: path.join(__dirname, '../../package-lock.json'),
+      bundling: { target: 'node22', externalModules: ['@aws-sdk/*'] },
+      ...productionFunctionOptions('TumblrPublishFunctionLogs'),
+      environment: {
+        DEPLOYMENT_STAGE: isProduction ? 'production' : deploymentStage,
+        CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        USE_CONTENT_CORE_TABLE: 'true',
+        MEDIA_BUCKET: mediaBucket.bucketName,
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        EXTERNAL_TOKEN_ENCRYPTION_KEY: externalTokenEncryptionKey,
+        UNLOCK_JWT_SECRET: unlockJwtSecret,
+        TUMBLR_CLIENT_ID: tumblrClientId,
+        TUMBLR_CLIENT_SECRET: tumblrClientSecret,
+        TUMBLR_OAUTH_REDIRECT_URI: tumblrOAuthRedirectUri,
+        TUMBLR_PUBLISH_QUEUE_URL: tumblrPublishQueue.queueUrl,
+        TUMBLR_API_BASE_URL: process.env.TUMBLR_API_BASE_URL || 'https://api.tumblr.com',
+        TUMBLR_POLICY_RULES_JSON: process.env.TUMBLR_POLICY_RULES_JSON || '[]',
+        TUMBLR_HOURLY_REQUEST_LIMIT: process.env.TUMBLR_HOURLY_REQUEST_LIMIT || '1000',
+        TUMBLR_DAILY_REQUEST_LIMIT: process.env.TUMBLR_DAILY_REQUEST_LIMIT || '5000',
+        TUMBLR_PUBLISH_MAX_ATTEMPTS: process.env.TUMBLR_PUBLISH_MAX_ATTEMPTS || '5',
+        TUMBLR_RETRY_BASE_DELAY_SECONDS: process.env.TUMBLR_RETRY_BASE_DELAY_SECONDS || '60',
+        PRODUCT_BRAND: productBrand,
+        TENANT_ID: process.env.TENANT_ID || productBrand,
+        APP_ORIGIN: isProduction ? webAppUrl! : (process.env.APP_ORIGIN || '')
+      }
+    });
     const ffmpegLayerArn = process.env.FFMPEG_LAYER_ARN;
     const videoPosterIngestFn = new lambdaNodejs.NodejsFunction(this, 'VideoPosterIngestFunction', {
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -748,10 +799,14 @@ export class UbeeqStack extends Stack {
     videoPosterIngestQueue.grantConsumeMessages(videoPosterIngestFn);
     externalSyncQueue.grantSendMessages(apiFn);
     discordCommunityDeliveryQueue.grantSendMessages(apiFn);
+    tumblrPublishQueue.grantSendMessages(apiFn);
     externalSyncQueue.grantConsumeMessages(externalSyncFn);
     externalSyncQueue.grantSendMessages(externalSyncSchedulerFn);
     discordCommunityDeliveryQueue.grantConsumeMessages(discordCommunityDeliveryFn);
     discordCommunityDeliveryQueue.grantSendMessages(discordCommunityDeliveryFn);
+    contentCoreTable.grantReadWriteData(tumblrPublishFn);
+    tumblrPublishQueue.grantConsumeMessages(tumblrPublishFn);
+    tumblrPublishQueue.grantSendMessages(tumblrPublishFn);
     externalSyncFn.addEventSource(new lambdaEventSources.SqsEventSource(externalSyncQueue, {
       batchSize: 1,
       reportBatchItemFailures: true
@@ -760,6 +815,7 @@ export class UbeeqStack extends Stack {
       batchSize: 5,
       reportBatchItemFailures: true
     }));
+    tumblrPublishFn.addEventSource(new lambdaEventSources.SqsEventSource(tumblrPublishQueue, { batchSize: 5, maxBatchingWindow: Duration.seconds(2), reportBatchItemFailures: true }));
 
     new events.Rule(this, 'TrendingRankerSchedule', {
       schedule: events.Schedule.rate(Duration.minutes(5)),

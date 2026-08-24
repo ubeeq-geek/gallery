@@ -68,7 +68,7 @@ describe('production survivability profile', () => {
     expect((buckets[0].Properties as Record<string, unknown>).VersioningConfiguration).toEqual({ Status: 'Enabled' });
     template.resourceCountIs('AWS::Backup::BackupPlan', 1);
     template.resourceCountIs('AWS::Backup::BackupVault', 1);
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 12);
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 14);
     template.resourceCountIs('AWS::Logs::MetricFilter', 1);
     template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
     template.resourceCountIs('AWS::SNS::Topic', 1);

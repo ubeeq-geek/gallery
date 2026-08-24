@@ -10,6 +10,9 @@ import { createInProcessExternalSyncQueue, type ExternalSyncQueue } from './exte
 import { createInProcessCommunityDeliveryQueue, type CommunityDeliveryQueue } from './communityDeliveryQueue';
 import { processDiscordDelivery } from './discordCommunity';
 import { runAdminBootstrap } from './adminBootstrap';
+import { InMemoryTumblrRepository } from './tumblrRepository';
+import { createInProcessTumblrPublishQueue } from './tumblrPublishQueue';
+import { processTumblrPublication } from './tumblrPublishing';
 
 // A local seed is useful for offline UI work, but it must not override real
 // Cognito identities when the paired web app has an auth configuration.
@@ -44,6 +47,8 @@ const config = {
 };
 void runAdminBootstrap(config);
 const store = new InMemoryStore();
+const tumblrRepository = new InMemoryTumblrRepository();
+let tumblrPublishQueue = createInProcessTumblrPublishQueue((publicationId) => processTumblrPublication(tumblrRepository, config, publicationId, tumblrPublishQueue));
 
 type LocalStoreSnapshot = {
   version: 1;
@@ -154,7 +159,9 @@ const app = createApp({
   config,
   store,
   externalSyncQueue,
-  communityDeliveryQueue
+  communityDeliveryQueue,
+  tumblrRepository,
+  tumblrPublishQueue
 });
 const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || '127.0.0.1';
