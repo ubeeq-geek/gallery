@@ -11909,3 +11909,22 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     width: 100%;
   }
 }
+
+/* Tumblr connector setup and Work publishing */
+.studio-tumblr-connect-mode,
+.studio-tumblr-publish-panel { display: grid; gap: .8rem; }
+.studio-tumblr-connect-mode { margin: 0; padding: 1rem; border: 1px solid var(--line); border-radius: .6rem; }
+.studio-tumblr-connect-mode > label { display: flex; align-items: flex-start; gap: .65rem; }
+.studio-tumblr-connect-mode small { display: block; margin-top: .2rem; }
+.studio-tumblr-account { display: grid; gap: 1rem; }
+.studio-tumblr-blog { display: grid; gap: .75rem; padding: .9rem; border: 1px solid var(--line); border-radius: .55rem; }
+.studio-tumblr-publish-panel { padding: 1rem; border: 1px solid var(--line); border-radius: .65rem; background: var(--surface-muted); }
+.studio-tumblr-preview { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; padding: .85rem; border-radius: .5rem; background: var(--surface); }
+.studio-tumblr-publications { display: grid; gap: .55rem; padding-top: .35rem; }
+.studio-tumblr-publications > div { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.studio-tumblr-asset-picker { display: grid; gap: .6rem; margin: 0; padding: .85rem; border: 1px solid var(--line); border-radius: .55rem; }
+.studio-tumblr-asset-picker > div { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .45rem; background: var(--surface); border-radius: .4rem; }
+.studio-tumblr-asset-picker > div > label { display: flex; align-items: center; gap: .65rem; min-width: 0; }
+.studio-tumblr-asset-picker img { width: 52px; height: 40px; object-fit: cover; border-radius: .3rem; }
+.studio-tumblr-asset-picker label span { display: grid; min-width: 0; }
+.studio-tumblr-asset-picker label small { overflow: hidden; text-overflow: ellipsis; }
