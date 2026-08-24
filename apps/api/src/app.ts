@@ -22,6 +22,8 @@ import { INSTAGRAM_PILOT_INSIGHT_METRICS, INSTAGRAM_PILOT_MEDIA_CONSTRAINTS, ins
 import { InstagramProviderError } from './instagramProvider';
 import { instagramDisclosureSnapshot, parseAiProvenance, parseAiTrainingPreference, requiresInstagramCarouselDisclosureChoice } from './aiProvenance';
 import { integrationCapabilities } from './integrationCapabilities';
+import { inspectContentCredentials } from './contentCredentials';
+import { integrationActivitySplit } from './integrationActivity';
 import { announcementIdempotencyKey, createAnnouncementPublication, isAnnouncementPreset } from './announcementPublication';
 import { recordRemotePublicationState } from './integrationSync';
 import { issueInstagramOAuthState, verifyInstagramOAuthState } from './externalOAuth';
@@ -5960,6 +5962,27 @@ export const createApp = ({
     })));
   });
 
+  app.get('/studio/integrations/capabilities', requireAuth, async (_req, res) => {
+    const instagram = instagramDeploymentStatus(config);
+    return res.json({
+      items: Object.values(integrationCapabilities).map((capability) => capability.platform === 'instagram'
+        ? {
+            ...capability,
+            publish: {
+              ...capability.publish,
+              image: instagram.pilotCapabilities.imagePublish,
+              carousel: instagram.pilotCapabilities.carouselPublish,
+              video: instagram.pilotCapabilities.reelPublish,
+              story: instagram.pilotCapabilities.storyPublish
+            },
+            import: instagram.pilotCapabilities.mediaRead,
+            analytics: instagram.pilotCapabilities.insightsRead,
+            limits: { ...capability.limits, rollout: { state: instagram.onboardingEnabled ? 'controlled_pilot' : 'configuration_required', note: instagram.state } }
+          }
+        : capability)
+    });
+  });
+
   app.get('/studio/integrations/bluesky/configuration', requireAuth, async (_req, res) => {
     const serviceUrl = config.blueskyOAuthServiceUrl?.replace(/\/$/, '');
     return res.json({
@@ -8531,6 +8554,7 @@ export const createApp = ({
         body: req.body
       });
       const now = new Date().toISOString();
+      const credentialInspection = inspectContentCredentials(req.body, now);
       const asset: CanonicalAsset = {
         assetId,
         tenantId: config.tenantId,
@@ -8546,6 +8570,8 @@ export const createApp = ({
           objectKey: stored.objectKey,
           thumbnailObjectKey: stored.thumbnailObjectKey
         },
+        ...(credentialInspection.provenance ? { aiProvenance: credentialInspection.provenance } : {}),
+        ...(credentialInspection.present ? { metadata: { contentCredentials: true, contentCredentialsEvidence: credentialInspection.evidence || 'c2pa:credential-present' } } : {}),
         createdAt: now,
         updatedAt: now
       };
@@ -9658,8 +9684,9 @@ export const createApp = ({
       .flat()
       .filter((publication) => publication.assetId === asset.assetId);
     const destinations = await Promise.all(publications.map(async (publication) => {
-      const [engagement, comments, favourites, activities] = await Promise.all([
+      const [engagement, engagementHistory, comments, favourites, activities] = await Promise.all([
         store.getExternalEngagementCurrent(publication.externalPublicationId),
+        store.listExternalEngagementSnapshots(publication.externalPublicationId, 100),
         store.listExternalComments(publication.externalPublicationId, 500),
         store.listExternalFavourites(publication.externalPublicationId, 500),
         store.listExternalActivitiesByPublication(publication.externalPublicationId, 500)
@@ -9669,6 +9696,8 @@ export const createApp = ({
       return {
         publication: { ...publicationResponse, externalUsername: account?.externalUsername || '' },
         account: account ? toExternalAccountResponse(account) : undefined,
+        activity: integrationActivitySplit(engagement ? [engagement] : [], engagementHistory, activities),
+        // Kept for existing Studio clients; new consumers should read activity.current.
         engagement,
         comments: comments.map(({ rawPayload: _rawPayload, ...comment }) => comment),
         favourites: favourites.map(({ rawPayload: _rawPayload, ...favourite }) => favourite),
@@ -9723,6 +9752,7 @@ export const createApp = ({
       Promise.all(accounts.map((account) => store.getExternalAccountProfile(account.externalAccountId)))
     ]);
     const publications = publicationLists.flat();
+    const engagementCurrent = (await Promise.all(publications.map((publication) => store.getExternalEngagementCurrent(publication.externalPublicationId)))).filter((value): value is NonNullable<typeof value> => Boolean(value));
     const publicationById = new Map(publications.map((publication) => [publication.externalPublicationId, publication]));
     const allItems = activityLists
       .flat()
@@ -9823,7 +9853,8 @@ export const createApp = ({
         };
       }),
       total: allItems.length,
-      nextCursor: offset + limit < allItems.length ? String(offset + limit) : undefined
+      nextCursor: offset + limit < allItems.length ? String(offset + limit) : undefined,
+      activity: integrationActivitySplit(engagementCurrent, [], allItems)
     });
   });
 

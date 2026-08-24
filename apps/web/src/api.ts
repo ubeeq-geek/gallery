@@ -1230,6 +1230,10 @@ export const api = {
       credentials?: Array<{ externalPlatformCredentialId: string; applicationLabel?: string; clientId: string; redirectUri: string; updatedAt: string }>;
     }>;
   },
+  async studioGetIntegrationCapabilities() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/capabilities`);
+    return handleJson(response) as Promise<{ items: Array<{ platform: string; import: boolean; publish: Record<string, boolean | undefined>; update: boolean; delete: boolean; collections: boolean; comments: boolean; analytics: boolean; scheduling: boolean; limits: Record<string, unknown> }> }>;
+  },
   async studioGetInstagramConfiguration() {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/api/integrations/instagram/configuration`);
     return handleJson(response) as Promise<{
