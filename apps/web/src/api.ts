@@ -1481,7 +1481,7 @@ export const api = {
     });
     return handleJson(response);
   },
-  async studioQueueDiscordBulkAnnouncement(payload: { creatorId: string; workIds: string[]; preset?: AnnouncementPresetId; includePrimaryMedia?: boolean }) {
+  async studioQueueDiscordBulkAnnouncement(payload: { creatorId: string; workIds: string[]; providers?: Array<'discord' | 'bluesky'>; preset?: AnnouncementPresetId; includePrimaryMedia?: boolean }) {
     const response = await fetch(`${API_BASE}/studio/integrations/discord/announcements/bulk`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
@@ -1857,7 +1857,12 @@ export const api = {
     published: boolean;
     hostingMode?: 'linked' | 'hosted';
     visibility?: 'private' | 'unlisted' | 'public';
-    announcement?: { mode?: 'default' | 'per_work' | 'digest' | 'none'; preset?: AnnouncementPresetId; includePrimaryMedia?: boolean };
+    announcement?: {
+      mode?: 'default' | 'per_work' | 'digest' | 'none';
+      providers?: Array<'discord' | 'bluesky'>;
+      preset?: AnnouncementPresetId;
+      includePrimaryMedia?: boolean;
+    };
   }) {
     const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(assetId)}/publications/eversally`, {
       method: 'PUT',

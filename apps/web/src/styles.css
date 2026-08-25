@@ -10732,6 +10732,30 @@ html[data-color-scheme='dark'][data-product-brand='eversally'] .app-shell {
     }
   }
 
+.studio-announcement-provider-picker {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.85rem;
+  }
+
+  .studio-announcement-provider-picker > span {
+    font-weight: 700;
+  }
+
+  .studio-announcement-provider-picker label {
+    align-items: center;
+    display: inline-flex;
+    gap: 0.4rem;
+    margin: 0;
+  }
+
+  .studio-announcement-provider-picker input {
+    block-size: 1rem;
+    inline-size: 1rem;
+    margin: 0;
+  }
+
   .studio-work-metadata-footer {
     display: flex;
     flex-wrap: wrap;

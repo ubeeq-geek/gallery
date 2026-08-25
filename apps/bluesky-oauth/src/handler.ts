@@ -190,6 +190,72 @@ const validInternalSignature = (event: ApiEvent, body: Buffer): boolean => {
   return received.length === expected.length && timingSafeEqual(received, expected);
 };
 
+type BlueskyPost = {
+  text: string;
+  facets?: Array<{
+    index: { byteStart: number; byteEnd: number };
+    features: Array<{ $type: 'app.bsky.richtext.facet#link'; uri: string }>;
+  }>;
+  embed?: {
+    $type: 'app.bsky.embed.external';
+    external: { uri: string; title: string; description?: string };
+  };
+};
+
+const isHttpUrl = (value: unknown): value is string => {
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
+};
+
+/** Accept only the small, safe rich-post subset emitted by Ubeeq/Eversally. */
+const parseBlueskyPost = (value: unknown): BlueskyPost | undefined => {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const text = typeof raw.text === 'string' ? raw.text.trim() : '';
+  if (!text || Array.from(text).length > 300) return undefined;
+  const byteLength = Buffer.byteLength(text, 'utf8');
+  let facets: BlueskyPost['facets'];
+  if (raw.facets !== undefined) {
+    if (!Array.isArray(raw.facets)) return undefined;
+    facets = [];
+    for (const candidate of raw.facets) {
+      if (!candidate || typeof candidate !== 'object') return undefined;
+      const facet = candidate as Record<string, unknown>;
+      const index = facet.index as Record<string, unknown> | undefined;
+      if (!index || !Number.isInteger(index.byteStart) || !Number.isInteger(index.byteEnd)
+        || Number(index.byteStart) < 0 || Number(index.byteEnd) <= Number(index.byteStart) || Number(index.byteEnd) > byteLength
+        || !Array.isArray(facet.features) || !facet.features.length) return undefined;
+    const features: Array<{ $type: 'app.bsky.richtext.facet#link'; uri: string }> = [];
+      for (const featureCandidate of facet.features) {
+        if (!featureCandidate || typeof featureCandidate !== 'object') return undefined;
+        const feature = featureCandidate as Record<string, unknown>;
+        if (feature.$type !== 'app.bsky.richtext.facet#link' || !isHttpUrl(feature.uri)) return undefined;
+        features.push({ $type: 'app.bsky.richtext.facet#link', uri: feature.uri });
+      }
+      facets.push({ index: { byteStart: Number(index.byteStart), byteEnd: Number(index.byteEnd) }, features });
+    }
+  }
+  let embed: BlueskyPost['embed'];
+  if (raw.embed !== undefined) {
+    const rawEmbed = raw.embed as Record<string, unknown> | undefined;
+    const external = rawEmbed?.external as Record<string, unknown> | undefined;
+    const title = typeof external?.title === 'string' ? external.title.trim() : '';
+    const description = typeof external?.description === 'string' ? external.description.trim() : undefined;
+    if (rawEmbed?.$type !== 'app.bsky.embed.external' || !external || !isHttpUrl(external.uri) || !title
+      || Array.from(title).length > 300 || (description !== undefined && Array.from(description).length > 300)) return undefined;
+    embed = {
+      $type: 'app.bsky.embed.external',
+      external: { uri: external.uri, title, ...(description ? { description } : {}) }
+    };
+  }
+  return { text, ...(facets?.length ? { facets } : {}), ...(embed ? { embed } : {}) };
+};
+
 const connectionReturn = (state: string, proof: string): ApiResponse | undefined => {
   if (!studioReturnUrl) return undefined;
   const url = new URL(studioReturnUrl);
@@ -221,13 +287,13 @@ export const handler = async (event: ApiEvent): Promise<ApiResponse> => {
     if (path.endsWith('/oauth/bluesky/publish')) {
       const rawBody = rawBodyFor(event);
       if (!validInternalSignature(event, rawBody)) return json(401, { message: 'Invalid broker request signature.' });
-      const payload = JSON.parse(rawBody.toString('utf8')) as { did?: string; text?: string; idempotencyKey?: string; createdAt?: string };
+      const payload = JSON.parse(rawBody.toString('utf8')) as { did?: string; text?: string; post?: unknown; idempotencyKey?: string; createdAt?: string };
       const did = payload.did?.trim();
-      const text = payload.text?.trim();
+      const post = parseBlueskyPost(payload.post || (payload.text ? { text: payload.text } : undefined));
       const idempotencyKey = payload.idempotencyKey?.trim();
       const createdAt = payload.createdAt?.trim();
-      if (!did?.startsWith('did:') || !text || text.length > 300 || !idempotencyKey || !createdAt || !Number.isFinite(Date.parse(createdAt))) {
-        return json(400, { message: 'A DID, announcement text, idempotency key, and publication timestamp are required.' });
+      if (!did?.startsWith('did:') || !post || !idempotencyKey || !createdAt || !Number.isFinite(Date.parse(createdAt))) {
+        return json(400, { message: 'A valid DID, Bluesky post, idempotency key, and publication timestamp are required.' });
       }
       const session = await client.restore(did as `did:${string}:${string}`);
       const rkey = `ubeeq-${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 40)}`;
@@ -239,7 +305,7 @@ export const handler = async (event: ApiEvent): Promise<ApiResponse> => {
           collection: 'app.bsky.feed.post',
           rkey,
           validate: true,
-          record: { $type: 'app.bsky.feed.post', text, createdAt }
+          record: { $type: 'app.bsky.feed.post', ...post, createdAt }
         })
       });
       const result = await response.json() as { uri?: string; cid?: string; message?: string };
