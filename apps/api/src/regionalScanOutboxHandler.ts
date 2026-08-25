@@ -51,6 +51,7 @@ const required = (name: string): string => {
 const dependencies = (): RegionalScanOutboxDependencies => {
   const region = required('DATA_HOME_REGION') as RegionalScanJob['dataHomeRegion'];
   const tableName = required('SCAN_JOBS_TABLE');
+  const metadataTableName = required('METADATA_TABLE');
   const queueUrl = required('SCAN_QUEUE_URL');
   const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
   const sqs = new SQSClient({ region });
@@ -60,7 +61,9 @@ const dependencies = (): RegionalScanOutboxDependencies => {
       const current = await ddb.send(new GetCommand({ TableName: tableName, Key: { id: record.id }, ConsistentRead: true }));
       if (current.Item?.state === 'SENT') return;
       if (current.Item?.state !== 'PENDING' || current.Item?.job?.id !== record.job.id) throw new Error('Scan dispatch outbox state is invalid');
-      await sqs.send(new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: JSON.stringify(record.job) }));
+      const asset = await ddb.send(new GetCommand({ TableName: metadataTableName, Key: { PK: `ASSET#${record.job.assetId}` }, ConsistentRead: true }));
+      if (!asset.Item?.spaceId || asset.Item.dataHomeRegion !== region) throw new Error('Scan job has no authoritative regional tenant');
+      await sqs.send(new SendMessageCommand({ QueueUrl: queueUrl, MessageBody: JSON.stringify(record.job), MessageGroupId: String(asset.Item.spaceId), MessageDeduplicationId: record.job.id }));
       await ddb.send(new UpdateCommand({ TableName: tableName, Key: { id: record.id }, UpdateExpression: 'SET #state = :sent, sentAt = :now', ConditionExpression: '#state = :pending', ExpressionAttributeNames: { '#state': 'state' }, ExpressionAttributeValues: { ':sent': 'SENT', ':pending': 'PENDING', ':now': new Date().toISOString() } }));
     }
   };

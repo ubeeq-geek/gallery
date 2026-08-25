@@ -1,7 +1,7 @@
 import type { SQSEvent, SQSBatchResponse } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { ChangeMessageVisibilityCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { planRegionalImageIngest, type RegionalImageIngestPlan } from './regionalImageIngest';
 import { scanGroupManifestRecords, type ManagedProduct, type ManagedRegion } from './regionalMedia';
@@ -11,7 +11,7 @@ export interface RegionalImageIngestMessage { product: ManagedProduct; environme
 export interface RegionalImageIngestDependencies {
   authorize(message: RegionalImageIngestMessage): Promise<'AUTHORIZED' | 'CONSUMED' | void>;
   read(bucket: string, key: string): Promise<{ bytes: Uint8Array; mimeType: string }>;
-  persistAndEnqueue(message: RegionalImageIngestMessage, plan: RegionalImageIngestPlan): Promise<void>;
+  persistAndEnqueue(message: RegionalImageIngestMessage, plan: RegionalImageIngestPlan, source: { bytes: Uint8Array; mimeType: string }): Promise<void>;
   markUnavailable(message: RegionalImageIngestMessage, errorCode: string): Promise<void>;
   deferRetry(receiptHandle: string, receiveCount: number): Promise<void>;
 }
@@ -19,7 +19,7 @@ const required = (name: string): string => { const value = process.env[name]?.tr
 
 const dependencies = (): RegionalImageIngestDependencies => {
   const region = required('DATA_HOME_REGION'); const tableName = required('SCAN_JOBS_TABLE'); const metadataTableName = required('METADATA_TABLE');
-  const workQueueUrl = required('IMAGE_INGEST_QUEUE_URL');
+  const workQueueUrl = required('IMAGE_INGEST_QUEUE_URL'); const originalsBucket = required('ORIGINALS_BUCKET'); const privateDerivativesBucket = required('PRIVATE_DERIVATIVES_BUCKET');
   const s3 = new S3Client({ region }); const sqs = new SQSClient({ region }); const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
   const putIdempotently = async (item: Record<string, unknown>): Promise<void> => {
     try { await ddb.send(new PutCommand({ TableName: tableName, Item: item, ConditionExpression: 'attribute_not_exists(id)' })); }
@@ -41,7 +41,12 @@ const dependencies = (): RegionalImageIngestDependencies => {
       return upload.Item.state as 'AUTHORIZED' | 'CONSUMED';
     },
     read: async (bucket, key) => { const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key })); if (!response.Body || !response.ContentType) throw new Error('Quarantined image body or MIME type is unavailable'); return { bytes: await response.Body.transformToByteArray(), mimeType: response.ContentType }; },
-    persistAndEnqueue: async (message, plan) => {
+    persistAndEnqueue: async (message, plan, source) => {
+      const privateDerivativeObjectKey = `assets/${message.assetId}/${message.mediaVersionId}/image`;
+      await Promise.all([
+        s3.send(new PutObjectCommand({ Bucket: originalsBucket, Key: `assets/${message.assetId}/${message.mediaVersionId}/source`, Body: source.bytes, ContentType: source.mimeType, Metadata: { sha256: plan.mediaVersion.sha256 } })),
+        s3.send(new PutObjectCommand({ Bucket: privateDerivativesBucket, Key: privateDerivativeObjectKey, Body: source.bytes, ContentType: source.mimeType, Metadata: { sha256: plan.mediaVersion.sha256 } }))
+      ]);
       await putIdempotently({ recordType: 'MEDIA_VERSION', product: message.product, environment: message.environment, dataHomeRegion: message.dataHomeRegion, ...plan.mediaVersion });
       for (const manifest of scanGroupManifestRecords(plan.scanJobs)) await putIdempotently(manifest);
       for (const job of plan.scanJobs) {
@@ -57,10 +62,10 @@ const dependencies = (): RegionalImageIngestDependencies => {
         }
       }
       await ddb.send(new UpdateCommand({ TableName: metadataTableName, Key: { PK: `ASSET#${message.assetId}` },
-        UpdateExpression: 'SET currentMediaVersionId = :mediaVersionId, currentScanGroupId = :scanGroupId, scanState = :queued, activeScanProfile = :profile, quarantineRegion = :region',
+        UpdateExpression: 'SET currentMediaVersionId = :mediaVersionId, currentScanGroupId = :scanGroupId, scanState = :queued, activeScanProfile = :profile, quarantineRegion = :region, privateDerivativeObjectKey = :derivative, mediaContentHash = :hash, mediaContentType = :contentType',
         ConditionExpression: '#product = :product AND #environment = :environment AND dataHomeRegion = :region AND canonicalRegion = :region AND (attribute_not_exists(currentMediaVersionId) OR currentMediaVersionId = :mediaVersionId)',
         ExpressionAttributeNames: { '#product': 'product', '#environment': 'environment' },
-        ExpressionAttributeValues: { ':product': message.product, ':environment': message.environment, ':region': message.dataHomeRegion, ':mediaVersionId': message.mediaVersionId, ':scanGroupId': plan.scanJobs[0].scanGroupId, ':queued': 'QUEUED', ':profile': plan.scanJobs[0].scanProfile } }));
+        ExpressionAttributeValues: { ':product': message.product, ':environment': message.environment, ':region': message.dataHomeRegion, ':mediaVersionId': message.mediaVersionId, ':scanGroupId': plan.scanJobs[0].scanGroupId, ':queued': 'QUEUED', ':profile': plan.scanJobs[0].scanProfile, ':derivative': privateDerivativeObjectKey, ':hash': plan.mediaVersion.sha256, ':contentType': source.mimeType } }));
       await ddb.send(new UpdateCommand({ TableName: metadataTableName, Key: { PK: `UPLOAD#${message.mediaVersionId}` }, UpdateExpression: 'SET #state = :consumed, consumedAt = :now', ConditionExpression: '#state = :authorized AND assetId = :assetId', ExpressionAttributeNames: { '#state': 'state' }, ExpressionAttributeValues: { ':consumed': 'CONSUMED', ':authorized': 'AUTHORIZED', ':assetId': message.assetId, ':now': new Date().toISOString() } }));
     },
     markUnavailable: async (message, errorCode) => { await putIdempotently({ id: `ingest-${message.mediaVersionId}`, recordType: 'IMAGE_INGEST_UNAVAILABLE', product: message.product, environment: message.environment, dataHomeRegion: message.dataHomeRegion, assetId: message.assetId, mediaVersionId: message.mediaVersionId, state: 'SCAN_UNAVAILABLE', errorCode, createdAt: new Date().toISOString() }); },
@@ -87,7 +92,7 @@ export const createRegionalImageIngestHandler = (deps: RegionalImageIngestDepend
       if (await deps.authorize(message) === 'CONSUMED') continue;
       const source = await deps.read(message.quarantineBucket, message.quarantineObjectKey);
       const plan = await planRegionalImageIngest({ product, environment, region, assetId: message.assetId, mediaVersionId: message.mediaVersionId, quarantineBucket, quarantineObjectKey: message.quarantineObjectKey, bytes: source.bytes, mimeType: message.mimeType || source.mimeType, specialistHashProvider: process.env.SPECIALIST_HASH_PROVIDER?.trim() });
-      await deps.persistAndEnqueue(message, plan);
+      await deps.persistAndEnqueue(message, plan, source);
     } catch (error) {
       if (message && cellValidated && Number(record.attributes?.ApproximateReceiveCount || 1) >= 5) await deps.markUnavailable(message, error instanceof Error ? error.name : 'Error');
       else { if (cellValidated) await deps.deferRetry(record.receiptHandle, Number(record.attributes?.ApproximateReceiveCount || 1)); failures.push({ itemIdentifier: record.messageId }); }

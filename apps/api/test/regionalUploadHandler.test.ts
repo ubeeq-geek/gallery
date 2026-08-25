@@ -33,9 +33,11 @@ describe('regional upload HTTP handler', () => {
     await repository.authorize({ id: 'upload-version', recordType: 'REGIONAL_UPLOAD_AUTHORIZATION', product: 'eversally', environment: 'production', dataHomeRegion: 'us-east-2', creatorId: 'creator', spaceId: 'space', assetId: 'asset', mediaVersionId: 'version', mediaType: 'image', contentType: 'image/jpeg', contentLength: 1024, quarantineBucket: 'quarantine', quarantineObjectKey: 'images/asset/version/source', state: 'AUTHORIZED', createdAt: '2026-08-25T00:00:00Z', expiresAt: '2026-08-25T00:15:00Z', expiresAtEpochSeconds: 1787616900 });
     const command = send.mock.calls[0][0] as TransactWriteCommand;
     expect(command).toBeInstanceOf(TransactWriteCommand);
-    expect(command.input.TransactItems).toHaveLength(4);
+    expect(command.input.TransactItems).toHaveLength(5);
     expect(command.input.TransactItems?.[0].ConditionCheck?.ConditionExpression).toContain('dataHomeMigrationState = :none');
     expect(command.input.TransactItems?.[1].ConditionCheck?.ConditionExpression).toContain('canonicalRegion = :region');
-    expect(command.input.TransactItems?.[2].Put?.ConditionExpression).toBe('attribute_not_exists(PK)');
+    expect(command.input.TransactItems?.[2].Update?.ConditionExpression).toContain('reservedMediaBytes + :bytes <= :byteLimit');
+    expect(command.input.TransactItems?.[3].Put?.ConditionExpression).toBe('attribute_not_exists(PK)');
+    expect(command.input.TransactItems?.[4].Put?.Item?.recordType).toBe('MEDIA_PROCESSING_LEDGER');
   });
 });

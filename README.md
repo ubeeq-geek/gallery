@@ -1,5 +1,8 @@
 # Ubeeq / Eversally Studio Platform
 
+For the current assessment of regional media-cell capabilities, missing control-plane and workflow wiring, and the recommended delivery sequence, see [Multi-region functionality gap analysis](docs/multi-region-gap-analysis.md).
+Regional residency boundaries, recovery objectives, alerting, redrive, deployment waves, and quota procedures are documented in [Regional operations](docs/regional-operations.md).
+
 AWS-first creator platform with:
 - Multi-creator and multi-grouping support.
 - Free preview media and premium media behind per-grouping passwords.
@@ -627,3 +630,4 @@ When running locally without Cognito, providing both values makes the local
 simulated identity an administrator so the full admin UI can be exercised. The
 local password is not persisted or used for authentication in that mode. If
 the values are omitted, local development keeps its normal non-admin identity.
+Regional data lifecycle, privacy APIs, stable endpoint semantics, and deployed two-cell qualification are documented in [the regional lifecycle and endpoint contract](docs/regional-lifecycle-and-endpoints.md).

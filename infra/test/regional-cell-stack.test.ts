@@ -16,20 +16,24 @@ describe('regional cell', () => {
     value.resourceCountIs('AWS::WAFv2::WebACL', 1);
     value.resourceCountIs('AWS::SecretsManager::Secret', 1);
     value.resourceCountIs('AWS::KMS::Key', 2);
-    value.resourceCountIs('AWS::Events::Rule', 4);
-    value.resourceCountIs('AWS::CloudWatch::Alarm', 9);
-    // Seven cell workers plus CDK's bucket auto-delete provider in test stacks.
-    value.resourceCountIs('AWS::Lambda::Function', 9);
+    value.resourceCountIs('AWS::Events::Rule', 6);
+    value.resourceCountIs('AWS::CloudWatch::Alarm', 18);
+    // Cell workers (including privacy) plus CDK's bucket auto-delete provider.
+    value.resourceCountIs('AWS::Lambda::Function', 17);
+    value.resourceCountIs('AWS::Backup::BackupVault', 1);
+    value.resourceCountIs('AWS::Backup::BackupPlan', 1);
+    value.resourceCountIs('AWS::SNS::Topic', 1);
     const rendered = JSON.stringify(value.toJSON());
     expect(rendered).not.toContain('ReplicationConfiguration');
     expect(rendered).not.toContain('AWS::DynamoDB::GlobalTable');
     expect(rendered).not.toContain('AWS::EC2::NatGateway');
+    value.hasResourceProperties('AWS::S3::Bucket', Match.objectLike({ LifecycleConfiguration: Match.objectLike({ Rules: Match.arrayWith([Match.objectLike({ Id: 'BoundedRetention', Status: 'Enabled' })]) }) }));
   });
 
   it('only exposes the approved derivative bucket through CloudFront', () => {
     const value = template();
     value.hasResourceProperties('AWS::CloudFront::Distribution', Match.objectLike({ DistributionConfig: Match.objectLike({ Comment: 'eversally-test-eu-central-1-public' }) }));
-    value.hasResourceProperties('AWS::SQS::Queue', Match.objectLike({ QueueName: 'eversally-test-eu-central-1-scan' }));
+    value.hasResourceProperties('AWS::SQS::Queue', Match.objectLike({ QueueName: 'eversally-test-eu-central-1-scan.fifo', FifoQueue: true }));
     value.hasResourceProperties('AWS::SQS::Queue', Match.objectLike({ QueueName: 'eversally-test-eu-central-1-public-delivery' }));
     value.hasResourceProperties('AWS::Lambda::Function', Match.objectLike({
       Environment: { Variables: Match.objectLike({ PRODUCT: 'eversally', DATA_HOME_REGION: 'eu-central-1', PUBLIC_DISTRIBUTION_ID: Match.anyValue() }) }
@@ -48,9 +52,14 @@ describe('regional cell', () => {
       ReservedConcurrentExecutions: 20
     }));
     value.hasResourceProperties('AWS::ApiGateway::Method', Match.objectLike({ HttpMethod: 'POST', AuthorizationType: 'COGNITO_USER_POOLS' }));
-    value.resourceCountIs('AWS::Cognito::UserPoolClient', 1);
+    value.hasResourceProperties('AWS::ApiGateway::Stage', Match.objectLike({ AccessLogSetting: Match.anyValue(), MethodSettings: Match.arrayWith([Match.objectLike({ MetricsEnabled: true, ThrottlingRateLimit: 100, ThrottlingBurstLimit: 200 })]) }));
+    value.hasResourceProperties('AWS::Lambda::Function', Match.objectLike({ Environment: { Variables: Match.objectLike({ EXPORTS_BUCKET: Match.anyValue(), EVIDENCE_BUCKET: Match.anyValue(), DATA_HOME_REGION: 'eu-central-1' }) } }));
+    value.resourceCountIs('AWS::Cognito::UserPoolClient', 0);
     value.hasResourceProperties('AWS::DynamoDB::Table', Match.objectLike({ TableName: 'eversally-test-eu-central-1-scan-jobs', StreamSpecification: { StreamViewType: 'NEW_IMAGE' } }));
     value.hasResourceProperties('AWS::Lambda::Function', Match.objectLike({ Environment: { Variables: Match.objectLike({ SCAN_JOBS_TABLE: Match.anyValue(), SCAN_QUEUE_URL: Match.anyValue(), PRODUCT: 'eversally', DATA_HOME_REGION: 'eu-central-1' }) } }));
+    value.hasResourceProperties('AWS::IAM::ManagedPolicy', Match.objectLike({ PolicyDocument: Match.objectLike({ Statement: Match.arrayWith([Match.objectLike({ Effect: 'Deny', Condition: { StringNotEquals: { 'aws:RequestedRegion': 'eu-central-1' } } })]) }) }));
+    expect(Object.values(value.findResources('AWS::IAM::Role')).every(({ Properties }: any) => Boolean(Properties.PermissionsBoundary))).toBe(true);
+    expect(Object.values(value.findResources('AWS::CloudWatch::Alarm')).every(({ Properties }: any) => Properties.AlarmActions?.length === 1)).toBe(true);
   });
 
   it('rejects a stack deployed outside its data home', () => {

@@ -39,15 +39,18 @@ export const createRegionalUploadHandler = (deps: RegionalUploadHandlerDependenc
   }
 };
 
-export const dynamoRegionalUploadRepository = (input: { client: DynamoDBDocumentClient; metadataTableName: string; auditTableName: string }): RegionalUploadRepository => ({
+export const dynamoRegionalUploadRepository = (input: { client: DynamoDBDocumentClient; metadataTableName: string; auditTableName: string; monthlyMediaBytesLimit?: number; monthlyUploadLimit?: number }): RegionalUploadRepository => ({
   authorize: async (authorization) => {
     const uploadKey = `UPLOAD#${authorization.mediaVersionId}`;
+    const period = authorization.createdAt.slice(0, 7); const quotaKey = `QUOTA#${authorization.spaceId}#${period}`;
+    const monthlyMediaBytesLimit = input.monthlyMediaBytesLimit || 100 * 1024 * 1024 * 1024; const monthlyUploadLimit = input.monthlyUploadLimit || 10_000;
     try {
       await input.client.send(new TransactWriteCommand({ TransactItems: [
         { ConditionCheck: { TableName: input.metadataTableName, Key: { PK: `SPACE#${authorization.spaceId}` }, ConditionExpression: '#product = :product AND #environment = :environment AND dataHomeRegion = :region AND creatorId = :creatorId AND #status = :active AND dataHomeMigrationState = :none', ExpressionAttributeNames: { '#product': 'product', '#environment': 'environment', '#status': 'status' }, ExpressionAttributeValues: { ':product': authorization.product, ':environment': authorization.environment, ':region': authorization.dataHomeRegion, ':creatorId': authorization.creatorId, ':active': 'ACTIVE', ':none': 'NONE' } } },
         { ConditionCheck: { TableName: input.metadataTableName, Key: { PK: `ASSET#${authorization.assetId}` }, ConditionExpression: '#product = :product AND #environment = :environment AND dataHomeRegion = :region AND canonicalRegion = :region AND spaceId = :spaceId AND (attribute_not_exists(currentMediaVersionId) OR currentMediaVersionId = :mediaVersionId)', ExpressionAttributeNames: { '#product': 'product', '#environment': 'environment' }, ExpressionAttributeValues: { ':product': authorization.product, ':environment': authorization.environment, ':region': authorization.dataHomeRegion, ':spaceId': authorization.spaceId, ':mediaVersionId': authorization.mediaVersionId } } },
+        { Update: { TableName: input.metadataTableName, Key: { PK: quotaKey }, UpdateExpression: 'SET recordType = :recordType, product = :product, #environment = :environment, dataHomeRegion = :region, creatorId = :creatorId, spaceId = :spaceId, period = :period, expiresAtEpochSeconds = :expires ADD reservedMediaBytes :bytes, uploadCount :one', ConditionExpression: '(attribute_not_exists(reservedMediaBytes) OR reservedMediaBytes + :bytes <= :byteLimit) AND (attribute_not_exists(uploadCount) OR uploadCount < :uploadLimit)', ExpressionAttributeNames: { '#environment': 'environment' }, ExpressionAttributeValues: { ':recordType': 'REGIONAL_USAGE_QUOTA', ':product': authorization.product, ':environment': authorization.environment, ':region': authorization.dataHomeRegion, ':creatorId': authorization.creatorId, ':spaceId': authorization.spaceId, ':period': period, ':expires': authorization.expiresAtEpochSeconds + 370 * 24 * 3600, ':bytes': authorization.contentLength, ':one': 1, ':byteLimit': monthlyMediaBytesLimit, ':uploadLimit': monthlyUploadLimit } } },
         { Put: { TableName: input.metadataTableName, Item: { ...authorization, PK: uploadKey }, ConditionExpression: 'attribute_not_exists(PK)' } },
-        { Put: { TableName: input.auditTableName, Item: { PK: regionalUploadAuditId(), recordType: 'REGIONAL_UPLOAD_AUDIT', product: authorization.product, environment: authorization.environment, dataHomeRegion: authorization.dataHomeRegion, creatorId: authorization.creatorId, spaceId: authorization.spaceId, assetId: authorization.assetId, mediaVersionId: authorization.mediaVersionId, action: 'regional_upload.authorized', createdAt: authorization.createdAt } } }
+        { Put: { TableName: input.auditTableName, Item: { PK: regionalUploadAuditId(), recordType: 'MEDIA_PROCESSING_LEDGER', product: authorization.product, environment: authorization.environment, dataHomeRegion: authorization.dataHomeRegion, creatorId: authorization.creatorId, spaceId: authorization.spaceId, assetId: authorization.assetId, mediaVersionId: authorization.mediaVersionId, period, mediaType: authorization.mediaType, reservedBytes: authorization.contentLength, sourceImageCount: authorization.mediaType === 'image' ? 1 : 0, action: 'regional_upload.authorized', createdAt: authorization.createdAt } } }
       ] }));
       return authorization;
     } catch (error) {
@@ -67,7 +70,7 @@ const dependencies = (): RegionalUploadHandlerDependencies => {
   const quarantineBucket = required('QUARANTINE_BUCKET');
   const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
   const s3 = new S3Client({ region });
-  const uploads = dynamoRegionalUploadRepository({ client: ddb, metadataTableName, auditTableName });
+  const uploads = dynamoRegionalUploadRepository({ client: ddb, metadataTableName, auditTableName, monthlyMediaBytesLimit: Number(process.env.MONTHLY_MEDIA_BYTES_LIMIT || 0) || undefined, monthlyUploadLimit: Number(process.env.MONTHLY_UPLOAD_LIMIT || 0) || undefined });
   return { authorize: (request) => authorizeRegionalUpload(request, { product: required('PRODUCT') as ManagedProduct, environment: required('ENVIRONMENT'), dataHomeRegion: region, quarantineBucket }, uploads, { sign: async (upload) => getSignedUrl(s3, new PutObjectCommand({ Bucket: upload.bucket, Key: upload.objectKey, ContentType: upload.contentType, ContentLength: upload.contentLength, Metadata: { 'upload-authorization': `upload-${request.mediaVersionId}` } }), { expiresIn: upload.expiresInSeconds }) }) };
 };
 
