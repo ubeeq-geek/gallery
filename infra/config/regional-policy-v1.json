@@ -1,0 +1,5 @@
+{
+  "version": "regional-policy-v1",
+  "highRiskModerationLabels": [],
+  "ageSensitiveUpperBound": 18
+}

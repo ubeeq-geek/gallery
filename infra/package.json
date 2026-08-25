@@ -9,6 +9,7 @@
     "cdk": "npx cdk",
     "deploy": "npx cdk deploy",
     "synth": "npx cdk synth",
+    "synth:regional-matrix": "DEPLOY_TARGET=regional-matrix npx cdk synth",
     "test": "jest --config jest.config.cjs --runInBand",
     "lint": "echo \"no lint\""
   },
