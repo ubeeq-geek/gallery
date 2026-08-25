@@ -1,3 +1,5 @@
+import { requireRegionalDelivery, type RegionalDeliveryContext } from './regionalDelivery';
+
 export type IntegrationDeliveryErrorCode =
   | 'authentication_required'
   | 'permission_denied'
@@ -23,6 +25,10 @@ export interface IntegrationDeliveryJob {
   createdAt: string;
   updatedAt: string;
 }
+
+/** Must be called before bytes are submitted to any destination provider. */
+export const authorizeIntegrationDelivery = (context: Omit<RegionalDeliveryContext, 'purpose' | 'publicDeliveryState'>): void =>
+  requireRegionalDelivery({ ...context, purpose: 'DESTINATION_INTEGRATION' });
 
 export const shouldRetryIntegrationDelivery = (
   operation: IntegrationDeliveryJob['operation'],

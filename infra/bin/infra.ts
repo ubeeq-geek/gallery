@@ -2,6 +2,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { UbeeqStack } from '../lib/ubeeq-stack';
 import { BlueskyOAuthStack, type PublicBrand, PublicLandingStack, publicLaunchStackName } from '../lib/public-launch-stack';
+import { LAUNCH_REGIONS, RegionalCellStack, type ManagedProduct } from '../lib/regional-cell-stack';
 
 const app = new cdk.App();
 const environment = {
@@ -12,7 +13,15 @@ const environment = {
 };
 const deployTarget = app.node.tryGetContext('deployTarget') || process.env.DEPLOY_TARGET || 'full';
 
-if (deployTarget === 'public') {
+if (deployTarget === 'regional-cell') {
+  const product = process.env.PRODUCT as ManagedProduct | undefined;
+  const cellEnvironment = process.env.ENVIRONMENT?.trim();
+  const dataHomeRegion = process.env.DATA_HOME_REGION as typeof LAUNCH_REGIONS[number] | undefined;
+  if (!product || !['eversally', 'nightframe'].includes(product) || !cellEnvironment || !dataHomeRegion || !LAUNCH_REGIONS.includes(dataHomeRegion)) {
+    throw new Error('Regional cells require PRODUCT=eversally|nightframe, ENVIRONMENT, and an approved DATA_HOME_REGION');
+  }
+  new RegionalCellStack(app, `${product}-${cellEnvironment}-${dataHomeRegion}`, { product, environment: cellEnvironment, dataHomeRegion, ffmpegLayerArn: process.env.FFMPEG_LAYER_ARN?.trim(), regionalPolicyProfileJson: process.env.REGIONAL_POLICY_PROFILE_JSON?.trim(), env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: dataHomeRegion } });
+} else if (deployTarget === 'public') {
   const brand: PublicBrand = process.env.PRODUCT_BRAND === 'ubeeq' ? 'ubeeq' : 'eversally';
   const rootDomain = process.env.ROOT_DOMAIN?.trim().toLowerCase();
   const apiDomain = process.env.API_DOMAIN?.trim().toLowerCase();
