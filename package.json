@@ -15,6 +15,7 @@
     "build": "npm run -ws build",
     "test": "npm run -ws test",
     "lint": "npm run -ws lint",
+    "validate:regional-cells": "node scripts/validate-regional-cells.mjs",
     "dev:api": "npm --workspace @gallery/api run dev:eversally",
     "dev:api:eversally": "npm --workspace @gallery/api run dev:eversally",
     "dev:api:oss": "npm --workspace @gallery/api run dev:oss",
@@ -28,7 +29,9 @@
     "dev": "npm run dev:eversally",
     "dev:eversally": "concurrently --names api:eversally,web:eversally \"npm run dev:api:eversally\" \"npm run dev:web:eversally\"",
     "dev:ubeeq": "concurrently --names api:ubeeq,web:ubeeq \"npm run dev:api:oss\" \"npm run dev:web:oss\"",
-    "dev:all": "concurrently --names eversally,ubeeq \"npm run dev:eversally\" \"npm run dev:ubeeq\""
+    "dev:all": "concurrently --names eversally,ubeeq \"npm run dev:eversally\" \"npm run dev:ubeeq\"",
+    "check:regional-drift": "node scripts/check-regional-drift.mjs",
+    "qualify:two-cell": "node scripts/qualify-two-cell.mjs"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

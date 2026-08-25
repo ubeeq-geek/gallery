@@ -1,7 +1,7 @@
 import type { SQSEvent, SQSBatchResponse } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, TransactWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { ChangeMessageVisibilityCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { planRegionalImageIngest, type RegionalImageIngestPlan } from './regionalImageIngest';
 import { scanGroupManifestRecords, type ManagedProduct, type ManagedRegion } from './regionalMedia';
@@ -14,7 +14,7 @@ export interface RegionalImageIngestDependencies {
   read(bucket: string, key: string): Promise<{ bytes: Uint8Array; mimeType: string }>;
   reserve?(message: RegionalImageIngestMessage, plan: RegionalImageIngestPlan): Promise<void>;
   release?(message: RegionalImageIngestMessage, scanGroupId: string, reason: string): Promise<void>;
-  persistAndEnqueue(message: RegionalImageIngestMessage, plan: RegionalImageIngestPlan): Promise<void>;
+  persistAndEnqueue(message: RegionalImageIngestMessage, plan: RegionalImageIngestPlan, source: { bytes: Uint8Array; mimeType: string }): Promise<void>;
   markUnavailable(message: RegionalImageIngestMessage, errorCode: string): Promise<void>;
   deferRetry(receiptHandle: string, receiveCount: number): Promise<void>;
 }
@@ -22,7 +22,7 @@ const required = (name: string): string => { const value = process.env[name]?.tr
 
 const dependencies = (): RegionalImageIngestDependencies => {
   const region = required('DATA_HOME_REGION'); const tableName = required('SCAN_JOBS_TABLE'); const metadataTableName = required('METADATA_TABLE'); const billingTableName = required('BILLING_LEDGER_TABLE');
-  const workQueueUrl = required('IMAGE_INGEST_QUEUE_URL');
+  const workQueueUrl = required('IMAGE_INGEST_QUEUE_URL'); const originalsBucket = required('ORIGINALS_BUCKET'); const privateDerivativesBucket = required('PRIVATE_DERIVATIVES_BUCKET');
   const s3 = new S3Client({ region }); const sqs = new SQSClient({ region }); const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region })); const billing = dynamoRegionalBillingRepository({ client: ddb, tableName: billingTableName });
   const putIdempotently = async (item: Record<string, unknown>): Promise<void> => {
     try { await ddb.send(new PutCommand({ TableName: tableName, Item: item, ConditionExpression: 'attribute_not_exists(id)' })); }
@@ -50,7 +50,12 @@ const dependencies = (): RegionalImageIngestDependencies => {
       await billing.reserve({ product: message.product, environment: message.environment, dataHomeRegion: message.dataHomeRegion, accountId: upload.Item.creatorId, creatorId: upload.Item.creatorId, spaceId: upload.Item.spaceId, assetId: message.assetId, mediaVersionId: message.mediaVersionId, scanGroupId: plan.scanJobs[0].scanGroupId, media: plan.mediaVersion });
     },
     release: async (message, scanGroupId, reason) => billing.release({ reservationId: processingReservationKey(message.mediaVersionId, scanGroupId), reason }),
-    persistAndEnqueue: async (message, plan) => {
+    persistAndEnqueue: async (message, plan, source) => {
+      const privateDerivativeObjectKey = `assets/${message.assetId}/${message.mediaVersionId}/image`;
+      await Promise.all([
+        s3.send(new PutObjectCommand({ Bucket: originalsBucket, Key: `assets/${message.assetId}/${message.mediaVersionId}/source`, Body: source.bytes, ContentType: source.mimeType, Metadata: { sha256: plan.mediaVersion.sha256 } })),
+        s3.send(new PutObjectCommand({ Bucket: privateDerivativesBucket, Key: privateDerivativeObjectKey, Body: source.bytes, ContentType: source.mimeType, Metadata: { sha256: plan.mediaVersion.sha256 } }))
+      ]);
       await putIdempotently({ recordType: 'MEDIA_VERSION', product: message.product, environment: message.environment, dataHomeRegion: message.dataHomeRegion, ...plan.mediaVersion });
       for (const manifest of scanGroupManifestRecords(plan.scanJobs)) await putIdempotently(manifest);
       for (const job of plan.scanJobs) {
@@ -66,10 +71,10 @@ const dependencies = (): RegionalImageIngestDependencies => {
         }
       }
       await ddb.send(new UpdateCommand({ TableName: metadataTableName, Key: { PK: `ASSET#${message.assetId}` },
-        UpdateExpression: 'SET currentMediaVersionId = :mediaVersionId, currentScanGroupId = :scanGroupId, scanState = :queued, activeScanProfile = :profile, quarantineRegion = :region',
+        UpdateExpression: 'SET currentMediaVersionId = :mediaVersionId, currentScanGroupId = :scanGroupId, scanState = :queued, activeScanProfile = :profile, quarantineRegion = :region, privateDerivativeObjectKey = :derivative, mediaContentHash = :hash, mediaContentType = :contentType',
         ConditionExpression: '#product = :product AND #environment = :environment AND dataHomeRegion = :region AND canonicalRegion = :region AND (attribute_not_exists(currentMediaVersionId) OR currentMediaVersionId = :mediaVersionId)',
         ExpressionAttributeNames: { '#product': 'product', '#environment': 'environment' },
-        ExpressionAttributeValues: { ':product': message.product, ':environment': message.environment, ':region': message.dataHomeRegion, ':mediaVersionId': message.mediaVersionId, ':scanGroupId': plan.scanJobs[0].scanGroupId, ':queued': 'QUEUED', ':profile': plan.scanJobs[0].scanProfile } }));
+        ExpressionAttributeValues: { ':product': message.product, ':environment': message.environment, ':region': message.dataHomeRegion, ':mediaVersionId': message.mediaVersionId, ':scanGroupId': plan.scanJobs[0].scanGroupId, ':queued': 'QUEUED', ':profile': plan.scanJobs[0].scanProfile, ':derivative': privateDerivativeObjectKey, ':hash': plan.mediaVersion.sha256, ':contentType': source.mimeType } }));
       await ddb.send(new UpdateCommand({ TableName: metadataTableName, Key: { PK: `UPLOAD#${message.mediaVersionId}` }, UpdateExpression: 'SET #state = :consumed, consumedAt = :now', ConditionExpression: '#state = :authorized AND assetId = :assetId', ExpressionAttributeNames: { '#state': 'state' }, ExpressionAttributeValues: { ':consumed': 'CONSUMED', ':authorized': 'AUTHORIZED', ':assetId': message.assetId, ':now': new Date().toISOString() } }));
     },
     markUnavailable: async (message, errorCode) => { await putIdempotently({ id: `ingest-${message.mediaVersionId}`, recordType: 'IMAGE_INGEST_UNAVAILABLE', product: message.product, environment: message.environment, dataHomeRegion: message.dataHomeRegion, assetId: message.assetId, mediaVersionId: message.mediaVersionId, state: 'SCAN_UNAVAILABLE', errorCode, createdAt: new Date().toISOString() }); },
@@ -98,7 +103,7 @@ export const createRegionalImageIngestHandler = (deps: RegionalImageIngestDepend
       const plan = await planRegionalImageIngest({ product, environment, region, assetId: message.assetId, mediaVersionId: message.mediaVersionId, quarantineBucket, quarantineObjectKey: message.quarantineObjectKey, bytes: source.bytes, mimeType: message.mimeType || source.mimeType, specialistHashProvider: process.env.SPECIALIST_HASH_PROVIDER?.trim() });
       await deps.reserve?.(message, plan);
       if (deps.reserve) reservedScanGroupId = plan.scanJobs[0].scanGroupId;
-      await deps.persistAndEnqueue(message, plan);
+      await deps.persistAndEnqueue(message, plan, source);
     } catch (error) {
       if (message && cellValidated && Number(record.attributes?.ApproximateReceiveCount || 1) >= 5) { const reason = error instanceof Error ? error.name : 'Error'; if (reservedScanGroupId) await deps.release?.(message, reservedScanGroupId, reason); await deps.markUnavailable(message, reason); }
       else { if (cellValidated) await deps.deferRetry(record.receiptHandle, Number(record.attributes?.ApproximateReceiveCount || 1)); failures.push({ itemIdentifier: record.messageId }); }

@@ -71,6 +71,7 @@ export const dynamoScanCompletionRepository = (input: { client: DynamoDBDocument
       transactions.push({ Put: { TableName: input.auditTableName, Item: { ...revocation, PK: `REVOCATION#${revocation.id}` }, ConditionExpression: 'attribute_not_exists(PK)' } });
     }
     if (decision.state === 'HELD' || decision.state === 'HUMAN_REVIEW_REQUIRED') transactions.push({ Put: { TableName: input.auditTableName, Item: { PK: `REVIEW#${randomUUID()}`, recordType: 'REGIONAL_REVIEW_CASE', product: job.product, environment: job.environment, dataHomeRegion: job.dataHomeRegion, assetId: job.assetId, scanGroupId: job.scanGroupId, restrictedSafety: decision.state === 'HELD', reasonCode: decision.reasonCode, createdAt: timestamp } } });
+    if (decision.state === 'CLEARED_FOR_POLICY_REVIEW') transactions.push({ Put: { TableName: input.auditTableName, Item: { PK: `PUBLICATION#${job.scanGroupId}`, recordType: 'PUBLICATION_OUTBOX', state: 'PENDING', product: job.product, environment: job.environment, dataHomeRegion: job.dataHomeRegion, assetId: job.assetId, mediaVersionId: job.mediaVersionId.split('@')[0], scanGroupId: job.scanGroupId, createdAt: timestamp }, ConditionExpression: 'attribute_not_exists(PK)' } });
     try {
       await input.client.send(new TransactWriteCommand({ TransactItems: transactions }));
     } catch (error) {

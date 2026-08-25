@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "configurationVersion": "regional-2026-08-25-v1",
+  "globalRoutingRegion": "us-east-1",
+  "cells": [
+    { "product": "eversally", "region": "us-east-2", "wave": 1 },
+    { "product": "nightframe", "region": "us-east-2", "wave": 1 },
+    { "product": "eversally", "region": "eu-central-1", "wave": 2 },
+    { "product": "nightframe", "region": "eu-central-1", "wave": 2 },
+    { "product": "eversally", "region": "ap-south-1", "wave": 3 },
+    { "product": "nightframe", "region": "ap-south-1", "wave": 3 },
+    { "product": "eversally", "region": "ap-southeast-1", "wave": 4 },
+    { "product": "nightframe", "region": "ap-southeast-1", "wave": 4 },
+    { "product": "eversally", "region": "ap-southeast-2", "wave": 5 },
+    { "product": "nightframe", "region": "ap-southeast-2", "wave": 5 }
+  ],
+  "requiredRegionalCapabilities": [
+    "lambda-nodejs22", "lambda-ffmpeg-layer", "rekognition-detect-moderation-labels",
+    "rekognition-detect-faces", "dynamodb-pitr", "s3-aws-backup"
+  ],
+  "minimumQuotas": { "lambdaConcurrentExecutions": 100, "rekognitionTransactionsPerSecond": 20 }
+}
