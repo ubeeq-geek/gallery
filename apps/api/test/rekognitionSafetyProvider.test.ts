@@ -23,11 +23,11 @@ describe('Rekognition image safety provider', () => {
     expect(analysis.safetyReviewReason).toContain('not a CSAM determination');
   });
 
-  it('does not call face analysis when no age-sensitive trigger exists', async () => {
-    const detectFaces = jest.fn();
+  it('always calls face analysis, even when no age-sensitive trigger exists', async () => {
+    const detectFaces = jest.fn().mockResolvedValue({ faces: [] });
     const client: RekognitionClientAdapter = { detectModerationLabels: jest.fn().mockResolvedValue({ labels: [{ Name: 'Alcohol', Confidence: 88 }] }), detectFaces };
     const analysis = await new RekognitionImageSafetyProvider(client).analyze(Buffer.from('image'));
-    expect(detectFaces).not.toHaveBeenCalled();
+    expect(detectFaces).toHaveBeenCalledTimes(1);
     expect(analysis).toMatchObject({ mediaState: 'CLEARED_FOR_POLICY_REVIEW', maturityLabels: [], ageSensitiveTriggers: [], estimatedAgeRanges: [] });
   });
 });

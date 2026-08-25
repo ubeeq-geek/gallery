@@ -42,8 +42,9 @@ export class RekognitionImageSafetyProvider {
       .map((label) => ({ label: label.Name, confidence: label.Confidence / 100 }));
     const maturity = [...new Set(labels.filter(({ label }) => matureLabels.has(label)).map(({ label }) => label))];
     const triggers = [...new Set(labels.filter(({ label }) => ageSensitiveLabels.has(label)).map(({ label }) => label))];
-    let faceResponse: Awaited<ReturnType<RekognitionClientAdapter['detectFaces']>> | undefined;
-    if (triggers.length) faceResponse = await this.client.detectFaces({ imageBytes });
+    // Every stored image and sampled frame receives age analysis. A missing face
+    // remains an inconclusive signal rather than evidence that nobody is present.
+    const faceResponse = await this.client.detectFaces({ imageBytes });
     const ages = (faceResponse?.faces || []).flatMap((face) => {
       const low = face.AgeRange?.Low; const high = face.AgeRange?.High;
       return typeof low === 'number' && typeof high === 'number' ? [{ low, high, confidence: (face.Confidence || 0) / 100 }] : [];
@@ -51,7 +52,7 @@ export class RekognitionImageSafetyProvider {
     const possibleMinorInAgeSensitiveContext = triggers.length > 0 && ages.some(({ low }) => low < 18);
     const moderationVersion = moderation.modelVersion || 'unspecified';
     const results: RekognitionImageAnalysis['results'] = [{ provider: 'aws-rekognition', modelName: 'DetectModerationLabels', modelVersion: moderationVersion, scanType: 'image_moderation', labels, disposition: possibleMinorInAgeSensitiveContext ? 'automated_signal' : 'automated_no_match', suitableForAutomatedAction: false }];
-    if (faceResponse) results.push({ provider: 'aws-rekognition', modelName: 'DetectFaces', modelVersion: faceResponse.modelVersion || moderationVersion, scanType: 'face_age_signal', labels: ages.flatMap(({ low, high, confidence }, index) => [{ label: `face_${index + 1}_estimated_age_${low}_${high}`, confidence }]), disposition: possibleMinorInAgeSensitiveContext ? 'automated_signal' : 'automated_no_match', suitableForAutomatedAction: false });
+    results.push({ provider: 'aws-rekognition', modelName: 'DetectFaces', modelVersion: faceResponse.modelVersion || moderationVersion, scanType: 'face_age_signal', labels: ages.flatMap(({ low, high, confidence }, index) => [{ label: `face_${index + 1}_estimated_age_${low}_${high}`, confidence }]), disposition: possibleMinorInAgeSensitiveContext ? 'automated_signal' : 'automated_no_match', suitableForAutomatedAction: false });
     return {
       results,
       mediaState: possibleMinorInAgeSensitiveContext ? 'HUMAN_REVIEW_REQUIRED' : 'CLEARED_FOR_POLICY_REVIEW',

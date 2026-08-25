@@ -189,6 +189,8 @@ export interface Creator {
     showOnMemberProfile?: boolean;
   };
   createdAt: string;
+  /** Immutable managed-cell assignment; migration is an explicit workflow. */
+  dataHome?: import('./regionalMedia').DataHomeAssignment;
 }
 
 export interface CreatorGroup {
@@ -842,6 +844,13 @@ export interface Asset {
   descriptionSyncPolicy: MetadataSyncPolicy;
   createdAt: string;
   updatedAt: string;
+  dataHomeRegion?: import('./regionalMedia').ManagedRegion;
+  quarantineRegion?: import('./regionalMedia').ManagedRegion;
+  canonicalRegion?: import('./regionalMedia').ManagedRegion;
+  scanState?: 'QUEUED' | 'RUNNING' | 'CLEARED_FOR_POLICY_REVIEW' | 'HUMAN_REVIEW_REQUIRED' | 'HELD' | 'SCAN_UNAVAILABLE' | 'SCAN_FAILED';
+  activeScanProfile?: string;
+  currentScanSummaryId?: string;
+  publicDeliveryState?: 'PRIVATE' | 'ELIGIBLE' | 'PUBLISHED' | 'REVOKED';
 }
 
 export interface ExternalPublication {
