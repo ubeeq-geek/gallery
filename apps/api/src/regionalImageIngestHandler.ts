@@ -6,11 +6,14 @@ import { ChangeMessageVisibilityCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { planRegionalImageIngest, type RegionalImageIngestPlan } from './regionalImageIngest';
 import { scanGroupManifestRecords, type ManagedProduct, type ManagedRegion } from './regionalMedia';
 import { scanDispatchOutbox } from './regionalScanOutboxHandler';
+import { dynamoRegionalBillingRepository, processingReservationKey } from './regionalBilling';
 
 export interface RegionalImageIngestMessage { product: ManagedProduct; environment: string; dataHomeRegion: ManagedRegion; assetId: string; mediaVersionId: string; quarantineBucket: string; quarantineObjectKey: string; mimeType?: string; }
 export interface RegionalImageIngestDependencies {
   authorize(message: RegionalImageIngestMessage): Promise<'AUTHORIZED' | 'CONSUMED' | void>;
   read(bucket: string, key: string): Promise<{ bytes: Uint8Array; mimeType: string }>;
+  reserve?(message: RegionalImageIngestMessage, plan: RegionalImageIngestPlan): Promise<void>;
+  release?(message: RegionalImageIngestMessage, scanGroupId: string, reason: string): Promise<void>;
   persistAndEnqueue(message: RegionalImageIngestMessage, plan: RegionalImageIngestPlan): Promise<void>;
   markUnavailable(message: RegionalImageIngestMessage, errorCode: string): Promise<void>;
   deferRetry(receiptHandle: string, receiveCount: number): Promise<void>;
@@ -18,9 +21,9 @@ export interface RegionalImageIngestDependencies {
 const required = (name: string): string => { const value = process.env[name]?.trim(); if (!value) throw new Error(`${name} is required`); return value; };
 
 const dependencies = (): RegionalImageIngestDependencies => {
-  const region = required('DATA_HOME_REGION'); const tableName = required('SCAN_JOBS_TABLE'); const metadataTableName = required('METADATA_TABLE');
+  const region = required('DATA_HOME_REGION'); const tableName = required('SCAN_JOBS_TABLE'); const metadataTableName = required('METADATA_TABLE'); const billingTableName = required('BILLING_LEDGER_TABLE');
   const workQueueUrl = required('IMAGE_INGEST_QUEUE_URL');
-  const s3 = new S3Client({ region }); const sqs = new SQSClient({ region }); const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
+  const s3 = new S3Client({ region }); const sqs = new SQSClient({ region }); const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region })); const billing = dynamoRegionalBillingRepository({ client: ddb, tableName: billingTableName });
   const putIdempotently = async (item: Record<string, unknown>): Promise<void> => {
     try { await ddb.send(new PutCommand({ TableName: tableName, Item: item, ConditionExpression: 'attribute_not_exists(id)' })); }
     catch (error) {
@@ -41,6 +44,12 @@ const dependencies = (): RegionalImageIngestDependencies => {
       return upload.Item.state as 'AUTHORIZED' | 'CONSUMED';
     },
     read: async (bucket, key) => { const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key })); if (!response.Body || !response.ContentType) throw new Error('Quarantined image body or MIME type is unavailable'); return { bytes: await response.Body.transformToByteArray(), mimeType: response.ContentType }; },
+    reserve: async (message, plan) => {
+      const upload = await ddb.send(new GetCommand({ TableName: metadataTableName, Key: { PK: `UPLOAD#${message.mediaVersionId}` }, ConsistentRead: true }));
+      if (!upload.Item?.creatorId || !upload.Item?.spaceId) throw new Error('Upload billing identity is unavailable');
+      await billing.reserve({ product: message.product, environment: message.environment, dataHomeRegion: message.dataHomeRegion, accountId: upload.Item.creatorId, creatorId: upload.Item.creatorId, spaceId: upload.Item.spaceId, assetId: message.assetId, mediaVersionId: message.mediaVersionId, scanGroupId: plan.scanJobs[0].scanGroupId, media: plan.mediaVersion });
+    },
+    release: async (message, scanGroupId, reason) => billing.release({ reservationId: processingReservationKey(message.mediaVersionId, scanGroupId), reason }),
     persistAndEnqueue: async (message, plan) => {
       await putIdempotently({ recordType: 'MEDIA_VERSION', product: message.product, environment: message.environment, dataHomeRegion: message.dataHomeRegion, ...plan.mediaVersion });
       for (const manifest of scanGroupManifestRecords(plan.scanJobs)) await putIdempotently(manifest);
@@ -72,7 +81,7 @@ export const createRegionalImageIngestHandler = (deps: RegionalImageIngestDepend
   const product = required('PRODUCT') as ManagedProduct; const environment = required('ENVIRONMENT'); const region = required('DATA_HOME_REGION') as ManagedRegion; const quarantineBucket = required('QUARANTINE_BUCKET');
   const failures: Array<{ itemIdentifier: string }> = [];
   for (const record of event.Records) {
-    let message: RegionalImageIngestMessage | undefined; let cellValidated = false;
+    let message: RegionalImageIngestMessage | undefined; let cellValidated = false; let reservedScanGroupId: string | undefined;
     try {
       const payload = JSON.parse(record.body) as any;
       const s3Record = payload.Records?.find(({ eventSource }: any) => eventSource === 'aws:s3');
@@ -87,9 +96,11 @@ export const createRegionalImageIngestHandler = (deps: RegionalImageIngestDepend
       if (await deps.authorize(message) === 'CONSUMED') continue;
       const source = await deps.read(message.quarantineBucket, message.quarantineObjectKey);
       const plan = await planRegionalImageIngest({ product, environment, region, assetId: message.assetId, mediaVersionId: message.mediaVersionId, quarantineBucket, quarantineObjectKey: message.quarantineObjectKey, bytes: source.bytes, mimeType: message.mimeType || source.mimeType, specialistHashProvider: process.env.SPECIALIST_HASH_PROVIDER?.trim() });
+      await deps.reserve?.(message, plan);
+      if (deps.reserve) reservedScanGroupId = plan.scanJobs[0].scanGroupId;
       await deps.persistAndEnqueue(message, plan);
     } catch (error) {
-      if (message && cellValidated && Number(record.attributes?.ApproximateReceiveCount || 1) >= 5) await deps.markUnavailable(message, error instanceof Error ? error.name : 'Error');
+      if (message && cellValidated && Number(record.attributes?.ApproximateReceiveCount || 1) >= 5) { const reason = error instanceof Error ? error.name : 'Error'; if (reservedScanGroupId) await deps.release?.(message, reservedScanGroupId, reason); await deps.markUnavailable(message, reason); }
       else { if (cellValidated) await deps.deferRetry(record.receiptHandle, Number(record.attributes?.ApproximateReceiveCount || 1)); failures.push({ itemIdentifier: record.messageId }); }
     }
   }

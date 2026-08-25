@@ -136,6 +136,10 @@ import { createTumblrPublishQueue, type TumblrPublishQueue } from './tumblrPubli
 import { createSupportRouter } from './supportRoutes';
 import { SupportSafetyService } from './supportSafety';
 import type { SupportSafetyRepository } from './supportSafetyRepository';
+import { CommercialBillingService, emitCommercialBillingMetric } from './commercialBilling';
+import { DynamoCommercialBillingRepository } from './commercialBillingRepository';
+import { createCommercialBillingRouter } from './commercialBillingRoutes';
+import { StripePaymentProvider, verifyStripeWebhook } from './stripePaymentProvider';
 
 interface CreateAppOptions {
   config: AppConfig;
@@ -1014,6 +1018,7 @@ export const createApp = ({
   const tumblrRepository = injectedTumblrRepository || new InMemoryTumblrRepository();
   const tumblrPublishQueue = injectedTumblrPublishQueue || createTumblrPublishQueue(config);
   const supportSafetyService = new SupportSafetyService(supportSafetyRepository);
+  const commercialBillingService = config.stripeSecretKey ? new CommercialBillingService(DynamoCommercialBillingRepository.fromConfig(config), new StripePaymentProvider(config.stripeSecretKey)) : undefined;
   const mediaCdnDomain = (config.mediaCdnDomain || '')
     .trim()
     .replace(/^https?:\/\//i, '')
@@ -2674,6 +2679,10 @@ export const createApp = ({
     express.raw({ type: 'application/json', limit: '1mb' }),
     createPatreonWebhookHandler(config, patreonRepository)
   );
+  if (commercialBillingService && config.stripeWebhookSecret) app.post('/webhooks/stripe', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
+    try { const signature = String(req.headers['stripe-signature'] || ''); const event = verifyStripeWebhook(Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '', signature, config.stripeWebhookSecret!); const applied = await commercialBillingService.applyWebhook(event); return res.json({ received: true, applied }); }
+    catch { emitCommercialBillingMetric('PaymentWebhookFailures'); return res.status(400).json({ message: 'Invalid billing webhook' }); }
+  });
   // Writing Works use structured block documents and should not be constrained
   // by the small default JSON parser limit. External destinations still apply
   // their own limits when publishing.
@@ -2729,6 +2738,7 @@ export const createApp = ({
     audit: auditLog
   });
   app.use('/support', createSupportRouter(supportSafetyService));
+  if (commercialBillingService) app.use('/billing', createCommercialBillingRouter(commercialBillingService));
   if (config.localMediaDirectory) app.use('/media/local', express.static(config.localMediaDirectory));
 
   const handleSmugMugError = (res: express.Response, error: unknown) => {

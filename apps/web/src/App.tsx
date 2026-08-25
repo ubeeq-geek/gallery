@@ -19,6 +19,8 @@ import UserProfilePage from './pages/UserProfilePage';
 import ProfileSettingsPage from './pages/SettingsPage';
 import ChallengePage from './pages/ChallengePage';
 import ChallengesPage from './pages/ChallengesPage';
+import BillingPage from './pages/BillingPage';
+import BillingOperatorPage from './pages/BillingOperatorPage';
 import { PublicProfileHero } from './components/PublicProfileHero';
 import { ProfileAvatar } from './components/ProfileAvatar';
 import { sanitizeProfileBio } from './profileBio';
@@ -8324,6 +8326,8 @@ export default function App() {
         <Route path="/auth/callback" element={<AuthCallbackPage setUser={setUser} />} />
         <Route path="/auth/:mode" element={<AuthPage user={user} setUser={setUser} />} />
         <Route path="/settings" element={<ProfileSettingsPage user={user} onProfileChanged={(profile) => setMyProfile(profile)} />} />
+        <Route path="/billing" element={<BillingPage user={user} />} />
+        <Route path="/billing/operator" element={<BillingOperatorPage user={user} />} />
         <Route path="/studio" element={user ? <StudioWorkspace onCreatorCreated={refreshManagedArtists} /> : <Navigate to="/auth/signin" replace />} />
         <Route path="/studio/workspace" element={user ? <StudioWorkspace onCreatorCreated={refreshManagedArtists} /> : <Navigate to="/auth/signin" replace />} />
         <Route path="/admin" element={<Navigate to="/studio" replace />} />

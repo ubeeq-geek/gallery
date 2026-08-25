@@ -31,7 +31,7 @@ describe('production survivability profile', () => {
   it('keeps development stacks disposable and free of production operations resources', () => {
     const template = synthTemplate('DevelopmentStack');
     const tables = Object.values(template.findResources('AWS::DynamoDB::Table')) as Array<Record<string, unknown>>;
-    expect(tables).toHaveLength(5);
+    expect(tables).toHaveLength(6);
     tables.forEach((table) => {
       expect(table.DeletionPolicy).toBe('Delete');
       expect((table.Properties as Record<string, unknown>).PointInTimeRecoverySpecification).toBeUndefined();
@@ -57,7 +57,7 @@ describe('production survivability profile', () => {
     process.env.APP_SECRETS_NAME = 'eversally/production/application';
     const template = synthTemplate('ProductionStack');
     const tables = Object.values(template.findResources('AWS::DynamoDB::Table')) as Array<Record<string, unknown>>;
-    expect(tables).toHaveLength(5);
+    expect(tables).toHaveLength(6);
     tables.forEach((table) => {
       expect(table.DeletionPolicy).toBe('Retain');
       expect((table.Properties as Record<string, unknown>).PointInTimeRecoverySpecification).toEqual({ PointInTimeRecoveryEnabled: true });
@@ -68,12 +68,14 @@ describe('production survivability profile', () => {
     expect((buckets[0].Properties as Record<string, unknown>).VersioningConfiguration).toEqual({ Status: 'Enabled' });
     template.resourceCountIs('AWS::Backup::BackupPlan', 1);
     template.resourceCountIs('AWS::Backup::BackupVault', 1);
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 14);
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 18);
     template.resourceCountIs('AWS::Logs::MetricFilter', 1);
     template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
     template.resourceCountIs('AWS::SNS::Topic', 1);
 
     const serialized = JSON.stringify(template.toJSON());
+    expect(serialized).toContain('Monthly7YearRetention');
+    expect(serialized).toContain('2555');
     expect(serialized).toContain('https://eversally.com');
     expect(serialized).not.toContain('https://fanadmin.top:5174');
     expect(serialized).toContain('eversally/production/application');

@@ -191,6 +191,7 @@ export default function HeaderAuth({
                     <div className="user-menu-email">{menuSecondaryLabel || displayName}</div>
                     <Link to="/settings?section=preferences" onClick={closeUserMenus}>Preferences</Link>
                     <Link to="/settings?section=security" onClick={closeUserMenus}>Security</Link>
+                    <Link to="/billing" onClick={closeUserMenus}>Billing & usage</Link>
                     <button onClick={() => void handleSignOutClick()}>Sign Out</button>
                   </div>
                 </details>
@@ -255,6 +256,10 @@ export default function HeaderAuth({
                 </Link>
                 <Link to="/settings?section=security" className="user-menu-settings-row" onClick={closeUserMenus}>
                   <span>Security</span>
+                  <span aria-hidden="true">›</span>
+                </Link>
+                <Link to="/billing" className="user-menu-settings-row" onClick={closeUserMenus}>
+                  <span>Billing & usage</span>
                   <span aria-hidden="true">›</span>
                 </Link>
                 <button className="user-menu-signout-btn" onClick={() => void handleSignOutClick()}>Sign out</button>

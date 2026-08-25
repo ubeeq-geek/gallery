@@ -132,6 +132,12 @@ export class UbeeqStack extends Stack {
       deletionProtection: isProduction,
       removalPolicy: dataRemovalPolicy
     });
+    const commercialBillingTable = new dynamodb.Table(this, 'CommercialBillingTable', {
+      partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING }, sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecoverySpecification: isProduction ? { pointInTimeRecoveryEnabled: true } : undefined,
+      deletionProtection: isProduction, removalPolicy: dataRemovalPolicy
+    });
     const patreonIntegrationTable = new dynamodb.Table(this, 'PatreonIntegrationTable', {
       partitionKey: { name: 'integrationId', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'recordId', type: dynamodb.AttributeType.STRING },
@@ -181,7 +187,7 @@ export class UbeeqStack extends Stack {
         removalPolicy: RemovalPolicy.RETAIN,
         lockConfiguration: {
           minRetention: Duration.days(35),
-          maxRetention: Duration.days(366)
+          maxRetention: Duration.days(2557)
         }
       });
       productionBackupPlan = new backup.BackupPlan(this, 'ProductionBackupPlan', {
@@ -193,9 +199,9 @@ export class UbeeqStack extends Stack {
             deleteAfter: Duration.days(35)
           }),
           new backup.BackupPlanRule({
-            ruleName: 'Monthly1YearRetention',
+            ruleName: 'Monthly7YearRetention',
             scheduleExpression: events.Schedule.cron({ minute: '0', hour: '6', day: '1' }),
-            deleteAfter: Duration.days(365)
+            deleteAfter: Duration.days(2555)
           })
         ]
       });
@@ -205,6 +211,7 @@ export class UbeeqStack extends Stack {
           backup.BackupResource.fromDynamoDbTable(contentStatsTable),
           backup.BackupResource.fromDynamoDbTable(trendingFeedTable),
           backup.BackupResource.fromDynamoDbTable(contentCoreTable),
+          backup.BackupResource.fromDynamoDbTable(commercialBillingTable),
           backup.BackupResource.fromArn(mediaBucket.bucketArn)
         ]
       });
@@ -555,6 +562,7 @@ export class UbeeqStack extends Stack {
         CONTENT_STATS_TABLE: contentStatsTable.tableName,
         TRENDING_FEED_TABLE: trendingFeedTable.tableName,
         CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        COMMERCIAL_BILLING_TABLE: commercialBillingTable.tableName,
         PATREON_INTEGRATION_TABLE: patreonIntegrationTable.tableName,
         USE_CONTENT_CORE_TABLE: 'true',
         MEDIA_BUCKET: mediaBucket.bucketName,
@@ -867,6 +875,7 @@ export class UbeeqStack extends Stack {
     contentStatsTable.grantReadWriteData(apiFn);
     trendingFeedTable.grantReadWriteData(apiFn);
     contentCoreTable.grantReadWriteData(apiFn);
+    commercialBillingTable.grantReadWriteData(apiFn);
     patreonIntegrationTable.grantReadWriteData(apiFn);
     contentCoreTable.grantReadWriteData(externalSyncFn);
     contentCoreTable.grantReadWriteData(externalSyncSchedulerFn);
@@ -1167,6 +1176,11 @@ export class UbeeqStack extends Stack {
         threshold: 5,
         comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD
       });
+      const commercialBillingMetric = (name: string, statistic: string = 'Sum') => new cloudwatch.Metric({ namespace: 'Gallery/CommercialBilling', metricName: name, statistic, period: Duration.minutes(5) });
+      alarm('PaymentWebhookFailuresAlarm', { ...alarmDefaults, alarmDescription: 'A signed payment webhook failed validation or application.', metric: commercialBillingMetric('PaymentWebhookFailures'), threshold: 1, comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD });
+      alarm('PaymentProviderFailuresAlarm', { ...alarmDefaults, alarmDescription: 'The payment provider rejected or failed an API operation.', metric: commercialBillingMetric('PaymentProviderFailures'), threshold: 1, comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD });
+      alarm('RevenueLeakageAlarm', { ...alarmDefaults, alarmDescription: 'Reconciliation identified uninvoiced usage.', metric: commercialBillingMetric('RevenueLeakageMinor'), threshold: 1, comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD });
+      alarm('ProviderCostVarianceAlarm', { ...alarmDefaults, alarmDescription: 'Actual provider cost differs from the versioned estimate.', metric: commercialBillingMetric('ProviderCostVarianceMinor'), threshold: 100, comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD });
 
       new cloudwatch.Dashboard(this, 'ProductionOperationsDashboard', {
         dashboardName: `${this.stackName}-${productBrand}-operations`,
@@ -1174,7 +1188,9 @@ export class UbeeqStack extends Stack {
           [new cloudwatch.GraphWidget({ title: 'API requests and 5xx responses', left: [apiRequests, apiServerErrors] })],
           [new cloudwatch.GraphWidget({ title: 'External sync queue', left: [externalSyncQueue.metricApproximateNumberOfMessagesVisible(), externalSyncDlq.metricApproximateNumberOfMessagesVisible()], right: [externalSyncQueue.metricApproximateAgeOfOldestMessage()] })],
           [new cloudwatch.GraphWidget({ title: 'Discord community delivery', left: [discordCommunityDeliveryQueue.metricApproximateNumberOfMessagesVisible(), discordCommunityDeliveryDlq.metricApproximateNumberOfMessagesVisible()], right: [discordCommunityDeliveryQueue.metricApproximateAgeOfOldestMessage()] })],
-          [new cloudwatch.GraphWidget({ title: 'Lambda errors', left: [apiFn.metricErrors(), externalSyncFn.metricErrors(), externalSyncSchedulerFn.metricErrors(), discordCommunityDeliveryFn.metricErrors(), trendingRankerFn.metricErrors(), videoPosterIngestFn.metricErrors()] })]
+          [new cloudwatch.GraphWidget({ title: 'Lambda errors', left: [apiFn.metricErrors(), externalSyncFn.metricErrors(), externalSyncSchedulerFn.metricErrors(), discordCommunityDeliveryFn.metricErrors(), trendingRankerFn.metricErrors(), videoPosterIngestFn.metricErrors()] })],
+          [new cloudwatch.GraphWidget({ title: 'Billing revenue and leakage', left: [commercialBillingMetric('InvoicedRevenueMinor'), commercialBillingMetric('RevenueLeakageMinor')], right: [commercialBillingMetric('ProviderCostVarianceMinor'), commercialBillingMetric('OpenReconciliationIssues', 'Maximum')] })],
+          [new cloudwatch.GraphWidget({ title: 'Payment and webhook health', left: [commercialBillingMetric('PaymentProviderFailures'), commercialBillingMetric('PaymentWebhookFailures'), commercialBillingMetric('PaymentWebhookReplays')] })]
         ]
       });
     }

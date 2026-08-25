@@ -13,6 +13,7 @@ export interface AppConfig {
   contentStatsTable: string;
   trendingFeedTable: string;
   contentCoreTable: string;
+  commercialBillingTable: string;
   useContentCoreTable: boolean;
   mediaBucket: string;
   unlockJwtSecret: string;
@@ -28,6 +29,9 @@ export interface AppConfig {
   cognitoUserPoolId?: string;
   cognitoClientId?: string;
   cognitoTokenUse?: 'id' | 'access';
+  /** Server-only Stripe credential and webhook signing secret for commercial billing. */
+  stripeSecretKey?: string;
+  stripeWebhookSecret?: string;
   externalOAuthRedirectUri?: string;
   soundCloudOAuthRedirectUri?: string;
   /** Compliance approval gate; SoundCloud remains unavailable unless explicitly enabled. */
@@ -171,6 +175,7 @@ export const loadConfig = (): AppConfig => {
   contentStatsTable: process.env.CONTENT_STATS_TABLE || 'content-stats',
   trendingFeedTable: process.env.TRENDING_FEED_TABLE || 'trending-feed',
   contentCoreTable: process.env.CONTENT_CORE_TABLE || 'content-core',
+  commercialBillingTable: process.env.COMMERCIAL_BILLING_TABLE || process.env.CONTENT_CORE_TABLE || 'content-core',
   useContentCoreTable: (process.env.USE_CONTENT_CORE_TABLE || 'false') === 'true',
   mediaBucket: process.env.MEDIA_BUCKET || 'content-media',
   unlockJwtSecret: process.env.UNLOCK_JWT_SECRET || 'dev-secret',
@@ -189,6 +194,8 @@ export const loadConfig = (): AppConfig => {
   // server-side variable supplied by CDK.
   cognitoClientId: process.env.COGNITO_CLIENT_ID || process.env.VITE_COGNITO_CLIENT_ID,
   cognitoTokenUse: (process.env.COGNITO_TOKEN_USE as 'id' | 'access') || 'id',
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
   externalOAuthRedirectUri: process.env.EXTERNAL_OAUTH_REDIRECT_URI,
   soundCloudOAuthRedirectUri: process.env.SOUNDCLOUD_OAUTH_REDIRECT_URI,
   soundCloudEnabled: (process.env.SOUNDCLOUD_ENABLED || 'false') === 'true',
@@ -292,11 +299,13 @@ export const loadConfig = (): AppConfig => {
   vimeoWebhookSecret: process.env.VIMEO_WEBHOOK_SECRET,
   vimeoUploadQueueUrl: process.env.VIMEO_UPLOAD_QUEUE_URL
   };
+  if (Boolean(config.stripeSecretKey) !== Boolean(config.stripeWebhookSecret)) throw new Error('STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET must be configured together.');
   if (deploymentStage === 'production' || deploymentStage === 'prod') {
     const missing = [
       !config.cognitoUserPoolId ? 'COGNITO_USER_POOL_ID' : '',
       !config.cognitoClientId ? 'COGNITO_CLIENT_ID' : '',
       !process.env.CONTENT_CORE_TABLE ? 'CONTENT_CORE_TABLE' : '',
+      !process.env.COMMERCIAL_BILLING_TABLE ? 'COMMERCIAL_BILLING_TABLE' : '',
       !config.useContentCoreTable ? 'USE_CONTENT_CORE_TABLE=true' : '',
       !process.env.MEDIA_BUCKET ? 'MEDIA_BUCKET' : '',
       !config.appOrigin ? 'APP_ORIGIN' : '',

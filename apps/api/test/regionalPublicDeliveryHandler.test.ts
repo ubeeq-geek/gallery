@@ -1,4 +1,5 @@
 import { createRegionalPublicDeliveryHandler } from '../src/regionalPublicDeliveryHandler';
+import { RegionalDeliveryBlockedError } from '../src/regionalDelivery';
 
 const message = {
   product: 'eversally', environment: 'production', dataHomeRegion: 'us-east-2', assetId: 'asset',
@@ -11,7 +12,7 @@ describe('regional public delivery handler', () => {
     cell: { product: 'eversally' as const, environment: 'production', dataHomeRegion: 'us-east-2' as const },
     privateDerivativesBucket: 'private', publicDerivativesBucket: 'public',
     loadAuthoritativeState: jest.fn().mockResolvedValue({ canonicalRegion: 'us-east-2', policyDecision: { state: 'CLEARED_FOR_POLICY_REVIEW', policyVersion: 'v1', reasonCode: 'AUTOMATED_NO_RELEVANT_RESULT', automatedCompletionOnly: true }, remainingCreditUnits: 10, requiredCreditUnits: 1 }),
-    publish: jest.fn().mockResolvedValue(undefined)
+    publish: jest.fn().mockResolvedValue(undefined), recordPermanentBlock: jest.fn().mockResolvedValue(undefined)
   });
 
   it('reloads authorization and publishes using only configured cell buckets', async () => {
@@ -33,6 +34,8 @@ describe('regional public delivery handler', () => {
     deps.publish.mockRejectedValueOnce(new Error('Asset held'));
     await expect(createRegionalPublicDeliveryHandler(deps)(event(message, 'failed'))).resolves.toEqual({ batchItemFailures: [{ itemIdentifier: 'failed' }] });
   });
+
+  it('records exhausted entitlement as actionable permanent work instead of retrying SQS', async () => { const deps = dependencies(); deps.publish.mockRejectedValueOnce(new RegionalDeliveryBlockedError('PROCESSING_ENTITLEMENT_EXHAUSTED')); await expect(createRegionalPublicDeliveryHandler(deps)(event(message, 'blocked'))).resolves.toEqual({ batchItemFailures: [] }); expect(deps.recordPermanentBlock).toHaveBeenCalledWith(message, 'PROCESSING_ENTITLEMENT_EXHAUSTED'); });
 
   it('rejects incomplete messages without accessing storage', async () => {
     const deps = dependencies();

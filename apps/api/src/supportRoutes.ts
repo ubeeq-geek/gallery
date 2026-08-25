@@ -104,12 +104,14 @@ export const createSupportRouter = (service: SupportSafetyService): Router => {
     catch (error) { return res.status(409).json({ message: (error as Error).message }); }
   });
   router.post('/billing-tasks', requireAuth, async (req, res) => {
-    if (typeof req.body?.linkedTicketId !== 'string' || typeof req.body?.requestedChange !== 'string') return res.status(400).json({ message: 'A linked ticket and requested change are required' });
-    return res.status(201).json(await service.createBillingTask({ requesterUserId: req.authUser!.userId, linkedTicketId: req.body.linkedTicketId, requestedChange: req.body.requestedChange, currentState: String(req.body.currentState || ''), financialImpact: String(req.body.financialImpact || 'unknown') }));
+    if (typeof req.body?.linkedTicketId !== 'string' || typeof req.body?.accountId !== 'string' || !['REFUND', 'CREDIT', 'MANUAL_CHARGE', 'VOID_INVOICE', 'WRITE_OFF', 'PLAN_OVERRIDE'].includes(req.body?.changeType) || !['DUPLICATE_CHARGE', 'SERVICE_FAILURE', 'GOODWILL', 'FRAUD', 'UNCOLLECTIBLE', 'CONTRACT_CORRECTION', 'OTHER'].includes(req.body?.reasonCode) || !['USD', 'EUR', 'GBP'].includes(req.body?.currency)) return res.status(400).json({ message: 'A typed billing change and linked ticket are required' });
+    try { return res.status(201).json(await service.createBillingTask({ requesterUserId: req.authUser!.userId, linkedTicketId: req.body.linkedTicketId, accountId: req.body.accountId, changeType: req.body.changeType, reasonCode: req.body.reasonCode, expectedState: String(req.body.expectedState || ''), currentAmountMinor: Number(req.body.currentAmountMinor), requestedAmountMinor: Number(req.body.requestedAmountMinor), currency: req.body.currency, notes: String(req.body.notes || ''), evidenceReferences: Array.isArray(req.body.evidenceReferences) ? req.body.evidenceReferences.filter((item: unknown): item is string => typeof item === 'string').slice(0, 20) : [], idempotencyKey: String(req.body.idempotencyKey || '') })); }
+    catch (error) { return res.status(400).json({ message: (error as Error).message }); }
   });
+  router.get('/billing-tasks', requireAdmin, async (_req, res) => res.json((await service.listBillingTasks()).sort((a, b) => a.createdAt.localeCompare(b.createdAt))));
   router.post('/billing-tasks/:taskId/decision', requireAdmin, async (req, res) => {
     if (!['EXECUTED', 'REJECTED', 'MORE_INFORMATION', 'FAILED'].includes(req.body?.outcome)) return res.status(400).json({ message: 'A valid human outcome is required' });
-    try { return res.json(await service.decideBillingTask(req.params.taskId, req.body.outcome, req.authUser!.userId)); } catch (error) { return res.status(404).json({ message: (error as Error).message }); }
+    try { return res.json(await service.decideBillingTask(req.params.taskId, { outcome: req.body.outcome, reason: String(req.body.reason || ''), providerOperationId: typeof req.body.providerOperationId === 'string' ? req.body.providerOperationId : undefined, resultingAmountMinor: req.body.resultingAmountMinor === undefined ? undefined : Number(req.body.resultingAmountMinor) }, req.authUser!.userId)); } catch (error) { return res.status(409).json({ message: (error as Error).message }); }
   });
   router.get('/review-queue', requireAdmin, async (_req, res) => res.json((await service.listReviewCases()).filter((item) => !item.restrictedSafety)));
   router.get('/safety-review-queue', requireSafetyReviewer, async (_req, res) => res.json((await service.listReviewCases()).filter((item) => item.restrictedSafety)));

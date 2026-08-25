@@ -49,9 +49,12 @@ describe('support and safety workflows', () => {
 
   it('requires a named human to execute billing work', async () => {
     const service = new SupportSafetyService();
-    const task = await service.createBillingTask({ requesterUserId: 'user-1', requestedChange: 'Refund', currentState: 'paid', financialImpact: '$20', linkedTicketId: 'ticket-1' });
+    const ticket = await service.createTicket({ requesterUserId: 'user-1', subject: 'Refund', body: 'Duplicate charge', category: 'billing', priority: 'normal' });
+    const task = await service.createBillingTask({ requesterUserId: 'user-1', accountId: 'account-1', changeType: 'REFUND', reasonCode: 'DUPLICATE_CHARGE', expectedState: 'PAID', currentAmountMinor: 4000, requestedAmountMinor: 2000, currency: 'USD', notes: 'Verified duplicate invoice', evidenceReferences: ['invoice-1'], idempotencyKey: 'refund-invoice-1', linkedTicketId: ticket.ticketId });
     expect(task.status).toBe('AWAITING_HUMAN');
-    expect(await service.decideBillingTask(task.billingTaskId, 'EXECUTED', 'finance-reviewer')).toMatchObject({ status: 'EXECUTED', approvedBy: 'finance-reviewer' });
+    expect(await service.listBillingTasks()).toEqual([task]);
+    await expect(service.decideBillingTask(task.billingTaskId, { outcome: 'EXECUTED', reason: 'Approved', providerOperationId: 'refund-1', resultingAmountMinor: 2000 }, 'user-1')).rejects.toThrow('different human');
+    expect(await service.decideBillingTask(task.billingTaskId, { outcome: 'EXECUTED', reason: 'Approved', providerOperationId: 'refund-1', resultingAmountMinor: 2000 }, 'finance-reviewer')).toMatchObject({ status: 'EXECUTED', approvedBy: 'finance-reviewer', providerOperationId: 'refund-1', currentAmountMinor: 4000, resultingAmountMinor: 2000 });
   });
 
   it('persists records across service instances and releases holds with an audit event', async () => {

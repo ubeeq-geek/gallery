@@ -10,12 +10,15 @@ import { ChangeMessageVisibilityCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { assertRegionalJob, finalizeRegionalScanGroup, planRegionalScans, scanGroupManifestRecords, type ManagedProduct, type ManagedRegion, type MediaVersion, type RegionalScanJob } from './regionalMedia';
 import { extractValidatedFrames, FfmpegVideoToolAdapter, type ValidatedVideoMetadata, type VideoToolAdapter } from './regionalVideoProcessing';
 import { scanDispatchOutbox } from './regionalScanOutboxHandler';
+import { dynamoRegionalBillingRepository, processingReservationKey } from './regionalBilling';
 
 export interface RegionalVideoHandlerDependencies {
   tools: VideoToolAdapter;
   authorize(job: RegionalScanJob): Promise<'AUTHORIZED' | 'CONSUMED' | void>;
   download(bucket: string, key: string, path: string): Promise<string>;
   uploadFrame(bucket: string, key: string, path: string): Promise<void>;
+  reserve?(job: RegionalScanJob, media: MediaVersion, scanGroupId: string): Promise<void>;
+  release?(job: RegionalScanJob, scanGroupId: string, reason: string): Promise<void>;
   ensurePlanJob(job: RegionalScanJob): Promise<boolean>;
   persistPlan(job: RegionalScanJob, metadata: ValidatedVideoMetadata, scanJobs: RegionalScanJob[]): Promise<void>;
   markUnavailable(job: RegionalScanJob, errorCode: string): Promise<void>;
@@ -33,9 +36,11 @@ const productionDependencies = (): RegionalVideoHandlerDependencies => {
   const tableName = required('SCAN_JOBS_TABLE');
   const workQueueUrl = required('VIDEO_PROCESSING_QUEUE_URL');
   const metadataTableName = required('METADATA_TABLE');
+  const billingTableName = required('BILLING_LEDGER_TABLE');
   const s3 = new S3Client({ region });
   const sqs = new SQSClient({ region });
   const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
+  const billing = dynamoRegionalBillingRepository({ client: ddb, tableName: billingTableName });
   const putIdempotently = async (item: Record<string, unknown>): Promise<boolean> => {
     try { await ddb.send(new PutCommand({ TableName: tableName, Item: item, ConditionExpression: 'attribute_not_exists(id)' })); return true; }
     catch (error) {
@@ -66,8 +71,15 @@ const productionDependencies = (): RegionalVideoHandlerDependencies => {
       return hash.digest('hex');
     },
     uploadFrame: async (bucket, key, path) => { await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: createReadStream(path), ContentType: 'image/jpeg', Metadata: { restricted: 'scan-frame' } })); },
+    reserve: async (job, media, scanGroupId) => {
+      const upload = await ddb.send(new GetCommand({ TableName: metadataTableName, Key: { PK: `UPLOAD#${job.mediaVersionId}` }, ConsistentRead: true }));
+      if (!upload.Item?.creatorId || !upload.Item?.spaceId) throw new Error('Upload billing identity is unavailable');
+      await billing.reserve({ product: job.product, environment: job.environment, dataHomeRegion: job.dataHomeRegion, accountId: upload.Item.creatorId, creatorId: upload.Item.creatorId, spaceId: upload.Item.spaceId, assetId: job.assetId, mediaVersionId: job.mediaVersionId, scanGroupId, media });
+    },
+    release: async (job, scanGroupId, reason) => billing.release({ reservationId: processingReservationKey(job.mediaVersionId, scanGroupId), reason }),
     ensurePlanJob: async (job) => { const inserted = await putIdempotently({ ...job, recordType: 'SCAN_JOB' }); if (inserted) return true; const existing = await ddb.send(new GetCommand({ TableName: tableName, Key: { id: job.id }, ConsistentRead: true })); return existing.Item?.state !== 'COMPLETE'; },
     persistPlan: async (job, metadata, scanJobs) => {
+      await putIdempotently({ id: job.mediaVersionId, recordType: 'MEDIA_VERSION', product: job.product, environment: job.environment, dataHomeRegion: job.dataHomeRegion, assetId: job.assetId, sha256: scanJobs[0]?.contentHash || job.contentHash, perceptualFingerprintRefs: [], region: job.dataHomeRegion, ingestSource: 'creator_upload', scanRequiredAt: job.createdAt, mediaType: 'video', durationSeconds: metadata.durationSeconds });
       await putIdempotently({ id: `${job.id}:video-summary`, recordType: 'VIDEO_FRAME_PLAN', jobId: job.id, product: job.product, environment: job.environment, dataHomeRegion: job.dataHomeRegion, assetId: job.assetId, mediaVersionId: job.mediaVersionId, contentHash: job.contentHash, scanProfile: job.scanProfile, ...metadata });
       for (const manifest of scanGroupManifestRecords(scanJobs)) await putIdempotently(manifest);
       for (const scanJob of scanJobs) {
@@ -104,7 +116,7 @@ export const createRegionalVideoHandler = (deps: RegionalVideoHandlerDependencie
   const failures: Array<{ itemIdentifier: string }> = [];
   for (const record of event.Records) {
     const workDirectory = `/tmp/regional-video-${record.messageId}`;
-    let job: RegionalScanJob | undefined; let cellValidated = false;
+    let job: RegionalScanJob | undefined; let cellValidated = false; let reservedScanGroupId: string | undefined;
     try {
       const payload = JSON.parse(record.body) as any;
       const s3Record = payload.Records?.find(({ eventSource }: any) => eventSource === 'aws:s3');
@@ -128,9 +140,11 @@ export const createRegionalVideoHandler = (deps: RegionalVideoHandlerDependencie
       const media: MediaVersion = { id: job.mediaVersionId, assetId: job.assetId, sha256: contentHash, perceptualFingerprintRefs: [], region, ingestSource: 'creator_upload', scanRequiredAt: job.createdAt, mediaType: 'video', durationSeconds: metadata.durationSeconds };
       const planned = planRegionalScans(product, environment, media, { bucket: quarantineBucket, objectKey: job.sourceObjectKey, frameBucket }, job.scanProfile).filter(({ type }) => type === 'VIDEO_FRAME_MODERATION' || type === 'VIDEO_FRAME_FACE_AGE');
       const scanJobs = finalizeRegionalScanGroup(planned, media, product, environment, job.scanProfile);
+      await deps.reserve?.(job, media, scanJobs[0].scanGroupId);
+      if (deps.reserve) reservedScanGroupId = scanJobs[0].scanGroupId;
       await deps.persistPlan(job, metadata, scanJobs);
     } catch (error) {
-      if (job && cellValidated && Number(record.attributes?.ApproximateReceiveCount || 1) >= 5) await deps.markUnavailable(job, error instanceof Error ? error.name : 'Error');
+      if (job && cellValidated && Number(record.attributes?.ApproximateReceiveCount || 1) >= 5) { const reason = error instanceof Error ? error.name : 'Error'; if (reservedScanGroupId) await deps.release?.(job, reservedScanGroupId, reason); await deps.markUnavailable(job, reason); }
       else { if (cellValidated) await deps.deferRetry(record.receiptHandle, Number(record.attributes?.ApproximateReceiveCount || 1)); failures.push({ itemIdentifier: record.messageId }); }
     } finally {
       await rm(workDirectory, { recursive: true, force: true });
