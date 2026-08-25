@@ -301,9 +301,10 @@ Run either static site alone, with no product API or web app required:
 ```bash
 npm run dev:landing:eversally # http://127.0.0.1:5180
 npm run dev:landing:ubeeq     # http://127.0.0.1:5181
+npm run dev:landing:nightframe # http://127.0.0.1:5182
 ```
 
-Or preview both together with `npm run dev:landing`.
+Or preview all three together with `npm run dev:landing`.
 
 ### Buttondown redirects
 
