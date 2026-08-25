@@ -80,6 +80,16 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const [discordAnnouncementMode, setDiscordAnnouncementMode] = useState<'default' | 'per_work' | 'none'>('default');
   const [discordAnnouncementPreset, setDiscordAnnouncementPreset] = useState<AnnouncementPresetId>('recommended');
   const [discordIncludePrimaryMedia, setDiscordIncludePrimaryMedia] = useState(true);
+  const [announcementProviders, setAnnouncementProviders] = useState<Array<'discord' | 'bluesky'>>(['discord']);
+
+  const toggleAnnouncementProvider = (provider: 'discord' | 'bluesky') => {
+    setAnnouncementProviders((current) => {
+      if (current.includes(provider)) {
+        return current.length === 1 ? current : current.filter((item) => item !== provider);
+      }
+      return [...current, provider];
+    });
+  };
 
   const backToWorks = () => {
     navigate(worksWorkspacePath(location.search));
@@ -379,7 +389,12 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         published,
         hostingMode: 'hosted',
         visibility,
-        announcement: { mode: discordAnnouncementMode, preset: discordAnnouncementPreset, includePrimaryMedia: discordIncludePrimaryMedia }
+        announcement: {
+          mode: discordAnnouncementMode,
+          providers: announcementProviders,
+          preset: discordAnnouncementPreset,
+          includePrimaryMedia: discordIncludePrimaryMedia
+        }
       });
       const withdrewDiscovery = !published || visibility !== 'public';
       setAsset((current) => current ? {
@@ -759,16 +774,28 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
               <small>Publishing publicly to your Space never opts this work into discovery automatically.</small>
             </label>
             <fieldset className="studio-work-metadata-options">
-              <legend>Discord announcement</legend>
-              <p className="small">Choose how this public Space release is announced in any configured Discord channels.</p>
+              <legend>Release announcements</legend>
+              <p className="small">Choose how this public Space release is announced through configured destinations.</p>
               <label><span>Delivery</span><select value={discordAnnouncementMode} disabled={spaceBusy} onChange={(event) => setDiscordAnnouncementMode(event.target.value as 'default' | 'per_work' | 'none')}>
-                <option value="default">Use each channel’s default</option>
+                <option value="default">Use each destination’s default</option>
                 <option value="per_work">Announce this Work</option>
                 <option value="none">Do not announce this Work</option>
               </select></label>
+              {discordAnnouncementMode !== 'none' && <div className="studio-announcement-provider-picker">
+                <span>Deliver to</span>
+                {(['discord', 'bluesky'] as const).map((provider) => <label key={provider}>
+                  <input
+                    type="checkbox"
+                    checked={announcementProviders.includes(provider)}
+                    disabled={spaceBusy || (announcementProviders.length === 1 && announcementProviders.includes(provider))}
+                    onChange={() => toggleAnnouncementProvider(provider)}
+                  />
+                  {provider === 'discord' ? 'Discord' : 'Bluesky'}
+                </label>)}
+              </div>}
               {discordAnnouncementMode !== 'none' && <label><span>Recommended format</span><select value={discordAnnouncementPreset} disabled={spaceBusy} onChange={(event) => setDiscordAnnouncementPreset(event.target.value as AnnouncementPresetId)}>{announcementPresetOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>}
               {discordAnnouncementMode !== 'none' && <label className="studio-work-metadata-option"><input type="checkbox" checked={discordIncludePrimaryMedia} disabled={spaceBusy} onChange={(event) => setDiscordIncludePrimaryMedia(event.target.checked)} /><span>Include primary image or media in supported rich previews</span></label>}
-              <small>Discord announcements are only delivered after this Work becomes Space-visible.</small>
+              <small>Only configured destinations are used, and delivery begins after this Work becomes Space-visible.</small>
             </fieldset>
           </section>
 

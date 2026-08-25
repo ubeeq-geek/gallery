@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import type { AiDisclosure } from './domain';
+import type { AiDisclosure, AnnouncementPresetId } from './domain';
 
 export type AnnouncementProvider = 'discord' | 'bluesky';
 export type AnnouncementPublicationStatus = 'queued' | 'sending' | 'sent' | 'retry_scheduled' | 'failed' | 'cancelled';
@@ -12,7 +12,22 @@ export interface AnnouncementContentSnapshot {
   creatorName?: string;
   imageUrl?: string;
   aiDisclosure?: AiDisclosure;
+  preset?: AnnouncementPresetId;
   capturedAt: string;
+}
+
+export interface BlueskyFacet {
+  index: { byteStart: number; byteEnd: number };
+  features: Array<{ $type: 'app.bsky.richtext.facet#link'; uri: string }>;
+}
+
+export interface BlueskyPost {
+  text: string;
+  facets?: BlueskyFacet[];
+  embed?: {
+    $type: 'app.bsky.embed.external';
+    external: { uri: string; title: string; description?: string };
+  };
 }
 
 /**
@@ -60,16 +75,59 @@ const aiLabel = (value?: AiDisclosure): string => value === 'ai-generated'
     ? 'AI-assisted'
     : '';
 
+const trimCharacters = (value: string, maximum: number): string => Array.from(value).slice(0, maximum).join('');
+
+const publicUrl = (value?: string): string | undefined => {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export const renderBlueskyPost = (content: AnnouncementContentSnapshot): BlueskyPost => {
+  const lead = `${content.creatorName ? `${content.creatorName}: ` : ''}${content.title}`;
+  const disclosure = aiLabel(content.aiDisclosure);
+  const prose = [lead, content.text?.trim(), disclosure ? `[${disclosure}]` : undefined].filter(Boolean).join('\n\n');
+  // A URL longer than Bluesky's entire text limit cannot be represented as a
+  // valid facet. Keep the announcement useful rather than emit an invalid
+  // record that the broker must reject.
+  const requestedUrl = publicUrl(content.url);
+  const url = requestedUrl && Array.from(requestedUrl).length <= 300 ? requestedUrl : undefined;
+  const urlCharacters = url ? Array.from(url).length : 0;
+  const separator = prose && url ? '\n\n' : '';
+  const prefix = trimCharacters(prose, Math.max(0, 300 - urlCharacters - Array.from(separator).length));
+  const text = `${prefix}${prefix && url ? separator : ''}${url || ''}` || trimCharacters(lead, 300);
+  const urlStart = url ? Array.from(prefix).length + Array.from(prefix && url ? separator : '').length : -1;
+  const facets = url
+    ? [{
+      index: {
+        byteStart: Buffer.byteLength(Array.from(text).slice(0, urlStart).join(''), 'utf8'),
+        byteEnd: Buffer.byteLength(Array.from(text).slice(0, urlStart + urlCharacters).join(''), 'utf8')
+      },
+      features: [{ $type: 'app.bsky.richtext.facet#link' as const, uri: url }]
+    }]
+    : undefined;
+  const description = trimCharacters([content.text?.trim(), disclosure ? `[${disclosure}]` : undefined].filter(Boolean).join('\n\n'), 300);
+  const embed = url && content.preset !== 'text_only'
+    ? { $type: 'app.bsky.embed.external' as const, external: { uri: url, title: trimCharacters(content.title, 300), description: description || undefined } }
+    : undefined;
+  return { text: trimCharacters(text, 300), ...(facets ? { facets } : {}), ...(embed ? { embed } : {}) };
+};
+
 export const renderAnnouncementPublication = (publication: AnnouncementPublication): {
   text: string;
   embed?: { title: string; description?: string; url?: string; imageUrl?: string };
+  blueskyPost?: BlueskyPost;
 } => {
   const { content } = publication;
   const disclosure = aiLabel(content.aiDisclosure);
   const suffix = [content.url, disclosure].filter(Boolean).join('\n');
   if (publication.provider === 'bluesky') {
-    const lead = `${content.creatorName ? `${content.creatorName}: ` : ''}${content.title}`;
-    return { text: [lead, content.text, suffix].filter(Boolean).join('\n\n').slice(0, 300) };
+    const blueskyPost = renderBlueskyPost(content);
+    return { text: blueskyPost.text, blueskyPost };
   }
   return {
     text: [`New from ${content.creatorName || 'a creator'}: **${content.title}**`, suffix].filter(Boolean).join('\n'),

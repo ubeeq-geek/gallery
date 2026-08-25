@@ -1,5 +1,6 @@
 import { createHmac } from 'crypto';
 import type { AppConfig } from './config';
+import type { BlueskyPost } from './announcementPublication';
 
 export class BlueskyAnnouncementError extends Error {
   constructor(readonly status: number, message: string, readonly retryAfterSeconds?: number) { super(message); }
@@ -12,12 +13,12 @@ export const blueskyAnnouncementConfigured = (config: AppConfig): boolean => Boo
 export const sendBlueskyAnnouncement = async (
   config: AppConfig,
   did: string,
-  text: string,
+  post: BlueskyPost,
   idempotencyKey: string,
   createdAt: string
 ): Promise<{ uri: string; cid?: string }> => {
   if (!blueskyAnnouncementConfigured(config)) throw new Error('Bluesky announcement publishing is not configured');
-  const body = JSON.stringify({ did, text: text.slice(0, 300), idempotencyKey, createdAt });
+  const body = JSON.stringify({ did, post, idempotencyKey, createdAt });
   const signature = createHmac('sha256', config.blueskyOAuthInternalSecret!).update(body).digest('hex');
   const response = await fetch(`${config.blueskyOAuthServiceUrl!.replace(/\/$/, '')}/oauth/bluesky/publish`, {
     method: 'POST',

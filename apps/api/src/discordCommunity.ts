@@ -224,7 +224,7 @@ export const queueDiscordWorkPublished = async (
       announcementPublication: createAnnouncementPublication({
         provider: 'discord', connectionId: destination.communityInstallationId, targetId: destination.remoteChannelId,
         workId: input.workId, idempotencyKey: `${input.idempotencyKey}:${destination.communityDestinationId}`,
-        content: { version: 1, title: input.title, text: input.description, url: input.url, creatorName: input.creatorName, imageUrl: input.imageUrl, aiDisclosure: input.aiDisclosure, capturedAt: now }
+        content: { version: 1, title: input.title, text: input.description, url: input.url, creatorName: input.creatorName, imageUrl: input.imageUrl, aiDisclosure: input.aiDisclosure, preset: input.preset, capturedAt: now }
       }),
       status: 'queued', attemptCount: 0, createdAt: now, updatedAt: now
     };
@@ -235,7 +235,7 @@ export const queueDiscordWorkPublished = async (
     const announcementPublication = createAnnouncementPublication({
       provider: 'bluesky', connectionId: account.externalAccountId, targetId: account.externalUserId,
       workId: input.workId, idempotencyKey: `${input.idempotencyKey}:${account.externalAccountId}`,
-      content: { version: 1, title: input.title, text: input.description, url: input.url, creatorName: input.creatorName, imageUrl: input.imageUrl, aiDisclosure: input.aiDisclosure, capturedAt: now }
+      content: { version: 1, title: input.title, text: input.description, url: input.url, creatorName: input.creatorName, imageUrl: input.imageUrl, aiDisclosure: input.aiDisclosure, preset: input.preset, capturedAt: now }
     });
     const delivery: CommunityDelivery = {
       communityDeliveryId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId,
@@ -285,6 +285,7 @@ export const queueDiscordWorksPublished = async (
           url: input.works[0]?.url,
           creatorName: input.creatorName,
           imageUrl: input.includePrimaryMedia ? input.works[0]?.imageUrl : undefined,
+          preset: input.preset || 'collection_digest',
           capturedAt: now
         }
       }),
@@ -297,7 +298,7 @@ export const queueDiscordWorksPublished = async (
     const announcementPublication = createAnnouncementPublication({
       provider: 'bluesky', connectionId: account.externalAccountId, targetId: account.externalUserId,
       idempotencyKey: `${input.idempotencyKey}:${account.externalAccountId}`,
-      content: { version: 1, title: `${input.works.length} new Works`, text: input.works.map((work) => `${work.title} — ${work.url}`).join('\n'), url: input.works[0]?.url, creatorName: input.creatorName, capturedAt: now }
+      content: { version: 1, title: `${input.works.length} new Works`, text: input.works.map((work) => `${work.title} — ${work.url}`).join('\n'), url: input.works[0]?.url, creatorName: input.creatorName, preset: input.preset || 'collection_digest', capturedAt: now }
     });
     const delivery: CommunityDelivery = { communityDeliveryId: randomUUID(), tenantId: config.tenantId, userId: input.userId, creatorIdentityId: input.creatorIdentityId, communityEventId: event.communityEventId, communityDestinationId: account.externalAccountId, provider: 'bluesky', announcementPublication, status: 'queued', attemptCount: 0, createdAt: now, updatedAt: now };
     await store.upsertCommunityDelivery(delivery);
@@ -364,7 +365,7 @@ export const processAnnouncementDelivery = async (store: DataStore, config: AppC
       const sent = await sendBlueskyAnnouncement(
         config,
         blueskyAccount.externalUserId,
-        rendered.text,
+        rendered.blueskyPost || { text: rendered.text },
         delivery.announcementPublication.idempotencyKey,
         delivery.announcementPublication.content.capturedAt
       );

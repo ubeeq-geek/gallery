@@ -6257,10 +6257,13 @@ export const createApp = ({
     const items = publicWorks.filter((item): item is NonNullable<typeof item> => Boolean(item));
     if (!items.length) return res.status(409).json({ message: 'Only public Space Works can be announced.' });
     const preset = ['recommended', 'collection_digest', 'series_digest', 'compact_link', 'text_only'].includes(req.body?.preset) ? req.body.preset : 'collection_digest';
+    const announcementProviders = Array.isArray(req.body?.providers)
+      ? req.body.providers.filter((provider: unknown): provider is 'discord' | 'bluesky' => provider === 'discord' || provider === 'bluesky')
+      : ['discord' as const];
     await queueDiscordWorksPublished(store, config, {
       userId: req.authUser!.userId, creatorIdentityId, creatorName: creator.name, works: items,
-      providers: ['discord'], preset, includePrimaryMedia: req.body?.includePrimaryMedia !== false,
-      idempotencyKey: `discord:space-bulk:${creatorIdentityId}:${items.map((item) => item.workId).sort().join(':')}`
+      providers: announcementProviders, preset, includePrimaryMedia: req.body?.includePrimaryMedia !== false,
+      idempotencyKey: `announcement:space-bulk:${creatorIdentityId}:${items.map((item) => item.workId).sort().join(':')}:${[...announcementProviders].sort().join('-') || 'none'}`
     }, communityDeliveryQueue.enqueue.bind(communityDeliveryQueue));
     return res.status(202).json({ queued: true, workCount: items.length });
   });
@@ -9234,7 +9237,7 @@ export const createApp = ({
           ...(announcementMode === 'per_work'
             ? { preset: announcementPreset, includePrimaryMedia }
             : {}),
-          idempotencyKey: `discord:space-live:${publication.publicationId}`
+          idempotencyKey: `announcement:space-live:${publication.publicationId}:${[...announcementProviders].sort().join('-') || 'none'}`
         }, communityDeliveryQueue.enqueue.bind(communityDeliveryQueue)).catch((error) => logServerError('discord.work-published.enqueue', error));
       }
     }
