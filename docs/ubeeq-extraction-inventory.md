@@ -60,6 +60,8 @@ The migrated private Eversally API now passes its complete suite (94 suites / 46
 
 Private `eversally-infrastructure` now pins the migrated Eversally API, creator web, and admin source revision in a CI-validated deployment manifest. Production promotion requires a private CI build, artifact provenance, and manual approval; it cannot bundle source from Gallery. AWS account credentials, artifact publishing, and the actual production rollout remain private operational work.
 
+Both private product repositories now declare their full current Ubeeq package set and verify, in CI, that every declared package exists in the pinned public checkout with a compatible major version. This is an explicit source-compatibility gate; installing those packages by semantic version remains gated on the first public registry release.
+
 The complete neutral Ubeeq landing application has likewise been copied byte-for-byte into the public Ubeeq repository and is covered by its public test suite and boundary check. Keep the Gallery copy only for manual verification; neutral landing changes should now be made in Ubeeq.
 
 Public Ubeeq now includes the `@ubeeq/self-host` package and a neutral reference instance configuration. It validates instance identity, secure public origins, storage requirements, and extension identifiers without selecting any hosted-product policy, domain, or credential. Package verification passes; a real operator installation remains an independent deployment verification gate.
