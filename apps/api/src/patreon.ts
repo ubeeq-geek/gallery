@@ -5,6 +5,7 @@ import type { AppConfig } from './config';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
 import { requireAuth } from './auth';
 import type { DataStore } from './store';
+import { nativeConnectionHealth } from './integrationAccountHealth';
 
 export const PATREON_API_VERSION = '2';
 export const PATREON_CAPABILITIES = Object.freeze({
@@ -159,7 +160,16 @@ const parseCredential = (config: AppConfig, encrypted: string): StoredPatreonCre
   JSON.parse(decryptExternalCredential(encrypted, config.externalTokenEncryptionKey!));
 const encryptCredential = (config: AppConfig, credential: StoredPatreonCredential): string =>
   encryptExternalCredential(JSON.stringify(credential), config.externalTokenEncryptionKey!);
-const safeConnection = (connection: PatreonConnection) => ({ ...connection, credential: undefined, capabilitiesSupported: PATREON_CAPABILITIES });
+const safeConnection = (connection: PatreonConnection) => ({
+  ...connection,
+  credential: undefined,
+  capabilitiesSupported: PATREON_CAPABILITIES,
+  health: nativeConnectionHealth({
+    platform: 'patreon', state: connection.state, connectedStates: ['CONNECTED'],
+    reauthorizationStates: ['REAUTH_REQUIRED', 'INSUFFICIENT_SCOPE'], rateLimitedStates: ['RATE_LIMITED'],
+    lastSuccessfulSyncAt: connection.lastSuccessfulSync
+  })
+});
 const redirectUri = (config: AppConfig, purpose: OAuthPurpose) => purpose === 'creator' ? config.patreonOAuthRedirectUri! : config.patreonPatronOAuthRedirectUri!;
 const patronLinkResponse = (repository: PatreonRepository, link: PatreonPatronLink) => ({
   linked: link.state === 'LINKED',

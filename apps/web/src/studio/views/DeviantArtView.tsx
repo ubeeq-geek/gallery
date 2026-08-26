@@ -254,6 +254,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [youtubeConnectionNotice, setYoutubeConnectionNotice] = useState('');
   const [youtubeConnectionError, setYoutubeConnectionError] = useState('');
   const [visibleIntegrationPlatforms, setVisibleIntegrationPlatforms] = useState<StudioIntegrationPlatform[]>(defaultVisibleIntegrationPlatforms);
+  const [availableIntegrationPlatforms, setAvailableIntegrationPlatforms] = useState<StudioIntegrationPlatform[]>(() => studioIntegrationPlatforms.map((platform) => platform.id));
   const [visibleIntegrationPlatformsByCreator, setVisibleIntegrationPlatformsByCreator] = useState<Record<string, StudioIntegrationPlatform[]>>({});
   const [savingIntegrationVisibility, setSavingIntegrationVisibility] = useState(false);
 
@@ -275,17 +276,38 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     setVisibleIntegrationPlatforms(normalizeVisibleIntegrationPlatforms(configuredPlatforms));
   }, [creatorId, creators, visibleIntegrationPlatformsByCreator]);
 
+  // The API registry is authoritative for which shipped Studio adapters may
+  // be shown. Keep the local list as a resilient fallback during upgrades.
+  useEffect(() => {
+    let active = true;
+    void api.studioGetIntegrationCatalog().then((catalog) => {
+      if (!active) return;
+      const localIds = new Set<string>(studioIntegrationPlatforms.map((platform) => platform.id));
+      const available = catalog.items
+        .filter((item) => item.surface === 'studio' && item.studioAdapter && localIds.has(item.studioAdapter))
+        .map((item) => item.studioAdapter as StudioIntegrationPlatform);
+      // A successful empty catalog is an intentional server-side disablement;
+      // only a failed request retains the local compatibility fallback.
+      setAvailableIntegrationPlatforms([...new Set(available)]);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    setVisibleIntegrationPlatforms((current) => current.filter((platform) => availableIntegrationPlatforms.includes(platform)));
+  }, [availableIntegrationPlatforms]);
+
   // Keep the platform chooser useful as integrations grow: enabled platforms
   // are grouped first, with alphabetical ordering within each group.
   const orderedIntegrationPlatforms = useMemo(() => {
     const selected = new Set(visibleIntegrationPlatforms);
-    return [...studioIntegrationPlatforms].sort((a, b) => {
+    return studioIntegrationPlatforms.filter((platform) => availableIntegrationPlatforms.includes(platform.id)).sort((a, b) => {
       const aSelected = selected.has(a.id);
       const bSelected = selected.has(b.id);
       if (aSelected !== bSelected) return aSelected ? -1 : 1;
       return integrationPlatformLabelOrder(a, b);
     });
-  }, [visibleIntegrationPlatforms]);
+  }, [availableIntegrationPlatforms, visibleIntegrationPlatforms]);
 
   const toggleIntegrationVisibility = async (platform: StudioIntegrationPlatform) => {
     if (!creatorId) return;

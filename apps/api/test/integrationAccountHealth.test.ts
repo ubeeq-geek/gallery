@@ -1,5 +1,5 @@
 import type { ExternalAccount } from '../src/domain';
-import { deriveIntegrationAccountHealth } from '../src/integrationAccountHealth';
+import { deriveIntegrationAccountHealth, nativeIntegrationHealthConnection } from '../src/integrationAccountHealth';
 
 const account = (overrides: Partial<ExternalAccount> = {}): ExternalAccount => ({
   externalAccountId: 'account-1', userId: 'user-1', externalPlatformCredentialId: 'credential-1',
@@ -39,5 +39,15 @@ describe('deriveIntegrationAccountHealth', () => {
     expect(result.state).toBe('attention');
     expect(result.issue?.code).toBe('invalid_response');
     expect(result.recommendedAction).toBe('review_setup');
+  });
+  it('projects native provider records without requiring an ExternalAccount', () => {
+    const result = deriveIntegrationAccountHealth(nativeIntegrationHealthConnection({
+      platform: 'ghost', connectionStatus: 'temporarily_unavailable',
+      lastSyncAttemptAt: '2026-08-25T11:00:00.000Z',
+      lastIssue: { code: 'network', message: 'Ghost is unavailable.', remediation: 'Retry later.' }
+    }), now);
+    expect(result.state).toBe('temporarily_unavailable');
+    expect(result.recommendedAction).toBe('retry_sync');
+    expect(result.capabilities.platform).toBe('ghost');
   });
 });

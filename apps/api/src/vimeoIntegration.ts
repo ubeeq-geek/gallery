@@ -4,6 +4,7 @@ import type { AppConfig } from './config';
 import type { DataStore } from './store';
 import { requireAuth } from './auth';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
+import { nativeConnectionHealth } from './integrationAccountHealth';
 import { VimeoApiError, VimeoProvider } from './vimeoProvider';
 import type { CanonicalAsset, Work } from './canonicalDomain';
 import type { VimeoQueue } from './vimeoQueue';
@@ -204,7 +205,10 @@ export const verifyVimeoWebhook = (
   return supplied.length === expected.length && timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
 };
 
-export const publicVimeoConnection = ({ credentialRef: _credential, applicationCredentialRef: _applicationCredential, ...connection }: VimeoConnection) => connection;
+export const publicVimeoConnection = ({ credentialRef: _credential, applicationCredentialRef: _applicationCredential, ...connection }: VimeoConnection) => ({
+  ...connection,
+  health: nativeConnectionHealth({ platform: 'vimeo', state: connection.state, connectedStates: ['CONNECTED'], reauthorizationStates: ['REAUTHORIZATION_REQUIRED'] })
+});
 export const publicVimeoPublication = ({ uploadAuthorization: _authorization, ...publication }: VimeoPublication) => publication;
 
 export const installVimeoRoutes = (

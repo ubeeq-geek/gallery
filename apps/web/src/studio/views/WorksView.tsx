@@ -477,14 +477,14 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     .map((asset) => asset.aiDisclosure || 'none')
     .join(',');
   const bulkPreflightTargets = useMemo(() => [
-    ...(bulkDeviantArtIntent ? [{ platform: 'deviantart', intent: 'publish' as const }] : []),
+    ...(bulkDeviantArtIntent ? [{ platform: 'deviantart', intent: 'publish' as const, externalAccountId: selectedBulkAccountId || undefined }] : []),
     ...(bulkSpaceIntent && bulkDiscordAnnouncementMode !== 'none' && bulkAnnouncementProviders.includes('bluesky')
       ? [{ platform: 'bluesky', intent: 'announce' as const }]
       : []),
     ...(bulkSpaceIntent && bulkDiscordAnnouncementMode !== 'none' && bulkAnnouncementProviders.includes('discord')
       ? [{ platform: 'discord', intent: 'announce' as const }]
       : [])
-  ], [bulkAnnouncementProviders, bulkDeviantArtIntent, bulkDiscordAnnouncementMode, bulkSpaceIntent]);
+  ], [bulkAnnouncementProviders, bulkDeviantArtIntent, bulkDiscordAnnouncementMode, bulkSpaceIntent, selectedBulkAccountId]);
   const bulkPreflightIssues = useMemo(
     () => bulkPreflights.flatMap((result) => result.issues.map((issue) => ({ ...issue, platform: result.platform }))),
     [bulkPreflights]
@@ -759,7 +759,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
       return 'image';
     })));
     const preflightInputs = [
-      ...(bulkDeviantArtIntent ? [{ platform: 'deviantart', intent: 'publish' as const }] : []),
+      ...(bulkDeviantArtIntent ? [{ platform: 'deviantart', intent: 'publish' as const, externalAccountId: selectedBulkAccountId || undefined }] : []),
       ...(bulkSpaceIntent && bulkDiscordAnnouncementMode !== 'none' && bulkAnnouncementProviders.includes('bluesky')
         ? [{ platform: 'bluesky', intent: 'announce' as const }]
         : []),
