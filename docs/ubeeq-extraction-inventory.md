@@ -18,6 +18,8 @@ The neutral Work, Asset, WorkAsset, origin, and content-availability contracts a
 
 The neutral Creator, collection, publication, publication-intent, and reconciliation contracts are now also represented by `@ubeeq/core`. Legacy concrete provider destinations, raw provider data, disclosure snapshots, and discovery/remediation policy remain transitional rather than becoming Ubeeq defaults.
 
+The portable structured content-block and media-reference contracts are now represented by `@ubeeq/core`, including structural validation only. Legacy viewer-specific visibility filtering, HTML sanitization, and provider renderers remain outside the public core and must move with the owning product or connector.
+
 The Eversally provider catalogue—provider ids, labels, rollout state, product surfaces, and enabled operations—is now declared and validated in the private `eversally-platform` repository. The legacy runtime registry remains temporarily until that private catalogue is consumed by the Eversally deployment.
 
 The private `@eversally/integrations` module now consumes that catalogue and the Eversally web-composition shell exposes it at runtime. Provider adapters, OAuth custody, and media/policy presentation details remain in the legacy runtime until their private implementations and product tests are migrated.
