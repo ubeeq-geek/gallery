@@ -169,12 +169,22 @@ export interface ScanJob {
 export interface BillingTask {
   billingTaskId: string;
   requesterUserId: string;
-  requestedChange: string;
-  currentState: string;
-  financialImpact: string;
+  accountId: string;
+  changeType: 'REFUND' | 'CREDIT' | 'MANUAL_CHARGE' | 'VOID_INVOICE' | 'WRITE_OFF' | 'PLAN_OVERRIDE';
+  reasonCode: 'DUPLICATE_CHARGE' | 'SERVICE_FAILURE' | 'GOODWILL' | 'FRAUD' | 'UNCOLLECTIBLE' | 'CONTRACT_CORRECTION' | 'OTHER';
+  expectedState: string;
+  currentAmountMinor: number;
+  requestedAmountMinor: number;
+  currency: 'USD' | 'EUR' | 'GBP';
+  notes: string;
+  evidenceReferences: string[];
+  idempotencyKey: string;
   linkedTicketId: string;
   status: 'AWAITING_HUMAN' | 'EXECUTED' | 'REJECTED' | 'MORE_INFORMATION' | 'FAILED';
   approvedBy?: string;
+  decisionReason?: string;
+  providerOperationId?: string;
+  resultingAmountMinor?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -203,6 +213,7 @@ export class SupportSafetyService {
     await this.repository.put('auditEvent', record.eventId, record);
   }
   listTickets(): Promise<SupportTicket[]> { return this.repository.list('ticket'); }
+  listBillingTasks(): Promise<BillingTask[]> { return this.repository.list('billingTask'); }
   listMessages(): Promise<SupportMessage[]> { return this.repository.list('message'); }
   listAttachments(): Promise<SupportAttachment[]> { return this.repository.list('attachment'); }
   listNotifications(): Promise<SupportNotification[]> { return this.repository.list('notification'); }
@@ -378,13 +389,20 @@ export class SupportSafetyService {
     await this.audit({ action: 'scan_job.completed', sourceId: job.scanJobId, targetId: job.targetId, previousStatus, newStatus: job.mediaState, reason: input.errorCode, authoredBy: 'system' });
     return job;
   }
-  async createBillingTask(input: Omit<BillingTask, 'billingTaskId' | 'status' | 'createdAt' | 'updatedAt'>): Promise<BillingTask> {
+  async createBillingTask(input: Omit<BillingTask, 'billingTaskId' | 'status' | 'approvedBy' | 'decisionReason' | 'providerOperationId' | 'resultingAmountMinor' | 'createdAt' | 'updatedAt'>): Promise<BillingTask> {
+    const ticket = await this.repository.get('ticket', input.linkedTicketId);
+    if (!ticket || ticket.requesterUserId !== input.requesterUserId) throw new Error('Owned billing support ticket not found');
+    if (!Number.isSafeInteger(input.currentAmountMinor) || !Number.isSafeInteger(input.requestedAmountMinor) || input.currentAmountMinor < 0 || input.requestedAmountMinor < 0 || !input.idempotencyKey.trim() || !input.notes.trim() || input.evidenceReferences.length > 20) throw new Error('Billing change request is invalid');
+    const duplicate = (await this.repository.list('billingTask')).find((item) => item.requesterUserId === input.requesterUserId && item.idempotencyKey === input.idempotencyKey);
+    if (duplicate) return duplicate;
     const now = this.now(); const task: BillingTask = { ...input, billingTaskId: randomUUID(), status: 'AWAITING_HUMAN', createdAt: now, updatedAt: now };
     await this.repository.put('billingTask', task.billingTaskId, task); await this.audit({ action: 'billing_task.created', sourceId: task.billingTaskId, newStatus: task.status, authoredBy: 'system' }); return task;
   }
-  async decideBillingTask(taskId: string, outcome: Exclude<BillingTask['status'], 'AWAITING_HUMAN'>, humanActorId: string): Promise<BillingTask> {
+  async decideBillingTask(taskId: string, input: { outcome: Exclude<BillingTask['status'], 'AWAITING_HUMAN'>; reason: string; providerOperationId?: string; resultingAmountMinor?: number }, humanActorId: string): Promise<BillingTask> {
     const task = await this.repository.get('billingTask', taskId); if (!task) throw new Error('Billing task not found');
-    const previousStatus = task.status; Object.assign(task, { status: outcome, approvedBy: humanActorId, updatedAt: this.now() });
-    await this.repository.put('billingTask', task.billingTaskId, task); await this.audit({ action: 'billing_task.decided', sourceId: taskId, previousStatus, newStatus: outcome, authoredBy: 'human', internalActorId: humanActorId }); return task;
+    if (task.requesterUserId === humanActorId) throw new Error('Billing changes require a different human approver');
+    if (task.status !== 'AWAITING_HUMAN' || !input.reason.trim() || (input.outcome === 'EXECUTED' && (!input.providerOperationId?.trim() || !Number.isSafeInteger(input.resultingAmountMinor) || input.resultingAmountMinor! < 0))) throw new Error('Billing decision is invalid');
+    const previousStatus = task.status; Object.assign(task, { status: input.outcome, approvedBy: humanActorId, decisionReason: input.reason.trim(), providerOperationId: input.providerOperationId?.trim(), resultingAmountMinor: input.resultingAmountMinor, updatedAt: this.now() });
+    await this.repository.put('billingTask', task.billingTaskId, task); await this.audit({ action: 'billing_task.decided', sourceId: taskId, previousStatus, newStatus: input.outcome, reason: input.reason.trim(), authoredBy: 'human', internalActorId: humanActorId }); return task;
   }
 }

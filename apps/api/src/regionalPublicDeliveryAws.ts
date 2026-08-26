@@ -48,9 +48,9 @@ export const dynamoRegionalPublicDeliveryRepository = (input: {
         ConditionCheck: {
           TableName: input.metadataTableName,
           Key: { PK: regionalAssetKey(publication.assetId) },
-          ConditionExpression: '#product = :product AND #environment = :environment AND dataHomeRegion = :region AND canonicalRegion = :region AND publicDeliveryState = :eligible AND currentScanGroupId = :scanGroupId AND currentMediaVersionId = :mediaVersionId',
+          ConditionExpression: '#product = :product AND #environment = :environment AND dataHomeRegion = :region AND canonicalRegion = :region AND processingBillingState = :consumed AND publicDeliveryState = :eligible AND currentScanGroupId = :scanGroupId AND currentMediaVersionId = :mediaVersionId',
           ExpressionAttributeNames: { '#product': 'product', '#environment': 'environment' },
-          ExpressionAttributeValues: { ':product': publication.product, ':environment': publication.environment, ':region': publication.dataHomeRegion, ':eligible': 'ELIGIBLE', ':scanGroupId': publication.scanGroupId, ':mediaVersionId': publication.mediaVersionId }
+          ExpressionAttributeValues: { ':product': publication.product, ':environment': publication.environment, ':region': publication.dataHomeRegion, ':consumed': 'CONSUMED', ':eligible': 'ELIGIBLE', ':scanGroupId': publication.scanGroupId, ':mediaVersionId': publication.mediaVersionId }
         }
       },
       {
@@ -80,9 +80,9 @@ export const dynamoRegionalPublicDeliveryRepository = (input: {
           TableName: input.metadataTableName,
           Key: { PK: regionalAssetKey(publication.assetId) },
           UpdateExpression: 'SET publicDeliveryState = :published, publicDerivativeKey = :key, publicDeliveryPublishedAt = :publishedAt',
-          ConditionExpression: '#product = :product AND #environment = :environment AND dataHomeRegion = :region AND canonicalRegion = :region AND publicDeliveryState = :eligible AND currentScanGroupId = :scanGroupId AND currentMediaVersionId = :mediaVersionId',
+          ConditionExpression: '#product = :product AND #environment = :environment AND dataHomeRegion = :region AND canonicalRegion = :region AND processingBillingState = :consumed AND publicDeliveryState = :eligible AND currentScanGroupId = :scanGroupId AND currentMediaVersionId = :mediaVersionId',
           ExpressionAttributeNames: { '#product': 'product', '#environment': 'environment' },
-          ExpressionAttributeValues: { ':product': publication.product, ':environment': publication.environment, ':region': publication.dataHomeRegion, ':eligible': 'ELIGIBLE', ':published': 'PUBLISHED', ':key': publication.destinationObjectKey, ':publishedAt': publication.publishedAt, ':scanGroupId': publication.scanGroupId, ':mediaVersionId': publication.mediaVersionId }
+          ExpressionAttributeValues: { ':product': publication.product, ':environment': publication.environment, ':region': publication.dataHomeRegion, ':consumed': 'CONSUMED', ':eligible': 'ELIGIBLE', ':published': 'PUBLISHED', ':key': publication.destinationObjectKey, ':publishedAt': publication.publishedAt, ':scanGroupId': publication.scanGroupId, ':mediaVersionId': publication.mediaVersionId }
         }
       },
       {

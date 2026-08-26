@@ -224,6 +224,9 @@ export function StudioWorkspace({ onCreatorCreated }: { onCreatorCreated?: () =>
                 <Link className="studio-task-link no-underline" to="/settings?section=preferences">
                   <strong>Account settings</strong><span>Manage account-wide preferences and sign-in settings.</span>
                 </Link>
+                <Link className="studio-task-link no-underline" to="/billing">
+                  <strong>Billing & usage</strong><span>Review processing credits, invoices, plan, and payment settings.</span>
+                </Link>
               </div>
             </Card>
             <Card title="Portable data export" eyebrow="Creator ownership">

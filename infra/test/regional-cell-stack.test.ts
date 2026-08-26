@@ -8,8 +8,9 @@ describe('regional cell', () => {
   it('creates isolated encrypted regional stores without replication or a VPC', () => {
     const value = template();
     value.resourceCountIs('AWS::S3::Bucket', 7);
-    value.resourceCountIs('AWS::DynamoDB::Table', 3);
-    value.allResourcesProperties('AWS::DynamoDB::Table', Match.objectLike({ TimeToLiveSpecification: { AttributeName: 'expiresAtEpochSeconds', Enabled: true } }));
+    value.resourceCountIs('AWS::DynamoDB::Table', 4);
+    value.resourcePropertiesCountIs('AWS::DynamoDB::Table', Match.objectLike({ TimeToLiveSpecification: { AttributeName: 'expiresAtEpochSeconds', Enabled: true } }), 3);
+    value.hasResourceProperties('AWS::DynamoDB::Table', Match.objectLike({ TableName: 'eversally-test-eu-central-1-billing-ledger', StreamSpecification: { StreamViewType: 'NEW_AND_OLD_IMAGES' }, GlobalSecondaryIndexes: Match.arrayWith([Match.objectLike({ IndexName: 'account-period-index' })]) }));
     value.resourceCountIs('AWS::EC2::VPC', 0);
     value.resourceCountIs('AWS::S3::BucketPolicy', 7);
     value.resourceCountIs('AWS::StepFunctions::StateMachine', 1);
@@ -17,9 +18,9 @@ describe('regional cell', () => {
     value.resourceCountIs('AWS::SecretsManager::Secret', 1);
     value.resourceCountIs('AWS::KMS::Key', 2);
     value.resourceCountIs('AWS::Events::Rule', 6);
-    value.resourceCountIs('AWS::CloudWatch::Alarm', 18);
+    value.resourceCountIs('AWS::CloudWatch::Alarm', 21);
     // Cell workers (including privacy) plus CDK's bucket auto-delete provider.
-    value.resourceCountIs('AWS::Lambda::Function', 17);
+    value.resourceCountIs('AWS::Lambda::Function', 18);
     value.resourceCountIs('AWS::Backup::BackupVault', 1);
     value.resourceCountIs('AWS::Backup::BackupPlan', 1);
     value.resourceCountIs('AWS::SNS::Topic', 1);

@@ -19,12 +19,17 @@ describe('regional scan completion', () => {
     expect(applyDecision).toHaveBeenCalledWith(jobs[1], expect.objectContaining({ policyVersion: 'v1' }));
   });
   it('atomically updates the authoritative regional Asset with the policy decision', async () => {
-    const send = jest.fn().mockResolvedValue({});
-    const repository = dynamoScanCompletionRepository({ client: { send } as any, scanTableName: 'scans', auditTableName: 'audit', metadataTableName: 'metadata' });
+    const send = jest.fn().mockImplementation((command: any) => {
+      if (command.input?.Key?.id === 'version') return Promise.resolve({ Item: { id: 'version', recordType: 'MEDIA_VERSION', assetId: 'asset', sha256: 'hash', perceptualFingerprintRefs: [], region: 'us-east-2', ingestSource: 'creator_upload', scanRequiredAt: 'now', mediaType: 'image' } });
+      if (String(command.input?.Key?.PK || '').startsWith('RESERVATION#')) return Promise.resolve({ Item: { id: command.input.Key.PK, recordType: 'PROCESSING_CREDIT_RESERVATION', product: 'eversally', environment: 'production', dataHomeRegion: 'us-east-2', accountId: 'account', creatorId: 'creator', spaceId: 'space', assetId: 'asset', mediaVersionId: 'version', scanGroupId: 'group', period: '2026-08', state: 'RESERVED', creditUnits: 1, priceBookVersion: 'regional-processing-2026-08-25', priceBookEffectiveAt: '2026-08-25T00:00:00.000Z', unit: 'PROCESSING_CREDIT', currency: 'CREDIT', calculation: '1 credit per source image', createdAt: 'now', expiresAt: 'later' } });
+      return Promise.resolve({});
+    });
+    const repository = dynamoScanCompletionRepository({ client: { send } as any, scanTableName: 'scans', auditTableName: 'audit', billingTableName: 'billing', metadataTableName: 'metadata' });
     await repository.applyDecision(jobs[0], { state: 'CLEARED_FOR_POLICY_REVIEW', policyVersion: 'v1', reasonCode: 'AUTOMATED_NO_RELEVANT_RESULT', automatedCompletionOnly: true });
-    const command = send.mock.calls[0][0] as TransactWriteCommand;
+    const command = send.mock.calls.map(([value]) => value).find((value) => value instanceof TransactWriteCommand) as TransactWriteCommand;
     const assetUpdate = command.input.TransactItems?.find(({ Update }) => Update?.TableName === 'metadata')?.Update;
     expect(assetUpdate?.ConditionExpression).toContain('currentScanGroupId = :scanGroupId');
-    expect(assetUpdate?.ExpressionAttributeValues).toMatchObject({ ':deliveryState': 'ELIGIBLE', ':scanState': 'CLEARED_FOR_POLICY_REVIEW', ':mediaVersionId': 'version' });
+    expect(assetUpdate?.ExpressionAttributeValues).toMatchObject({ ':deliveryState': 'ELIGIBLE', ':scanState': 'CLEARED_FOR_POLICY_REVIEW', ':billingState': 'CONSUMED', ':mediaVersionId': 'version' });
+    expect(command.input.TransactItems).toEqual(expect.arrayContaining([expect.objectContaining({ Put: expect.objectContaining({ TableName: 'billing', Item: expect.objectContaining({ recordType: 'MEDIA_PROCESSING_USAGE', billableEvent: 'SCAN_GROUP_POLICY_COMPLETED' }) }) })]));
   });
 });

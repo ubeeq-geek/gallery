@@ -123,6 +123,13 @@ export class RegionalCellStack extends Stack {
     const metadata = table('metadata', 'PK');
     const scanJobs = table('scan-jobs', 'id', dynamodb.StreamViewType.NEW_IMAGE);
     const auditUsage = table('audit-usage', 'PK', dynamodb.StreamViewType.NEW_IMAGE);
+    const billingLedger = new dynamodb.Table(this, 'BillingLedgerTable', {
+      tableName: `${prefix}-billing-ledger`, partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, encryption: dynamodb.TableEncryption.CUSTOMER_MANAGED, encryptionKey: contentKey,
+      pointInTimeRecoverySpecification: production ? { pointInTimeRecoveryEnabled: true } : undefined,
+      deletionProtection: production, removalPolicy, stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES
+    });
+    billingLedger.addGlobalSecondaryIndex({ indexName: 'account-period-index', partitionKey: { name: 'GSI1PK', type: dynamodb.AttributeType.STRING }, sortKey: { name: 'GSI1SK', type: dynamodb.AttributeType.STRING }, projectionType: dynamodb.ProjectionType.ALL });
     const auditLogGroup = new logs.LogGroup(this, 'AuditLogGroup', { logGroupName: `/ubeeq/${prefix}/audit`, retention: production ? logs.RetentionDays.ONE_YEAR : logs.RetentionDays.ONE_WEEK, removalPolicy });
 
     const backupVault = new backup.BackupVault(this, 'RegionalBackupVault', {
@@ -167,7 +174,7 @@ export class RegionalCellStack extends Stack {
       reservedConcurrentExecutions: props.workerConcurrency || 20,
       entry: path.join(__dirname, '../../apps/api/src/regionalScanHandler.ts'),
       bundling: { externalModules: ['@aws-sdk/client-rekognition'] },
-      environment: { PRODUCT: props.product, ENVIRONMENT: props.environment, DATA_HOME_REGION: props.dataHomeRegion, SCAN_PROFILE: 'REKOGNITION_FRAME_V1', VIDEO_FRAME_INTERVAL_SECONDS: '3', SCAN_QUEUE_URL: queue.queueUrl, SCAN_JOBS_TABLE: scanJobs.tableName, METADATA_TABLE: metadata.tableName, AUDIT_USAGE_TABLE: auditUsage.tableName, REGIONAL_POLICY_PROFILE: regionalPolicyProfile, QUARANTINE_BUCKET: quarantine.bucketName, SCAN_FRAMES_BUCKET: scanFrames.bucketName }
+      environment: { PRODUCT: props.product, ENVIRONMENT: props.environment, DATA_HOME_REGION: props.dataHomeRegion, SCAN_PROFILE: 'REKOGNITION_FRAME_V1', VIDEO_FRAME_INTERVAL_SECONDS: '3', SCAN_QUEUE_URL: queue.queueUrl, SCAN_JOBS_TABLE: scanJobs.tableName, METADATA_TABLE: metadata.tableName, AUDIT_USAGE_TABLE: auditUsage.tableName, BILLING_LEDGER_TABLE: billingLedger.tableName, REGIONAL_POLICY_PROFILE: regionalPolicyProfile, QUARANTINE_BUCKET: quarantine.bucketName, SCAN_FRAMES_BUCKET: scanFrames.bucketName }
     });
     queue.grantConsumeMessages(worker);
     worker.addEventSource(new lambdaEventSources.SqsEventSource(queue, { batchSize: 1, reportBatchItemFailures: true }));
@@ -179,6 +186,7 @@ export class RegionalCellStack extends Stack {
     scanJobs.grantReadWriteData(worker);
     metadata.grantReadWriteData(worker);
     auditUsage.grantWriteData(worker);
+    billingLedger.grantReadWriteData(worker);
     regionalSecrets.grantRead(worker);
     worker.addToRolePolicy(new iam.PolicyStatement({ actions: ['rekognition:DetectModerationLabels', 'rekognition:DetectFaces'], resources: ['*'], conditions: { StringEquals: { 'aws:RequestedRegion': props.dataHomeRegion } } }));
     const scanOutboxWorker = new lambdaNodejs.NodejsFunction(this, 'ScanOutboxWorker', {
@@ -198,7 +206,7 @@ export class RegionalCellStack extends Stack {
       ephemeralStorageSize: Size.mebibytes(10_240),
       reservedConcurrentExecutions: Math.max(1, Math.floor((props.workerConcurrency || 20) / 4)),
       entry: path.join(__dirname, '../../apps/api/src/regionalVideoHandler.ts'), layers: ffmpegLayer ? [ffmpegLayer] : undefined,
-      environment: { PRODUCT: props.product, ENVIRONMENT: props.environment, DATA_HOME_REGION: props.dataHomeRegion, SCAN_PROFILE: 'REKOGNITION_FRAME_V1', VIDEO_PROCESSING_QUEUE_URL: videoQueue.queueUrl, SCAN_JOBS_TABLE: scanJobs.tableName, METADATA_TABLE: metadata.tableName, QUARANTINE_BUCKET: quarantine.bucketName, SCAN_FRAMES_BUCKET: scanFrames.bucketName, FFPROBE_PATH: '/opt/bin/ffprobe', FFMPEG_PATH: '/opt/bin/ffmpeg' }
+      environment: { PRODUCT: props.product, ENVIRONMENT: props.environment, DATA_HOME_REGION: props.dataHomeRegion, SCAN_PROFILE: 'REKOGNITION_FRAME_V1', VIDEO_PROCESSING_QUEUE_URL: videoQueue.queueUrl, SCAN_JOBS_TABLE: scanJobs.tableName, METADATA_TABLE: metadata.tableName, BILLING_LEDGER_TABLE: billingLedger.tableName, QUARANTINE_BUCKET: quarantine.bucketName, SCAN_FRAMES_BUCKET: scanFrames.bucketName, FFPROBE_PATH: '/opt/bin/ffprobe', FFMPEG_PATH: '/opt/bin/ffmpeg' }
     });
     videoWorker.addEventSource(new lambdaEventSources.SqsEventSource(videoQueue, { batchSize: 1, reportBatchItemFailures: true }));
     videoQueue.grantConsumeMessages(videoWorker);
@@ -206,14 +214,15 @@ export class RegionalCellStack extends Stack {
     scanFrames.grantWrite(videoWorker);
     scanJobs.grantReadWriteData(videoWorker);
     metadata.grantReadWriteData(videoWorker);
+    billingLedger.grantReadWriteData(videoWorker);
 
     const imageIngestWorker = new lambdaNodejs.NodejsFunction(this, 'ImageIngestWorker', {
       functionName: `${prefix}-image-ingest`, runtime: lambda.Runtime.NODEJS_22_X, handler: 'handler', timeout: Duration.minutes(2), memorySize: 2048,
       reservedConcurrentExecutions: props.workerConcurrency || 20, entry: path.join(__dirname, '../../apps/api/src/regionalImageIngestHandler.ts'),
-      environment: { PRODUCT: props.product, ENVIRONMENT: props.environment, DATA_HOME_REGION: props.dataHomeRegion, IMAGE_INGEST_QUEUE_URL: imageIngestQueue.queueUrl, SCAN_JOBS_TABLE: scanJobs.tableName, METADATA_TABLE: metadata.tableName, QUARANTINE_BUCKET: quarantine.bucketName, ORIGINALS_BUCKET: originals.bucketName, PRIVATE_DERIVATIVES_BUCKET: privateDerivatives.bucketName }
+      environment: { PRODUCT: props.product, ENVIRONMENT: props.environment, DATA_HOME_REGION: props.dataHomeRegion, IMAGE_INGEST_QUEUE_URL: imageIngestQueue.queueUrl, SCAN_JOBS_TABLE: scanJobs.tableName, METADATA_TABLE: metadata.tableName, BILLING_LEDGER_TABLE: billingLedger.tableName, QUARANTINE_BUCKET: quarantine.bucketName, ORIGINALS_BUCKET: originals.bucketName, PRIVATE_DERIVATIVES_BUCKET: privateDerivatives.bucketName }
     });
     imageIngestWorker.addEventSource(new lambdaEventSources.SqsEventSource(imageIngestQueue, { batchSize: 1, reportBatchItemFailures: true }));
-    imageIngestQueue.grantConsumeMessages(imageIngestWorker); quarantine.grantRead(imageIngestWorker); originals.grantPut(imageIngestWorker); privateDerivatives.grantPut(imageIngestWorker); scanJobs.grantReadWriteData(imageIngestWorker); metadata.grantReadWriteData(imageIngestWorker);
+    imageIngestQueue.grantConsumeMessages(imageIngestWorker); quarantine.grantRead(imageIngestWorker); originals.grantPut(imageIngestWorker); privateDerivatives.grantPut(imageIngestWorker); scanJobs.grantReadWriteData(imageIngestWorker); metadata.grantReadWriteData(imageIngestWorker); billingLedger.grantReadWriteData(imageIngestWorker);
 
     const fallbackUserPool = props.globalUserPoolArn ? undefined : new cognito.UserPool(this, 'DevelopmentIdentity', { selfSignUpEnabled: false, removalPolicy });
     const userPool = props.globalUserPoolArn ? cognito.UserPool.fromUserPoolArn(this, 'GlobalIdentity', props.globalUserPoolArn) : fallbackUserPool!;
@@ -323,7 +332,7 @@ export class RegionalCellStack extends Stack {
       entry: path.join(__dirname, '../../apps/api/src/regionalPublicDeliveryHandler.ts'),
       environment: {
         PRODUCT: props.product, ENVIRONMENT: props.environment, DATA_HOME_REGION: props.dataHomeRegion,
-        METADATA_TABLE: metadata.tableName, SCAN_JOBS_TABLE: scanJobs.tableName, AUDIT_USAGE_TABLE: auditUsage.tableName,
+        METADATA_TABLE: metadata.tableName, SCAN_JOBS_TABLE: scanJobs.tableName, AUDIT_USAGE_TABLE: auditUsage.tableName, BILLING_LEDGER_TABLE: billingLedger.tableName,
         PRIVATE_DERIVATIVES_BUCKET: privateDerivatives.bucketName, PUBLIC_DERIVATIVES_BUCKET: publicDerivatives.bucketName
       }
     });
@@ -334,6 +343,14 @@ export class RegionalCellStack extends Stack {
     metadata.grantReadWriteData(publicationWorker);
     scanJobs.grantReadData(publicationWorker);
     auditUsage.grantReadWriteData(publicationWorker);
+    billingLedger.grantReadData(publicationWorker);
+    const billingRollupWorker = new lambdaNodejs.NodejsFunction(this, 'BillingRollupWorker', {
+      functionName: `${prefix}-billing-rollup`, runtime: lambda.Runtime.NODEJS_22_X, handler: 'handler', timeout: Duration.minutes(2), memorySize: 512,
+      entry: path.join(__dirname, '../../apps/api/src/regionalBillingRollupHandler.ts'),
+      environment: { PRODUCT: props.product, ENVIRONMENT: props.environment, DATA_HOME_REGION: props.dataHomeRegion, BILLING_LEDGER_TABLE: billingLedger.tableName }
+    });
+    billingRollupWorker.addEventSource(new lambdaEventSources.DynamoEventSource(billingLedger, { startingPosition: lambda.StartingPosition.LATEST, batchSize: 50, bisectBatchOnError: true, reportBatchItemFailures: true, retryAttempts: 10 }));
+    billingLedger.grantStreamRead(billingRollupWorker); billingLedger.grantReadWriteData(billingRollupWorker);
     const publicationOutboxWorker = new lambdaNodejs.NodejsFunction(this, 'PublicationOutboxWorker', {
       functionName: `${prefix}-publication-outbox`, runtime: lambda.Runtime.NODEJS_22_X, handler: 'handler', timeout: Duration.minutes(2), memorySize: 512,
       entry: path.join(__dirname, '../../apps/api/src/regionalPublicationOutboxHandler.ts'),
@@ -348,15 +365,22 @@ export class RegionalCellStack extends Stack {
     auditLogWorker.addEventSource(new lambdaEventSources.DynamoEventSource(auditUsage, { startingPosition: lambda.StartingPosition.LATEST, batchSize: 25, bisectBatchOnError: true, retryAttempts: 10, onFailure: new lambdaEventSources.SqsDlq(streamFailureQueue) }));
     auditUsage.grantStreamRead(auditLogWorker);
     const dashboard = new cloudwatch.Dashboard(this, 'CellDashboard', { dashboardName: `${prefix}-operations` });
+    const billingMetric = (name: string, statistic: string = 'Sum') => new cloudwatch.Metric({ namespace: 'Gallery/Billing', metricName: name, dimensionsMap: { Region: props.dataHomeRegion }, statistic, period: Duration.minutes(5) });
     dashboard.addWidgets(
       new cloudwatch.GraphWidget({ title: 'Regional scan queue', left: [queue.metricApproximateNumberOfMessagesVisible(), dlq.metricApproximateNumberOfMessagesVisible()] }),
       new cloudwatch.GraphWidget({ title: 'Scan success and failures', left: [worker.metricInvocations(), worker.metricErrors()] }),
-      new cloudwatch.GraphWidget({ title: 'Ingest and frame processing latency', left: [worker.metricDuration(), videoWorker.metricDuration()] })
+      new cloudwatch.GraphWidget({ title: 'Ingest and frame processing latency', left: [worker.metricDuration(), videoWorker.metricDuration()] }),
+      new cloudwatch.GraphWidget({ title: 'Billing metering and reservations', left: [billingMetric('MeteredCreditUnits'), billingMetric('ReservedCreditUnits')] }),
+      new cloudwatch.GraphWidget({ title: 'Provider cost and credit balance', left: [billingMetric('EstimatedProviderCostUsd')], right: [billingMetric('AvailableCreditBalance', 'Minimum')] }),
+      new cloudwatch.SingleValueWidget({ title: 'Billing integrity', metrics: [billingMetric('NegativeCreditBalance'), billingMetric('EntitlementRejections'), billingRollupWorker.metricErrors()] })
     );
     const alarm = (id: string, alarmName: string, metric: cloudwatch.IMetric, threshold: number, evaluationPeriods = 1) => { const value = new cloudwatch.Alarm(this, id, { alarmName, metric, threshold, evaluationPeriods, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING }); value.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic)); return value; };
     alarm('ScanDlqAlarm', `${prefix}-scan-dlq-depth`, dlq.metricApproximateNumberOfMessagesVisible(), 1);
     alarm('ImageIngestDlqAlarm', `${prefix}-image-ingest-dlq-depth`, imageIngestDlq.metricApproximateNumberOfMessagesVisible(), 1);
     alarm('VideoProcessingDlqAlarm', `${prefix}-video-processing-dlq-depth`, videoDlq.metricApproximateNumberOfMessagesVisible(), 1);
+    alarm('BillingRollupErrorsAlarm', `${prefix}-billing-rollup-errors`, billingRollupWorker.metricErrors(), 1);
+    alarm('NegativeCreditBalanceAlarm', `${prefix}-negative-credit-balance`, billingMetric('NegativeCreditBalance'), 1);
+    alarm('EntitlementRejectionsAlarm', `${prefix}-entitlement-rejections`, billingMetric('EntitlementRejections'), 5);
     alarm('PublicDeliveryDlqAlarm', `${prefix}-public-delivery-dlq-depth`, publicationDlq.metricApproximateNumberOfMessagesVisible(), 1);
     alarm('ScanOutboxFailureAlarm', `${prefix}-scan-outbox-failures`, scanOutboxFailureQueue.metricApproximateNumberOfMessagesVisible(), 1);
     alarm('CriticalStreamFailureAlarm', `${prefix}-critical-stream-failures`, streamFailureQueue.metricApproximateNumberOfMessagesVisible(), 1);

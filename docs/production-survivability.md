@@ -44,7 +44,7 @@ Production does not read `GOOGLE_CLIENT_SECRET`, `APPLE_PRIVATE_KEY`, `CLOUDFRON
 
 Override the S3 non-current-version period with `MEDIA_NONCURRENT_VERSION_RETENTION_DAYS`. Reducing it reduces the recovery window and should be treated as a production policy change.
 
-The AWS Backup vault enforces recovery-point retention between 35 and 366 days. It is retained if the application stack is deleted.
+The AWS Backup vault enforces recovery-point retention between 35 days and seven years. Daily recovery points are retained for 35 days, monthly recovery points are retained for seven years, and the vault is retained if the application stack is deleted.
 
 ## Monitoring
 

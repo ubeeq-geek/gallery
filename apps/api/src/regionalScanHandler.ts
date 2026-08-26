@@ -34,12 +34,13 @@ const dependencies = (): RegionalScanHandlerDependencies => {
   const region = required('DATA_HOME_REGION');
   const tableName = required('SCAN_JOBS_TABLE');
   const auditTableName = required('AUDIT_USAGE_TABLE');
+  const billingTableName = required('BILLING_LEDGER_TABLE');
   const metadataTableName = required('METADATA_TABLE');
   const queueUrl = required('SCAN_QUEUE_URL');
   const policy = JSON.parse(required('REGIONAL_POLICY_PROFILE')) as RegionalPolicyProfile;
   const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
   const sqs = new SQSClient({ region });
-  const completion = dynamoScanCompletionRepository({ client: ddb, scanTableName: tableName, auditTableName, metadataTableName });
+  const completion = dynamoScanCompletionRepository({ client: ddb, scanTableName: tableName, auditTableName, billingTableName, metadataTableName });
   const transactIdempotently = async (job: RegionalScanJob, result: RegionalScanResult, command: TransactWriteCommand): Promise<void> => {
     try { await ddb.send(command); }
     catch (error) {
