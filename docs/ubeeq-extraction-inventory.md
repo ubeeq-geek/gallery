@@ -10,6 +10,8 @@ The generic capability vocabulary, remote-operation gate, and executable conform
 
 The neutral moderation evidence, review-case, hold, and auditable decision lifecycle are now represented by `@ubeeq/moderation`. Product-specific thresholding, notices, enforcement, and escalation policy remain private.
 
+The provider-neutral admission decision over active review holds is now represented by `@ubeeq/moderation`, including a typed blocked result for queue and API callers. Product policy continues to decide which holds exist, which operations select which targets, how a hold is remediated, and what a creator is told.
+
 The neutral asset-processing request and idempotent usage measurement interfaces are now represented by `@ubeeq/processing`. Plan catalogues, credit reservations, prices, quotas, overage treatment, and billing approvals remain private.
 
 The neutral object-storage and delivery adapter interfaces are now represented by `@ubeeq/storage`. Retention schedules, access eligibility, domains, signed-delivery policy, and revocation decisions remain private.
@@ -50,7 +52,7 @@ The following remain here temporarily because they are product decisions or prov
 - `apps/api/src/brand.ts`, `apps/web/src/brand.ts`, and `apps/admin/src/brand.ts`: transitional Eversally brand copies; remove only after the private Eversally application consumes `@eversally/brand`.
 - `apps/api/src/integrationCapabilities.ts`: media limits, rights/consent requirements, rollout messaging, and UI presentation.
 - OAuth credential storage, connector implementations, secrets, and provider-specific operations.
-- Product visibility, eligibility, safety holds, and admission policies.
+- Product visibility, eligibility, the rules that create and resolve safety holds, and admission policies.
 
 ## Required migration gates
 
