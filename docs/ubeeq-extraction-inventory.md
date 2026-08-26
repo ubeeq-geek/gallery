@@ -16,9 +16,12 @@ The neutral object-storage and delivery adapter interfaces are now represented b
 
 The Eversally provider catalogue—provider ids, labels, rollout state, product surfaces, and enabled operations—is now declared and validated in the private `eversally-platform` repository. The legacy runtime registry remains temporarily until that private catalogue is consumed by the Eversally deployment.
 
+The private `@eversally/brand` module now owns the hosted product's terminology, navigation, URLs, and theme tokens. The legacy API, web, and admin brand selectors remain transitional until the Eversally application composes that module at runtime.
+
 The following remain here temporarily because they are product decisions or provider implementations:
 
 - `apps/api/src/integrationStandard.ts`: transitional runtime copy of the Eversally provider catalogue; remove only after the private product composition consumes its declared catalogue.
+- `apps/api/src/brand.ts`, `apps/web/src/brand.ts`, and `apps/admin/src/brand.ts`: transitional Eversally brand copies; remove only after the private Eversally application consumes `@eversally/brand`.
 - `apps/api/src/integrationCapabilities.ts`: media limits, rights/consent requirements, rollout messaging, and UI presentation.
 - OAuth credential storage, connector implementations, secrets, and provider-specific operations.
 - Product visibility, eligibility, safety holds, and admission policies.
