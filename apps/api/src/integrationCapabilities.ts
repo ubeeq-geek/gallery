@@ -48,6 +48,11 @@ export interface IntegrationCapabilityLimits {
 export interface IntegrationCapabilityDeclaration {
   platform: IntegrationPlatformId;
   label: string;
+  surface: 'studio' | 'api_only' | 'internal' | 'planned';
+  availability: 'available' | 'pilot' | 'configuration_required';
+  ownerModel: 'creator' | 'user' | 'workspace';
+  connectionModel: 'external_account' | 'native_connection';
+  studioAdapter?: string;
   import: boolean;
   sourceCopy: boolean;
   publish: Partial<Record<IntegrationMediaType, boolean>>;
@@ -156,6 +161,11 @@ const declarationFor = (platform: IntegrationPlatformId): IntegrationCapabilityD
   return {
     platform,
     label: definition.label,
+    surface: definition.surface,
+    availability: definition.availability,
+    ownerModel: definition.ownerModel,
+    connectionModel: definition.connectionModel,
+    studioAdapter: definition.studioAdapter,
     import: has(platform, 'catalogue_import'),
     sourceCopy: has(platform, 'source_migration'),
     publish: availablePublishShapes(platform, detail.publish),
@@ -194,6 +204,9 @@ export const validateIntegrationCapabilityRegistry = (): void => {
       || capability.analytics !== has(platform, 'engagement_read')
       || capability.comments !== has(platform, 'engagement_write')) {
       throw new Error(`Integration capability declaration for ${platform} does not match its runtime contract.`);
+    }
+    if (capability.surface === 'studio' && !capability.studioAdapter) {
+      throw new Error(`${platform} is Studio-visible but has no Studio adapter.`);
     }
     if (Object.values(capability.publish).some(Boolean) && !has(platform, 'publish')) {
       throw new Error(`${platform} advertises publishing without the runtime publish capability.`);

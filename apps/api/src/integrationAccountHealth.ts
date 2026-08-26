@@ -1,9 +1,21 @@
-import type { ExternalAccount, ExternalAccountConnectionStatus, ExternalPlatform } from './domain';
+import type { ExternalAccount, ExternalAccountConnectionStatus } from './domain';
 import { capabilityFor, type IntegrationPlatformId } from './integrationCapabilities';
 
 export type IntegrationTokenHealth = 'valid' | 'expires_soon' | 'expired' | 'unknown';
 export type IntegrationAccountHealthState = ExternalAccountConnectionStatus | 'attention';
 export type IntegrationAccountRecommendedAction = 'none' | 'reconnect' | 'wait' | 'retry_sync' | 'review_setup';
+
+/** The minimum durable connection data every provider projects for Studio. */
+export interface IntegrationHealthConnection {
+  platform: IntegrationPlatformId;
+  connectionStatus: ExternalAccountConnectionStatus;
+  tokenExpiresAt?: string;
+  grantedScopes?: readonly string[];
+  rateLimitedUntil?: string;
+  lastSuccessfulSyncAt?: string;
+  lastSyncAttemptAt?: string;
+  lastIssue?: { code: string; message: string; remediation: string; occurredAt?: string };
+}
 
 const EXPIRY_WARNING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -14,7 +26,7 @@ const timestamp = (value?: string): number | undefined => {
 };
 
 /** Provider-neutral health projection from the durable external-account record. */
-export const deriveIntegrationAccountHealth = (account: ExternalAccount, nowMs = Date.now()) => {
+export const deriveIntegrationAccountHealth = (account: IntegrationHealthConnection, nowMs = Date.now()) => {
   const expiresAtMs = timestamp(account.tokenExpiresAt);
   const rateLimitedUntilMs = timestamp(account.rateLimitedUntil);
   const tokenStatus: IntegrationTokenHealth = expiresAtMs === undefined
@@ -32,7 +44,7 @@ export const deriveIntegrationAccountHealth = (account: ExternalAccount, nowMs =
     : state === 'rate_limited' && coolingDown ? 'wait'
       : account.lastIssue?.code === 'invalid_response' || account.lastIssue?.code === 'unsupported' ? 'review_setup'
         : state === 'temporarily_unavailable' || Boolean(account.lastIssue) ? 'retry_sync' : 'none';
-  const capabilities = capabilityFor(account.platform as ExternalPlatform as IntegrationPlatformId);
+  const capabilities = capabilityFor(account.platform);
   return {
     state,
     token: { status: tokenStatus, expiresAt: account.tokenExpiresAt, grantedScopes: account.grantedScopes || [] },
@@ -47,3 +59,37 @@ export const deriveIntegrationAccountHealth = (account: ExternalAccount, nowMs =
     capabilities
   };
 };
+
+/** Backward-compatible external-account adapter plus native adapter building block. */
+export const externalAccountHealthConnection = (account: ExternalAccount): IntegrationHealthConnection => account;
+
+/**
+ * Maps provider-native connection records without forcing them into the legacy
+ * ExternalAccount persistence model. Native adapters supply their own state
+ * mapping, while Studio receives the same health shape.
+ */
+export const nativeIntegrationHealthConnection = (input: IntegrationHealthConnection): IntegrationHealthConnection => input;
+
+/** Maps the differing native state enums onto the shared Studio vocabulary. */
+export const nativeConnectionHealth = (input: {
+  platform: IntegrationPlatformId;
+  state: string;
+  connectedStates: readonly string[];
+  reauthorizationStates?: readonly string[];
+  rateLimitedStates?: readonly string[];
+  lastSuccessfulSyncAt?: string;
+  lastAttemptAt?: string;
+  lastError?: string;
+}) => deriveIntegrationAccountHealth(nativeIntegrationHealthConnection({
+  platform: input.platform,
+  connectionStatus: input.connectedStates.includes(input.state)
+    ? 'connected'
+    : input.reauthorizationStates?.includes(input.state)
+      ? 'authentication_required'
+      : input.rateLimitedStates?.includes(input.state)
+        ? 'rate_limited'
+        : input.state === 'DISCONNECTED' || input.state === 'disabled' ? 'disabled' : 'temporarily_unavailable',
+  lastSuccessfulSyncAt: input.lastSuccessfulSyncAt,
+  lastSyncAttemptAt: input.lastAttemptAt,
+  lastIssue: input.lastError ? { code: 'sync_failed', message: input.lastError, remediation: 'Review this integration and retry.' } : undefined
+}));

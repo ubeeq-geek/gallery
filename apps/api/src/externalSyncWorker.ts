@@ -4,7 +4,8 @@ import { decryptExternalCredential, encryptExternalCredential } from './external
 import { openStoredUbeeqWorkStream, readStoredUbeeqWorkImage, storeExternalContent } from './externalContentStorage';
 import { brandForConfig } from './brand';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
-import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation } from './integrationStandard';
+import { createStoreIntegrationPolicyGate, requireIntegrationOperation } from './integrationStandard';
+import { integrationOperationForExternalSyncJobType } from './integrationOperation';
 import { recordPublicationReconciliation } from './integrationReconciliation';
 import { recordExternalPublicationLifecycle, type RemotePublicationState } from './integrationSync';
 import { deliveryRetryDelaySeconds, shouldRetryIntegrationDelivery } from './integrationDelivery';
@@ -32,12 +33,12 @@ export const shouldRetryExternalJobFailure = (
   attemptCount: number
 ): boolean => {
   if (code === 'temporarily_unavailable' && jobType === 'content_sync') return false;
-  const operation: IntegrationOperation = jobType === 'publish' ? 'publish' : jobType === 'remote_delete' ? 'delete_remote' : 'update_remote';
+  const operation = integrationOperationForExternalSyncJobType(jobType);
   const recovery = integrationRecoveryDecision({ operation, code: code === 'invalid_response' || code === 'unsupported' || code === 'preflight_blocked' ? 'invalid_request' : code });
   if (recovery.disposition !== 'retry' && recovery.disposition !== 'reconcile_before_retry') return false;
   if (code !== 'rate_limited' && code !== 'temporarily_unavailable' && code !== 'ambiguous_submission') return false;
   return shouldRetryIntegrationDelivery(
-    jobType === 'publish' ? 'publish' : 'update',
+    operation === 'publish' ? 'publish' : operation === 'delete_remote' ? 'delete' : 'update',
     code,
     attemptCount,
     MAX_AMBIGUOUS_PUBLISH_ATTEMPTS
@@ -2618,13 +2619,19 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
     await updateJob(store, job, { status: 'cancelled', errorCode: 'ACCOUNT_REMOVED', errorMessage: 'Synchronization stopped because the DeviantArt account was removed' });
     return;
   }
-  const operation: IntegrationOperation = job.type === 'publish'
-    ? 'publish'
-    : job.type === 'remote_update'
-      ? 'update_remote'
-      : job.type === 'content_sync' || job.type === 'account_import' || job.type === 'account_scan' || job.type === 'full_reconciliation'
-        ? 'import'
-        : 'read_engagement';
+  // This is the durable admission recheck: a browser preflight can become
+  // stale between confirmation and execution, so no provider call occurs for
+  // a connection that is already known to require repair.
+  if (account.connectionStatus === 'authentication_required') {
+    await updateJob(store, job, {
+      status: 'authentication_required',
+      errorCode: 'AUTHENTICATION_REQUIRED',
+      errorMessage: 'Reconnect this integration before retrying the operation.',
+      nextAttemptAt: undefined
+    });
+    return;
+  }
+  const operation = integrationOperationForExternalSyncJobType(job.type);
   try {
     requireIntegrationOperation(account.platform, operation);
   } catch (error) {

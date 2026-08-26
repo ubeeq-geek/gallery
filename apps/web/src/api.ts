@@ -1265,15 +1265,26 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/capabilities`);
     return handleJson(response) as Promise<{ items: Array<{ platform: string; import: boolean; publish: Record<string, boolean | undefined>; update: boolean; delete: boolean; collections: boolean; comments: boolean; analytics: boolean; scheduling: boolean; limits: Record<string, unknown> }> }>;
   },
+  async studioGetIntegrationCatalog() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/v1/integrations`);
+    return handleJson(response) as Promise<{ version: 'v1'; items: Array<{
+      platform: string; label: string; surface: 'studio' | 'api_only' | 'internal' | 'planned';
+      availability: 'available' | 'pilot' | 'configuration_required'; studioAdapter?: string;
+    }> }>;
+  },
   async studioPreflightIntegration(input: {
     platform: string;
     intent?: 'publish' | 'announce';
+    externalAccountId?: string;
     mediaTypes?: string[];
     aiDisclosures?: Array<'none' | 'ai-assisted' | 'ai-generated'>;
     itemCount?: number;
     caption?: string;
     mimeTypes?: string[];
     bytes?: number;
+    rightsAttested?: boolean;
+    adultAttested?: boolean;
+    consentAttested?: boolean;
   }) {
     const response = await fetch(`${API_BASE}/studio/integrations/preflight`, {
       method: 'POST',
@@ -1285,6 +1296,8 @@ export const api = {
       intent: 'publish' | 'announce';
       ok: boolean;
       issues: Array<{ code: string; severity: 'blocking' | 'warning'; message: string }>;
+      static: { ok: boolean; issues: Array<{ code: string; severity: 'blocking' | 'warning'; message: string }> };
+      admission: { checked: boolean; ok: boolean; issues: Array<{ code: string; severity: 'blocking' | 'warning'; message: string }> };
     }>;
   },
   async studioGetInstagramConfiguration() {

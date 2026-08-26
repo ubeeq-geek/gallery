@@ -9,6 +9,7 @@ import type { AppConfig } from './config';
 import type { DataStore } from './store';
 import type { PostBlock } from './domain';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
+import { nativeConnectionHealth } from './integrationAccountHealth';
 import { requireAuth } from './auth';
 
 export type WordPressCapabilityProfile = {
@@ -153,7 +154,10 @@ export const renderWordPressContent = (blocks: PostBlock[] = [], policy: WordPre
 }).join('\n');
 
 const hash = (value: unknown) => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
-const safeView = ({ credentialEncrypted: _secret, ...connection }: WordPressConnectionRecord) => connection;
+const safeView = ({ credentialEncrypted: _secret, ...connection }: WordPressConnectionRecord) => ({
+  ...connection,
+  health: nativeConnectionHealth({ platform: 'wordpress', state: connection.state, connectedStates: ['CONNECTED'], lastSuccessfulSyncAt: connection.lastSyncAt })
+});
 
 const rendered = (value: unknown): string => typeof value === 'string'
   ? value

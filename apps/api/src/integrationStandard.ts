@@ -39,6 +39,13 @@ export interface IntegrationDefinition {
   capabilities: readonly IntegrationCapability[];
   /** Whether this provider needs an isolated OAuth/token broker. */
   credentialCustody: 'application' | 'isolated_broker';
+  /** Product surface, independent of whether an adapter happens to exist. */
+  surface: 'studio' | 'api_only' | 'internal' | 'planned';
+  availability: 'available' | 'pilot' | 'configuration_required';
+  ownerModel: 'creator' | 'user' | 'workspace';
+  connectionModel: 'external_account' | 'native_connection';
+  /** Named Studio adapter required before a platform may be creator-selectable. */
+  studioAdapter?: string;
 }
 
 const requiredCapability: Record<IntegrationOperation, IntegrationCapability> = {
@@ -60,85 +67,85 @@ export const integrationDefinitions: Record<IntegrationPlatform, IntegrationDefi
     platform: 'deviantart',
     label: 'DeviantArt',
     capabilities: ['connect', 'catalogue_import', 'source_migration', 'publish', 'remote_update', 'engagement_read', 'engagement_write', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'studio', availability: 'available', ownerModel: 'creator', connectionModel: 'external_account', studioAdapter: 'deviantart'
   },
   youtube: {
     platform: 'youtube',
     label: 'YouTube',
     capabilities: ['connect', 'catalogue_import', 'engagement_read', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'studio', availability: 'configuration_required', ownerModel: 'creator', connectionModel: 'external_account', studioAdapter: 'youtube'
   },
   instagram: {
     platform: 'instagram',
     label: 'Instagram',
     capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'engagement_read', 'webhook_receive', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'studio', availability: 'pilot', ownerModel: 'creator', connectionModel: 'external_account', studioAdapter: 'instagram'
   },
   wordpress: {
     platform: 'wordpress',
     label: 'WordPress',
     capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'webhook_receive', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'api_only', availability: 'configuration_required', ownerModel: 'user', connectionModel: 'native_connection'
   },
   flickr: {
     platform: 'flickr',
     label: 'Flickr',
     capabilities: ['connect', 'catalogue_import', 'source_migration', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'api_only', availability: 'available', ownerModel: 'creator', connectionModel: 'native_connection'
   },
   soundcloud: {
     platform: 'soundcloud',
     label: 'SoundCloud',
     capabilities: ['connect', 'catalogue_import', 'publish', 'engagement_read', 'engagement_write', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'api_only', availability: 'available', ownerModel: 'creator', connectionModel: 'external_account'
   },
   fanvue: {
     platform: 'fanvue',
     label: 'FanVue',
     capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'webhook_receive', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'studio', availability: 'pilot', ownerModel: 'creator', connectionModel: 'native_connection', studioAdapter: 'fanvue'
   },
   patreon: {
     platform: 'patreon',
     label: 'Patreon',
     capabilities: ['connect', 'catalogue_import', 'webhook_receive', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'api_only', availability: 'pilot', ownerModel: 'creator', connectionModel: 'native_connection'
   },
   bluesky: {
     platform: 'bluesky',
     label: 'Bluesky',
     capabilities: ['connect', 'publish'],
-    credentialCustody: 'isolated_broker'
+    credentialCustody: 'isolated_broker', surface: 'studio', availability: 'configuration_required', ownerModel: 'creator', connectionModel: 'external_account', studioAdapter: 'bluesky'
   },
   tumblr: {
     platform: 'tumblr',
     label: 'Tumblr',
     capabilities: ['connect', 'publish', 'remote_update', 'remote_delete'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'studio', availability: 'available', ownerModel: 'creator', connectionModel: 'native_connection', studioAdapter: 'tumblr'
   },
   discord: {
     platform: 'discord',
     label: 'Discord',
     capabilities: ['connect', 'publish'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'studio', availability: 'available', ownerModel: 'workspace', connectionModel: 'native_connection', studioAdapter: 'discord'
   },
   ghost: {
     platform: 'ghost',
     label: 'Ghost',
     capabilities: ['connect', 'catalogue_import', 'publish', 'remote_update', 'remote_delete', 'webhook_receive', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'api_only', availability: 'configuration_required', ownerModel: 'creator', connectionModel: 'native_connection'
   },
   smugmug: {
     platform: 'smugmug',
     label: 'SmugMug',
     capabilities: ['connect', 'catalogue_import', 'source_migration', 'publish', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'api_only', availability: 'pilot', ownerModel: 'creator', connectionModel: 'native_connection'
   },
   vimeo: {
     platform: 'vimeo',
     label: 'Vimeo',
     capabilities: ['connect', 'catalogue_import', 'source_migration', 'publish', 'remote_update', 'remote_delete', 'engagement_read', 'webhook_receive', 'reconcile'],
-    credentialCustody: 'application'
+    credentialCustody: 'application', surface: 'api_only', availability: 'configuration_required', ownerModel: 'creator', connectionModel: 'native_connection'
   }
 };
 

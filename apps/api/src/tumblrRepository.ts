@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { DeleteCommand, GetCommand, PutCommand, QueryCommand, TransactWriteCommand, UpdateCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
+import { nativeConnectionHealth } from './integrationAccountHealth';
 import type { TumblrApplicationCredentials, TumblrBlogDestination, TumblrConnector, TumblrOAuthState, TumblrPublication } from './tumblrIntegration';
 import { issueTumblrOAuthState, verifyTumblrOAuthState } from './tumblrIntegration';
 
@@ -95,9 +96,14 @@ export const decryptTumblrOAuthGrant = (connector: TumblrConnector, encryptionSe
   };
 };
 
-export const publicTumblrConnector = (connector: TumblrConnector): Omit<TumblrConnector, 'creatorApplicationEncrypted' | 'credentialsEncrypted'> & { hasCreatorApplication: boolean; hasOAuthGrant: boolean } => {
+export const publicTumblrConnector = (connector: TumblrConnector): Omit<TumblrConnector, 'creatorApplicationEncrypted' | 'credentialsEncrypted'> & { hasCreatorApplication: boolean; hasOAuthGrant: boolean; health: ReturnType<typeof nativeConnectionHealth> } => {
   const { creatorApplicationEncrypted, credentialsEncrypted, ...safe } = connector;
-  return { ...safe, hasCreatorApplication: Boolean(creatorApplicationEncrypted?.clientId && creatorApplicationEncrypted.clientSecret), hasOAuthGrant: Object.keys(credentialsEncrypted).length > 0 };
+  return {
+    ...safe,
+    hasCreatorApplication: Boolean(creatorApplicationEncrypted?.clientId && creatorApplicationEncrypted.clientSecret),
+    hasOAuthGrant: Object.keys(credentialsEncrypted).length > 0,
+    health: nativeConnectionHealth({ platform: 'tumblr', state: connector.status, connectedStates: ['connected'], reauthorizationStates: ['revoked', 'failed'], lastAttemptAt: connector.lastValidatedAt })
+  };
 };
 
 export class InMemoryTumblrRepository implements TumblrRepository {

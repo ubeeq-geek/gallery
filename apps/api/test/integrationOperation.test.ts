@@ -41,6 +41,7 @@ describe('integration operation projection', () => {
     expect(integrationOperationForExternalSyncJobType('content_sync')).toBe('import');
     expect(integrationOperationForExternalSyncJobType('remote_update')).toBe('update_remote');
     expect(integrationOperationForExternalSyncJobType('remote_delete')).toBe('delete_remote');
+    expect(integrationOperationForExternalSyncJobType('user_action')).toBe('write_engagement');
     expect(integrationOperationKindForExternalSyncJobType('gallery_sync')).toBe('sync_content');
     expect(integrationOperationKindForExternalSyncJobType('comment_sync')).toBe('sync_activity');
   });

@@ -17,6 +17,8 @@ import { issueRememberAccessToken, issueUnlockToken, verifyPassword, verifyUnloc
 import type { AppConfig } from './config';
 import { brandForConfig } from './brand';
 import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation, type IntegrationPlatform, type IntegrationPolicyTarget } from './integrationStandard';
+import { requireIntegrationAdmission } from './integrationGuard';
+import { requiredScopesForIntegrationOperation } from './integrationScopes';
 import {
   integrationOperationForExternalSyncJobType,
   isIntegrationOperationCancellable,
@@ -1729,7 +1731,17 @@ export const createApp = ({
   }, async (creatorId, derivativeAssetId) => {
     const asset = await store.getCanonicalAsset(config.tenantId, derivativeAssetId);
     return Boolean(asset && asset.creatorId === creatorId && asset.status === 'ready' && asset.mimeType.startsWith('image/'));
-  }, isAdminRequest);
+  }, isAdminRequest, async ({ operation, creatorId, connectionId, workId }) => {
+    await requireIntegrationAdmission(store, {
+      platform: 'ghost',
+      operation,
+      targets: [
+        { type: 'creator', id: creatorId },
+        ...(connectionId ? [{ type: 'integration_connection' as const, id: connectionId }] : []),
+        ...(workId ? [{ type: 'work' as const, id: workId }] : [])
+      ]
+    });
+  });
 
   const ensureCreatorAccountAccess = async (req: express.Request, res: express.Response, creatorId: string): Promise<boolean> => {
     if (!(await ensureCreatorContentAccess(req, res, creatorId))) return false;
@@ -2796,6 +2808,16 @@ export const createApp = ({
     const result = await s3Client.send(new GetObjectCommand({ Bucket: config.mediaBucket, Key: asset.storage.objectKey }));
     if (!result.Body) throw new Error('The selected Asset body is unavailable.');
     return Buffer.from(await result.Body.transformToByteArray());
+  }, async ({ operation, ownerId, connectionId, workId }) => {
+    await requireIntegrationAdmission(store, {
+      platform: 'fanvue',
+      operation,
+      targets: [
+        { type: 'creator', id: ownerId },
+        ...(connectionId ? [{ type: 'integration_connection' as const, id: connectionId }] : []),
+        ...(workId ? [{ type: 'work' as const, id: workId }] : [])
+      ]
+    });
   }));
   registerTumblrRoutes({
     app, config, repository: tumblrRepository,
@@ -6048,6 +6070,87 @@ export const createApp = ({
       : capability) });
   });
 
+  /**
+   * Versioned discovery contract. Provider-specific APIs remain available
+   * while clients migrate their setup navigation to this common catalog.
+   */
+  app.get('/api/v1/integrations', requireAuth, async (_req, res) => {
+    const instagram = instagramDeploymentStatus(config);
+    return res.json({ version: 'v1', scope: 'discovery_and_external_account_read', items: Object.values(integrationCapabilities).map((capability) => ({
+      platform: capability.platform,
+      label: capability.label,
+      surface: capability.surface,
+      availability: capability.platform === 'instagram'
+        ? (instagram.onboardingEnabled ? 'pilot' : 'configuration_required')
+        : capability.availability,
+      ownerModel: capability.ownerModel,
+      connectionModel: capability.connectionModel,
+      studioAdapter: capability.studioAdapter,
+      capabilities: {
+        import: capability.import,
+        sourceCopy: capability.sourceCopy,
+        publish: capability.publish,
+        announce: capability.announce,
+        update: capability.update,
+        delete: capability.delete,
+        collections: capability.collections,
+        comments: capability.comments,
+        analytics: capability.analytics,
+        scheduling: capability.scheduling
+      }
+    })) });
+  });
+
+  app.get('/api/v1/integrations/:platform', requireAuth, async (req, res) => {
+    const capability = integrationCapabilities[req.params.platform as keyof typeof integrationCapabilities];
+    if (!capability) return res.status(404).json({ message: 'Integration not found.' });
+    const instagram = instagramDeploymentStatus(config);
+    return res.json({ version: 'v1', scope: 'discovery_and_external_account_read', integration: capability.platform === 'instagram'
+      ? { ...capability, availability: instagram.onboardingEnabled ? 'pilot' as const : 'configuration_required' as const }
+      : capability });
+  });
+
+  const v1ExternalAccount = async (req: express.Request, res: express.Response) => {
+    const platform = req.params.platform as IntegrationPlatform;
+    const account = await store.getExternalAccount(req.params.connectionId);
+    if (!account || account.userId !== req.authUser!.userId || account.platform !== platform) {
+      res.status(404).json({ message: 'Integration connection not found.' });
+      return undefined;
+    }
+    return account;
+  };
+
+  app.get('/api/v1/integrations/:platform/connections', requireAuth, async (req, res) => {
+    const capability = integrationCapabilities[req.params.platform as keyof typeof integrationCapabilities];
+    if (!capability) return res.status(404).json({ message: 'Integration not found.' });
+    if (capability.connectionModel !== 'external_account') return res.json({ items: [], connectionModel: capability.connectionModel });
+    const accounts = (await store.listExternalAccountsByUser(req.authUser!.userId))
+      .filter((account) => account.platform === capability.platform)
+      .map((account) => ({
+        id: account.externalAccountId,
+        label: account.externalUsername || account.externalUserId,
+        platform: account.platform,
+        health: deriveIntegrationAccountHealth(account),
+        createdAt: account.createdAt,
+        updatedAt: account.updatedAt
+      }));
+    return res.json({ items: accounts, connectionModel: capability.connectionModel });
+  });
+
+  app.get('/api/v1/integrations/:platform/connections/:connectionId/operations', requireAuth, async (req, res) => {
+    const account = await v1ExternalAccount(req, res);
+    if (!account) return;
+    const operations = (await store.listExternalSyncJobs(account.externalAccountId)).map((job) => toIntegrationOperationResponse(job, account));
+    return res.json({ items: operations.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)) });
+  });
+
+  app.get('/api/v1/integrations/:platform/connections/:connectionId/publications', requireAuth, async (req, res) => {
+    const account = await v1ExternalAccount(req, res);
+    if (!account) return;
+    const publications = await store.listExternalPublications(account.externalAccountId);
+    return res.json({ items: publications });
+  });
+
   app.post('/studio/integrations/preflight', requireAuth, async (req, res) => {
     const platform = typeof req.body?.platform === 'string' ? req.body.platform : '';
     if (!Object.prototype.hasOwnProperty.call(integrationCapabilities, platform)) {
@@ -6069,6 +6172,32 @@ export const createApp = ({
       : undefined;
     const numberValue = (value: unknown): number | undefined =>
       typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+    const externalAccountId = typeof req.body?.externalAccountId === 'string' ? req.body.externalAccountId.trim() : '';
+    let admission: Parameters<typeof preflightIntegrationPublication>[0]['admission'];
+    if (externalAccountId) {
+      const account = await store.getExternalAccount(externalAccountId);
+      if (!account || account.userId !== req.authUser!.userId || account.platform !== platform) {
+        return res.status(404).json({ message: 'Integration account not found.' });
+      }
+      const health = deriveIntegrationAccountHealth(account);
+      const operation: IntegrationOperation = intent === 'announce' ? 'publish' : 'publish';
+      const targets: IntegrationPolicyTarget[] = [
+        { type: 'external_account', id: account.externalAccountId },
+        ...(account.primaryCreatorIdentityId || account.creatorIdentityId
+          ? [{ type: 'creator' as const, id: account.primaryCreatorIdentityId || account.creatorIdentityId! }]
+          : [])
+      ];
+      const policyReason = await integrationAdmissionReason(account.platform, operation, targets);
+      admission = {
+        connectionState: health.state,
+        requiredScopes: requiredScopesForIntegrationOperation(account.platform, operation),
+        grantedScopes: health.token.grantedScopes,
+        policyBlocked: Boolean(policyReason),
+        rightsAttested: req.body?.rightsAttested === true,
+        adultAttested: req.body?.adultAttested === true,
+        consentAttested: req.body?.consentAttested === true
+      };
+    }
 
     return res.json(preflightIntegrationPublication({
       platform: platform as keyof typeof integrationCapabilities,
@@ -6078,7 +6207,8 @@ export const createApp = ({
       mimeTypes,
       itemCount: numberValue(req.body?.itemCount),
       bytes: numberValue(req.body?.bytes),
-      caption: typeof req.body?.caption === 'string' ? req.body.caption : undefined
+      caption: typeof req.body?.caption === 'string' ? req.body.caption : undefined,
+      admission
     }));
   });
 

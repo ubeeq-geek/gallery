@@ -42,4 +42,21 @@ describe('integration publication preflight', () => {
       'unsupported_operation', 'unsupported_media'
     ]));
   });
+
+  it('separates durable admission failures from static validation', () => {
+    const result = preflightIntegrationPublication({
+      platform: 'fanvue', mediaTypes: ['image'],
+      admission: {
+        connectionState: 'authentication_required', policyBlocked: true,
+        rightsAttested: false, adultAttested: false, consentAttested: false
+      }
+    });
+    expect(result.static.ok).toBe(true);
+    expect(result.admission.checked).toBe(true);
+    expect(result.admission.ok).toBe(false);
+    expect(result.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      'account_not_ready', 'policy_blocked', 'rights_attestation_required',
+      'adult_attestation_required', 'consent_attestation_required'
+    ]));
+  });
 });
