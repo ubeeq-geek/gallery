@@ -2,6 +2,8 @@
 
 This repository remains the transitional source while Ubeeq and the private hosted-product repositories are verified. Do not delete it until every item below has a tested replacement.
 
+Run `node scripts/inventory-hosted-coupling.mjs` to produce the current file/reference count by migration category. The initial inventory finds 113 files with hosted-product references; treat the report as a migration baseline, not a public-repository allowlist.
+
 ## First extraction: integration mechanism
 
 The generic capability vocabulary, remote-operation gate, and executable conformance runner are now represented by `@ubeeq/integrations` in the public Ubeeq repository.
@@ -24,4 +26,3 @@ The following remain here temporarily because they are product decisions or prov
 ## Safety rule
 
 No production data, credentials, product policy, prices, or reviewer instructions may be copied into the public Ubeeq repository during extraction.
-
