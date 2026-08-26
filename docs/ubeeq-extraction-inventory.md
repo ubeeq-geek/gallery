@@ -22,6 +22,8 @@ The private `@eversally/brand` module now owns the hosted product's terminology,
 
 The private Eversally web-composition shell now consumes `@eversally/brand` at runtime. It is intentionally limited to health and brand endpoints until public Ubeeq packages are released and the legacy product's domain features can migrate through declared dependencies.
 
+The private `@nightframe/brand` module and Nightframe web-composition shell now own the established product name and visual tokens. They intentionally do not infer eligibility, moderation, billing, or integration policy from Eversally; those implementations begin only when Nightframe-specific requirements are available.
+
 Public Ubeeq packages now have a manually dispatched, provenance-capable publish workflow and registry-safe dependency metadata. The remaining release gate is operational: configure the protected npm publishing credential (or trusted publishing), publish the first package set, and then replace the private compatibility checkout with installed semver dependencies.
 
 The following remain here temporarily because they are product decisions or provider implementations:
