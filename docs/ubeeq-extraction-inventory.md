@@ -16,6 +16,8 @@ The neutral object-storage and delivery adapter interfaces are now represented b
 
 The Eversally provider catalogue—provider ids, labels, rollout state, product surfaces, and enabled operations—is now declared and validated in the private `eversally-platform` repository. The legacy runtime registry remains temporarily until that private catalogue is consumed by the Eversally deployment.
 
+The private `@eversally/integrations` module now consumes that catalogue and the Eversally web-composition shell exposes it at runtime. Provider adapters, OAuth custody, and media/policy presentation details remain in the legacy runtime until their private implementations and product tests are migrated.
+
 The private `@eversally/brand` module now owns the hosted product's terminology, navigation, URLs, and theme tokens. The legacy API, web, and admin brand selectors remain transitional until the Eversally application composes that module at runtime.
 
 The private Eversally web-composition shell now consumes `@eversally/brand` at runtime. It is intentionally limited to health and brand endpoints until public Ubeeq packages are released and the legacy product's domain features can migrate through declared dependencies.
