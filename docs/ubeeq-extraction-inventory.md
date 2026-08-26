@@ -34,6 +34,8 @@ The neutral authenticated-subject and role/scope authorization contracts are now
 
 Eversally's current group mapping, role hierarchy, and creator/community capability decisions are now represented by the private `@eversally/policy` module and exercised by the product-composition shell. Gallery's corresponding application code remains transitional until the hosted deployment consumes that module end-to-end.
 
+Nightframe now has its own private `@nightframe/policy` eligibility boundary. It is intentionally fail-closed until a Nightframe deployment supplies a product-specific evaluator, preserving the requirement that Nightframe not inherit Eversally's eligibility or moderation rules.
+
 The Eversally provider catalogue—provider ids, labels, rollout state, product surfaces, and enabled operations—is now declared and validated in the private `eversally-platform` repository. The legacy runtime registry remains temporarily until that private catalogue is consumed by the Eversally deployment.
 
 The private `@eversally/integrations` module now consumes that catalogue and the Eversally web-composition shell exposes it at runtime. Provider adapters, OAuth custody, and media/policy presentation details remain in the legacy runtime until their private implementations and product tests are migrated.
