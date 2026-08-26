@@ -50,6 +50,8 @@ The complete Eversally and Nightframe branded landing applications have been cop
 
 The substantive Eversally creator/public web and administration applications now also live in private `eversally-platform` under `apps/product-web` and `apps/admin`. Their private copies remove the Ubeeq product selector and Gallery-specific local TLS paths; both production builds are verified. Keep Gallery's applications until the private deployment is connected to its independently deployed API and manually verified end-to-end.
 
+The substantive Eversally API and its test suite now live in private `eversally-platform/apps/api`. Its private local runner defaults to the Eversally tenant and no longer relies on Gallery's hostname or certificate paths; the API compiles and its focused configuration/brand tests pass. Keep the Gallery API until this private API is deployed into Eversally's separate infrastructure and the complete suite plus end-to-end product flow are verified there.
+
 The complete neutral Ubeeq landing application has likewise been copied byte-for-byte into the public Ubeeq repository and is covered by its public test suite and boundary check. Keep the Gallery copy only for manual verification; neutral landing changes should now be made in Ubeeq.
 
 Public Ubeeq packages now have a manually dispatched, provenance-capable publish workflow and registry-safe dependency metadata. The remaining release gate is operational: configure the protected npm publishing credential (or trusted publishing), publish the first package set, and then replace the private compatibility checkout with installed semver dependencies.
