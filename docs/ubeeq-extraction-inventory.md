@@ -66,7 +66,7 @@ The complete neutral Ubeeq landing application has likewise been copied byte-for
 
 Public Ubeeq now includes the `@ubeeq/self-host` package and a neutral reference instance configuration. It validates instance identity, secure public origins, storage requirements, and extension identifiers without selecting any hosted-product policy, domain, or credential. Package verification passes; a real operator installation remains an independent deployment verification gate.
 
-Public Ubeeq packages now have a manually dispatched, provenance-capable publish workflow and registry-safe dependency metadata. The remaining release gate is operational: configure the protected npm publishing credential (or trusted publishing), publish the first package set, and then replace the private compatibility checkout with installed semver dependencies.
+Public Ubeeq packages now have a manually dispatched, provenance-capable publish workflow and registry-safe dependency metadata. The workflow is CI-checked to publish every public package, including auth, billing, and self-hosting contracts, so the declared private dependency set cannot drift from a release. The remaining release gate is operational: configure the protected npm publishing credential (or trusted publishing), publish the first package set, and then replace the private compatibility checkout with installed semver dependencies.
 
 The following remain here temporarily because they are product decisions or provider implementations:
 
