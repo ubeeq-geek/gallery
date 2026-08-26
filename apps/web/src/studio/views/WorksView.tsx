@@ -26,6 +26,22 @@ type CollectionResponse = {
 type WorkLifecycle = 'draft' | 'ready' | 'archived';
 type PlatformFilter = 'all' | 'published_anywhere' | 'published_nowhere' | 'unpublished_unqueued' | 'unpublished_images' | 'deviantart_live' | 'eversally_live' | 'out_of_sync' | 'error';
 type WorkSort = 'name_asc' | 'name_desc' | 'updated_desc';
+type IntegrationPreflightResult = {
+  platform: string;
+  intent: 'publish' | 'announce';
+  ok: boolean;
+  issues: Array<{ code: string; severity: 'blocking' | 'warning'; message: string }>;
+};
+const integrationPreflightLabel = (platform: string): string => ({
+  deviantart: 'DeviantArt',
+  bluesky: 'Bluesky',
+  discord: 'Discord'
+})[platform] || platform;
+const integrationSetupAnchor = (platform: string): string => ({
+  deviantart: 'integration-deviantart',
+  bluesky: 'integration-bluesky',
+  discord: 'integration-discord'
+})[platform] || 'integration-deviantart';
 const worksPageSizes = [12, 24, 48, 100] as const;
 const platformFilters: PlatformFilter[] = ['all', 'published_anywhere', 'published_nowhere', 'unpublished_unqueued', 'unpublished_images', 'deviantart_live', 'eversally_live', 'out_of_sync', 'error'];
 const workSorts: WorkSort[] = ['name_asc', 'name_desc', 'updated_desc'];
@@ -57,6 +73,59 @@ const destinationStatusLabel = (status: StudioExternalAsset['destinationPublicat
 const engagementNumber = (value: number): string => new Intl.NumberFormat().format(value);
 
 const sourcePlatformLabel = (publication: StudioExternalAsset['publications'][number]): string => publication.platform === 'deviantart' ? 'DeviantArt' : (publication.platform || 'Integration');
+
+type ReconciliationStatus = NonNullable<StudioExternalAsset['publications'][number]['reconciliation']>['status'];
+
+const reconciliationStatusLabel = (status: ReconciliationStatus): string => ({
+  in_sync: 'In sync',
+  local_newer: 'Local changes to review',
+  remote_newer: 'Remote changes to review',
+  non_conflicting_changes: 'Changes ready to reconcile',
+  conflict: 'Conflicting changes'
+})[status];
+
+type DeviantArtAccountAction = NonNullable<StudioDeviantArtAccount['health']>['recommendedAction'];
+
+const deviantArtAccountRecommendedAction = (account: StudioDeviantArtAccount): DeviantArtAccountAction => {
+  if (account.health?.recommendedAction) return account.health.recommendedAction;
+  switch (account.connectionStatus) {
+    case 'authentication_required': return 'reconnect';
+    case 'rate_limited': return 'wait';
+    case 'temporarily_unavailable': return 'retry_sync';
+    case 'disabled': return 'review_setup';
+    default: return 'none';
+  }
+};
+
+const isDeviantArtAccountQueueable = (account: StudioDeviantArtAccount): boolean => {
+  const action = deviantArtAccountRecommendedAction(account);
+  return action !== 'reconnect' && action !== 'review_setup' && account.connectionStatus !== 'disabled';
+};
+
+const deviantArtAccountActionMessage = (account: StudioDeviantArtAccount): string => {
+  switch (deviantArtAccountRecommendedAction(account)) {
+    case 'reconnect':
+      return `DeviantArt · ${account.externalUsername} needs reconnecting before it can be used for publishing.`;
+    case 'review_setup':
+      return `DeviantArt · ${account.externalUsername} needs its setup reviewed before it can be used for publishing.`;
+    case 'wait':
+      return `DeviantArt · ${account.externalUsername} is rate limited. Publishing will wait and resume automatically.`;
+    case 'retry_sync':
+      return `DeviantArt · ${account.externalUsername} is temporarily unavailable. Publishing will retry automatically.`;
+    default:
+      return `DeviantArt · ${account.externalUsername} is ready for publishing.`;
+  }
+};
+
+const deviantArtAccountOptionLabel = (account: StudioDeviantArtAccount): string => {
+  switch (deviantArtAccountRecommendedAction(account)) {
+    case 'reconnect': return ' (reconnect required)';
+    case 'review_setup': return ' (setup needs attention)';
+    case 'wait': return ' (rate limited — will queue)';
+    case 'retry_sync': return ' (temporarily unavailable — will retry)';
+    default: return '';
+  }
+};
 
 const assetTypeLabel = (asset: StudioExternalAsset): string => {
   if (asset.assetType === 'image') return 'Image';
@@ -182,6 +251,8 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   const [bulkDiscordAnnouncementPreset, setBulkDiscordAnnouncementPreset] = useState<AnnouncementPresetId>('recommended');
   const [bulkDiscordIncludePrimaryMedia, setBulkDiscordIncludePrimaryMedia] = useState(true);
   const [bulkAnnouncementProviders, setBulkAnnouncementProviders] = useState<Array<'discord' | 'bluesky'>>(['discord']);
+  const [bulkPreflights, setBulkPreflights] = useState<IntegrationPreflightResult[]>([]);
+  const [bulkPreflightLoading, setBulkPreflightLoading] = useState(false);
   const [bulkPublishing, setBulkPublishing] = useState(false);
   const [bulkPublishMessage, setBulkPublishMessage] = useState('');
   const appliedRouteCollectionFilter = useRef('');
@@ -196,6 +267,21 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   };
 
   const activeCreator = useMemo(() => creators.find((creator) => creator.creatorId === creatorId), [creatorId, creators]);
+  const queueableAccounts = useMemo(() => accounts.filter(isDeviantArtAccountQueueable), [accounts]);
+  const attentionAccounts = useMemo(
+    () => accounts.filter((account) => deviantArtAccountRecommendedAction(account) !== 'none'),
+    [accounts]
+  );
+  const selectedBulkAccountId = bulkDestinationAccountId || (
+    queueableAccounts.length === 1 ? queueableAccounts[0]?.externalAccountId : ''
+  );
+  const selectedBulkAccount = useMemo(
+    () => accounts.find((account) => account.externalAccountId === selectedBulkAccountId),
+    [accounts, selectedBulkAccountId]
+  );
+  const selectedBulkAccountCanPublish = Boolean(
+    selectedBulkAccount && isDeviantArtAccountQueueable(selectedBulkAccount)
+  );
   const selectedCollection = useMemo(
     () => collections.ubeeqCollections.find((collection) => collection.ubeeqCollectionId === collectionId),
     [collectionId, collections.ubeeqCollections]
@@ -213,17 +299,14 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
       setAssets(((catalogue as { items?: StudioExternalAsset[] }).items || []));
       setCatalogueLoaded(true);
       setCollections(nextCollections as CollectionResponse);
-      const queueableAccounts = ((nextAccounts || []) as StudioDeviantArtAccount[]).filter((account) => (
-        account.connectionStatus === 'connected'
-        || account.connectionStatus === 'rate_limited'
-        || account.connectionStatus === 'temporarily_unavailable'
-      ));
-      setAccounts(queueableAccounts);
-      setBulkDeviantArtIntent(queueableAccounts.length > 0);
+      const nextStudioAccounts = (nextAccounts || []) as StudioDeviantArtAccount[];
+      const nextQueueableAccounts = nextStudioAccounts.filter(isDeviantArtAccountQueueable);
+      setAccounts(nextStudioAccounts);
+      setBulkDeviantArtIntent(nextQueueableAccounts.length > 0);
       setBulkDestinationAccountId((current) => (
-        queueableAccounts.some((account) => account.externalAccountId === current)
+        nextQueueableAccounts.some((account) => account.externalAccountId === current)
           ? current
-          : queueableAccounts.length === 1 ? queueableAccounts[0].externalAccountId : ''
+          : nextQueueableAccounts.length === 1 ? nextQueueableAccounts[0].externalAccountId : ''
       ));
     } catch (loadError) {
       setCatalogueLoaded(true);
@@ -247,8 +330,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   }, [creatorId]);
 
   useEffect(() => {
-    const selectedAccountId = bulkDestinationAccountId || (accounts.length === 1 ? accounts[0]?.externalAccountId : '');
-    const preset = accounts.find((account) => account.externalAccountId === selectedAccountId)?.deviantArtPublishingPreset;
+    const preset = selectedBulkAccount?.deviantArtPublishingPreset;
     if (!preset) return;
     setBulkDestinationStatus(preset.targetStatus || 'published');
     setBulkDaDisplayResolution(preset.displayResolution ? String(preset.displayResolution) : '');
@@ -261,7 +343,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     setBulkDaMatureClassification(preset.matureClassification || []);
     setBulkDaIsAiGenerated(preset.isAiGenerated === true);
     setBulkDaNoAi(preset.noAi === true);
-  }, [accounts, bulkDestinationAccountId]);
+  }, [selectedBulkAccount]);
 
   useEffect(() => {
     if (!platformAccountId || !accounts.length) return;
@@ -342,8 +424,20 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
       )) return false;
       if (platformFilter === 'deviantart_live' && !current.some((publication) => publication.destination === 'deviantart' && publication.status === 'live')) return false;
       if (platformFilter === 'eversally_live' && !current.some((publication) => publication.destination === 'eversally' && publication.status === 'live')) return false;
-      if (platformFilter === 'out_of_sync' && !current.some((publication) => publication.syncStatus === 'local_newer' || publication.syncStatus === 'remote_newer' || publication.syncStatus === 'conflict')) return false;
-      if (platformFilter === 'error' && !current.some((publication) => publication.status === 'failed' || publication.syncStatus === 'error')) return false;
+      if (platformFilter === 'out_of_sync' && !(
+        current.some((publication) => publication.syncStatus === 'local_newer' || publication.syncStatus === 'remote_newer' || publication.syncStatus === 'non_conflicting_changes' || publication.syncStatus === 'conflict')
+        || asset.publications.some((publication) => publication.reconciliation && publication.reconciliation.status !== 'in_sync')
+      )) return false;
+      const hasPublicationIssue = current.some((publication) => (
+        publication.status === 'failed'
+        || publication.status === 'missing'
+        || publication.status === 'unknown'
+        || publication.syncStatus === 'error'
+      )) || asset.publications.some((publication) => (
+        publication.syncStatus === 'error'
+        || publication.syncStatus === 'restricted'
+      ));
+      if (platformFilter === 'error' && !hasPublicationIssue) return false;
       if (!normalizedQuery) return true;
       return [asset.canonicalTitle || '', asset.canonicalDescription || '', ...asset.publications.flatMap((publication) => [publication.externalTitle || '', ...publication.externalTags])]
         .some((value) => value.toLowerCase().includes(normalizedQuery));
@@ -369,7 +463,62 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     () => selectedWorkAssetIds.filter((assetId) => displayedAssetIds.has(assetId)),
     [displayedAssetIds, selectedWorkAssetIds]
   );
-  const selectedBulkAccountId = bulkDestinationAccountId || (accounts.length === 1 ? accounts[0]?.externalAccountId : '');
+  const selectedReviewAssets = useMemo(
+    () => displayedAssets.filter((asset) => selectedDisplayedAssetIds.includes(asset.assetId)),
+    [displayedAssets, selectedDisplayedAssetIds]
+  );
+  const selectedReviewMediaTypes = useMemo(() => Array.from(new Set(selectedReviewAssets.map((asset) => {
+    if (asset.assetType === 'animation') return 'video';
+    if (asset.assetType === 'literature') return 'literature';
+    return 'image';
+  }))), [selectedReviewAssets]);
+  const selectedReviewMediaTypeKey = selectedReviewMediaTypes.join(',');
+  const selectedReviewAiDisclosureKey = selectedReviewAssets
+    .map((asset) => asset.aiDisclosure || 'none')
+    .join(',');
+  const bulkPreflightTargets = useMemo(() => [
+    ...(bulkDeviantArtIntent ? [{ platform: 'deviantart', intent: 'publish' as const, externalAccountId: selectedBulkAccountId || undefined }] : []),
+    ...(bulkSpaceIntent && bulkDiscordAnnouncementMode !== 'none' && bulkAnnouncementProviders.includes('bluesky')
+      ? [{ platform: 'bluesky', intent: 'announce' as const }]
+      : []),
+    ...(bulkSpaceIntent && bulkDiscordAnnouncementMode !== 'none' && bulkAnnouncementProviders.includes('discord')
+      ? [{ platform: 'discord', intent: 'announce' as const }]
+      : [])
+  ], [bulkAnnouncementProviders, bulkDeviantArtIntent, bulkDiscordAnnouncementMode, bulkSpaceIntent, selectedBulkAccountId]);
+  const bulkPreflightIssues = useMemo(
+    () => bulkPreflights.flatMap((result) => result.issues.map((issue) => ({ ...issue, platform: result.platform }))),
+    [bulkPreflights]
+  );
+  const bulkPreflightBlockingIssues = bulkPreflightIssues.filter((issue) => issue.severity === 'blocking');
+  useEffect(() => {
+    if (!bulkReviewOpen || !bulkPreflightTargets.length || !selectedReviewAssets.length) {
+      setBulkPreflights([]);
+      setBulkPreflightLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setBulkPreflightLoading(true);
+    void Promise.all(bulkPreflightTargets.map((target) => api.studioPreflightIntegration({
+      ...target,
+      mediaTypes: selectedReviewMediaTypes,
+      aiDisclosures: selectedReviewAssets.map((asset) => asset.aiDisclosure || 'none')
+    }).catch((): IntegrationPreflightResult => ({
+      ...target,
+      ok: true,
+      issues: [{
+        code: 'preflight_unavailable',
+        severity: 'warning',
+        message: 'Unable to check this destination right now. Publishing will apply its normal server-side validation.'
+      }]
+    }))))
+      .then((results) => {
+        if (!cancelled) setBulkPreflights(results);
+      })
+      .finally(() => {
+        if (!cancelled) setBulkPreflightLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [bulkPreflightTargets, bulkReviewOpen, selectedReviewAiDisclosureKey, selectedReviewAssets.length, selectedReviewMediaTypeKey]);
   const bulkAccountGalleries = useMemo(
     () => collections.externalCollections.filter((collection) => collection.externalAccountId === selectedBulkAccountId && collection.syncStatus !== 'missing'),
     [collections.externalCollections, selectedBulkAccountId]
@@ -500,13 +649,23 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
 
   const addDeviantArtDestination = async (asset: StudioExternalAsset, externalAccountId: string, targetStatus: 'draft' | 'published') => {
     if (!externalAccountId) return;
+    const account = accounts.find((candidate) => candidate.externalAccountId === externalAccountId);
+    if (!account || !isDeviantArtAccountQueueable(account)) {
+      setDestinationMessageByAsset((current) => ({
+        ...current,
+        [asset.assetId]: account
+          ? deviantArtAccountActionMessage(account)
+          : 'Choose a DeviantArt account that is ready for publishing.'
+      }));
+      return;
+    }
     setDestinationUpdatingAssetId(asset.assetId);
     setError('');
     setDestinationMessageByAsset((current) => ({ ...current, [asset.assetId]: '' }));
     try {
       const intent = await api.studioSetWorkPublicationIntent(asset.assetId, { destination: 'deviantart', integrationAccountId: externalAccountId, enabled: true, desiredStatus: targetStatus === 'draft' ? 'draft' : 'live' });
       setAssets((current) => current.map((item) => item.assetId === asset.assetId ? { ...item, publicationIntents: [...item.publicationIntents.filter((existing) => !(existing.destination === 'deviantart' && existing.integrationAccountId === externalAccountId)), intent] } : item));
-      setDestinationMessageByAsset((current) => ({ ...current, [asset.assetId]: `Publishing intent saved for DeviantArt · ${accounts.find((account) => account.externalAccountId === externalAccountId)?.externalUsername || 'account'}. No remote publication has been created yet.` }));
+      setDestinationMessageByAsset((current) => ({ ...current, [asset.assetId]: `Publishing intent saved for DeviantArt · ${account.externalUsername}. No remote publication has been created yet.` }));
     } catch (destinationError) {
       setError(destinationError instanceof Error ? destinationError.message : 'Unable to add DeviantArt as a destination.');
     } finally {
@@ -531,8 +690,14 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   };
 
   const addSelectedWorksToDeviantArt = async () => {
-    const externalAccountId = bulkDestinationAccountId || (accounts.length === 1 ? accounts[0].externalAccountId : '');
-    if (!selectedDisplayedAssetIds.length || (!bulkSpaceIntent && !bulkDeviantArtIntent) || (bulkDeviantArtIntent && !externalAccountId)) return;
+    const externalAccountId = selectedBulkAccountId;
+    if (!selectedDisplayedAssetIds.length || (!bulkSpaceIntent && !bulkDeviantArtIntent)) return;
+    if (bulkDeviantArtIntent && (!selectedBulkAccount || !selectedBulkAccountCanPublish)) {
+      setBulkDestinationMessage(selectedBulkAccount
+        ? deviantArtAccountActionMessage(selectedBulkAccount)
+        : 'Choose a DeviantArt account that is ready for publishing.');
+      return;
+    }
     setBulkDestinationUpdating(true);
     setBulkDestinationMessage('');
     setError('');
@@ -569,8 +734,14 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   };
 
   const publishSelectedWorks = async () => {
-    const externalAccountId = bulkDestinationAccountId || (accounts.length === 1 ? accounts[0].externalAccountId : '');
-    if (!selectedDisplayedAssetIds.length || (!bulkSpaceIntent && !bulkDeviantArtIntent) || (bulkDeviantArtIntent && !externalAccountId)) return;
+    const externalAccountId = selectedBulkAccountId;
+    if (!selectedDisplayedAssetIds.length || (!bulkSpaceIntent && !bulkDeviantArtIntent)) return;
+    if (bulkDeviantArtIntent && (!selectedBulkAccount || !selectedBulkAccountCanPublish)) {
+      setBulkDestinationMessage(selectedBulkAccount
+        ? deviantArtAccountActionMessage(selectedBulkAccount)
+        : 'Choose a DeviantArt account that is ready for publishing.');
+      return;
+    }
     const selectedAssets = displayedAssets.filter((asset) => selectedDisplayedAssetIds.includes(asset.assetId));
     const parsedDisplayResolution = Number.parseInt(bulkDaDisplayResolution, 10);
     if (bulkDeviantArtIntent && bulkDaDisplayResolution && !deviantArtDisplayWidths.includes(parsedDisplayResolution)) {
@@ -580,8 +751,40 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
     const deviantArtOptions = bulkDeviantArtOptions();
     const destinations = [
       ...(bulkSpaceIntent ? [`${brand.workspaceFullName} (${bulkSpaceVisibility})`] : []),
-      ...(bulkDeviantArtIntent ? [`DeviantArt · ${accounts.find((account) => account.externalAccountId === externalAccountId)?.externalUsername || 'account'} (${bulkDestinationStatus === 'draft' ? 'Sta.sh draft' : 'publish'})`] : [])
+      ...(bulkDeviantArtIntent ? [`DeviantArt · ${selectedBulkAccount?.externalUsername || 'account'} (${bulkDestinationStatus === 'draft' ? 'Sta.sh draft' : 'publish'})`] : [])
     ];
+    const selectedMediaTypes = Array.from(new Set(selectedAssets.map((asset) => {
+      if (asset.assetType === 'animation') return 'video';
+      if (asset.assetType === 'literature') return 'literature';
+      return 'image';
+    })));
+    const preflightInputs = [
+      ...(bulkDeviantArtIntent ? [{ platform: 'deviantart', intent: 'publish' as const, externalAccountId: selectedBulkAccountId || undefined }] : []),
+      ...(bulkSpaceIntent && bulkDiscordAnnouncementMode !== 'none' && bulkAnnouncementProviders.includes('bluesky')
+        ? [{ platform: 'bluesky', intent: 'announce' as const }]
+        : []),
+      ...(bulkSpaceIntent && bulkDiscordAnnouncementMode !== 'none' && bulkAnnouncementProviders.includes('discord')
+        ? [{ platform: 'discord', intent: 'announce' as const }]
+        : [])
+    ];
+    setBulkPreflightLoading(true);
+    try {
+      const preflightResults = await Promise.all(preflightInputs.map((input) => api.studioPreflightIntegration({
+        ...input,
+        mediaTypes: selectedMediaTypes,
+        aiDisclosures: selectedAssets.map((asset) => asset.aiDisclosure || 'none')
+      })));
+      const blockingIssues = preflightResults.flatMap((result) => result.issues.filter((issue) => issue.severity === 'blocking'));
+      if (blockingIssues.length) {
+        setBulkDestinationMessage(`Review these destination requirements before publishing: ${blockingIssues.map((issue) => issue.message).join(' ')}`);
+        return;
+      }
+    } catch {
+      setBulkDestinationMessage('Unable to check every destination right now. Try again in a moment.');
+      return;
+    } finally {
+      setBulkPreflightLoading(false);
+    }
     const includesUnverifiedFailure = selectedAssets.some((asset) => asset.publications.some((publication) => publication.platform === 'deviantart' && publication.syncStatus === 'error'));
     const retryWarning = includesUnverifiedFailure
       ? ' At least one selected DeviantArt submission could not previously be verified. Check Sta.sh first: retrying it may create a second draft.'
@@ -643,7 +846,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
   };
 
   const saveBulkDeviantArtPreset = async () => {
-    const externalAccountId = bulkDestinationAccountId || (accounts.length === 1 ? accounts[0].externalAccountId : '');
+    const externalAccountId = selectedBulkAccountId;
     const account = accounts.find((item) => item.externalAccountId === externalAccountId);
     if (!externalAccountId || !account) return;
     const parsedDisplayResolution = Number.parseInt(bulkDaDisplayResolution, 10);
@@ -856,8 +1059,8 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                 <option value="unpublished_images">Unpublished images (drafts)</option>
                 <option value="eversally_live">Published on {brand.workspaceFullName}</option>
                 <option value="deviantart_live">Published on DeviantArt</option>
-                <option value="out_of_sync">Out of sync</option>
-                <option value="error">Errors</option>
+                <option value="out_of_sync">Needs reconciliation</option>
+                <option value="error">Needs attention</option>
               </select>
             </label>
             <label>
@@ -874,6 +1077,15 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
 
         {loading && <p className="small">Loading works…</p>}
         {error && <p className="error">{error}</p>}
+        {!!attentionAccounts.length && <aside className="studio-works-integration-attention" aria-label="Integration attention needed">
+          <div>
+            <strong>Integration attention needed</strong>
+            <span>{attentionAccounts.map(deviantArtAccountActionMessage).join(' ')}</span>
+          </div>
+          <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}`}>
+            Manage integrations
+          </Link>
+        </aside>}
 
         {!!displayedAssets.length && <div className="studio-works-bulk-bar">
           <label className="studio-work-select-all" aria-label={`Select all ${displayedAssets.length} works on this page`}>
@@ -924,13 +1136,28 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
               >{label}</button>)}
             </div>
             <span>Bulk publishing review</span>
+            {!!bulkPreflightTargets.length && <div className={`studio-works-preflight${bulkPreflightBlockingIssues.length ? ' is-blocked' : ''}`} aria-live="polite">
+              <strong>Destination readiness</strong>
+              {bulkPreflightLoading ? <p>Checking every selected destination…</p> : bulkPreflightIssues.length > 0 ? <ul>
+                {bulkPreflightIssues.map((issue) => <li key={`${issue.platform}-${issue.code}-${issue.message}`} className={`is-${issue.severity}`}>
+                  <strong>{integrationPreflightLabel(issue.platform)}:</strong> {issue.message}
+                  <Link
+                    className="studio-works-preflight-link"
+                    to={`/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}#${integrationSetupAnchor(issue.platform)}`}
+                  >
+                    Open {integrationPreflightLabel(issue.platform)} setup
+                  </Link>
+                </li>)}
+              </ul> : <p>All selected destinations meet their shared publishing requirements.</p>}
+            </div>}
             {!bulkSpaceIntent && !bulkDeviantArtIntent && <p className="studio-work-metadata-warning">Choose at least one publish destination below.</p>}
-            {bulkDeviantArtIntent && !bulkDestinationAccountId && <p className="studio-work-metadata-warning">Choose a DeviantArt account below.</p>}
+            {bulkDeviantArtIntent && !selectedBulkAccount && <p className="studio-work-metadata-warning">Choose a DeviantArt account below.</p>}
+            {bulkDeviantArtIntent && selectedBulkAccount && deviantArtAccountRecommendedAction(selectedBulkAccount) !== 'none' && <p className="studio-work-metadata-warning">{deviantArtAccountActionMessage(selectedBulkAccount)}</p>}
             {(bulkSpaceIntent || bulkDeviantArtIntent) && <p className="small">{selectedDisplayedAssetIds.length} selected work{selectedDisplayedAssetIds.length === 1 ? '' : 's'} will be sent to:</p>}
             <ul className="small">
               {bulkSpaceIntent && <li>{brand.workspaceFullName} — {bulkSpaceVisibility === 'public' ? 'Space-visible' : bulkSpaceVisibility}</li>}
               {bulkSpaceIntent && bulkDiscordAnnouncementMode !== 'none' && <li>{bulkAnnouncementProviders.map((provider) => provider === 'discord' ? 'Discord' : 'Bluesky').join(' + ')} — {bulkDiscordAnnouncementMode === 'digest' ? 'one digest for this release' : bulkDiscordAnnouncementMode === 'per_work' ? 'one announcement per Work' : 'destination default'} · {announcementPresetOptions.find((option) => option.id === bulkDiscordAnnouncementPreset)?.label || 'Recommended'}</li>}
-              {bulkDeviantArtIntent && <li>DeviantArt · {accounts.find((account) => account.externalAccountId === (bulkDestinationAccountId || (accounts.length === 1 ? accounts[0].externalAccountId : '')))?.externalUsername || 'account'} — {bulkDestinationStatus === 'draft' ? 'save as Sta.sh draft' : 'publish'} · {bulkDaDisplayResolution ? `${bulkDaDisplayResolution}px display rendition` : 'original display'} · free download {bulkDaAllowFreeDownload ? 'enabled' : 'disabled'}{bulkDaAddWatermark && bulkDaDisplayResolution ? ' · watermark enabled' : ''} · {bulkDaIsMature ? `mature (${bulkDaMatureLevel})` : 'not mature'} · {bulkDaIsAiGenerated ? 'made with AI' : 'not marked AI-generated'} · AI training {bulkDaNoAi ? 'disallowed' : 'allowed'}</li>}
+              {bulkDeviantArtIntent && <li>DeviantArt · {selectedBulkAccount?.externalUsername || 'account'} — {bulkDestinationStatus === 'draft' ? 'save as Sta.sh draft' : 'publish'} · {bulkDaDisplayResolution ? `${bulkDaDisplayResolution}px display rendition` : 'original display'} · free download {bulkDaAllowFreeDownload ? 'enabled' : 'disabled'}{bulkDaAddWatermark && bulkDaDisplayResolution ? ' · watermark enabled' : ''} · {bulkDaIsMature ? `mature (${bulkDaMatureLevel})` : 'not mature'} · {bulkDaIsAiGenerated ? 'made with AI' : 'not marked AI-generated'} · AI training {bulkDaNoAi ? 'disallowed' : 'allowed'}</li>}
             </ul>
             <p className="small">Queued in the current Works order:</p>
             <ol className="small">
@@ -939,7 +1166,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
             {selectedDisplayedAssetIds.length > 8 && <p className="small">…and {selectedDisplayedAssetIds.length - 8} more.</p>}
             <div className="studio-works-review-dialog-actions">
               <button type="button" className="auth-secondary-btn" disabled={bulkPublishing} onClick={() => setBulkReviewOpen(false)}>Cancel</button>
-              <button type="button" className="auth-primary-btn" disabled={bulkPublishing || !bulkDestinationCount || (bulkDeviantArtIntent && !bulkDestinationAccountId)} onClick={() => void publishSelectedWorks()}>{bulkPublishing ? 'Publishing…' : `Publish to ${bulkDestinationCount} destination${bulkDestinationCount === 1 ? '' : 's'}`}</button>
+              <button type="button" className="auth-primary-btn" disabled={bulkPublishing || bulkPreflightLoading || !bulkDestinationCount || (bulkDeviantArtIntent && !selectedBulkAccountCanPublish) || bulkPreflightBlockingIssues.length > 0} onClick={() => void publishSelectedWorks()}>{bulkPublishing ? 'Publishing…' : `Publish to ${bulkDestinationCount} destination${bulkDestinationCount === 1 ? '' : 's'}`}</button>
             </div>
           </div>
           <div className="studio-works-bulk-destination studio-works-review-panel">
@@ -986,12 +1213,14 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
               <option value="unlisted">Unlisted</option>
               <option value="public">Space-visible</option>
             </select>}
-            {!!accounts.length && <label><input type="checkbox" checked={bulkDeviantArtIntent} onChange={(event) => setBulkDeviantArtIntent(event.target.checked)} /> DeviantArt</label>}
+            {!!accounts.length && <label><input type="checkbox" checked={bulkDeviantArtIntent} disabled={!queueableAccounts.length} onChange={(event) => setBulkDeviantArtIntent(event.target.checked)} /> DeviantArt</label>}
+            {!queueableAccounts.length && !!accounts.length && <small className="studio-work-destination-message">Reconnect or review account setup in Integrations before using DeviantArt as a destination.</small>}
             {bulkDeviantArtIntent && accounts.length > 1 && <select value={bulkDestinationAccountId} onChange={(event) => setBulkDestinationAccountId(event.target.value)}>
               <option value="">Choose an account…</option>
-              {accounts.map((account) => <option key={account.externalAccountId} value={account.externalAccountId}>{account.externalUsername}{account.connectionStatus === 'connected' ? '' : ` (${account.connectionStatus === 'rate_limited' ? 'rate limited — queued' : 'temporarily unavailable — queued'})`}</option>)}
+              {accounts.map((account) => <option key={account.externalAccountId} value={account.externalAccountId}>{account.externalUsername}{deviantArtAccountOptionLabel(account)}</option>)}
             </select>}
-            {bulkDeviantArtIntent && accounts.length === 1 && <small>{accounts[0].externalUsername}{accounts[0].connectionStatus === 'connected' ? '' : ` · ${accounts[0].connectionStatus === 'rate_limited' ? 'rate limited; publishing will queue' : 'temporarily unavailable; publishing will queue'}`}</small>}
+            {bulkDeviantArtIntent && accounts.length === 1 && <small>{accounts[0].externalUsername}{deviantArtAccountOptionLabel(accounts[0])}</small>}
+            {bulkDeviantArtIntent && selectedBulkAccount && deviantArtAccountRecommendedAction(selectedBulkAccount) !== 'none' && <small className="studio-work-destination-message">{deviantArtAccountActionMessage(selectedBulkAccount)}</small>}
             {bulkDeviantArtIntent && <select value={bulkDestinationStatus} onChange={(event) => setBulkDestinationStatus(event.target.value as 'draft' | 'published')} aria-label="DeviantArt destination status for selected works">
               <option value="published">Published (default)</option>
               <option value="draft">Draft in Sta.sh</option>
@@ -1008,13 +1237,12 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
             {bulkDeviantArtIntent && <label className="studio-works-bulk-da-option"><span>Display size</span><select value={bulkDaDisplayResolution} onChange={(event) => setBulkDaDisplayResolution(event.target.value)} aria-label="DeviantArt display size for selected works"><option value="">Original</option>{deviantArtDisplayWidths.map((width) => <option key={width} value={width}>Size: {width} pixels wide</option>)}</select></label>}
             {bulkDeviantArtIntent && <label><input type="checkbox" checked={bulkDaAllowFreeDownload} onChange={(event) => setBulkDaAllowFreeDownload(event.target.checked)} /> Allow original download</label>}
             {bulkDeviantArtIntent && <label><input type="checkbox" checked={bulkDaAddWatermark} disabled={!bulkDaDisplayResolution} onChange={(event) => setBulkDaAddWatermark(event.target.checked)} /> Add watermark</label>}
-            {bulkDeviantArtIntent && <button type="button" className="auth-secondary-btn" disabled={!bulkDestinationAccountId || bulkPresetSaving} onClick={() => void saveBulkDeviantArtPreset()}>
+            {bulkDeviantArtIntent && <button type="button" className="auth-secondary-btn" disabled={!selectedBulkAccountCanPublish || bulkPresetSaving} onClick={() => void saveBulkDeviantArtPreset()}>
               {bulkPresetSaving ? 'Saving default…' : 'Save as account default'}
             </button>}
             {bulkDeviantArtIntent && (() => {
-              const selectedAccount = accounts.find((account) => account.externalAccountId === (bulkDestinationAccountId || (accounts.length === 1 ? accounts[0].externalAccountId : '')));
-              const preset = selectedAccount?.deviantArtPublishingPreset;
-              return <small className="studio-work-destination-message">Settings began with {selectedAccount?.externalUsername || 'this account'}’s saved preset{preset?.defaultTags?.length ? ` · ${preset.defaultTags.join(', ')}` : ''}. Changes here apply to the selected Works. <Link to={`/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}`}>Edit full preset</Link></small>;
+              const preset = selectedBulkAccount?.deviantArtPublishingPreset;
+              return <small className="studio-work-destination-message">Settings began with {selectedBulkAccount?.externalUsername || 'this account'}’s saved preset{preset?.defaultTags?.length ? ` · ${preset.defaultTags.join(', ')}` : ''}. Changes here apply to the selected Works. <Link to={`/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}`}>Edit full preset</Link></small>;
             })()}
             {bulkDeviantArtIntent && <fieldset className="studio-work-metadata-options">
               <legend>Bulk edit existing DeviantArt works</legend>
@@ -1039,7 +1267,7 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
               {!!selectedDisplayedAssetIds.length && selectedDeviantArtOriginWorks.length < selectedDisplayedAssetIds.length && <small>{selectedDisplayedAssetIds.length - selectedDeviantArtOriginWorks.length} selected Work{selectedDisplayedAssetIds.length - selectedDeviantArtOriginWorks.length === 1 ? '' : 's'} will be skipped because they were not imported from this DeviantArt account or no longer have an editable publication.</small>}
               {bulkDaEditMessage && <small className="studio-work-destination-message">{bulkDaEditMessage}</small>}
             </fieldset>}
-            <button type="button" className="auth-secondary-btn" disabled={!selectedDisplayedAssetIds.length || (!bulkSpaceIntent && !bulkDeviantArtIntent) || (bulkDeviantArtIntent && !bulkDestinationAccountId) || bulkDestinationUpdating} onClick={() => void addSelectedWorksToDeviantArt()}>
+            <button type="button" className="auth-secondary-btn" disabled={!selectedDisplayedAssetIds.length || (!bulkSpaceIntent && !bulkDeviantArtIntent) || (bulkDeviantArtIntent && !selectedBulkAccountCanPublish) || bulkDestinationUpdating} onClick={() => void addSelectedWorksToDeviantArt()}>
               {bulkDestinationUpdating ? 'Saving…' : 'Save choices'}
             </button>
             {bulkDestinationMessage && <small className="studio-work-destination-message">{bulkDestinationMessage}</small>}
@@ -1064,7 +1292,19 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
               publication.platform === 'deviantart'
               && (publication.syncStatus === 'missing' || publication.syncStatus === 'restricted' || publication.syncStatus === 'deleted' || publication.syncStatus === 'error')
             ));
-            const selectedDestinationAccountId = destinationAccountByAsset[asset.assetId] || (accounts.length === 1 ? accounts[0].externalAccountId : '');
+            const reconciliationIssues = asset.publications.filter((publication) => (
+              publication.reconciliation && publication.reconciliation.status !== 'in_sync'
+            ));
+            const destinationIssues = asset.destinationPublications.filter((publication) => (
+              publication.status === 'failed'
+              || publication.status === 'missing'
+              || publication.status === 'unknown'
+              || publication.syncStatus === 'error'
+            ));
+            const hasPublicationIssue = destinationIssues.length > 0 || remoteLifecycleIssues.length > 0;
+            const selectedDestinationAccountId = destinationAccountByAsset[asset.assetId] || (queueableAccounts.length === 1 ? queueableAccounts[0].externalAccountId : '');
+            const selectedDestinationAccount = accounts.find((account) => account.externalAccountId === selectedDestinationAccountId);
+            const selectedDestinationAccountCanPublish = Boolean(selectedDestinationAccount && isDeviantArtAccountQueueable(selectedDestinationAccount));
             const selectedDestinationStatus = destinationStatusByAsset[asset.assetId] || 'published';
             const isDestinationUpdating = destinationUpdatingAssetId === asset.assetId;
             const spaceIntentEnabled = asset.publicationIntents.some((intent) => intent.destination === 'eversally' && intent.enabled);
@@ -1116,9 +1356,9 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                             onChange={(event) => setDestinationAccountByAsset((current) => ({ ...current, [asset.assetId]: event.target.value }))}
                           >
                             <option value="">Choose an account…</option>
-                            {accounts.map((account) => <option key={account.externalAccountId} value={account.externalAccountId}>{account.externalUsername}</option>)}
+                            {accounts.map((account) => <option key={account.externalAccountId} value={account.externalAccountId}>{account.externalUsername}{deviantArtAccountOptionLabel(account)}</option>)}
                           </select>}
-                          {accounts.length === 1 && <small>{accounts[0].externalUsername}</small>}
+                          {accounts.length === 1 && <small>{accounts[0].externalUsername}{deviantArtAccountOptionLabel(accounts[0])}</small>}
                           <select
                             value={selectedDestinationStatus}
                             disabled={isDestinationUpdating}
@@ -1131,18 +1371,25 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                           <button
                             type="button"
                             className="auth-secondary-btn"
-                            disabled={isDestinationUpdating || !selectedDestinationAccountId}
+                            disabled={isDestinationUpdating || !selectedDestinationAccountCanPublish}
                             onClick={() => void addDeviantArtDestination(asset, selectedDestinationAccountId, selectedDestinationStatus)}
                           >
                             {isDestinationUpdating ? 'Saving…' : 'Save DeviantArt intent'}
                           </button>
                         </div>
                         : <div><small>No connected account is available for this creator.</small><Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}`}>Manage integrations</Link></div>}
+                    {selectedDestinationAccount && deviantArtAccountRecommendedAction(selectedDestinationAccount) !== 'none' && <small className="studio-work-destination-message">{deviantArtAccountActionMessage(selectedDestinationAccount)}</small>}
                     {destinationMessageByAsset[asset.assetId] && <small className="studio-work-destination-message">{destinationMessageByAsset[asset.assetId]}</small>}
                   </div>
                   </details>
                   {remoteLifecycleIssues.map((publication) => <small className="studio-work-metadata-warning" key={`remote-state:${publication.externalPublicationId}`}>
                     @{publication.externalUsername} · {publication.syncStatus.replace(/_/g, ' ')}{publication.remoteStateReason ? ` — ${publication.remoteStateReason}` : ''}
+                  </small>)}
+                  {hasPublicationIssue && <small className="studio-work-integration-attention-note">
+                    A publishing destination needs attention. Review this Work to retry publishing or update its destination.
+                  </small>}
+                  {reconciliationIssues.map((publication) => <small className="studio-work-reconciliation-summary" key={publication.externalPublicationId}>
+                    {sourcePlatformLabel(publication)} · @{publication.externalUsername} — {reconciliationStatusLabel(publication.reconciliation!.status)}
                   </small>)}
                 </div>
                 <div className="studio-work-destination-column">
@@ -1177,7 +1424,11 @@ function WorksIndex({ creators }: { creators: StudioCreator[] }) {
                     className="auth-secondary-btn no-underline"
                     to={workRoute(asset.assetId)}
                   >
-                    {deviantArtDestinations.some((publication) => publication.syncStatus === 'pending_publish') || !asset.destinationPublications.some((publication) => publication.status === 'live')
+                    {reconciliationIssues.length > 0
+                      ? 'Resolve changes'
+                      : hasPublicationIssue
+                      ? 'Fix publishing issue'
+                      : deviantArtDestinations.some((publication) => publication.syncStatus === 'pending_publish') || !asset.destinationPublications.some((publication) => publication.status === 'live')
                       ? 'Review & publish'
                       : 'Edit metadata'}
                   </Link>

@@ -17,12 +17,23 @@ import { issueRememberAccessToken, issueUnlockToken, verifyPassword, verifyUnloc
 import type { AppConfig } from './config';
 import { brandForConfig } from './brand';
 import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation, type IntegrationPlatform, type IntegrationPolicyTarget } from './integrationStandard';
+import { requireIntegrationAdmission } from './integrationGuard';
+import { requiredScopesForIntegrationOperation } from './integrationScopes';
+import {
+  integrationOperationForExternalSyncJobType,
+  isIntegrationOperationCancellable,
+  isIntegrationOperationRetryable,
+  toIntegrationOperationLogResponse,
+  toIntegrationOperationResponse
+} from './integrationOperation';
 import { resolvePublicationReconciliation } from './integrationReconciliation';
 import { appendPublicationDisclosureSnapshot, createPublicationDisclosureSnapshot, creatorAiProvenance, providerAiProvenance, unknownAiProvenance } from './aiProvenance';
 import { INSTAGRAM_PILOT_INSIGHT_METRICS, INSTAGRAM_PILOT_MEDIA_CONSTRAINTS, instagramDeploymentStatus, createManagedInstagramProvider } from './instagramConfiguration';
 import { InstagramProviderError } from './instagramProvider';
 import { inspectContentCredentials } from './contentCredentials';
 import { integrationCapabilities } from './integrationCapabilities';
+import { preflightIntegrationPublication, type IntegrationPreflightIntent } from './integrationPreflight';
+import { deriveIntegrationAccountHealth } from './integrationAccountHealth';
 import { issueInstagramOAuthState, verifyInstagramOAuthState } from './externalOAuth';
 import { evaluateInstagramEligibility, instagramIdempotencyKey, instagramPublishingLimitAvailable, issueInstagramDeliveryCapability, validateInstagramMedia, verifyInstagramDeliveryCapability, verifyInstagramWebhookSignature, type InstagramCapabilities, type InstagramPlacement } from './instagramIntegration';
 import type { DataStore } from './store';
@@ -1175,7 +1186,9 @@ export const createApp = ({
     externalUserId: account.externalUserId,
     externalUsername: account.externalUsername,
     tokenExpiresAt: account.tokenExpiresAt,
+    grantedScopes: account.grantedScopes || [],
     connectionStatus: account.connectionStatus,
+    health: deriveIntegrationAccountHealth(account),
     rateLimitedUntil: account.rateLimitedUntil,
     lastSuccessfulSyncAt: account.lastSuccessfulSyncAt,
     lastSyncAttemptAt: account.lastSyncAttemptAt,
@@ -1235,6 +1248,7 @@ export const createApp = ({
           ? encryptExternalCredential(tokens.refreshToken, config.externalTokenEncryptionKey)
           : account.refreshTokenEncrypted,
         tokenExpiresAt: tokens.expiresAt,
+        grantedScopes: ['https://www.googleapis.com/auth/youtube.readonly'],
         connectionStatus: 'connected',
         updatedAt: new Date().toISOString()
       };
@@ -1250,13 +1264,7 @@ export const createApp = ({
     payload?: Record<string, unknown>
   ): Promise<ExternalSyncJob> => {
     const account = await store.getExternalAccount(externalAccountId);
-    const operation: IntegrationOperation = type === 'publish'
-      ? 'publish'
-      : type === 'remote_update'
-        ? 'update_remote'
-        : type === 'account_import' || type === 'account_scan' || type === 'full_reconciliation' || type === 'content_sync'
-          ? 'import'
-        : 'read_engagement';
+    const operation = integrationOperationForExternalSyncJobType(type);
     if (!account) throw new Error('Connected account not found.');
     requireIntegrationOperation(account.platform, operation);
     const policy = await createStoreIntegrationPolicyGate(store).evaluate({
@@ -1296,6 +1304,80 @@ export const createApp = ({
       throw error;
     }
     return job;
+  };
+
+  /**
+   * Cancel a durable integration operation and its dependent child work. The
+   * worker checks this status between provider calls, so cancellation is safe
+   * for every provider using ExternalSyncJob rather than only DeviantArt.
+   */
+  const cancelExternalSyncJob = async (
+    job: ExternalSyncJob,
+    options: { message?: string; relatedMessage?: string } = {}
+  ): Promise<{ job: ExternalSyncJob; relatedJobsCancelled: number }> => {
+    const now = new Date().toISOString();
+    const cancelledJob: ExternalSyncJob = {
+      ...job,
+      status: 'cancelled',
+      nextAttemptAt: undefined,
+      errorCode: 'CANCELLED_BY_USER',
+      errorMessage: options.message || 'Operation cancelled by the user',
+      updatedAt: now
+    };
+    await store.updateExternalSyncJob(cancelledJob);
+    const relatedJobs = (await store.listExternalSyncJobs(job.externalAccountId, 100))
+      .filter((candidate) => candidate.payload?.parentJobId === job.externalSyncJobId)
+      .filter((candidate) => isIntegrationOperationCancellable(candidate.status));
+    await Promise.all(relatedJobs.map(async (candidate) => {
+      await store.updateExternalSyncJob({
+        ...candidate,
+        status: 'cancelled',
+        nextAttemptAt: undefined,
+        errorCode: 'PARENT_OPERATION_CANCELLED',
+        errorMessage: options.relatedMessage || 'Operation cancelled with its parent',
+        updatedAt: now
+      });
+      if (candidate.type === 'content_sync' && typeof candidate.payload?.assetId === 'string') {
+        const spacePublication = await store.getSpacePublication(candidate.payload.assetId);
+        if (spacePublication && spacePublication.contentSyncStatus !== 'hosted') {
+          await store.upsertSpacePublication({
+            ...spacePublication,
+            contentSyncStatus: 'not_requested',
+            contentSyncError: undefined,
+            updatedAt: now
+          });
+        }
+      }
+    }));
+    return { job: cancelledJob, relatedJobsCancelled: relatedJobs.length };
+  };
+
+  /** Put a retryable operation back at the front of its provider queue. */
+  const retryExternalSyncJob = async (job: ExternalSyncJob): Promise<ExternalSyncJob> => {
+    const now = new Date().toISOString();
+    const queuedJob: ExternalSyncJob = {
+      ...job,
+      status: 'queued',
+      nextAttemptAt: undefined,
+      errorCode: undefined,
+      errorMessage: undefined,
+      updatedAt: now
+    };
+    await store.updateExternalSyncJob(queuedJob);
+    try {
+      await externalSyncQueue.enqueue(queuedJob.externalSyncJobId);
+    } catch (error) {
+      await store.updateExternalSyncJob({
+        ...queuedJob,
+        status: 'retry_scheduled',
+        nextAttemptAt: new Date(Date.now() + config.externalSyncBaseDelaySeconds * 1000).toISOString(),
+        errorCode: 'QUEUE_UNAVAILABLE',
+        errorMessage: 'The synchronization queue is unavailable',
+        updatedAt: new Date().toISOString()
+      });
+      throw error;
+    }
+    return queuedJob;
   };
 
   const integrationAdmissionReason = async (
@@ -1649,7 +1731,17 @@ export const createApp = ({
   }, async (creatorId, derivativeAssetId) => {
     const asset = await store.getCanonicalAsset(config.tenantId, derivativeAssetId);
     return Boolean(asset && asset.creatorId === creatorId && asset.status === 'ready' && asset.mimeType.startsWith('image/'));
-  }, isAdminRequest);
+  }, isAdminRequest, async ({ operation, creatorId, connectionId, workId }) => {
+    await requireIntegrationAdmission(store, {
+      platform: 'ghost',
+      operation,
+      targets: [
+        { type: 'creator', id: creatorId },
+        ...(connectionId ? [{ type: 'integration_connection' as const, id: connectionId }] : []),
+        ...(workId ? [{ type: 'work' as const, id: workId }] : [])
+      ]
+    });
+  });
 
   const ensureCreatorAccountAccess = async (req: express.Request, res: express.Response, creatorId: string): Promise<boolean> => {
     if (!(await ensureCreatorContentAccess(req, res, creatorId))) return false;
@@ -2716,6 +2808,16 @@ export const createApp = ({
     const result = await s3Client.send(new GetObjectCommand({ Bucket: config.mediaBucket, Key: asset.storage.objectKey }));
     if (!result.Body) throw new Error('The selected Asset body is unavailable.');
     return Buffer.from(await result.Body.transformToByteArray());
+  }, async ({ operation, ownerId, connectionId, workId }) => {
+    await requireIntegrationAdmission(store, {
+      platform: 'fanvue',
+      operation,
+      targets: [
+        { type: 'creator', id: ownerId },
+        ...(connectionId ? [{ type: 'integration_connection' as const, id: connectionId }] : []),
+        ...(workId ? [{ type: 'work' as const, id: workId }] : [])
+      ]
+    });
   }));
   registerTumblrRoutes({
     app, config, repository: tumblrRepository,
@@ -5968,6 +6070,148 @@ export const createApp = ({
       : capability) });
   });
 
+  /**
+   * Versioned discovery contract. Provider-specific APIs remain available
+   * while clients migrate their setup navigation to this common catalog.
+   */
+  app.get('/api/v1/integrations', requireAuth, async (_req, res) => {
+    const instagram = instagramDeploymentStatus(config);
+    return res.json({ version: 'v1', scope: 'discovery_and_external_account_read', items: Object.values(integrationCapabilities).map((capability) => ({
+      platform: capability.platform,
+      label: capability.label,
+      surface: capability.surface,
+      availability: capability.platform === 'instagram'
+        ? (instagram.onboardingEnabled ? 'pilot' : 'configuration_required')
+        : capability.availability,
+      ownerModel: capability.ownerModel,
+      connectionModel: capability.connectionModel,
+      studioAdapter: capability.studioAdapter,
+      capabilities: {
+        import: capability.import,
+        sourceCopy: capability.sourceCopy,
+        publish: capability.publish,
+        announce: capability.announce,
+        update: capability.update,
+        delete: capability.delete,
+        collections: capability.collections,
+        comments: capability.comments,
+        analytics: capability.analytics,
+        scheduling: capability.scheduling
+      }
+    })) });
+  });
+
+  app.get('/api/v1/integrations/:platform', requireAuth, async (req, res) => {
+    const capability = integrationCapabilities[req.params.platform as keyof typeof integrationCapabilities];
+    if (!capability) return res.status(404).json({ message: 'Integration not found.' });
+    const instagram = instagramDeploymentStatus(config);
+    return res.json({ version: 'v1', scope: 'discovery_and_external_account_read', integration: capability.platform === 'instagram'
+      ? { ...capability, availability: instagram.onboardingEnabled ? 'pilot' as const : 'configuration_required' as const }
+      : capability });
+  });
+
+  const v1ExternalAccount = async (req: express.Request, res: express.Response) => {
+    const platform = req.params.platform as IntegrationPlatform;
+    const account = await store.getExternalAccount(req.params.connectionId);
+    if (!account || account.userId !== req.authUser!.userId || account.platform !== platform) {
+      res.status(404).json({ message: 'Integration connection not found.' });
+      return undefined;
+    }
+    return account;
+  };
+
+  app.get('/api/v1/integrations/:platform/connections', requireAuth, async (req, res) => {
+    const capability = integrationCapabilities[req.params.platform as keyof typeof integrationCapabilities];
+    if (!capability) return res.status(404).json({ message: 'Integration not found.' });
+    if (capability.connectionModel !== 'external_account') return res.json({ items: [], connectionModel: capability.connectionModel });
+    const accounts = (await store.listExternalAccountsByUser(req.authUser!.userId))
+      .filter((account) => account.platform === capability.platform)
+      .map((account) => ({
+        id: account.externalAccountId,
+        label: account.externalUsername || account.externalUserId,
+        platform: account.platform,
+        health: deriveIntegrationAccountHealth(account),
+        createdAt: account.createdAt,
+        updatedAt: account.updatedAt
+      }));
+    return res.json({ items: accounts, connectionModel: capability.connectionModel });
+  });
+
+  app.get('/api/v1/integrations/:platform/connections/:connectionId/operations', requireAuth, async (req, res) => {
+    const account = await v1ExternalAccount(req, res);
+    if (!account) return;
+    const operations = (await store.listExternalSyncJobs(account.externalAccountId)).map((job) => toIntegrationOperationResponse(job, account));
+    return res.json({ items: operations.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)) });
+  });
+
+  app.get('/api/v1/integrations/:platform/connections/:connectionId/publications', requireAuth, async (req, res) => {
+    const account = await v1ExternalAccount(req, res);
+    if (!account) return;
+    const publications = await store.listExternalPublications(account.externalAccountId);
+    return res.json({ items: publications });
+  });
+
+  app.post('/studio/integrations/preflight', requireAuth, async (req, res) => {
+    const platform = typeof req.body?.platform === 'string' ? req.body.platform : '';
+    if (!Object.prototype.hasOwnProperty.call(integrationCapabilities, platform)) {
+      return res.status(400).json({ message: 'Select a supported integration platform.' });
+    }
+    const intent = req.body?.intent === undefined ? undefined : req.body.intent;
+    if (intent !== undefined && intent !== 'publish' && intent !== 'announce') {
+      return res.status(400).json({ message: 'Integration intent must be publish or announce.' });
+    }
+    const mediaTypes = Array.isArray(req.body?.mediaTypes) && req.body.mediaTypes.every((item: unknown) => typeof item === 'string')
+      ? req.body.mediaTypes
+      : undefined;
+    const aiDisclosures = Array.isArray(req.body?.aiDisclosures)
+      && req.body.aiDisclosures.every((item: unknown) => item === 'none' || item === 'ai-assisted' || item === 'ai-generated')
+      ? req.body.aiDisclosures
+      : undefined;
+    const mimeTypes = Array.isArray(req.body?.mimeTypes) && req.body.mimeTypes.every((item: unknown) => typeof item === 'string')
+      ? req.body.mimeTypes
+      : undefined;
+    const numberValue = (value: unknown): number | undefined =>
+      typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+    const externalAccountId = typeof req.body?.externalAccountId === 'string' ? req.body.externalAccountId.trim() : '';
+    let admission: Parameters<typeof preflightIntegrationPublication>[0]['admission'];
+    if (externalAccountId) {
+      const account = await store.getExternalAccount(externalAccountId);
+      if (!account || account.userId !== req.authUser!.userId || account.platform !== platform) {
+        return res.status(404).json({ message: 'Integration account not found.' });
+      }
+      const health = deriveIntegrationAccountHealth(account);
+      const operation: IntegrationOperation = intent === 'announce' ? 'publish' : 'publish';
+      const targets: IntegrationPolicyTarget[] = [
+        { type: 'external_account', id: account.externalAccountId },
+        ...(account.primaryCreatorIdentityId || account.creatorIdentityId
+          ? [{ type: 'creator' as const, id: account.primaryCreatorIdentityId || account.creatorIdentityId! }]
+          : [])
+      ];
+      const policyReason = await integrationAdmissionReason(account.platform, operation, targets);
+      admission = {
+        connectionState: health.state,
+        requiredScopes: requiredScopesForIntegrationOperation(account.platform, operation),
+        grantedScopes: health.token.grantedScopes,
+        policyBlocked: Boolean(policyReason),
+        rightsAttested: req.body?.rightsAttested === true,
+        adultAttested: req.body?.adultAttested === true,
+        consentAttested: req.body?.consentAttested === true
+      };
+    }
+
+    return res.json(preflightIntegrationPublication({
+      platform: platform as keyof typeof integrationCapabilities,
+      intent: intent as IntegrationPreflightIntent | undefined,
+      mediaTypes,
+      aiDisclosures,
+      mimeTypes,
+      itemCount: numberValue(req.body?.itemCount),
+      bytes: numberValue(req.body?.bytes),
+      caption: typeof req.body?.caption === 'string' ? req.body.caption : undefined,
+      admission
+    }));
+  });
+
   app.get('/studio/integrations/bluesky/configuration', requireAuth, async (_req, res) => {
     const serviceUrl = config.blueskyOAuthServiceUrl?.replace(/\/$/, '');
     return res.json({
@@ -7936,6 +8180,91 @@ export const createApp = ({
     }
   });
 
+  // Adapter-neutral integration operation API. New providers can expose their
+  // work through this surface without adding provider-specific polling,
+  // cancellation, and retry routes to Studio.
+  app.get('/studio/integration-operations', requireAuth, async (req, res) => {
+    const externalAccountId = typeof req.query.externalAccountId === 'string'
+      ? req.query.externalAccountId.trim()
+      : '';
+    const requestedStatus = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+    let accounts: ExternalAccount[];
+    if (externalAccountId) {
+      const account = await store.getExternalAccount(externalAccountId);
+      if (!account || account.userId !== req.authUser!.userId) {
+        return res.status(404).json({ message: 'Integration account not found.' });
+      }
+      accounts = [account];
+    } else {
+      accounts = await store.listExternalAccountsByUser(req.authUser!.userId);
+    }
+    const operations = (await Promise.all(accounts.map(async (account) => (
+      (await store.listExternalSyncJobs(account.externalAccountId)).map((job) => toIntegrationOperationResponse(job, account))
+    ))))
+      .flat()
+      .filter((operation) => !requestedStatus || operation.state === requestedStatus || operation.jobStatus === requestedStatus)
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+    return res.json({ operations, total: operations.length });
+  });
+
+  app.get('/studio/integration-operations/:externalSyncJobId/logs', requireAuth, async (req, res) => {
+    const job = await store.getExternalSyncJob(req.params.externalSyncJobId);
+    if (!job) return res.status(404).json({ message: 'Integration operation not found.' });
+    const account = await store.getExternalAccount(job.externalAccountId);
+    if (!account || account.userId !== req.authUser!.userId) {
+      return res.status(404).json({ message: 'Integration operation not found.' });
+    }
+    const logs = await store.listExternalSyncLogs(job.externalSyncJobId, 100);
+    return res.json({ logs: logs.map(toIntegrationOperationLogResponse) });
+  });
+
+  app.post('/studio/integration-operations/:externalSyncJobId/retry', requireAuth, async (req, res) => {
+    const job = await store.getExternalSyncJob(req.params.externalSyncJobId);
+    if (!job) return res.status(404).json({ message: 'Integration operation not found.' });
+    const account = await store.getExternalAccount(job.externalAccountId);
+    if (!account || account.userId !== req.authUser!.userId) {
+      return res.status(404).json({ message: 'Integration operation not found.' });
+    }
+    if (!isIntegrationOperationRetryable(job.status)) {
+      return res.status(409).json({ message: `This operation cannot be retried while it is ${job.status.replace(/_/g, ' ')}.` });
+    }
+    try {
+      const retriedJob = await retryExternalSyncJob(job);
+      auditLog(req, 'integration.operation.retried', {
+        externalAccountId: account.externalAccountId,
+        jobId: job.externalSyncJobId,
+        platform: account.platform
+      });
+      return res.status(202).json({ operation: toIntegrationOperationResponse(retriedJob, account) });
+    } catch (error) {
+      logServerError('integration.operation.retry', error);
+      return res.status(503).json({ message: 'The integration queue is unavailable. The operation will retry automatically.' });
+    }
+  });
+
+  app.post('/studio/integration-operations/:externalSyncJobId/cancel', requireAuth, async (req, res) => {
+    const job = await store.getExternalSyncJob(req.params.externalSyncJobId);
+    if (!job) return res.status(404).json({ message: 'Integration operation not found.' });
+    const account = await store.getExternalAccount(job.externalAccountId);
+    if (!account || account.userId !== req.authUser!.userId) {
+      return res.status(404).json({ message: 'Integration operation not found.' });
+    }
+    if (!isIntegrationOperationCancellable(job.status)) {
+      return res.status(409).json({ message: `This operation is already ${job.status.replace(/_/g, ' ')}.` });
+    }
+    const cancelled = await cancelExternalSyncJob(job);
+    auditLog(req, 'integration.operation.cancelled', {
+      externalAccountId: account.externalAccountId,
+      jobId: job.externalSyncJobId,
+      platform: account.platform,
+      relatedJobsCancelled: cancelled.relatedJobsCancelled
+    });
+    return res.json({
+      operation: toIntegrationOperationResponse(cancelled.job, account),
+      relatedOperationsCancelled: cancelled.relatedJobsCancelled
+    });
+  });
+
   app.get('/studio/integrations/deviantart/accounts/:externalAccountId/jobs', requireAuth, async (req, res) => {
     const account = await store.getExternalAccount(req.params.externalAccountId);
     if (!account || account.platform !== 'deviantart') return res.status(404).json({ message: 'DeviantArt account not found' });
@@ -7959,46 +8288,16 @@ export const createApp = ({
     if (!['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status)) {
       return res.status(409).json({ message: `This synchronization is already ${job.status.replace(/_/g, ' ')}.` });
     }
-    const now = new Date().toISOString();
-    const cancelledJob: ExternalSyncJob = {
-      ...job,
-      status: 'cancelled',
-      nextAttemptAt: undefined,
-      errorCode: 'CANCELLED_BY_USER',
-      errorMessage: 'Synchronization cancelled by the user',
-      updatedAt: now
-    };
-    await store.updateExternalSyncJob(cancelledJob);
-    const relatedJobs = (await store.listExternalSyncJobs(account.externalAccountId, 100))
-      .filter((candidate) => candidate.payload?.parentJobId === job.externalSyncJobId)
-      .filter((candidate) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(candidate.status));
-    await Promise.all(relatedJobs.map(async (candidate) => {
-      await store.updateExternalSyncJob({
-        ...candidate,
-        status: 'cancelled',
-        nextAttemptAt: undefined,
-        errorCode: 'PARENT_SYNC_CANCELLED',
-        errorMessage: 'Synchronization cancelled with its account import',
-        updatedAt: now
-      });
-      if (candidate.type === 'content_sync' && typeof candidate.payload?.assetId === 'string') {
-        const spacePublication = await store.getSpacePublication(candidate.payload.assetId);
-        if (spacePublication && spacePublication.contentSyncStatus !== 'hosted') {
-          await store.upsertSpacePublication({
-            ...spacePublication,
-            contentSyncStatus: 'not_requested',
-            contentSyncError: undefined,
-            updatedAt: now
-          });
-        }
-      }
-    }));
+    const cancelled = await cancelExternalSyncJob(job, {
+      message: 'Synchronization cancelled by the user',
+      relatedMessage: 'Synchronization cancelled with its account import'
+    });
     auditLog(req, 'deviantart.sync.cancelled', {
       externalAccountId: account.externalAccountId,
       jobId: job.externalSyncJobId,
-      relatedJobsCancelled: relatedJobs.length
+      relatedJobsCancelled: cancelled.relatedJobsCancelled
     });
-    return res.json({ job: cancelledJob, relatedJobsCancelled: relatedJobs.length });
+    return res.json({ job: cancelled.job, relatedJobsCancelled: cancelled.relatedJobsCancelled });
   });
 
   app.get('/studio/integrations/deviantart/jobs/:externalSyncJobId/logs', requireAuth, async (req, res) => {
@@ -9770,12 +10069,13 @@ export const createApp = ({
           externalAccountId: account.externalAccountId,
           platform: account.platform,
           externalUsername: account.externalUsername,
+          health: deriveIntegrationAccountHealth(account),
           watchers: watcherCheckpoints[index]?.summary,
           watchersLastSyncedAt: watcherCheckpoints[index]?.lastSuccessfulSyncAt,
           profile: profile ? profileResponse : undefined
         };
       }),
-      items: items.map(({ rawPayload: _rawPayload, ...activity }) => {
+      items: items.map(({ rawPayload, ...activity }) => {
         const account = accountById.get(activity.externalAccountId);
         const publication = (activity.externalPublicationId
           ? publicationById.get(activity.externalPublicationId)
@@ -9785,8 +10085,22 @@ export const createApp = ({
         ));
         const assetId = activity.assetId || publication?.assetId;
         const asset = assetId ? assetById.get(assetId) : undefined;
+        const integrationIssue = rawPayload?.kind === 'integration_issue'
+          ? {
+            code: typeof rawPayload.errorCode === 'string' ? rawPayload.errorCode : 'sync_failed',
+            remediation: typeof rawPayload.remediation === 'string'
+              ? rawPayload.remediation
+              : 'Review this integration and try again.'
+          }
+          : undefined;
+        const publicationAction = activity.type === 'publication'
+          && (rawPayload?.action === 'publish' || rawPayload?.action === 'publish_retrying' || rawPayload?.action === 'publish_failed')
+          ? rawPayload.action
+          : undefined;
         return {
           ...activity,
+          integrationIssue,
+          publicationAction,
           account: account ? {
             externalAccountId: account.externalAccountId,
             platform: account.platform,
@@ -9858,6 +10172,13 @@ export const createApp = ({
     if (account.userId !== req.authUser!.userId) return res.status(403).json({ message: 'You do not control this DeviantArt connection.' });
     const activity = await store.getExternalActivityByRemoteId(account.externalAccountId, req.params.remoteActivityId);
     if (!activity) return res.status(404).json({ message: 'Activity not found' });
+    if (activity.rawPayload?.kind === 'integration_issue') {
+      const now = new Date().toISOString();
+      const updated = { ...activity, readAt: now, remoteDeletedAt: now, updatedAt: now };
+      await store.upsertExternalActivity(updated);
+      const { rawPayload: _rawPayload, ...response } = updated;
+      return res.json(response);
+    }
     try {
       const updated = await dismissExternalActivity(store, config, account, activity, req.body?.stack === true);
       const { rawPayload: _rawPayload, ...response } = updated;

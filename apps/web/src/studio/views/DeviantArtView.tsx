@@ -9,6 +9,7 @@ import { studioIntegrationPlatforms } from '../types';
 import { FanvueView } from './FanvueView';
 import type {
   StudioCreator,
+  StudioBlueskyAccount,
   StudioDeviantArtAccount,
   StudioExternalCollection,
   StudioExternalCollectionMapping,
@@ -99,11 +100,38 @@ const formatCountdown = (value: string | undefined, now: number): string => {
   return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
 };
 
-const accountTone = (status: StudioDeviantArtAccount['connectionStatus'] | StudioYouTubeAccount['connectionStatus']): 'success' | 'warning' | 'danger' | 'default' => {
+type IntegrationAccount = StudioDeviantArtAccount | StudioYouTubeAccount | StudioBlueskyAccount;
+
+const accountTone = (status: IntegrationAccount['connectionStatus'] | 'attention'): 'success' | 'warning' | 'danger' | 'default' => {
   if (status === 'connected') return 'success';
   if (status === 'authentication_required') return 'danger';
-  if (status === 'rate_limited' || status === 'temporarily_unavailable') return 'warning';
+  if (status === 'rate_limited' || status === 'temporarily_unavailable' || status === 'attention') return 'warning';
   return 'default';
+};
+
+const accountHealthState = (account: IntegrationAccount) => account.health?.state || account.connectionStatus;
+
+const accountHealthLabel = (account: IntegrationAccount) => accountHealthState(account).replace(/_/g, ' ');
+
+const accountHealthNotice = (account: IntegrationAccount): { tone: 'warning' | 'danger'; message: string } | undefined => {
+  const health = account.health;
+  if (!health) return undefined;
+  if (health.issue) {
+    return {
+      tone: health.issue.code === 'authentication_required' ? 'danger' : 'warning',
+      message: `${health.issue.message} ${health.issue.remediation}`
+    };
+  }
+  if (health.token.status === 'expired') {
+    return { tone: 'danger', message: 'This connection has expired. Reconnect it to restore access.' };
+  }
+  if (health.token.status === 'expires_soon') {
+    return { tone: 'warning', message: 'This connection expires soon. Reconnect it before it expires.' };
+  }
+  if (health.sync.coolingDown) {
+    return { tone: 'warning', message: 'This provider is temporarily rate limited. Wait for the cooldown before retrying.' };
+  }
+  return undefined;
 };
 
 const copySyncSummary = (jobs: StudioExternalSyncJob[], catalogueJob?: StudioExternalSyncJob) => {
@@ -149,7 +177,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     credentials?: DeviantArtCredential[];
   } | null>(null);
   const [blueskyConfiguration, setBlueskyConfiguration] = useState<{ configured: boolean; requiredConfiguration: string[] } | null>(null);
-  const [blueskyAccounts, setBlueskyAccounts] = useState<Array<{ externalAccountId: string; externalUsername: string; externalUserId: string }>>([]);
+  const [blueskyAccounts, setBlueskyAccounts] = useState<StudioBlueskyAccount[]>([]);
   const [blueskyHandle, setBlueskyHandle] = useState('');
   const [youtubeConfiguration, setYoutubeConfiguration] = useState<{
     configured: boolean;
@@ -226,6 +254,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
   const [youtubeConnectionNotice, setYoutubeConnectionNotice] = useState('');
   const [youtubeConnectionError, setYoutubeConnectionError] = useState('');
   const [visibleIntegrationPlatforms, setVisibleIntegrationPlatforms] = useState<StudioIntegrationPlatform[]>(defaultVisibleIntegrationPlatforms);
+  const [availableIntegrationPlatforms, setAvailableIntegrationPlatforms] = useState<StudioIntegrationPlatform[]>(() => studioIntegrationPlatforms.map((platform) => platform.id));
   const [visibleIntegrationPlatformsByCreator, setVisibleIntegrationPlatformsByCreator] = useState<Record<string, StudioIntegrationPlatform[]>>({});
   const [savingIntegrationVisibility, setSavingIntegrationVisibility] = useState(false);
 
@@ -247,17 +276,38 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     setVisibleIntegrationPlatforms(normalizeVisibleIntegrationPlatforms(configuredPlatforms));
   }, [creatorId, creators, visibleIntegrationPlatformsByCreator]);
 
+  // The API registry is authoritative for which shipped Studio adapters may
+  // be shown. Keep the local list as a resilient fallback during upgrades.
+  useEffect(() => {
+    let active = true;
+    void api.studioGetIntegrationCatalog().then((catalog) => {
+      if (!active) return;
+      const localIds = new Set<string>(studioIntegrationPlatforms.map((platform) => platform.id));
+      const available = catalog.items
+        .filter((item) => item.surface === 'studio' && item.studioAdapter && localIds.has(item.studioAdapter))
+        .map((item) => item.studioAdapter as StudioIntegrationPlatform);
+      // A successful empty catalog is an intentional server-side disablement;
+      // only a failed request retains the local compatibility fallback.
+      setAvailableIntegrationPlatforms([...new Set(available)]);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    setVisibleIntegrationPlatforms((current) => current.filter((platform) => availableIntegrationPlatforms.includes(platform)));
+  }, [availableIntegrationPlatforms]);
+
   // Keep the platform chooser useful as integrations grow: enabled platforms
   // are grouped first, with alphabetical ordering within each group.
   const orderedIntegrationPlatforms = useMemo(() => {
     const selected = new Set(visibleIntegrationPlatforms);
-    return [...studioIntegrationPlatforms].sort((a, b) => {
+    return studioIntegrationPlatforms.filter((platform) => availableIntegrationPlatforms.includes(platform.id)).sort((a, b) => {
       const aSelected = selected.has(a.id);
       const bSelected = selected.has(b.id);
       if (aSelected !== bSelected) return aSelected ? -1 : 1;
       return integrationPlatformLabelOrder(a, b);
     });
-  }, [visibleIntegrationPlatforms]);
+  }, [availableIntegrationPlatforms, visibleIntegrationPlatforms]);
 
   const toggleIntegrationVisibility = async (platform: StudioIntegrationPlatform) => {
     if (!creatorId) return;
@@ -461,7 +511,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       setYoutubeConfiguration(nextYoutubeConfiguration);
       setYoutubeAccounts((nextYoutubeAccounts || []) as StudioYouTubeAccount[]);
       setBlueskyConfiguration(nextBlueskyConfiguration);
-      setBlueskyAccounts((nextBlueskyAccounts || []) as Array<{ externalAccountId: string; externalUsername: string; externalUserId: string }>);
+      setBlueskyAccounts((nextBlueskyAccounts || []) as StudioBlueskyAccount[]);
       setDiscordConfiguration(nextDiscordConfiguration);
       setDiscordDestinations(nextDiscordDestinations || []);
       const nextJobs = await Promise.all(typedAccounts.map(async (account) => [
@@ -596,12 +646,12 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
     }
   };
 
-  const connectBluesky = async () => {
-    if (!creatorId || !blueskyHandle.trim()) return;
+  const connectBluesky = async (handle = blueskyHandle) => {
+    if (!creatorId || !handle.trim()) return;
     setError('');
     setConnectionError('');
     try {
-      const result = await api.studioStartBlueskyConnection(creatorId, blueskyHandle.trim(), '/studio/workspace?section=integrations');
+      const result = await api.studioStartBlueskyConnection(creatorId, handle.trim(), '/studio/workspace?section=integrations');
       window.location.assign(result.authorizationUrl);
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : 'Unable to begin Bluesky authorization.');
@@ -1118,18 +1168,24 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
               Connect another channel
             </button>
           </div>
-          {youtubeAccounts.map((account) => <div key={account.externalAccountId} className="studio-integration-account">
-            <div>
-              <p className="auth-eyebrow">YouTube channel</p>
-              <h3>{account.channelTitle || account.externalUsername}</h3>
-              <p className="small">@{account.externalUsername} · Video metadata, thumbnails, and embeds import into this Creator’s catalogue.</p>
-            </div>
-            <div className="studio-integration-row-actions">
-              <Pill tone={accountTone(account.connectionStatus)} label={account.connectionStatus.replace(/_/g, ' ')} />
-              <button type="button" className="auth-secondary-btn" disabled={Boolean(youtubeBusy)} onClick={() => void syncYoutubeAccount(account.externalAccountId)}>{youtubeBusy === `sync:${account.externalAccountId}` ? 'Queueing…' : 'Sync videos'}</button>
-              <button type="button" className="auth-secondary-btn" disabled={Boolean(youtubeBusy)} onClick={() => void removeYoutubeAccount(account)}>{youtubeBusy === `remove:${account.externalAccountId}` ? 'Disconnecting…' : 'Disconnect channel'}</button>
-            </div>
-          </div>)}
+          {youtubeAccounts.map((account) => {
+            const healthNotice = accountHealthNotice(account);
+            const needsReconnect = account.health?.recommendedAction === 'reconnect' || account.connectionStatus === 'authentication_required';
+            return <div key={account.externalAccountId} className="studio-integration-account">
+              <div>
+                <p className="auth-eyebrow">YouTube channel</p>
+                <h3>{account.channelTitle || account.externalUsername}</h3>
+                <p className="small">@{account.externalUsername} · Video metadata, thumbnails, and embeds import into this Creator’s catalogue.</p>
+                {healthNotice && <p className={healthNotice.tone === 'danger' ? 'error' : 'studio-work-metadata-warning'}>{healthNotice.message}</p>}
+              </div>
+              <div className="studio-integration-row-actions">
+                <Pill tone={accountTone(accountHealthState(account))} label={accountHealthLabel(account)} />
+                {needsReconnect && <button type="button" className="auth-secondary-btn" disabled={!creatorId || Boolean(youtubeBusy)} onClick={() => void connectYoutube()}>Reconnect channel</button>}
+                <button type="button" className="auth-secondary-btn" disabled={Boolean(youtubeBusy)} onClick={() => void syncYoutubeAccount(account.externalAccountId)}>{youtubeBusy === `sync:${account.externalAccountId}` ? 'Queueing…' : 'Sync videos'}</button>
+                <button type="button" className="auth-secondary-btn" disabled={Boolean(youtubeBusy)} onClick={() => void removeYoutubeAccount(account)}>{youtubeBusy === `remove:${account.externalAccountId}` ? 'Disconnecting…' : 'Disconnect channel'}</button>
+              </div>
+            </div>;
+          })}
         </div> : !loading && <div className="studio-youtube-empty-state">
           <div>
             <h4>No YouTube channel connected</h4>
@@ -1146,7 +1202,8 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
       </Card>}
 {visibleIntegrationPlatforms.includes('fanvue') && <FanvueView creatorId={creatorId} creatorName={creators.find((creator) => creator.creatorId === creatorId)?.name || brand.creatorName} />}
 {visibleIntegrationPlatforms.includes('tumblr') && <TumblrIntegrationPanel creatorId={creatorId} />}
-      {visibleIntegrationPlatforms.includes('bluesky') && <Card
+      {visibleIntegrationPlatforms.includes('bluesky') && <div id="integration-bluesky">
+      <Card
         title="Bluesky announcements"
         eyebrow="Platform integration"
         className="studio-integration-accounts studio-integration-pane--bluesky"
@@ -1170,14 +1227,28 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
         {blueskyConfiguration && !blueskyConfiguration.configured && <p className="studio-integration-setup-notice">Bluesky is not yet configured. Complete the integration setup to connect an account.</p>}
         {blueskyAccounts.length ? (
           <div className="studio-integration-account-list">
-            {blueskyAccounts.map((account) => <div key={account.externalAccountId} className="studio-integration-account">
-              <div><p className="auth-eyebrow">Connected account</p><h3>{account.externalUsername}</h3><p className="small">{account.externalUserId}</p></div>
-              <Pill tone="success" label="Connected" />
-            </div>)}
+            {blueskyAccounts.map((account) => {
+              const healthNotice = accountHealthNotice(account);
+              const needsReconnect = account.health?.recommendedAction === 'reconnect' || account.connectionStatus === 'authentication_required';
+              return <div key={account.externalAccountId} className="studio-integration-account">
+                <div>
+                  <p className="auth-eyebrow">Connected account</p>
+                  <h3>{account.externalUsername}</h3>
+                  <p className="small">{account.externalUserId}</p>
+                  {healthNotice && <p className={healthNotice.tone === 'danger' ? 'error' : 'studio-work-metadata-warning'}>{healthNotice.message}</p>}
+                </div>
+                <div className="studio-integration-row-actions">
+                  <Pill tone={accountTone(accountHealthState(account))} label={accountHealthLabel(account)} />
+                  {needsReconnect && <button type="button" className="auth-secondary-btn" disabled={!creatorId || !blueskyConfiguration?.configured} onClick={() => void connectBluesky(account.externalUsername)}>Reconnect Bluesky</button>}
+                </div>
+              </div>;
+            })}
           </div>
         ) : <span></span>}
-      </Card>}
-      {visibleIntegrationPlatforms.includes('discord') && <Card
+      </Card>
+      </div>}
+      {visibleIntegrationPlatforms.includes('discord') && <div id="integration-discord">
+      <Card
         title="Discord community"
         eyebrow="Community delivery"
         className="studio-integration-accounts studio-integration-pane--discord"
@@ -1237,8 +1308,10 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
             })}
           </div> : <p className="studio-empty-state">No Discord channels are configured for this Creator yet.</p>}
         </> : null}
-      </Card>}
-      {visibleIntegrationPlatforms.includes('deviantart') && <Card
+      </Card>
+      </div>}
+      {visibleIntegrationPlatforms.includes('deviantart') && <div id="integration-deviantart">
+      <Card
         title="DeviantArt integration"
         eyebrow="Platform integration"
         className="studio-integration-accounts studio-integration-pane--deviantart"
@@ -1338,6 +1411,9 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
               const recoveryJob = accountJobs.find((job) => ['queued', 'processing', 'retry_scheduled', 'rate_limited'].includes(job.status));
               const recoveryInFlight = account.connectionStatus === 'rate_limited'
                 && Boolean(recoveryJob && ['queued', 'processing'].includes(recoveryJob.status));
+              const healthState = accountHealthState(account);
+              const healthNotice = accountHealthNotice(account);
+              const needsReconnect = account.health?.recommendedAction === 'reconnect' || account.connectionStatus === 'authentication_required';
               const connectionStatusLabel = account.connectionStatus === 'rate_limited'
                 ? cooldownActive
                   ? `rate limited · retry in ${formatCountdown(rateLimitedUntil, rateLimitClock)}`
@@ -1346,7 +1422,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                     : recoveryJob
                       ? 'cooldown elapsed · retry queued'
                       : 'cooldown elapsed · ready to retry'
-                : account.connectionStatus.replace(/_/g, ' ');
+                : accountHealthLabel(account);
               const copySummary = copySyncSummary(accountJobs, catalogueJob);
               const ancillarySyncJobs = [
                 { type: 'activity_sync', label: 'Activity', description: 'Notifications and watchers' },
@@ -1416,6 +1492,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                             : `The DeviantArt cooldown has elapsed, but no automatic retry is currently queued. Use Sync now to verify the connection.`}
                       {rateLimitedJob?.attemptCount ? ` Attempt ${rateLimitedJob.attemptCount}.` : ''}
                     </span>}
+                    {healthNotice && !(account.connectionStatus === 'rate_limited' || rateLimitedJob || cooldownActive) && <span className={healthNotice.tone === 'danger' ? 'error' : 'studio-work-metadata-warning'}>{healthNotice.message}</span>}
                   </div>
                   <div className="studio-integration-account-status-column">
                     <div className="studio-integration-sync-stat studio-integration-account-last-sync studio-integration-account-last-sync-desktop">
@@ -1424,7 +1501,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                       <small>→ {destinationCreator?.name || 'No destination'}</small>
                     </div>
                     <div className="studio-integration-account-status-pills studio-integration-account-status-pills-desktop">
-                      <Pill label={connectionStatusLabel} tone={accountTone(account.connectionStatus)} />
+                      <Pill label={connectionStatusLabel} tone={accountTone(healthState)} />
                       {!savedDestinationCreatorId && <Pill label={`Needs ${brand.creatorName}`} tone="warning" />}
                     </div>
                   </div>
@@ -1447,7 +1524,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                     <span><strong>Include source files in this sync</strong><small>Copies available DeviantArt source files into private {brand.workspaceFullName} storage.</small></span>
                   </label>}
                   <div className="studio-integration-row-actions">
-                    {account.connectionStatus === 'authentication_required' && <button type="button" className="auth-primary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void reconnect(account)}>
+                    {needsReconnect && <button type="button" className="auth-primary-btn" disabled={workingAccountId === account.externalAccountId} onClick={() => void reconnect(account)}>
                       Reconnect & repair permissions
                     </button>}
                     {savedDestinationCreatorId && <button type="button" className="auth-primary-btn" disabled={workingAccountId === account.externalAccountId || Boolean(activeCatalogueJob) || Boolean(rateLimitedJob) || cooldownActive || recoveryInFlight} onClick={() => void sync(account.externalAccountId)}>
@@ -1486,7 +1563,7 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                       <small>→ {destinationCreator?.name || 'No destination'}</small>
                     </div>
                     <div className="studio-integration-account-status-pills studio-integration-account-status-pills-mobile">
-                      <Pill label={connectionStatusLabel} tone={accountTone(account.connectionStatus)} />
+                      <Pill label={connectionStatusLabel} tone={accountTone(healthState)} />
                       {!savedDestinationCreatorId && <Pill label={`Needs ${brand.creatorName}`} tone="warning" />}
                     </div>
                     <div className="studio-integration-sync-stat">
@@ -1522,7 +1599,6 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
                       </div>;
                     })}
                   </div>
-                  {account.connectionStatus === 'authentication_required' && <p className="studio-work-metadata-warning">DeviantArt needs authorization or an updated permission grant. Reconnect this same account to repair it without changing its creator assignment.</p>}
                   {editingPreset && <section className="studio-integration-credential-form" aria-label={`Publishing preset for ${account.externalUsername}`}>
                     <div>
                       <p className="auth-eyebrow">DeviantArt publishing preset</p>
@@ -1602,7 +1678,8 @@ export function DeviantArtView({ creators }: { creators: StudioCreator[] }) {
           </div>
           {!collections.externalCollections.length && <div className="studio-empty-state">Gallery folders appear after the account's first import. Create {brand.productName} Collections from the Collections section, then map galleries here.</div>}
         </section>}
-      </Card>}
+      </Card>
+      </div>}
       {!visibleIntegrationPlatforms.length && <div className="studio-empty-state">No integrations are currently shown. Use the controls above to show a platform.</div>}
       {movingAccountId && (() => {
         const movingAccount = accounts.find((account) => account.externalAccountId === movingAccountId);

@@ -4,14 +4,17 @@ import { decryptExternalCredential, encryptExternalCredential } from './external
 import { openStoredUbeeqWorkStream, readStoredUbeeqWorkImage, storeExternalContent } from './externalContentStorage';
 import { brandForConfig } from './brand';
 import { createExternalSyncQueue, type ExternalSyncQueue } from './externalSyncQueue';
-import { createStoreIntegrationPolicyGate, requireIntegrationOperation, type IntegrationOperation } from './integrationStandard';
+import { createStoreIntegrationPolicyGate, requireIntegrationOperation } from './integrationStandard';
+import { integrationOperationForExternalSyncJobType } from './integrationOperation';
 import { recordPublicationReconciliation } from './integrationReconciliation';
 import { recordExternalPublicationLifecycle, type RemotePublicationState } from './integrationSync';
 import { deliveryRetryDelaySeconds, shouldRetryIntegrationDelivery } from './integrationDelivery';
 import { integrationRecoveryDecision } from './integrationSyncRecovery';
 import { appendPublicationDisclosureSnapshot, createPublicationDisclosureSnapshot } from './aiProvenance';
+import { preflightIntegrationPublication } from './integrationPreflight';
+import type { IntegrationMediaType } from './integrationCapabilities';
 import { createExternalPlatformProvider, DEVIANTART_METADATA_BATCH_SIZE, ExternalProviderError, type ExternalContentPublish, type ExternalContentUpdate, type ExternalPlatformProvider, type ExternalRemoteActivity, type ExternalRemoteComment, type ExternalRemoteContent, type ExternalRemoteEngagement } from './externalPlatformProvider';
-import type { Asset, ExternalAccount, ExternalAccountProfile, ExternalCollection, ExternalCollectionMapping, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, IntegrationActivity, SpacePublication, UbeeqCollection, UbeeqCollectionAsset } from './domain';
+import type { Asset, ExternalAccount, ExternalAccountIssue, ExternalAccountProfile, ExternalCollection, ExternalCollectionMapping, ExternalComment, ExternalEngagementCurrent, ExternalPublication, ExternalSyncCheckpoint, ExternalSyncJob, ExternalSyncJobType, ExternalWatcher, IntegrationActivity, SpacePublication, UbeeqCollection, UbeeqCollectionAsset } from './domain';
 import type { CanonicalAsset, Publication, Work } from './canonicalDomain';
 import type { DataStore } from './store';
 
@@ -30,12 +33,12 @@ export const shouldRetryExternalJobFailure = (
   attemptCount: number
 ): boolean => {
   if (code === 'temporarily_unavailable' && jobType === 'content_sync') return false;
-  const operation: IntegrationOperation = jobType === 'publish' ? 'publish' : jobType === 'remote_delete' ? 'delete_remote' : 'update_remote';
-  const recovery = integrationRecoveryDecision({ operation, code: code === 'invalid_response' || code === 'unsupported' ? 'invalid_request' : code });
+  const operation = integrationOperationForExternalSyncJobType(jobType);
+  const recovery = integrationRecoveryDecision({ operation, code: code === 'invalid_response' || code === 'unsupported' || code === 'preflight_blocked' ? 'invalid_request' : code });
   if (recovery.disposition !== 'retry' && recovery.disposition !== 'reconcile_before_retry') return false;
   if (code !== 'rate_limited' && code !== 'temporarily_unavailable' && code !== 'ambiguous_submission') return false;
   return shouldRetryIntegrationDelivery(
-    jobType === 'publish' ? 'publish' : 'update',
+    operation === 'publish' ? 'publish' : operation === 'delete_remote' ? 'delete' : 'update',
     code,
     attemptCount,
     MAX_AMBIGUOUS_PUBLISH_ATTEMPTS
@@ -104,16 +107,73 @@ const deferQueuedJobsForAccount = async (
 
 const markAccountRecovered = async (store: DataStore, externalAccountId: string): Promise<void> => {
   const account = await store.getExternalAccount(externalAccountId);
-  if (!account || (
-    account.connectionStatus !== 'rate_limited'
-    && account.connectionStatus !== 'temporarily_unavailable'
-    && !account.rateLimitedUntil
-  )) return;
+  if (!account || (account.connectionStatus === 'connected' && !account.rateLimitedUntil && !account.lastIssue)) return;
   await store.updateExternalAccount({
     ...account,
     connectionStatus: 'connected',
     rateLimitedUntil: undefined,
+    lastIssue: undefined,
     updatedAt: new Date().toISOString()
+  });
+};
+
+const actionableAccountIssue = (code: ExternalProviderError['code'], message: string, occurredAt: string): ExternalAccountIssue => {
+  const normalizedCode: ExternalAccountIssue['code'] = (() => {
+    switch (code) {
+      case 'authentication_required':
+      case 'rate_limited':
+      case 'temporarily_unavailable':
+      case 'invalid_response':
+      case 'unsupported':
+        return code;
+      default:
+        return 'sync_failed';
+    }
+  })();
+  const remediation = normalizedCode === 'authentication_required'
+    ? 'Reconnect this account to restore access.'
+    : normalizedCode === 'rate_limited'
+      ? 'Wait for the provider cooldown, then retry synchronization.'
+      : normalizedCode === 'temporarily_unavailable'
+        ? 'Retry synchronization shortly. If this continues, reconnect the account.'
+        : normalizedCode === 'invalid_response' || normalizedCode === 'unsupported'
+          ? 'Review the integration setup and retry the action.'
+          : 'Retry synchronization. If this continues, reconnect the account.';
+  return { code: normalizedCode, message, remediation, occurredAt };
+};
+
+const persistAccountIssue = async (
+  store: DataStore,
+  account: ExternalAccount,
+  code: ExternalProviderError['code'],
+  message: string,
+  now: string,
+  overrides: Partial<ExternalAccount> = {}
+): Promise<void> => {
+  const issue = actionableAccountIssue(code, message, now);
+  await store.updateExternalAccount({ ...account, ...overrides, lastIssue: issue, lastSyncAttemptAt: now, updatedAt: now });
+  const remoteActivityId = `integration-issue:${account.externalAccountId}:${issue.code}`;
+  const existing = await store.getExternalActivityByRemoteId(account.externalAccountId, remoteActivityId);
+  await store.upsertExternalActivity({
+    ...(existing || {}),
+    externalActivityId: existing?.externalActivityId || randomUUID(),
+    externalAccountId: account.externalAccountId,
+    creatorIdentityId: account.primaryCreatorIdentityId || account.creatorIdentityId,
+    platform: account.platform,
+    type: 'activity',
+    direction: 'inbound',
+    remoteActivityId,
+    externalActorId: `integration:${account.platform}`,
+    externalActorName: `${account.platform} integration`,
+    body: `${issue.message} ${issue.remediation}`,
+    occurredAt: now,
+    firstSeenAt: existing?.firstSeenAt || now,
+    lastSeenAt: now,
+    readAt: undefined,
+    remoteDeletedAt: undefined,
+    rawPayload: { kind: 'integration_issue', errorCode: issue.code, remediation: issue.remediation },
+    createdAt: now,
+    updatedAt: now
   });
 };
 
@@ -1183,6 +1243,29 @@ const executeRemoteDelete = async (store: DataStore, config: AppConfig, job: Ext
   await addLog(store, job.externalSyncJobId, 'info', `${account.platform} publication deleted after explicit confirmation`, { externalPublicationId });
 };
 
+const integrationMediaTypeForWork = (work: Work | null, asset: Asset): IntegrationMediaType => {
+  switch (work?.kind) {
+    case 'image':
+    case 'video':
+    case 'audio':
+    case 'literature':
+      return work.kind;
+    case 'gallery':
+    case 'mixed':
+      return 'carousel';
+    case 'article':
+      return 'literature';
+    case 'animation':
+      return 'video';
+    default:
+      return asset.assetType === 'video' || asset.assetType === 'audio' || asset.assetType === 'literature'
+        ? asset.assetType
+        : asset.assetType === 'animation'
+          ? 'video'
+          : 'image';
+  }
+};
+
 const executePublish = async (store: DataStore, config: AppConfig, job: ExternalSyncJob, account: ExternalAccount): Promise<void> => {
   const assetId = typeof job.payload?.assetId === 'string' ? job.payload.assetId : '';
   const asset = assetId ? await store.getAsset(assetId) : null;
@@ -1190,8 +1273,6 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
   if (!asset || !spacePublication?.hostedObjectKey || !spacePublication.hostedContentType) {
     throw new ExternalProviderError('The uploaded work is not available for publishing', 'invalid_response');
   }
-  const provider = await providerForAccount(store, config, account);
-  const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
   const externalPublicationId = typeof job.payload?.externalPublicationId === 'string' ? job.payload.externalPublicationId : '';
   const pendingPublication = externalPublicationId
     ? (await store.listExternalPublications(account.externalAccountId)).find((publication) => publication.externalPublicationId === externalPublicationId && publication.assetId === asset.assetId)
@@ -1199,6 +1280,28 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
   if (!pendingPublication) throw new ExternalProviderError('The selected destination is no longer available for publishing', 'invalid_response');
   const savedSettings = pendingPublication.rawMetadataJson || {};
   const canonicalWork = await store.getWork(config.tenantId, asset.assetId);
+  const preflight = preflightIntegrationPublication({
+    platform: account.platform,
+    intent: 'publish',
+    mediaTypes: [integrationMediaTypeForWork(canonicalWork, asset)],
+    aiDisclosures: canonicalWork ? [canonicalWork.aiDisclosure] : [],
+    itemCount: 1,
+    caption: pendingPublication.externalDescription ?? canonicalWork?.description ?? asset.canonicalDescription ?? '',
+    mimeTypes: [spacePublication.hostedContentType],
+    bytes: spacePublication.hostedByteSize
+  });
+  const blockingPreflightIssue = preflight.issues.find((issue) => issue.severity === 'blocking');
+  if (blockingPreflightIssue) {
+    throw new ExternalProviderError(blockingPreflightIssue.message, 'preflight_blocked');
+  }
+  const warnings = preflight.issues.filter((issue) => issue.severity === 'warning');
+  if (warnings.length) {
+    await addLog(store, job.externalSyncJobId, 'warning', 'Publish preflight completed with warnings', {
+      warnings: warnings.map((issue) => ({ code: issue.code, message: issue.message }))
+    });
+  }
+  const provider = await providerForAccount(store, config, account);
+  const session = await refreshAccessTokenIfNeeded(store, config, account, provider);
   if (canonicalWork) {
     await syncCanonicalPublication(store, config, session.account, canonicalWork, pendingPublication);
     const canonicalPublication = await store.getPublication(config.tenantId, pendingPublication.externalPublicationId);
@@ -1382,6 +1485,15 @@ const executePublish = async (store: DataStore, config: AppConfig, job: External
   if (pendingPublication) await store.updateExternalPublication(publication, submittedDraftPublication.externalContentId);
   else await store.createExternalPublication(publication);
   if (work) await syncCanonicalPublication(store, config, session.account, work, publication, now);
+  await upsertActivity(store, session.account, {
+    remoteActivityId: `publication:${published.externalContentId}`,
+    sourceMessageId: job.externalSyncJobId,
+    type: 'publication',
+    occurredAt: now,
+    externalContentId: published.externalContentId,
+    body: `Published “${asset.canonicalTitle}” to DeviantArt.`,
+    rawPayload: { action: 'publish', source: 'publish_deviation' }
+  }, publication, now, 'outbound');
   await updateJob(store, job, {
     status: 'successful',
     progress: { discovered: 1, synchronized: 1, remaining: 0 },
@@ -1813,6 +1925,8 @@ const executeAccountImport = async (store: DataStore, config: AppConfig, job: Ex
   await store.updateExternalAccount({
     ...session.account,
     connectionStatus: 'connected',
+    rateLimitedUntil: undefined,
+    lastIssue: undefined,
     lastSuccessfulSyncAt: now,
     lastSyncAttemptAt: now,
     initialContentSyncRequested: false,
@@ -2505,13 +2619,19 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
     await updateJob(store, job, { status: 'cancelled', errorCode: 'ACCOUNT_REMOVED', errorMessage: 'Synchronization stopped because the DeviantArt account was removed' });
     return;
   }
-  const operation: IntegrationOperation = job.type === 'publish'
-    ? 'publish'
-    : job.type === 'remote_update'
-      ? 'update_remote'
-      : job.type === 'content_sync' || job.type === 'account_import' || job.type === 'account_scan' || job.type === 'full_reconciliation'
-        ? 'import'
-        : 'read_engagement';
+  // This is the durable admission recheck: a browser preflight can become
+  // stale between confirmation and execution, so no provider call occurs for
+  // a connection that is already known to require repair.
+  if (account.connectionStatus === 'authentication_required') {
+    await updateJob(store, job, {
+      status: 'authentication_required',
+      errorCode: 'AUTHENTICATION_REQUIRED',
+      errorMessage: 'Reconnect this integration before retrying the operation.',
+      nextAttemptAt: undefined
+    });
+    return;
+  }
+  const operation = integrationOperationForExternalSyncJobType(job.type);
   try {
     requireIntegrationOperation(account.platform, operation);
   } catch (error) {
@@ -2616,8 +2736,13 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
     // healthy catalogue connection does not appear unavailable.
     const isContentSync = job.type === 'content_sync';
     const jobWillRetry = shouldRetryExternalJobFailure(job.type, providerError.code, attemptCount);
+    const issueNow = new Date().toISOString();
+    const accountForIssue = currentAccount || account;
     if (providerError.code === 'authentication_required' && !isContentSync) {
-      await store.updateExternalAccount({ ...account, connectionStatus: 'authentication_required', lastSyncAttemptAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      await persistAccountIssue(store, accountForIssue, providerError.code, providerError.message, issueNow, {
+        connectionStatus: 'authentication_required',
+        rateLimitedUntil: undefined
+      });
       await updateJob(store, latest, { status: 'authentication_required', errorCode: providerError.code, errorMessage: providerError.message });
     } else if (providerError.code === 'rate_limited') {
       const delay = providerError.retryAfterSeconds !== undefined
@@ -2628,12 +2753,9 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
       const rateLimitedUntil = existingRateLimitedUntil && existingRateLimitedUntil > proposedRateLimitedUntil
         ? existingRateLimitedUntil
         : proposedRateLimitedUntil;
-      await store.updateExternalAccount({
-        ...(currentAccount || account),
+      await persistAccountIssue(store, accountForIssue, providerError.code, providerError.message, issueNow, {
         connectionStatus: 'rate_limited',
-        rateLimitedUntil,
-        lastSyncAttemptAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        rateLimitedUntil
       });
       await updateJob(store, latest, {
         status: 'rate_limited',
@@ -2671,14 +2793,30 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
       });
     } else if (providerError.code === 'temporarily_unavailable' && !isContentSync) {
       const delay = retryDelaySeconds(attemptCount, config.externalSyncBaseDelaySeconds);
-      await store.updateExternalAccount({ ...(currentAccount || account), connectionStatus: 'temporarily_unavailable', lastSyncAttemptAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      await persistAccountIssue(store, accountForIssue, providerError.code, providerError.message, issueNow, {
+        connectionStatus: 'temporarily_unavailable',
+        rateLimitedUntil: undefined
+      });
       await updateJob(store, latest, {
         status: 'retry_scheduled',
         nextAttemptAt: new Date(Date.now() + delay * 1000).toISOString(),
         errorCode: providerError.code,
         errorMessage: providerError.message
       });
+    } else if (providerError.code === 'preflight_blocked') {
+      // This is a local Work/destination validation issue, not an account-health
+      // problem. Keep it on the publication for correction and allow the same
+      // connected account to continue syncing other Works.
+      await updateJob(store, latest, {
+        status: 'failed',
+        errorCode: providerError.code,
+        errorMessage: providerError.message,
+        nextAttemptAt: undefined
+      });
     } else {
+      if (!isContentSync) {
+        await persistAccountIssue(store, accountForIssue, providerError.code, providerError.message, issueNow);
+      }
       await updateJob(store, latest, { status: 'failed', errorCode: providerError.code, errorMessage: providerError.message });
     }
     const failedPublicationId = typeof job.payload?.externalPublicationId === 'string' ? job.payload.externalPublicationId : '';
@@ -2704,6 +2842,37 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
         });
       }
     }
+    if (job.type === 'publish' && failedPublicationId) {
+      const failedPublication = (await store.listExternalPublications(account.externalAccountId))
+        .find((publication) => publication.externalPublicationId === failedPublicationId);
+      if (failedPublication) {
+        const failedAsset = await store.getAsset(failedPublication.assetId);
+        const platformLabel = account.platform === 'youtube'
+          ? 'YouTube'
+          : account.platform === 'soundcloud'
+            ? 'SoundCloud'
+            : account.platform === 'deviantart'
+              ? 'DeviantArt'
+              : `${account.platform.charAt(0).toUpperCase()}${account.platform.slice(1)}`;
+        await upsertActivity(store, account, {
+          // Keep a retry and its eventual terminal result together in the inbox.
+          remoteActivityId: `publication-delivery:${job.externalSyncJobId}`,
+          sourceMessageId: job.externalSyncJobId,
+          type: 'publication',
+          occurredAt: issueNow,
+          externalContentId: failedPublication.externalContentId,
+          body: publishWillRetry
+            ? `Could not publish “${failedAsset?.canonicalTitle || 'this Work'}” to ${platformLabel}. Retrying automatically.`
+            : `Could not publish “${failedAsset?.canonicalTitle || 'this Work'}” to ${platformLabel}. Review the publishing error.`,
+          rawPayload: {
+            action: publishWillRetry ? 'publish_retrying' : 'publish_failed',
+            errorCode: providerError.code,
+            errorMessage: providerError.message,
+            retrying: publishWillRetry
+          }
+        }, failedPublication, issueNow, 'outbound');
+      }
+    }
     if (job.type === 'content_sync' && providerError.code !== 'rate_limited' && typeof job.payload?.assetId === 'string') {
       const current = await store.getSpacePublication(job.payload.assetId);
       if (current) {
@@ -2717,7 +2886,7 @@ export const processExternalSyncJob = async (store: DataStore, config: AppConfig
       }
     }
     if (providerError.code !== 'rate_limited') {
-      await addLog(store, externalSyncJobId, jobWillRetry ? 'warning' : 'error', providerError.message, {
+      await addLog(store, externalSyncJobId, jobWillRetry || providerError.code === 'preflight_blocked' ? 'warning' : 'error', providerError.message, {
         code: providerError.code,
         attemptCount,
         retryScheduled: jobWillRetry

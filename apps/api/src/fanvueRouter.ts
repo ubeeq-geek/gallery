@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import type { AppConfig } from './config';
 import { requireAuth } from './auth';
 import { decryptExternalCredential, encryptExternalCredential } from './externalCredentials';
+import { deriveIntegrationAccountHealth, nativeIntegrationHealthConnection } from './integrationAccountHealth';
 import { createFanvuePkce, evaluateFanvueEligibility, FanvueClient, FanvueWebhookVerifier, hashFanvueSnapshot, newFanvuePublication, type FanvueConnection, type FanvueExternalReferenceWork, type FanvuePublication, type FanvueRightsEligibility, type FanvueWebhookEnvelope } from './fanvue';
 import { InMemoryFanvueRepository, minimizeFanvueWebhook, type FanvueRepository } from './fanvueRepository';
 import type { CanonicalAsset, Work, WorkAsset } from './canonicalDomain';
@@ -14,7 +15,19 @@ type OAuthState = {
 
 const safeConnection = (connection: FanvueConnection) => {
   const { encryptedCredentialReference: _secret, ...safe } = connection;
-  return safe;
+  return {
+    ...safe,
+    health: deriveIntegrationAccountHealth(nativeIntegrationHealthConnection({
+      platform: 'fanvue',
+      connectionStatus: connection.state === 'CONNECTED' ? 'connected'
+        : connection.state === 'REAUTH_REQUIRED' ? 'authentication_required'
+          : connection.state === 'FANVUE_RESTRICTED' ? 'disabled' : 'temporarily_unavailable',
+      lastSuccessfulSyncAt: connection.lastSyncAt,
+      lastIssue: connection.accountHealth?.status === 'attention'
+        ? { code: 'sync_failed', message: 'Fanvue requires account attention.', remediation: 'Review the account health details and retry.' }
+        : undefined
+    }))
+  };
 };
 
 const requestedScopes = ['creator.read', 'posts.read', 'posts.write', 'media.write'];
@@ -28,7 +41,8 @@ export const createFanvueRouter = (
   canManageOwner: (userId: string, ownerId: string) => Promise<boolean> = async (userId, ownerId) => userId === ownerId,
   getWorkContext: (workId: string) => Promise<null | { work: Work; assets: Array<CanonicalAsset & { attachment: WorkAsset }>; activeSafetyHold: boolean }> = async () => null,
   canApproveManagedEligibility: (userId: string) => Promise<boolean> = async () => false,
-  loadAssetBody: (asset: CanonicalAsset) => Promise<Buffer> = async () => { throw new Error('Asset loading is not configured.'); }
+  loadAssetBody: (asset: CanonicalAsset) => Promise<Buffer> = async () => { throw new Error('Asset loading is not configured.'); },
+  requireAdmission: (input: { operation: 'connect' | 'import' | 'publish' | 'update_remote' | 'delete_remote'; ownerId: string; connectionId?: string; workId?: string }) => Promise<void> = async () => undefined
 ) => {
   const router = express.Router();
   const stateSecret = config.externalTokenEncryptionKey;
@@ -76,6 +90,7 @@ export const createFanvueRouter = (
     const mode = req.body?.mode === 'CREATOR_OWNED' ? 'CREATOR_OWNED' : 'STUDIO_MANAGED';
     if (!ownerId) return res.status(400).json({ message: 'ownerId is required.' });
     if (!(await canManageOwner(req.authUser!.userId, ownerId))) return res.status(403).json({ message: 'Owner or manager access required.' });
+    await requireAdmission({ operation: 'connect', ownerId });
     // Creator-owned secret collection is deliberately not approximated in the studio pilot.
     if (mode === 'CREATOR_OWNED') return res.status(409).json({ message: 'Creator-owned OAuth applications require the reviewed credential-vault flow.' });
 
@@ -215,6 +230,7 @@ export const createFanvueRouter = (
     const connection = await repository.getConnection(req.params.id);
     if (!connection) return res.status(404).json({ message: 'Fanvue connection not found.' });
     if (!(await canManageOwner(req.authUser!.userId, connection.ownerId))) return res.status(403).json({ message: 'Owner or manager access required.' });
+    await requireAdmission({ operation: 'import', ownerId: connection.ownerId, connectionId: connection.connectionId });
     if (!connection.capabilities.includes('read_posts')) return res.status(409).json({ message: 'Enable read posts before synchronizing.' });
     if (!connection.encryptedCredentialReference || !stateSecret) return res.status(409).json({ message: 'Fanvue reauthorization is required.' });
     if (connection.state !== 'CONNECTED') return res.status(409).json({ message: 'Fanvue connection is not ready to synchronize.', state: connection.state });
@@ -336,6 +352,7 @@ export const createFanvueRouter = (
     const connectionId = typeof req.body?.connectionId === 'string' ? req.body.connectionId : '';
     const connection = connectionId ? await repository.getConnection(connectionId) : null;
     if (!connection || connection.ownerId !== context.work.creatorId) return res.status(400).json({ message: 'A Fanvue connection for this Work owner is required.' });
+    await requireAdmission({ operation: 'publish', ownerId: context.work.creatorId, connectionId: connection.connectionId, workId: context.work.workId });
     if (connection.state !== 'CONNECTED' || connection.verificationStatus !== 'verified' || !connection.capabilities.includes('publish_posts')) {
       return res.status(409).json({ message: 'The Fanvue connection is not ready for publishing.' });
     }
@@ -386,6 +403,7 @@ export const createFanvueRouter = (
     const context = await getWorkContext(publication.workId);
     if (!connection || !context) return res.status(409).json({ message: 'The publication source is no longer available.' });
     if (!(await canManageOwner(req.authUser!.userId, context.work.creatorId))) return res.status(403).json({ message: 'Owner or manager access required.' });
+    await requireAdmission({ operation: 'update_remote', ownerId: context.work.creatorId, connectionId: connection.connectionId, workId: context.work.workId });
     if (['UPLOADING', 'PROCESSING', 'FLAGGED', 'REMOVED'].includes(publication.state)) {
       return res.status(409).json({ message: 'This Fanvue publication cannot be edited in its current state.' });
     }
@@ -443,6 +461,7 @@ export const createFanvueRouter = (
     const context = await getWorkContext(publication.workId);
     if (!connection || !context) return res.status(409).json({ message: 'The publication source is no longer available.' });
     if (!(await canManageOwner(req.authUser!.userId, context.work.creatorId))) return res.status(403).json({ message: 'Owner or manager access required.' });
+    await requireAdmission({ operation: 'publish', ownerId: context.work.creatorId, connectionId: connection.connectionId, workId: context.work.workId });
     if (req.body?.confirmed !== true || req.body?.previewHash !== publication.previewHash) {
       return res.status(409).json({ message: 'Confirm the exact Fanvue preview before publishing.', previewHash: publication.previewHash });
     }
@@ -531,6 +550,7 @@ export const createFanvueRouter = (
     const context = await getWorkContext(publication.workId);
     if (!connection || !context) return res.status(409).json({ message: 'The publication source is no longer available.' });
     if (!(await canManageOwner(req.authUser!.userId, context.work.creatorId))) return res.status(403).json({ message: 'Owner or manager access required.' });
+    await requireAdmission({ operation: 'delete_remote', ownerId: context.work.creatorId, connectionId: connection.connectionId, workId: context.work.workId });
     if (req.body?.confirmed !== true || req.body?.remotePostUuid !== publication.remotePostUuid) {
       return res.status(409).json({ message: `Confirm the exact remote post before ${action}.`, remotePostUuid: publication.remotePostUuid });
     }

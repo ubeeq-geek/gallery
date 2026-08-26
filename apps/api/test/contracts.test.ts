@@ -1092,4 +1092,37 @@ describe('API contract', () => {
       .send({ creatorIdentityIds: ['creator-a', 'creator-b'], primaryCreatorIdentityId: 'creator-b' });
     expect(unsupportedSplit.status).toBe(400);
   });
+
+  it('exposes the v1 integration catalog and enforces preflight account admission', async () => {
+    const store = new InMemoryStore();
+    const app = createApp({ config: buildConfig(), store });
+    const now = new Date().toISOString();
+    await store.createExternalAccount({
+      externalAccountId: 'v1-youtube', userId: 'v1-owner', creatorIdentityId: 'v1-creator', primaryCreatorIdentityId: 'v1-creator',
+      externalPlatformCredentialId: 'credential', platform: 'youtube', externalUserId: 'channel', externalUsername: 'Channel',
+      accessTokenEncrypted: 'encrypted', connectionStatus: 'authentication_required', grantedScopes: [], createdAt: now, updatedAt: now
+    });
+    await request(app).get('/api/v1/integrations').expect(401);
+    const catalog = await request(app).get('/api/v1/integrations').set('x-user-id', 'v1-owner').expect(200);
+    expect(catalog.body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ platform: 'deviantart', surface: 'studio', studioAdapter: 'deviantart' }),
+      expect.objectContaining({ platform: 'ghost', surface: 'api_only', connectionModel: 'native_connection' })
+    ]));
+    await request(app).get('/api/v1/integrations/nope').set('x-user-id', 'v1-owner').expect(404);
+    await request(app).get('/api/v1/integrations/youtube/connections/v1-youtube/operations').set('x-user-id', 'other-user').expect(404);
+    const admission = await request(app).post('/studio/integrations/preflight').set('x-user-id', 'v1-owner').send({
+      platform: 'youtube', externalAccountId: 'v1-youtube', mediaTypes: ['video']
+    }).expect(200);
+    expect(admission.body.admission.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'account_not_ready' })
+    ]));
+    await store.upsertIntegrationReviewHold({
+      integrationReviewHoldId: 'v1-hold', targetType: 'external_account', targetId: 'v1-youtube',
+      holdType: 'MANUAL_REVIEW', reason: 'Review required.', active: true, createdAt: now
+    });
+    const held = await request(app).post('/studio/integrations/preflight').set('x-user-id', 'v1-owner').send({
+      platform: 'youtube', externalAccountId: 'v1-youtube', mediaTypes: ['video']
+    }).expect(200);
+    expect(held.body.admission.issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'policy_blocked' })]));
+  });
 });

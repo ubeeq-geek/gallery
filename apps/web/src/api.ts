@@ -1,8 +1,32 @@
 import { getValidIdToken } from './cognitoAuth';
 import type { PostBlock } from './domainTypes';
-import type { StudioExternalAsset, StudioExternalPublication, StudioSpacePublication, StudioUbeeqCollection } from './studio/types';
+import type { StudioExternalAsset, StudioExternalPublication, StudioReconciliationAction, StudioSpacePublication, StudioUbeeqCollection } from './studio/types';
 
 export type AnnouncementPresetId = 'recommended' | 'image_showcase' | 'writing_release' | 'video_premiere' | 'audio_release' | 'compact_link' | 'text_only' | 'collection_digest' | 'series_digest';
+
+/**
+ * Shared lifecycle record for work performed by any connected integration.
+ * This deliberately describes queue activity rather than a platform-specific
+ * publication, so Studio can use one operations inbox for every adapter.
+ */
+export type StudioIntegrationOperation = {
+  id: string;
+  kind: 'import' | 'sync_content' | 'sync_activity' | 'publish' | 'update_remote' | 'remove_remote' | 'other';
+  state: 'queued' | 'in_progress' | 'completed' | 'retry_scheduled' | 'requires_attention' | 'failed' | 'cancelled';
+  jobStatus: string;
+  platform: string;
+  platformLabel: string;
+  account: { id: string; label: string };
+  progress: { discovered: number; synchronized: number; remaining: number };
+  attemptCount: number;
+  lastAttemptAt?: string;
+  nextAttemptAt?: string;
+  error?: { code?: string; message?: string };
+  retryable: boolean;
+  cancellable: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
 
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 const usesLocalDeveloperApi = import.meta.env.DEV && /^(https?:\/\/)(localhost|127\.0\.0\.1|fanadmin\.top)(?::\d+)?(?:\/|$)/.test(configuredApiBase);
@@ -102,7 +126,13 @@ type CanonicalPublication = {
   remoteUpdatedAt?: string;
   metadataOverrides?: { title?: string; description?: string; tags?: string[]; fields?: Record<string, unknown> };
   providerData?: Record<string, unknown>;
-  sync: { status: 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'conflict' | 'error' | 'unknown'; lastSuccessfulAt?: string; errorCode?: string; errorMessage?: string };
+  sync: {
+    status: 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'non_conflicting_changes' | 'conflict' | 'error' | 'unknown';
+    reconciliation?: StudioExternalPublication['reconciliation'];
+    lastSuccessfulAt?: string;
+    errorCode?: string;
+    errorMessage?: string;
+  };
   publishedAt?: string;
 };
 
@@ -203,7 +233,8 @@ const canonicalWorkToStudioAsset = (work: CanonicalWorkResponse): StudioExternal
       publishedAt: publication.publishedAt,
       remoteUpdatedAt: publication.remoteUpdatedAt,
       lastSyncedAt: publication.sync.lastSuccessfulAt,
-      metadataSyncStatus: publication.sync.status === 'conflict' ? 'conflict' : publication.sync.status === 'remote_newer' ? 'remote_changed' : publication.sync.status === 'local_newer' ? 'local_update_pending' : 'in_sync',
+      metadataSyncStatus: publication.sync.status === 'conflict' ? 'conflict' : publication.sync.status === 'remote_newer' ? 'remote_changed' : publication.sync.status === 'local_newer' || publication.sync.status === 'non_conflicting_changes' ? 'local_update_pending' : 'in_sync',
+      reconciliation: publication.sync.reconciliation,
       remoteStateReason: publication.sync.errorMessage,
       syncStatus: externalStatusFor(publication)
     }))
@@ -1234,6 +1265,41 @@ export const api = {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/capabilities`);
     return handleJson(response) as Promise<{ items: Array<{ platform: string; import: boolean; publish: Record<string, boolean | undefined>; update: boolean; delete: boolean; collections: boolean; comments: boolean; analytics: boolean; scheduling: boolean; limits: Record<string, unknown> }> }>;
   },
+  async studioGetIntegrationCatalog() {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/api/v1/integrations`);
+    return handleJson(response) as Promise<{ version: 'v1'; items: Array<{
+      platform: string; label: string; surface: 'studio' | 'api_only' | 'internal' | 'planned';
+      availability: 'available' | 'pilot' | 'configuration_required'; studioAdapter?: string;
+    }> }>;
+  },
+  async studioPreflightIntegration(input: {
+    platform: string;
+    intent?: 'publish' | 'announce';
+    externalAccountId?: string;
+    mediaTypes?: string[];
+    aiDisclosures?: Array<'none' | 'ai-assisted' | 'ai-generated'>;
+    itemCount?: number;
+    caption?: string;
+    mimeTypes?: string[];
+    bytes?: number;
+    rightsAttested?: boolean;
+    adultAttested?: boolean;
+    consentAttested?: boolean;
+  }) {
+    const response = await fetch(`${API_BASE}/studio/integrations/preflight`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(input)
+    });
+    return handleJson(response) as Promise<{
+      platform: string;
+      intent: 'publish' | 'announce';
+      ok: boolean;
+      issues: Array<{ code: string; severity: 'blocking' | 'warning'; message: string }>;
+      static: { ok: boolean; issues: Array<{ code: string; severity: 'blocking' | 'warning'; message: string }> };
+      admission: { checked: boolean; ok: boolean; issues: Array<{ code: string; severity: 'blocking' | 'warning'; message: string }> };
+    }>;
+  },
   async studioGetInstagramConfiguration() {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/api/integrations/instagram/configuration`);
     return handleJson(response) as Promise<{
@@ -1569,6 +1635,32 @@ export const api = {
     });
     return handleJson(response);
   },
+  async studioListIntegrationOperations(options?: { externalAccountId?: string; status?: StudioIntegrationOperation['state'] | 'all' }) {
+    const params = new URLSearchParams();
+    if (options?.externalAccountId) params.set('externalAccountId', options.externalAccountId);
+    if (options?.status && options.status !== 'all') params.set('status', options.status);
+    const suffix = params.size ? `?${params.toString()}` : '';
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integration-operations${suffix}`);
+    return handleJson(response) as Promise<{ operations: StudioIntegrationOperation[]; total: number }>;
+  },
+  async studioGetIntegrationOperationLogs(externalSyncJobId: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integration-operations/${encodeURIComponent(externalSyncJobId)}/logs`);
+    return handleJson(response) as Promise<{ logs: unknown[] }>;
+  },
+  async studioRetryIntegrationOperation(externalSyncJobId: string) {
+    const response = await fetch(`${API_BASE}/studio/integration-operations/${encodeURIComponent(externalSyncJobId)}/retry`, {
+      method: 'POST',
+      headers: await authHeaders()
+    });
+    return handleJson(response) as Promise<{ operation: StudioIntegrationOperation }>;
+  },
+  async studioCancelIntegrationOperation(externalSyncJobId: string) {
+    const response = await fetch(`${API_BASE}/studio/integration-operations/${encodeURIComponent(externalSyncJobId)}/cancel`, {
+      method: 'POST',
+      headers: await authHeaders()
+    });
+    return handleJson(response) as Promise<{ operation: StudioIntegrationOperation; relatedOperationsCancelled: number }>;
+  },
   async studioListDeviantArtComments(externalAccountId: string, externalContentId: string) {
     const response = await fetchAuthGetWithRetry(`${API_BASE}/studio/integrations/deviantart/accounts/${encodeURIComponent(externalAccountId)}/publications/${encodeURIComponent(externalContentId)}/comments`);
     return handleJson(response);
@@ -1784,6 +1876,14 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
       body: JSON.stringify({ strategy })
+    });
+    return handleJson(response);
+  },
+  async studioResolvePublicationReconciliation(workId: string, publicationId: string, action: StudioReconciliationAction) {
+    const response = await fetch(`${API_BASE}/studio/works/${encodeURIComponent(workId)}/publications/${encodeURIComponent(publicationId)}/reconciliation/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify({ action, confirm: true })
     });
     return handleJson(response);
   },
