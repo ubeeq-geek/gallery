@@ -147,6 +147,10 @@ interface CreateAppOptions {
   tumblrRepository?: TumblrRepository;
   tumblrPublishQueue?: TumblrPublishQueue;
   supportSafetyRepository?: SupportSafetyRepository;
+  /** Independently authenticated instance-to-instance federation contract. */
+  federationRouter?: express.Router;
+  federationAdminRouter?: express.Router;
+  federationHomeRouter?: express.Router;
 }
 
 let hasHandledInvocation = false;
@@ -993,7 +997,10 @@ export const createApp = ({
   fanvueRepository,
   tumblrRepository: injectedTumblrRepository,
   tumblrPublishQueue: injectedTumblrPublishQueue,
-  supportSafetyRepository
+  supportSafetyRepository,
+  federationRouter: injectedFederationRouter,
+  federationAdminRouter: injectedFederationAdminRouter,
+  federationHomeRouter: injectedFederationHomeRouter
 }: CreateAppOptions) => {
   const brand = brandForConfig(config);
   const app = express();
@@ -2686,7 +2693,10 @@ export const createApp = ({
       }
     }
   }));
+  if (injectedFederationRouter) app.use('/federation', injectedFederationRouter);
   app.use(createOptionalAuthMiddleware(config));
+  if (injectedFederationAdminRouter) app.use('/admin/federation', injectedFederationAdminRouter);
+  if (injectedFederationHomeRouter) app.use('/studio/federation', injectedFederationHomeRouter);
   app.use('/api', createPatreonRouter(config, patreonRepository, undefined, store));
   app.use('/api', createWordPressRouter(config, store));
   registerFlickrRoutes(app, config, createFlickrRepository(config), undefined, store);

@@ -17,7 +17,9 @@ const managedVariables = [
   'CLOUDFRONT_PRIVATE_KEY',
   'EXTERNAL_TOKEN_ENCRYPTION_KEY',
   'UNLOCK_JWT_SECRET',
-  'ALARM_NOTIFICATION_EMAIL'
+  'ALARM_NOTIFICATION_EMAIL',
+  'FEDERATION_ENABLED',
+  'FEDERATION_SIGNING_KEY_SECRET_NAME'
 ];
 
 const synthTemplate = (id: string): Template => {
@@ -49,6 +51,26 @@ describe('production survivability profile', () => {
     expect(() => synthTemplate('MissingSecretsStack')).toThrow('APP_SECRETS_NAME');
     process.env.APP_SECRETS_NAME = 'eversally/production/application';
     expect(() => synthTemplate('MissingOriginStack')).toThrow('WEB_APP_URL');
+  });
+
+  it('provisions isolated federation queues, asset quarantine, key access, and alarms only when enabled', () => {
+    process.env.FEDERATION_ENABLED = 'true';
+    expect(() => synthTemplate('FederationMissingKeyStack')).toThrow('FEDERATION_SIGNING_KEY_SECRET_NAME');
+    process.env.FEDERATION_SIGNING_KEY_SECRET_NAME = 'ubeeq/development/federation-signing-key';
+    const template = synthTemplate('FederationStack');
+    const serialized = JSON.stringify(template.toJSON());
+    expect(serialized).toContain('FederationRequestQueue');
+    expect(serialized).toContain('FederationCallbackQueue');
+    expect(serialized).toContain('ExpireFederationQuarantine');
+    expect(serialized).toContain('FEDERATION_SIGNING_KEY_SECRET_ARN');
+    expect(serialized).toContain('ubeeq/development/federation-signing-key');
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
+    template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
+    template.resourceCountIs('AWS::SNS::Topic', 1);
+    expect(serialized).toContain('Ubeeq/Federation');
+    expect(serialized).toContain('SignatureFailure');
+    expect(serialized).toContain('ReplayAttempt');
+    expect(serialized).toContain('AssetProcessingLatency');
   });
 
   it('adds retention, backups, restricted origins, observability, and secret references only in production', () => {

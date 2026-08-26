@@ -17,6 +17,7 @@ import { WorksView } from './studio/views/WorksView';
 import { ActivityView } from './studio/views/ActivityView';
 import { CreatorOnboardingView } from './studio/views/CreatorOnboardingView';
 import { CreatorLaunchChecklist } from './studio/views/CreatorLaunchChecklist';
+import { HomeFederationRoute } from './federation/HomeFederationRoute';
 import { PostsView } from './studio/views/PostsView';
 import { ResourceView } from './studio/views/ResourceView';
 import { ChallengesView } from './studio/views/ChallengesView';
@@ -211,6 +212,8 @@ export function StudioWorkspace({ onCreatorCreated }: { onCreatorCreated?: () =>
             </div>
           </Card>
         );
+      case 'federation':
+        return <HomeFederationRoute creatorId={activeCreatorId} />;
       case 'activity':
         return <ActivityView creatorId={activeCreatorId} />;
       case 'settings':
