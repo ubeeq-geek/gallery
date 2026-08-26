@@ -1,7 +1,18 @@
-import { integrationCapabilities } from '../src/integrationCapabilities';
+import { integrationCapabilities, validateIntegrationCapabilityRegistry } from '../src/integrationCapabilities';
 import { integrationsRequiringConformance, runIntegrationConformanceSuite } from '../src/integrationConformance';
 
 describe('integration capability registry', () => {
+  it('derives advertised operations from the runtime integration contract', () => {
+    expect(() => validateIntegrationCapabilityRegistry()).not.toThrow();
+    expect(integrationCapabilities.youtube.import).toBe(true);
+    expect(integrationCapabilities.youtube.publish).toEqual({});
+    expect(integrationCapabilities.bluesky.announce).toBe(true);
+    expect(integrationCapabilities.bluesky.publish).toEqual({});
+    expect(integrationCapabilities.patreon.publish).toEqual({});
+    expect(integrationCapabilities.smugmug.sourceCopy).toBe(true);
+    expect(integrationCapabilities.vimeo.publish.video).toBe(true);
+  });
+
   it('exposes platform limits instead of leaving policy embedded in UI assumptions', () => {
     expect(integrationCapabilities.instagram.limits.rollout?.state).toBe('controlled_pilot');
     expect(integrationCapabilities.wordpress.limits.content?.unsupportedBlockTypes).toContain('html_fragment');

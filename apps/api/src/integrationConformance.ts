@@ -1,4 +1,8 @@
-import { integrationCapabilities, type IntegrationPlatformId } from './integrationCapabilities';
+import {
+  integrationCapabilities,
+  type IntegrationPlatformId,
+  validateIntegrationCapabilityRegistry
+} from './integrationCapabilities';
 
 export const integrationConformanceScenarios = [
   'oauth-expiry', 'pagination', 'rate-limit-backoff', 'duplicate-retry',
@@ -14,6 +18,7 @@ export interface IntegrationConformanceAdapter {
 /** Shared test runner for every adapter. Unsupported operations must be an
  * explicit, successful assertion rather than an omitted test. */
 export const runIntegrationConformanceSuite = async (adapter: IntegrationConformanceAdapter): Promise<void> => {
+  validateIntegrationCapabilityRegistry();
   if (!integrationCapabilities[adapter.platform]) throw new Error(`No capability declaration for ${adapter.platform}`);
   for (const scenario of integrationConformanceScenarios) await adapter.run(scenario);
 };

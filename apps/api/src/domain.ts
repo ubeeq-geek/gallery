@@ -677,6 +677,19 @@ export type ExternalAccountConnectionStatus =
   | 'rate_limited'
   | 'temporarily_unavailable'
   | 'disabled';
+export type ExternalAccountIssueCode =
+  | 'authentication_required'
+  | 'rate_limited'
+  | 'temporarily_unavailable'
+  | 'invalid_response'
+  | 'unsupported'
+  | 'sync_failed';
+export interface ExternalAccountIssue {
+  code: ExternalAccountIssueCode;
+  message: string;
+  remediation: string;
+  occurredAt: string;
+}
 export type ExternalAssetType = 'image' | 'literature' | 'video' | 'audio' | 'animation' | 'other';
 export type AssetVisibility = 'private' | 'unlisted' | 'public';
 export type UbeeqCollectionType = 'collection' | 'gallery' | 'series';
@@ -750,11 +763,15 @@ export interface ExternalAccount {
   accessTokenEncrypted: string;
   refreshTokenEncrypted?: string;
   tokenExpiresAt?: string;
+  /** OAuth scopes granted when the account was connected, retained for repair diagnostics. */
+  grantedScopes?: string[];
   connectionStatus: ExternalAccountConnectionStatus;
   /** Account-wide provider cooldown. No job for this account should call the provider before this instant. */
   rateLimitedUntil?: string;
   lastSuccessfulSyncAt?: string;
   lastSyncAttemptAt?: string;
+  /** Durable, user-actionable integration problem. Cleared after a successful recovery. */
+  lastIssue?: ExternalAccountIssue;
   /** One-time import preference selected before the account was connected. */
   initialContentSyncRequested?: boolean;
   /** Whether subsequent synchronizations should also copy available source files into the local creator workspace. */
@@ -1035,7 +1052,7 @@ export interface ExternalWatcher {
   rawPayload?: Record<string, unknown>;
 }
 
-export type ExternalActivityType = 'comment' | 'reply' | 'favourite' | 'watch' | 'unwatch' | 'mention' | 'activity';
+export type ExternalActivityType = 'comment' | 'reply' | 'favourite' | 'watch' | 'unwatch' | 'mention' | 'publication' | 'activity';
 
 export interface ExternalActivity {
   externalActivityId: string;

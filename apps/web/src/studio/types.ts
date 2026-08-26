@@ -165,6 +165,18 @@ export type StudioDeviantArtAccount = {
   rateLimitedUntil?: string;
   lastSuccessfulSyncAt?: string;
   lastSyncAttemptAt?: string;
+  health?: {
+    state: 'connected' | 'authentication_required' | 'rate_limited' | 'temporarily_unavailable' | 'disabled' | 'attention';
+    token: { status: 'valid' | 'expires_soon' | 'expired' | 'unknown'; expiresAt?: string; grantedScopes: string[] };
+    sync: { lastAttemptAt?: string; lastSuccessfulAt?: string; rateLimitedUntil?: string; coolingDown: boolean };
+    issue?: {
+      code: 'authentication_required' | 'rate_limited' | 'temporarily_unavailable' | 'invalid_response' | 'unsupported' | 'sync_failed';
+      message: string;
+      remediation: string;
+      occurredAt: string;
+    };
+    recommendedAction: 'none' | 'reconnect' | 'wait' | 'retry_sync' | 'review_setup';
+  };
   includeSourceFilesOnSync?: boolean;
   deviantArtPublishingPreset?: {
     titleFormat: 'filename_title_case';
@@ -186,6 +198,10 @@ export type StudioDeviantArtAccount = {
 export type StudioYouTubeAccount = Omit<StudioDeviantArtAccount, 'platform' | 'includeSourceFilesOnSync' | 'deviantArtPublishingPreset'> & {
   platform: 'youtube';
   channelTitle?: string;
+};
+
+export type StudioBlueskyAccount = Omit<StudioDeviantArtAccount, 'platform' | 'includeSourceFilesOnSync' | 'deviantArtPublishingPreset'> & {
+  platform: 'bluesky';
 };
 
 export type StudioExternalSyncJob = {
@@ -252,7 +268,7 @@ export type StudioExternalActivity = {
   externalPublicationId?: string;
   assetId?: string;
   platform: string;
-  type: 'comment' | 'reply' | 'favourite' | 'watch' | 'unwatch' | 'mention' | 'activity';
+  type: 'comment' | 'reply' | 'favourite' | 'watch' | 'unwatch' | 'mention' | 'publication' | 'activity';
   direction: 'inbound' | 'outbound';
   remoteActivityId: string;
   remoteMessageId?: string;
@@ -264,6 +280,11 @@ export type StudioExternalActivity = {
   firstSeenAt: string;
   readAt?: string;
   remoteDeletedAt?: string;
+  integrationIssue?: {
+    code: string;
+    remediation: string;
+  };
+  publicationAction?: 'publish' | 'publish_retrying' | 'publish_failed';
   account?: {
     externalAccountId: string;
     platform: string;
@@ -323,10 +344,27 @@ export type StudioExternalPublication = {
   remoteUpdatedAt?: string;
   lastSyncedAt?: string;
   metadataSyncStatus?: 'in_sync' | 'remote_changed' | 'local_update_pending' | 'conflict';
+  reconciliation?: StudioPublicationReconciliation;
   remoteChangeDetectedAt?: string;
   lastOutboundSyncAt?: string;
   remoteStateReason?: string;
   syncStatus: 'pending_publish' | 'draft' | 'active' | 'missing' | 'deleted' | 'restricted' | 'unknown' | 'error';
+};
+
+export type StudioReconciliationAction = 'accept_remote' | 'keep_local' | 'create_detached_copy';
+
+export type StudioPublicationReconciliation = {
+  status: 'in_sync' | 'local_newer' | 'remote_newer' | 'non_conflicting_changes' | 'conflict';
+  fields: Array<{
+    field: string;
+    lastSynced: unknown;
+    local: unknown;
+    remote: unknown;
+    localChanged: boolean;
+    remoteChanged: boolean;
+    conflict: boolean;
+  }>;
+  updatedAt: string;
 };
 
 export type StudioExternalAsset = {
@@ -335,6 +373,8 @@ export type StudioExternalAsset = {
   assetType: 'image' | 'literature' | 'video' | 'animation' | 'other';
   canonicalTitle?: string;
   canonicalDescription?: string;
+  /** Canonical provenance disclosure, used to preflight platform-specific AI labels. */
+  aiDisclosure?: 'none' | 'ai-assisted' | 'ai-generated';
   /** Structured block content for literature/article Works. */
   body?: PostBlock[];
   canonicalSlug?: string;
@@ -376,7 +416,7 @@ export type StudioDestinationPublication = {
   accountLabel?: string;
   status: 'draft' | 'scheduled' | 'queued' | 'publishing' | 'live' | 'updating' | 'failed' | 'missing' | 'removed' | 'unknown';
   visibility: 'private' | 'unlisted' | 'public';
-  syncStatus: 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'conflict' | 'error' | 'unknown';
+  syncStatus: 'not_applicable' | 'in_sync' | 'local_newer' | 'remote_newer' | 'non_conflicting_changes' | 'conflict' | 'error' | 'unknown';
   remoteUrl?: string;
   publishedAt?: string;
 };

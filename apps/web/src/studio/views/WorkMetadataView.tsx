@@ -11,7 +11,7 @@ import { BlockEditor } from '../../components/BlockEditor';
 import type { PostBlock } from '../../domainTypes';
 import { Card } from '../components/Card';
 import { worksWorkspacePath } from '../workListNavigation';
-import type { StudioCreator, StudioDeviantArtAccount, StudioExternalAsset, StudioExternalCollection, StudioExternalPublication, StudioExternalSyncJob } from '../types';
+import type { StudioCreator, StudioDeviantArtAccount, StudioExternalAsset, StudioExternalCollection, StudioExternalPublication, StudioExternalSyncJob, StudioReconciliationAction } from '../types';
 import { TumblrWorkPublishingPanel } from './TumblrWorkPublishingPanel';
 
 const sourceLabel = (publication?: StudioExternalPublication): string => {
@@ -19,6 +19,54 @@ const sourceLabel = (publication?: StudioExternalPublication): string => {
   if (publication?.platform) return publication.platform.replace(/(^|[-_ ])([a-z])/g, (_, prefix: string, letter: string) => `${prefix}${letter.toUpperCase()}`);
   return 'Integration';
 };
+
+const destinationStatusLabel = (publication: StudioExternalPublication): string => {
+  if (publication.syncStatus === 'pending_publish') {
+    return publication.targetStatus === 'draft' ? 'Ready to save in Sta.sh' : 'Ready to publish';
+  }
+  if (publication.syncStatus === 'draft') return 'Draft in Sta.sh';
+  if (publication.syncStatus === 'active') return 'Published';
+  if (publication.syncStatus === 'missing') return 'Missing remotely';
+  if (publication.syncStatus === 'deleted') return 'Removed remotely';
+  if (publication.syncStatus === 'restricted') return 'Unavailable remotely';
+  if (publication.syncStatus === 'unknown') return 'Remote status unknown';
+  if (publication.syncStatus === 'error') return 'Needs recovery';
+  return publication.syncStatus;
+};
+
+const needsDestinationRecovery = (publication: StudioExternalPublication): boolean => (
+  publication.syncStatus === 'error'
+  || publication.syncStatus === 'missing'
+  || publication.syncStatus === 'deleted'
+  || publication.syncStatus === 'restricted'
+  || publication.syncStatus === 'unknown'
+);
+
+const reconciliationFieldLabel = (field: string): string => ({
+  title: 'Title',
+  description: 'Description',
+  tags: 'Tags',
+  visibility: 'Visibility'
+}[field] || field.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[-_]/g, ' ').replace(/^./, (character) => character.toUpperCase()));
+
+const reconciliationValue = (value: unknown): string => {
+  if (value === undefined || value === null || value === '') return '—';
+  if (Array.isArray(value)) return value.length ? value.map(String).join(', ') : 'None';
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return 'Complex value';
+    }
+  }
+  return String(value);
+};
+
+const reconciliationActionLabel = (action: StudioReconciliationAction): string => ({
+  accept_remote: 'Use remote version',
+  keep_local: 'Keep local version',
+  create_detached_copy: 'Keep both separately'
+}[action]);
 
 const isMetadataLinked = (asset: StudioExternalAsset): boolean => (
   asset.titleSyncPolicy === 'mirrored' || asset.titleSyncPolicy === 'initially_mirrored'
@@ -53,6 +101,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
   const [destinationBusy, setDestinationBusy] = useState(false);
   const [spaceBusy, setSpaceBusy] = useState(false);
   const [destinationMessage, setDestinationMessage] = useState('');
+  const [pendingReconciliationAction, setPendingReconciliationAction] = useState<StudioReconciliationAction | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -255,6 +304,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     setMatureClassification(publication.displayOptions?.matureClassification || []);
     setIsAiGenerated(publication.displayOptions?.isAiGenerated);
     setNoAi(publication.displayOptions?.noAi);
+    setPendingReconciliationAction(null);
   };
 
   const addDestination = async () => {
@@ -336,7 +386,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
 
   const syncDestination = async (publication: StudioExternalPublication) => {
     if (!asset) return;
-    if (publication.syncStatus === 'error' && !window.confirm('The previous DeviantArt submission could not be verified because DeviantArt did not return a Sta.sh item ID. Check Sta.sh for this work before retrying: retrying may create a second draft if the original submission actually succeeded.')) return;
+    if (publication.syncStatus === 'error' && !window.confirm(`Retry ${sourceLabel(publication)} for this Work? ${publication.remoteStateReason || 'The prior submission could not be verified.'} Retrying may create a second draft if the original submission actually succeeded.`)) return;
     setDestinationBusy(true);
     setError('');
     setDestinationMessage('');
@@ -350,21 +400,26 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
     }
   };
 
-  const resolveDestination = async (strategy: 'pull' | 'push') => {
+  const resolveReconciliation = async (action: StudioReconciliationAction) => {
     if (!asset || !integration) return;
     const source = sourceLabel(integration);
-    const confirmation = strategy === 'pull'
-      ? `Pull the current ${source} metadata into ${brand.productName}? This replaces the local title, description, tags, and supported destination metadata with the remote version.`
-      : `Push the current ${brand.productName} metadata to ${source}? This replaces the supported remote metadata with the local version.`;
-    if (!window.confirm(confirmation)) return;
     setDestinationBusy(true);
     setError('');
     setDestinationMessage('');
     try {
-      await api.studioResolveWorkPublicationConflict(asset.assetId, integration.externalPublicationId, strategy);
-      setDestinationMessage(strategy === 'pull'
-        ? `${source} changes are being pulled and reconciled.`
-        : `${brand.productName} metadata is queued to replace the ${source} version.`);
+      await api.studioResolvePublicationReconciliation(asset.assetId, integration.externalPublicationId, action);
+      setPendingReconciliationAction(null);
+      setAsset((current) => current ? {
+        ...current,
+        publications: current.publications.map((publication) => publication.externalPublicationId === integration.externalPublicationId
+          ? { ...publication, reconciliation: undefined, metadataSyncStatus: 'in_sync' }
+          : publication)
+      } : current);
+      setDestinationMessage(action === 'accept_remote'
+        ? `${source} is now the source of truth for the changed metadata. Re-open this Work to view its updated local copy.`
+        : action === 'keep_local'
+          ? `${brand.productName} remains the source of truth for the changed metadata.`
+          : `A separate private draft was created from the ${source} version.`);
     } catch (resolutionError) {
       setError(resolutionError instanceof Error ? resolutionError.message : `Unable to reconcile this ${source} publication.`);
     } finally {
@@ -571,14 +626,46 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
         </label>)}
       <small>Gallery placement is applied through DeviantArt’s published-deviation edit API and verified after saving.</small>
     </fieldset>
-    {(integration.metadataSyncStatus === 'conflict' || integration.metadataSyncStatus === 'remote_changed') && <div className="studio-work-metadata-warning">
-      <p>{integration.metadataSyncStatus === 'conflict'
-        ? `Both ${brand.productName} and DeviantArt changed this destination. Choose the version that should win.`
-        : 'DeviantArt metadata changed since the previous synchronization. Choose whether to keep the remote version or replace it with the local version.'}</p>
-      <div className="studio-inline-actions">
-        <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => void resolveDestination('pull')}>Pull DeviantArt changes</button>
-        <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => void resolveDestination('push')}>Use {brand.productName} version</button>
+    {integration.reconciliation && integration.reconciliation.status !== 'in_sync' && <section className="studio-reconciliation" aria-label="Metadata reconciliation">
+      <div className="studio-reconciliation-heading">
+        <p className="studio-work-metadata-field-heading">Metadata reconciliation</p>
+        <h5>{integration.reconciliation.status === 'conflict'
+          ? `Both ${brand.productName} and ${integrationLabel} changed this publication`
+          : `${integrationLabel} metadata differs from ${brand.productName}`}</h5>
+        <p>Compare the changed fields before confirming a resolution. Nothing changes until you confirm.</p>
       </div>
+      <div className="studio-reconciliation-field-list">
+        {integration.reconciliation.fields.filter((field) => field.localChanged || field.remoteChanged).map((field) => <article className="studio-reconciliation-field" key={field.field}>
+          <div className="studio-reconciliation-field-summary">
+            <strong>{reconciliationFieldLabel(field.field)}</strong>
+            <span>{field.conflict ? 'Both changed' : field.remoteChanged ? `${integrationLabel} changed` : `${brand.productName} changed`}</span>
+          </div>
+          <div className="studio-reconciliation-values">
+            <div><span>{brand.productName}</span><p>{reconciliationValue(field.local)}</p></div>
+            <div><span>{integrationLabel}</span><p>{reconciliationValue(field.remote)}</p></div>
+          </div>
+        </article>)}
+      </div>
+      {pendingReconciliationAction
+        ? <div className="studio-reconciliation-confirm">
+          <p><strong>Confirm resolution:</strong> {pendingReconciliationAction === 'accept_remote'
+            ? `replace local changed metadata with the ${integrationLabel} version.`
+            : pendingReconciliationAction === 'keep_local'
+              ? `keep the ${brand.productName} version and synchronize it outward.`
+              : `create a separate private draft from the ${integrationLabel} version.`}</p>
+          <div className="studio-inline-actions">
+            <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => setPendingReconciliationAction(null)}>Cancel</button>
+            <button type="button" className="auth-primary-btn" disabled={destinationBusy} onClick={() => void resolveReconciliation(pendingReconciliationAction)}>Confirm {reconciliationActionLabel(pendingReconciliationAction)}</button>
+          </div>
+        </div>
+        : <div className="studio-inline-actions">
+          <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => setPendingReconciliationAction('accept_remote')}>Use {integrationLabel} version</button>
+          <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => setPendingReconciliationAction('keep_local')}>Keep {brand.productName} version</button>
+          <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => setPendingReconciliationAction('create_detached_copy')}>Keep both as separate Works</button>
+        </div>}
+    </section>}
+    {!integration.reconciliation && (integration.metadataSyncStatus === 'conflict' || integration.metadataSyncStatus === 'remote_changed') && <div className="studio-work-metadata-warning">
+      <p>{integrationLabel} metadata changed, but a detailed comparison is not available yet. Refresh this integration before resolving it.</p>
     </div>}
     {integration.metadataSyncStatus === 'local_update_pending' && <p className="small">A {brand.productName} metadata update is queued or waiting for DeviantArt verification.</p>}
     {integration.syncStatus !== 'active' && integration.remoteStateReason && <p className="studio-work-metadata-warning">{integration.remoteStateReason}</p>}
@@ -679,8 +766,7 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
               {destinations.map((publication) => <article key={publication.externalPublicationId} className={`studio-work-destination-row${publication.externalPublicationId === integration?.externalPublicationId ? ' studio-work-destination-row-active' : ''}`}>
                 <button type="button" className="studio-work-destination-select" onClick={() => selectDestination(publication)}>
                   <strong>{sourceLabel(publication)} · {publication.externalUsername}</strong>
-                  <span>{publication.syncStatus === 'pending_publish' ? (publication.targetStatus === 'draft' ? 'Ready to save in Sta.sh' : 'Ready to publish') : publication.syncStatus === 'draft' ? 'Draft in Sta.sh' : publication.syncStatus === 'active' ? 'Published' : publication.syncStatus}</span>
-                  {publication.syncStatus === 'error' && publication.remoteStateReason && <small className="studio-work-metadata-warning">{publication.remoteStateReason}</small>}
+                  <span>{destinationStatusLabel(publication)}</span>
                 </button>
                 <div className="studio-work-destination-actions">
                   {(publication.syncStatus === 'pending_publish' || publication.syncStatus === 'draft') && <select
@@ -692,9 +778,21 @@ export function WorkMetadataView({ creators }: { creators: StudioCreator[] }) {
                     <option value="published">Published</option>
                     <option value="draft">Draft in Sta.sh</option>
                   </select>}
-                  {(publication.syncStatus === 'pending_publish' || publication.syncStatus === 'draft' || publication.syncStatus === 'error') && <button type="button" className="auth-primary-btn" disabled={destinationBusy} onClick={() => void syncDestination(publication)}>{publication.syncStatus === 'error' ? 'Retry publish' : (publication.targetStatus || (publication.syncStatus === 'draft' ? 'draft' : 'published')) === 'draft' ? 'Save to Sta.sh' : 'Publish to DeviantArt'}</button>}
+                  {(publication.syncStatus === 'pending_publish' || publication.syncStatus === 'draft') && <button type="button" className="auth-primary-btn" disabled={destinationBusy} onClick={() => void syncDestination(publication)}>{(publication.targetStatus || (publication.syncStatus === 'draft' ? 'draft' : 'published')) === 'draft' ? 'Save to Sta.sh' : 'Publish to DeviantArt'}</button>}
                   <button type="button" className="auth-secondary-btn" disabled={destinationBusy} onClick={() => void removeDestination(publication)}>{publication.syncStatus === 'active' ? 'Unpublish…' : 'Remove destination'}</button>
                 </div>
+                {needsDestinationRecovery(publication) && <div className="studio-work-destination-recovery" role="status">
+                  <div>
+                    <strong>{publication.syncStatus === 'error' ? 'Review before retrying' : 'Review this destination'}</strong>
+                    <p>{publication.remoteStateReason || (publication.syncStatus === 'error'
+                      ? 'The previous DeviantArt submission could not be verified. Check Sta.sh before retrying.'
+                      : `${sourceLabel(publication)} could not confirm the remote publication state for this Work.`)}</p>
+                    {publication.syncStatus === 'error' && <p className="small">Retrying may create a second draft if the original submission actually succeeded.</p>}
+                  </div>
+                  {publication.syncStatus === 'error'
+                    ? <button type="button" className="auth-primary-btn" disabled={destinationBusy} onClick={() => void syncDestination(publication)}>Review and retry</button>
+                    : <Link className="auth-secondary-btn no-underline" to={`/studio/workspace?section=integrations&creatorId=${encodeURIComponent(creatorId)}`}>Open integrations</Link>}
+                </div>}
               </article>)}
             </div> : <p className="small">No destinations yet. {accounts.length ? 'Choose the DeviantArt account above to prepare this work for synchronization.' : `You can continue editing the ${brand.productName} metadata while you manage the creator’s connected platforms.`}</p>}
           </section>

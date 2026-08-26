@@ -139,6 +139,7 @@ describe('external metadata update verification', () => {
     expect(shouldRetryExternalJobFailure('publish', 'ambiguous_submission', 2)).toBe(true);
     expect(shouldRetryExternalJobFailure('publish', 'ambiguous_submission', MAX_AMBIGUOUS_PUBLISH_ATTEMPTS)).toBe(false);
     expect(shouldRetryExternalJobFailure('publish', 'invalid_response', 1)).toBe(false);
+    expect(shouldRetryExternalJobFailure('publish', 'preflight_blocked', 1)).toBe(false);
 
     const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,

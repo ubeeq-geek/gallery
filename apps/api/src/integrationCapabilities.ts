@@ -1,14 +1,22 @@
-import type { ExternalPlatform } from './domain';
+import {
+  getIntegrationDefinition,
+  integrationDefinitions,
+  type IntegrationPlatform,
+  type IntegrationCapability as RuntimeIntegrationCapability
+} from './integrationStandard';
 
+/**
+ * Product-facing detail layered on top of the authoritative runtime contract.
+ *
+ * `integrationStandard` answers whether an operation can run.  This module
+ * answers how it should be presented before a creator begins that operation.
+ * Keeping the booleans derived prevents a screen from offering a provider
+ * action which the adapter will reject later.
+ */
 export type IntegrationMediaType = 'image' | 'video' | 'audio' | 'literature' | 'carousel' | 'story';
-export type IntegrationCapability =
-  | 'import' | 'source-copy' | 'update' | 'delete' | 'collections' | 'comments' | 'analytics'
-  | 'ai-label-read' | 'ai-label-write' | 'carousel-precise' | 'scheduling' | 'rate-limits';
-
-export type IntegrationPlatformId = ExternalPlatform | 'discord' | 'ghost';
+export type IntegrationPlatformId = IntegrationPlatform;
 
 export interface IntegrationCapabilityLimits {
-  /** Constraints that a client can show before it offers a publish control. */
   media?: {
     allowedMimeTypes?: string[];
     maximumItems?: number;
@@ -39,9 +47,12 @@ export interface IntegrationCapabilityLimits {
 
 export interface IntegrationCapabilityDeclaration {
   platform: IntegrationPlatformId;
+  label: string;
   import: boolean;
   sourceCopy: boolean;
   publish: Partial<Record<IntegrationMediaType, boolean>>;
+  /** A remote announcement is intentionally distinct from a canonical Work publication. */
+  announce: boolean;
   update: boolean;
   delete: boolean;
   collections: boolean;
@@ -53,21 +64,142 @@ export interface IntegrationCapabilityDeclaration {
   limits: IntegrationCapabilityLimits;
 }
 
-/** The UI must read this declaration instead of inferring support from a provider name. */
-const none = { limits: {} };
-export const integrationCapabilities: Record<IntegrationPlatformId, IntegrationCapabilityDeclaration> = {
-  instagram: { platform: 'instagram', import: true, sourceCopy: false, publish: { image: true, video: true, carousel: true, story: true }, update: false, delete: false, collections: false, comments: true, analytics: true, aiLabel: { read: true, write: true, carouselPrecision: 'whole-carousel' }, scheduling: false, rateLimits: true, limits: { media: { allowedMimeTypes: ['image/jpeg', 'video/mp4'], maximumItems: 10, maximumCaptionCharacters: 2200, maximumBytes: 100 * 1024 * 1024 }, rollout: { state: 'controlled_pilot', note: 'Availability depends on approved app review and the configured pilot capabilities.' } } },
-  deviantart: { platform: 'deviantart', import: true, sourceCopy: true, publish: { image: true, video: true, audio: true, literature: true }, update: true, delete: true, collections: true, comments: true, analytics: true, aiLabel: { read: true, write: true, carouselPrecision: 'none' }, scheduling: false, rateLimits: true, ...none },
-  bluesky: { platform: 'bluesky', import: false, sourceCopy: false, publish: {}, update: false, delete: false, collections: false, comments: false, analytics: false, aiLabel: { read: false, write: false, carouselPrecision: 'none' }, scheduling: false, rateLimits: true, limits: { rollout: { state: 'configuration_required', note: 'Announcement records can be drafted; delivery requires the managed OAuth posting service.' } } },
-  flickr: { platform: 'flickr', import: true, sourceCopy: false, publish: { image: true, video: true }, update: true, delete: true, collections: true, comments: true, analytics: false, aiLabel: { read: false, write: false, carouselPrecision: 'none' }, scheduling: false, rateLimits: true, ...none },
-  soundcloud: { platform: 'soundcloud', import: false, sourceCopy: false, publish: { audio: true }, update: true, delete: true, collections: true, comments: true, analytics: true, aiLabel: { read: false, write: false, carouselPrecision: 'none' }, scheduling: true, rateLimits: true, ...none },
-  youtube: { platform: 'youtube', import: false, sourceCopy: false, publish: { video: true }, update: true, delete: true, collections: true, comments: true, analytics: true, aiLabel: { read: false, write: false, carouselPrecision: 'none' }, scheduling: true, rateLimits: true, ...none },
-  fanvue: { platform: 'fanvue', import: false, sourceCopy: false, publish: { image: true, video: true }, update: true, delete: true, collections: true, comments: false, analytics: false, aiLabel: { read: false, write: true, carouselPrecision: 'none' }, scheduling: true, rateLimits: true, limits: { access: { requiresRightsAttestation: true, requiresAdultAttestation: true, requiresConsentAttestation: true, creatorOwnedConnectionRequired: true, supportedAudience: ['free', 'subscriber', 'paid'] }, rollout: { state: 'controlled_pilot', note: 'Publishing is limited to eligible accounts, verified rights, and approved media.' } } },
-  patreon: { platform: 'patreon', import: false, sourceCopy: false, publish: { image: true, video: true, audio: true, literature: true }, update: true, delete: true, collections: true, comments: true, analytics: true, aiLabel: { read: false, write: false, carouselPrecision: 'none' }, scheduling: true, rateLimits: true, limits: { webhooks: { supportedEvents: ['members:pledge:create', 'members:pledge:update', 'members:pledge:delete'], delivery: 'configured' }, rollout: { state: 'controlled_pilot', note: 'Post publishing remains a companion task; access synchronization is the supported managed workflow.' } } },
-  tumblr: { platform: 'tumblr', import: false, sourceCopy: false, publish: { image: true, video: true, audio: true, literature: true }, update: true, delete: true, collections: false, comments: true, analytics: false, aiLabel: { read: false, write: false, carouselPrecision: 'none' }, scheduling: true, rateLimits: true, ...none },
-  wordpress: { platform: 'wordpress', import: false, sourceCopy: false, publish: { image: true, literature: true }, update: true, delete: true, collections: true, comments: true, analytics: false, aiLabel: { read: false, write: false, carouselPrecision: 'none' }, scheduling: true, rateLimits: true, limits: { content: { unsupportedBlockTypes: ['html_fragment', 'video', 'audio', 'file', 'pdf_preview'], referenceOnlyImport: true }, media: { allowedMimeTypes: ['image/*'] }, rollout: { state: 'configuration_required', note: 'Per-site permissions and an approved WordPress connection determine the final available controls.' } } },
-  ghost: { platform: 'ghost', import: true, sourceCopy: false, publish: { image: true, literature: true }, update: true, delete: true, collections: false, comments: false, analytics: false, aiLabel: { read: false, write: false, carouselPrecision: 'none' }, scheduling: true, rateLimits: true, limits: { content: { supportedBlockTypes: ['paragraph', 'heading', 'image', 'code', 'link'], referenceOnlyImport: true }, media: { allowedMimeTypes: ['image/*'] }, rollout: { state: 'configuration_required', note: 'Ghost supports its constrained Lexical renderer only.' } } },
-  discord: { platform: 'discord', import: false, sourceCopy: false, publish: {}, update: false, delete: false, collections: false, comments: false, analytics: false, aiLabel: { read: false, write: false, carouselPrecision: 'none' }, scheduling: true, rateLimits: true, ...none }
+type PresentationDetail = Pick<IntegrationCapabilityDeclaration, 'publish' | 'announce' | 'collections' | 'aiLabel' | 'scheduling' | 'rateLimits' | 'limits'>;
+
+const noAi = { read: false, write: false, carouselPrecision: 'none' as const };
+const none: PresentationDetail = {
+  publish: {}, announce: false, collections: false, aiLabel: noAi,
+  scheduling: false, rateLimits: true, limits: {}
 };
 
+/**
+ * These details describe media shape and rollout policy only.  Operational
+ * truth is derived below from `integrationDefinitions`.
+ */
+const presentation: Record<IntegrationPlatformId, PresentationDetail> = {
+  instagram: {
+    ...none,
+    publish: { image: true, video: true, carousel: true, story: true },
+    aiLabel: { read: true, write: true, carouselPrecision: 'whole-carousel' },
+    limits: {
+      media: { allowedMimeTypes: ['image/jpeg', 'video/mp4'], maximumItems: 10, maximumCaptionCharacters: 2200, maximumBytes: 100 * 1024 * 1024 },
+      rollout: { state: 'controlled_pilot', note: 'Availability depends on approved app review and the configured pilot capabilities.' }
+    }
+  },
+  deviantart: {
+    ...none,
+    publish: { image: true, video: true, audio: true, literature: true },
+    collections: true,
+    aiLabel: { read: true, write: true, carouselPrecision: 'none' }
+  },
+  bluesky: {
+    ...none,
+    announce: true,
+    limits: { rollout: { state: 'configuration_required', note: 'Announcements require the managed OAuth posting service.' } }
+  },
+  flickr: { ...none },
+  soundcloud: { ...none, publish: { audio: true }, collections: true, scheduling: true },
+  youtube: {
+    ...none,
+    limits: { rollout: { state: 'configuration_required', note: 'This release imports and embeds existing videos. Upload, publishing, and remote editing are not enabled yet.' } }
+  },
+  fanvue: {
+    ...none,
+    publish: { image: true, video: true }, collections: true, scheduling: true,
+    limits: {
+      access: { requiresRightsAttestation: true, requiresAdultAttestation: true, requiresConsentAttestation: true, creatorOwnedConnectionRequired: true, supportedAudience: ['free', 'subscriber', 'paid'] },
+      rollout: { state: 'controlled_pilot', note: 'Publishing is limited to eligible accounts, verified rights, and approved media.' }
+    }
+  },
+  patreon: {
+    ...none,
+    limits: {
+      webhooks: { supportedEvents: ['members:pledge:create', 'members:pledge:update', 'members:pledge:delete'], delivery: 'configured' },
+      rollout: { state: 'controlled_pilot', note: 'Access synchronization is the supported managed workflow. Publishing is not enabled yet.' }
+    }
+  },
+  tumblr: { ...none, publish: { image: true, video: true, audio: true, literature: true }, scheduling: true },
+  wordpress: {
+    ...none,
+    publish: { image: true, literature: true }, collections: true, scheduling: true,
+    limits: {
+      content: { unsupportedBlockTypes: ['html_fragment', 'video', 'audio', 'file', 'pdf_preview'], referenceOnlyImport: true },
+      media: { allowedMimeTypes: ['image/*'] },
+      rollout: { state: 'configuration_required', note: 'Per-site permissions and an approved WordPress connection determine the final available controls.' }
+    }
+  },
+  ghost: {
+    ...none,
+    publish: { image: true, literature: true }, scheduling: true,
+    limits: {
+      content: { supportedBlockTypes: ['paragraph', 'heading', 'image', 'code', 'link'], referenceOnlyImport: true },
+      media: { allowedMimeTypes: ['image/*'] },
+      rollout: { state: 'configuration_required', note: 'Ghost supports its constrained Lexical renderer only.' }
+    }
+  },
+  discord: { ...none, announce: true, scheduling: true },
+  smugmug: { ...none, publish: { image: true, video: true }, collections: true },
+  vimeo: { ...none, publish: { video: true }, collections: true, scheduling: true }
+};
+
+const has = (platform: IntegrationPlatformId, capability: RuntimeIntegrationCapability): boolean =>
+  getIntegrationDefinition(platform).capabilities.includes(capability);
+
+const availablePublishShapes = (platform: IntegrationPlatformId, requested: PresentationDetail['publish']): PresentationDetail['publish'] => {
+  if (!has(platform, 'publish')) return {};
+  return requested;
+};
+
+const declarationFor = (platform: IntegrationPlatformId): IntegrationCapabilityDeclaration => {
+  const detail = presentation[platform];
+  const definition = getIntegrationDefinition(platform);
+  return {
+    platform,
+    label: definition.label,
+    import: has(platform, 'catalogue_import'),
+    sourceCopy: has(platform, 'source_migration'),
+    publish: availablePublishShapes(platform, detail.publish),
+    announce: detail.announce && has(platform, 'publish'),
+    update: has(platform, 'remote_update'),
+    delete: has(platform, 'remote_delete'),
+    collections: detail.collections && (has(platform, 'catalogue_import') || has(platform, 'publish')),
+    comments: has(platform, 'engagement_write'),
+    analytics: has(platform, 'engagement_read'),
+    aiLabel: detail.aiLabel,
+    scheduling: detail.scheduling && has(platform, 'publish'),
+    rateLimits: detail.rateLimits,
+    limits: detail.limits
+  };
+};
+
+/** The UI and API route both consume this single derived registry. */
+export const integrationCapabilities: Record<IntegrationPlatformId, IntegrationCapabilityDeclaration> =
+  Object.fromEntries(Object.keys(integrationDefinitions).map((platform) => [platform, declarationFor(platform as IntegrationPlatformId)])) as Record<IntegrationPlatformId, IntegrationCapabilityDeclaration>;
+
 export const capabilityFor = (platform: IntegrationPlatformId): IntegrationCapabilityDeclaration => integrationCapabilities[platform];
+
+/** Throws during tests/start-up if a presentation declaration drifts from runtime support. */
+export const validateIntegrationCapabilityRegistry = (): void => {
+  const runtimePlatforms = Object.keys(integrationDefinitions).sort();
+  const presentationPlatforms = Object.keys(integrationCapabilities).sort();
+  if (runtimePlatforms.join('|') !== presentationPlatforms.join('|')) {
+    throw new Error('Integration capability registry must declare every runtime integration exactly once.');
+  }
+  for (const platform of runtimePlatforms as IntegrationPlatformId[]) {
+    const capability = capabilityFor(platform);
+    if (capability.import !== has(platform, 'catalogue_import')
+      || capability.sourceCopy !== has(platform, 'source_migration')
+      || capability.update !== has(platform, 'remote_update')
+      || capability.delete !== has(platform, 'remote_delete')
+      || capability.analytics !== has(platform, 'engagement_read')
+      || capability.comments !== has(platform, 'engagement_write')) {
+      throw new Error(`Integration capability declaration for ${platform} does not match its runtime contract.`);
+    }
+    if (Object.values(capability.publish).some(Boolean) && !has(platform, 'publish')) {
+      throw new Error(`${platform} advertises publishing without the runtime publish capability.`);
+    }
+    if (capability.announce && !has(platform, 'publish')) {
+      throw new Error(`${platform} advertises announcements without the runtime publish capability.`);
+    }
+  }
+};
