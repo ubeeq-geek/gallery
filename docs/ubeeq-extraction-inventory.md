@@ -32,6 +32,8 @@ The neutral append-only usage and credit-reservation ledger is now represented b
 
 The neutral authenticated-subject and role/scope authorization contracts are now represented by `@ubeeq/auth`. Identity-provider verification, group mapping, role hierarchy, product eligibility, and transport-specific unauthorized/forbidden responses remain application responsibilities.
 
+The neutral remote actor and publication-reference contracts are now represented by `@ubeeq/federation`. They validate portable HTTPS federation metadata only; remote-host trust, warnings, discovery, and visibility remain product-supplied federation policy.
+
 Eversally's current group mapping, role hierarchy, and creator/community capability decisions are now represented by the private `@eversally/policy` module and exercised by the product-composition shell. Gallery's corresponding application code remains transitional until the hosted deployment consumes that module end-to-end.
 
 Nightframe now has its own private `@nightframe/policy` eligibility boundary. It is intentionally fail-closed until a Nightframe deployment supplies a product-specific evaluator, preserving the requirement that Nightframe not inherit Eversally's eligibility or moderation rules.
