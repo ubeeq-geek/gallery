@@ -38,6 +38,8 @@ Nightframe now has its own private `@nightframe/policy` eligibility boundary. It
 
 Nightframe now also has an independent private API composition at `nightframe-platform/apps/api`. It exposes only product health and the fail-closed Nightframe admission boundary, and is tested without importing or copying Eversally application code. It is the minimal base for future Nightframe-owned product features rather than a competing implementation of the Eversally API.
 
+Private `nightframe-infrastructure` now pins only the Nightframe API, web composition, and landing revision through a CI-validated provenance manifest. Its account, data, encryption, logs, and production approval gates are separate from Eversally; further product capabilities must be added through Nightframe-owned deployment changes rather than copied infrastructure.
+
 The Eversally provider catalogue—provider ids, labels, rollout state, product surfaces, and enabled operations—is now declared and validated in the private `eversally-platform` repository. The legacy runtime registry remains temporarily until that private catalogue is consumed by the Eversally deployment.
 
 The private `@eversally/integrations` module now consumes that catalogue and the Eversally web-composition shell exposes it at runtime. Provider adapters, OAuth custody, and media/policy presentation details remain in the legacy runtime until their private implementations and product tests are migrated.
