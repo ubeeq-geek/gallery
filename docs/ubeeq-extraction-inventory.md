@@ -10,6 +10,8 @@ The generic capability vocabulary, remote-operation gate, and executable conform
 
 The neutral moderation evidence, review-case, hold, and auditable decision lifecycle are now represented by `@ubeeq/moderation`. Product-specific thresholding, notices, enforcement, and escalation policy remain private.
 
+The neutral asset-processing request and idempotent usage measurement interfaces are now represented by `@ubeeq/processing`. Plan catalogues, credit reservations, prices, quotas, overage treatment, and billing approvals remain private.
+
 The following remain here temporarily because they are product decisions or provider implementations:
 
 - `apps/api/src/integrationStandard.ts`: provider identifiers, labels, rollout availability, and Studio surfaces.
