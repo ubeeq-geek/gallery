@@ -14,9 +14,11 @@ The neutral asset-processing request and idempotent usage measurement interfaces
 
 The neutral object-storage and delivery adapter interfaces are now represented by `@ubeeq/storage`. Retention schedules, access eligibility, domains, signed-delivery policy, and revocation decisions remain private.
 
+The Eversally provider catalogue—provider ids, labels, rollout state, product surfaces, and enabled operations—is now declared and validated in the private `eversally-platform` repository. The legacy runtime registry remains temporarily until that private catalogue is consumed by the Eversally deployment.
+
 The following remain here temporarily because they are product decisions or provider implementations:
 
-- `apps/api/src/integrationStandard.ts`: provider identifiers, labels, rollout availability, and Studio surfaces.
+- `apps/api/src/integrationStandard.ts`: transitional runtime copy of the Eversally provider catalogue; remove only after the private product composition consumes its declared catalogue.
 - `apps/api/src/integrationCapabilities.ts`: media limits, rights/consent requirements, rollout messaging, and UI presentation.
 - OAuth credential storage, connector implementations, secrets, and provider-specific operations.
 - Product visibility, eligibility, safety holds, and admission policies.
