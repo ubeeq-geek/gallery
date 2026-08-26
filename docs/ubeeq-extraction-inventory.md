@@ -14,6 +14,8 @@ The neutral asset-processing request and idempotent usage measurement interfaces
 
 The neutral object-storage and delivery adapter interfaces are now represented by `@ubeeq/storage`. Retention schedules, access eligibility, domains, signed-delivery policy, and revocation decisions remain private.
 
+The neutral Work, Asset, WorkAsset, origin, and content-availability contracts are now represented by `@ubeeq/core`. The legacy canonical domain remains transitional while its content-rating, AI-disclosure, discovery, publication, provider destination, and product-policy fields are separately moved behind the appropriate public or private contracts.
+
 The Eversally provider catalogue—provider ids, labels, rollout state, product surfaces, and enabled operations—is now declared and validated in the private `eversally-platform` repository. The legacy runtime registry remains temporarily until that private catalogue is consumed by the Eversally deployment.
 
 The private `@eversally/integrations` module now consumes that catalogue and the Eversally web-composition shell exposes it at runtime. Provider adapters, OAuth custody, and media/policy presentation details remain in the legacy runtime until their private implementations and product tests are migrated.
