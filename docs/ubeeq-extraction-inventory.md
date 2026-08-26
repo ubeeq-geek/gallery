@@ -26,6 +26,8 @@ The private `@nightframe/brand` module and Nightframe web-composition shell now 
 
 The complete Eversally and Nightframe branded landing applications have been copied byte-for-byte into their respective private product repositories and are covered by product-local integrity checks. Keep the legacy landing directories until the private deployments have been manually verified; product landing changes should now be made in the private repositories.
 
+The complete neutral Ubeeq landing application has likewise been copied byte-for-byte into the public Ubeeq repository and is covered by its public test suite and boundary check. Keep the Gallery copy only for manual verification; neutral landing changes should now be made in Ubeeq.
+
 Public Ubeeq packages now have a manually dispatched, provenance-capable publish workflow and registry-safe dependency metadata. The remaining release gate is operational: configure the protected npm publishing credential (or trusted publishing), publish the first package set, and then replace the private compatibility checkout with installed semver dependencies.
 
 The following remain here temporarily because they are product decisions or provider implementations:
