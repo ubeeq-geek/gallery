@@ -21,7 +21,7 @@ const deviantArtDisplayResolutionCode = new Map<number, number>([
 export class ExternalProviderError extends Error {
   constructor(
     message: string,
-    readonly code: 'authentication_required' | 'rate_limited' | 'temporarily_unavailable' | 'ambiguous_submission' | 'invalid_response' | 'unsupported',
+    readonly code: 'authentication_required' | 'rate_limited' | 'temporarily_unavailable' | 'ambiguous_submission' | 'invalid_response' | 'unsupported' | 'preflight_blocked',
     readonly retryAfterSeconds?: number,
     readonly operation?: 'token_exchange' | 'account_lookup'
   ) {
