@@ -52,6 +52,8 @@ The substantive Eversally creator/public web and administration applications now
 
 The substantive Eversally API and its test suite now live in private `eversally-platform/apps/api`. Its private local runner defaults to the Eversally tenant and no longer relies on Gallery's hostname or certificate paths; the API compiles and its focused configuration/brand tests pass. Keep the Gallery API until this private API is deployed into Eversally's separate infrastructure and the complete suite plus end-to-end product flow are verified there.
 
+The migrated private Eversally API now passes its complete suite (94 suites / 464 tests) in `eversally-platform`; its deployment provenance is pinned only after that verification. This verifies the source migration, not the separate AWS deployment or manual end-to-end rollout.
+
 Private `eversally-infrastructure` now pins the migrated Eversally API, creator web, and admin source revision in a CI-validated deployment manifest. Production promotion requires a private CI build, artifact provenance, and manual approval; it cannot bundle source from Gallery. AWS account credentials, artifact publishing, and the actual production rollout remain private operational work.
 
 The complete neutral Ubeeq landing application has likewise been copied byte-for-byte into the public Ubeeq repository and is covered by its public test suite and boundary check. Keep the Gallery copy only for manual verification; neutral landing changes should now be made in Ubeeq.
