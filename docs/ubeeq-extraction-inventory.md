@@ -68,6 +68,8 @@ Both private product repositories now declare their full current Ubeeq package s
 
 The private compatibility jobs now also verify that the checked-out Ubeeq commit exactly matches each product's declared compatibility pin. A stale workflow checkout therefore fails rather than silently testing an older public contract revision.
 
+Those jobs also install, test, and build the private product before evaluating the pinned Ubeeq contract, making the product compatibility result a release gate rather than a manifest-only check.
+
 The complete neutral Ubeeq landing application has likewise been copied byte-for-byte into the public Ubeeq repository and is covered by its public test suite and boundary check. Keep the Gallery copy only for manual verification; neutral landing changes should now be made in Ubeeq.
 
 Public Ubeeq now includes the `@ubeeq/self-host` package and a neutral reference instance configuration. It validates instance identity, secure public origins, storage requirements, and extension identifiers without selecting any hosted-product policy, domain, or credential. Package verification passes; a real operator installation remains an independent deployment verification gate.
