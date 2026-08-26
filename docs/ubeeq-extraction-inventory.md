@@ -18,6 +18,8 @@ The Eversally provider catalogue—provider ids, labels, rollout state, product 
 
 The private `@eversally/brand` module now owns the hosted product's terminology, navigation, URLs, and theme tokens. The legacy API, web, and admin brand selectors remain transitional until the Eversally application composes that module at runtime.
 
+The private Eversally web-composition shell now consumes `@eversally/brand` at runtime. It is intentionally limited to health and brand endpoints until public Ubeeq packages are released and the legacy product's domain features can migrate through declared dependencies.
+
 The following remain here temporarily because they are product decisions or provider implementations:
 
 - `apps/api/src/integrationStandard.ts`: transitional runtime copy of the Eversally provider catalogue; remove only after the private product composition consumes its declared catalogue.
