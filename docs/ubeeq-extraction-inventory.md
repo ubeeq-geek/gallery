@@ -12,6 +12,8 @@ The neutral moderation evidence, review-case, hold, and auditable decision lifec
 
 The neutral asset-processing request and idempotent usage measurement interfaces are now represented by `@ubeeq/processing`. Plan catalogues, credit reservations, prices, quotas, overage treatment, and billing approvals remain private.
 
+The neutral object-storage and delivery adapter interfaces are now represented by `@ubeeq/storage`. Retention schedules, access eligibility, domains, signed-delivery policy, and revocation decisions remain private.
+
 The following remain here temporarily because they are product decisions or provider implementations:
 
 - `apps/api/src/integrationStandard.ts`: provider identifiers, labels, rollout availability, and Studio surfaces.
