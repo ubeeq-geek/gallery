@@ -8,6 +8,8 @@ Run `node scripts/inventory-hosted-coupling.mjs` to produce the current file/ref
 
 The generic capability vocabulary, remote-operation gate, and executable conformance runner are now represented by `@ubeeq/integrations` in the public Ubeeq repository.
 
+The neutral moderation evidence, review-case, hold, and auditable decision lifecycle are now represented by `@ubeeq/moderation`. Product-specific thresholding, notices, enforcement, and escalation policy remain private.
+
 The following remain here temporarily because they are product decisions or provider implementations:
 
 - `apps/api/src/integrationStandard.ts`: provider identifiers, labels, rollout availability, and Studio surfaces.
