@@ -242,6 +242,40 @@ const canonicalWorkToStudioAsset = (work: CanonicalWorkResponse): StudioExternal
 };
 
 export const api = {
+  async studioFederationDashboard(creatorId: string) {
+    const response = await fetch(`${API_BASE}/studio/federation/${encodeURIComponent(creatorId)}`, { headers: await authHeaders() });
+    return handleJson(response);
+  },
+  async studioFederationConnect(creatorId: string, payload: { destinationInstanceId: string; scopes: string[]; policyVersion: string; expiresAt?: string }) {
+    const response = await fetch(`${API_BASE}/studio/federation/${encodeURIComponent(creatorId)}/destinations`, { method: 'POST', headers: { ...(await authHeaders()), 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async studioFederationUpdateProfile(creatorId: string, destinationInstanceId: string, payload: { displayName: string; handle: string; shortBio?: string }) {
+    const response = await fetch(`${API_BASE}/studio/federation/${encodeURIComponent(creatorId)}/destinations/${encodeURIComponent(destinationInstanceId)}/profile`, { method: 'PUT', headers: { ...(await authHeaders()), 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async studioFederationPublish(creatorId: string, payload: { sourceWorkUri: string; destinationInstanceId: string }) {
+    const response = await fetch(`${API_BASE}/studio/federation/${encodeURIComponent(creatorId)}/publications`, { method: 'POST', headers: { ...(await authHeaders()), 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    return handleJson(response);
+  },
+  async studioFederationWithdraw(creatorId: string, publicationId: string) {
+    const response = await fetch(`${API_BASE}/studio/federation/${encodeURIComponent(creatorId)}/publications/${encodeURIComponent(publicationId)}/withdraw`, { method: 'POST', headers: { ...(await authHeaders()), 'Content-Type': 'application/json' }, body: '{}' });
+    return handleJson(response);
+  },
+  async studioFederationRevoke(creatorId: string, destinationInstanceId: string) {
+    const response = await fetch(`${API_BASE}/studio/federation/${encodeURIComponent(creatorId)}/destinations/${encodeURIComponent(destinationInstanceId)}/revoke`, { method: 'POST', headers: { ...(await authHeaders()), 'Content-Type': 'application/json' }, body: '{}' });
+    return handleJson(response);
+  },
+  async getFederatedCreator(actorUri: string) {
+    const response = await fetchAuthGetWithRetry(`${API_BASE}/federation/v1/creators?actorUri=${encodeURIComponent(actorUri)}`);
+    return handleJson(response);
+  },
+  async recordFederatedHomeLinkConsent(actorUri: string) {
+    const response = await fetch(`${API_BASE}/federation/v1/creators/home-link-consent`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ actorUri }), keepalive: true
+    });
+    return handleJson(response);
+  },
   async checkUsername(username: string) {
     const response = await fetch(`${API_BASE}/auth/username/check?username=${encodeURIComponent(username)}`);
     return handleJson(response);

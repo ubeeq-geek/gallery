@@ -10,8 +10,9 @@ import {
   type CurrentUser
 } from './cognitoAuth';
 import { adminBrand } from './brand';
+import { FederationOperationsView } from './FederationOperationsView';
 
-type View = 'creators' | 'galleries' | 'media' | 'posts' | 'settings' | 'moderation' | 'users';
+type View = 'creators' | 'galleries' | 'media' | 'posts' | 'settings' | 'moderation' | 'federation' | 'users';
 type PlatformRole = 'user' | 'contributor' | 'creator' | 'admin';
 const ROLE_DISPLAY_LABELS: Partial<Record<PlatformRole, string>> = {
   contributor: adminBrand.memberName
@@ -134,6 +135,7 @@ const views: Array<{ id: View; label: string }> = [
   { id: 'posts', label: 'Posts' },
   { id: 'settings', label: 'Site Settings' },
   { id: 'moderation', label: 'Moderation' },
+  { id: 'federation', label: 'Federation' },
   { id: 'users', label: 'Users' }
 ];
 
@@ -1784,6 +1786,8 @@ export function StudioApp() {
             <button onClick={unblockUser}>Unblock User</button>
           </>
         )}
+
+        {user && isAdmin && view === 'federation' && <FederationOperationsView request={request} />}
 
         {user && isAdmin && view === 'settings' && (
           <div className="content-card">

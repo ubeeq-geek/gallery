@@ -35,6 +35,9 @@ export class UbeeqStack extends Stack {
     const deploymentStage = (process.env.DEPLOYMENT_STAGE || 'development').trim().toLowerCase();
     const isProduction = deploymentStage === 'production' || deploymentStage === 'prod';
     const dataRemovalPolicy = isProduction ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
+    const federationEnabled = (process.env.FEDERATION_ENABLED || 'false').trim().toLowerCase() === 'true';
+    const federationSigningKeySecretName = process.env.FEDERATION_SIGNING_KEY_SECRET_NAME?.trim();
+    if (federationEnabled && !federationSigningKeySecretName) throw new Error('FEDERATION_SIGNING_KEY_SECRET_NAME is required when federation is enabled.');
     const appSecretsName = process.env.APP_SECRETS_NAME?.trim();
     if (isProduction && !appSecretsName) {
       throw new Error('APP_SECRETS_NAME is required when DEPLOYMENT_STAGE=production.');
@@ -257,6 +260,22 @@ export class UbeeqStack extends Stack {
       receiveMessageWaitTime: Duration.seconds(20),
       deadLetterQueue: { maxReceiveCount: 5, queue: discordCommunityDeliveryDlq }
     });
+    const federationRequestDlq = federationEnabled ? new sqs.Queue(this, 'FederationRequestDlq', { encryption: sqs.QueueEncryption.SQS_MANAGED, retentionPeriod: Duration.days(14) }) : undefined;
+    const federationRequestQueue = federationEnabled ? new sqs.Queue(this, 'FederationRequestQueue', {
+      encryption: sqs.QueueEncryption.SQS_MANAGED, visibilityTimeout: Duration.minutes(5), receiveMessageWaitTime: Duration.seconds(20),
+      deadLetterQueue: { maxReceiveCount: 5, queue: federationRequestDlq! }
+    }) : undefined;
+    const federationCallbackDlq = federationEnabled ? new sqs.Queue(this, 'FederationCallbackDlq', { encryption: sqs.QueueEncryption.SQS_MANAGED, retentionPeriod: Duration.days(14) }) : undefined;
+    const federationCallbackQueue = federationEnabled ? new sqs.Queue(this, 'FederationCallbackQueue', {
+      encryption: sqs.QueueEncryption.SQS_MANAGED, visibilityTimeout: Duration.minutes(2), receiveMessageWaitTime: Duration.seconds(20),
+      deadLetterQueue: { maxReceiveCount: 5, queue: federationCallbackDlq! }
+    }) : undefined;
+    const federationAssetBucket = federationEnabled ? new s3.Bucket(this, 'FederationAssetBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL, encryption: s3.BucketEncryption.S3_MANAGED, enforceSSL: true,
+      versioned: isProduction, lifecycleRules: [{ id: 'ExpireFederationQuarantine', prefix: 'federation/quarantine/', expiration: Duration.days(7), abortIncompleteMultipartUploadAfter: Duration.days(1) }],
+      removalPolicy: dataRemovalPolicy, autoDeleteObjects: !isProduction
+    }) : undefined;
+    const federationSigningKeySecret = federationEnabled ? secretsmanager.Secret.fromSecretNameV2(this, 'FederationSigningKeySecret', federationSigningKeySecretName!) : undefined;
     mediaBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
       new s3n.SqsDestination(videoPosterIngestQueue)
@@ -555,6 +574,20 @@ export class UbeeqStack extends Stack {
         CONTENT_STATS_TABLE: contentStatsTable.tableName,
         TRENDING_FEED_TABLE: trendingFeedTable.tableName,
         CONTENT_CORE_TABLE: contentCoreTable.tableName,
+        ...(federationEnabled ? {
+          FEDERATION_INSTANCE_ID: process.env.FEDERATION_INSTANCE_ID || `${productBrand}-${deploymentStage}`,
+          FEDERATION_PUBLIC_ORIGIN: process.env.FEDERATION_PUBLIC_ORIGIN || webAppUrl || '',
+          FEDERATION_ACTOR_BASE_URL: process.env.FEDERATION_ACTOR_BASE_URL || `${webAppUrl || ''}/.well-known/ubeeq/creators`,
+          FEDERATION_POLICY_VERSION: process.env.FEDERATION_POLICY_VERSION || '2026-08',
+          FEDERATION_ACTIVE_KEY_ID: process.env.FEDERATION_ACTIVE_KEY_ID || `${productBrand}-federation-1`,
+          FEDERATION_SIGNING_KEY_SECRET_ARN: federationSigningKeySecret!.secretArn,
+          FEDERATION_TRUSTED_INSTANCES_JSON: process.env.FEDERATION_TRUSTED_INSTANCES_JSON || '[]',
+          FEDERATION_REQUEST_QUEUE_URL: federationRequestQueue!.queueUrl,
+          FEDERATION_CALLBACK_QUEUE_URL: federationCallbackQueue!.queueUrl,
+          FEDERATION_ASSET_BUCKET: federationAssetBucket!.bucketName,
+          FEDERATION_ASSET_PREFIX: 'federation/',
+          FEDERATION_TABLE: contentCoreTable.tableName
+        } : {}),
         PATREON_INTEGRATION_TABLE: patreonIntegrationTable.tableName,
         USE_CONTENT_CORE_TABLE: 'true',
         MEDIA_BUCKET: mediaBucket.bucketName,
@@ -889,6 +922,50 @@ export class UbeeqStack extends Stack {
     vimeoUploadQueue.grantSendMessages(apiFn);
     discordCommunityDeliveryQueue.grantSendMessages(apiFn);
     tumblrPublishQueue.grantSendMessages(apiFn);
+    if (federationEnabled) {
+      federationRequestQueue!.grantSendMessages(apiFn);
+      federationCallbackQueue!.grantSendMessages(apiFn);
+      federationAssetBucket!.grantReadWrite(apiFn);
+      federationSigningKeySecret!.grantRead(apiFn);
+      const federationAlarmTopic = new sns.Topic(this, 'FederationAlarmTopic', { displayName: 'Ubeeq federation operational alarms' });
+      const callbackDlqAlarm = new cloudwatch.Alarm(this, 'FederationCallbackDeadLettersAlarm', {
+        metric: federationCallbackDlq!.metricApproximateNumberOfMessagesVisible({ period: Duration.minutes(1), statistic: 'Maximum' }), threshold: 1, evaluationPeriods: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        alarmDescription: 'A federation status callback exhausted delivery attempts.'
+      });
+      callbackDlqAlarm.addAlarmAction(new cloudwatchActions.SnsAction(federationAlarmTopic));
+      const callbackAgeAlarm = new cloudwatch.Alarm(this, 'FederationCallbackAgeAlarm', {
+        metric: federationCallbackQueue!.metricApproximateAgeOfOldestMessage({ period: Duration.minutes(1), statistic: 'Maximum' }), threshold: 300, evaluationPeriods: 2,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        alarmDescription: 'Federation callback delivery is outside the five-minute objective.'
+      });
+      callbackAgeAlarm.addAlarmAction(new cloudwatchActions.SnsAction(federationAlarmTopic));
+      const federationMetric = (metricName: string, statistic = 'Sum') => new cloudwatch.Metric({
+        namespace: 'Ubeeq/Federation', metricName, dimensionsMap: { InstanceId: process.env.FEDERATION_INSTANCE_ID || 'managed-local' },
+        period: Duration.minutes(5), statistic
+      });
+      const authenticationAlarm = new cloudwatch.Alarm(this, 'FederationAuthenticationFailuresAlarm', {
+        metric: new cloudwatch.MathExpression({
+          expression: 'signature + replay', usingMetrics: { signature: federationMetric('SignatureFailure'), replay: federationMetric('ReplayAttempt') },
+          period: Duration.minutes(5), label: 'Federation authentication failures'
+        }),
+        threshold: 5, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription: 'Federation signature or replay failures exceeded the managed-traffic threshold.'
+      });
+      authenticationAlarm.addAlarmAction(new cloudwatchActions.SnsAction(federationAlarmTopic));
+      const assetFailureAlarm = new cloudwatch.Alarm(this, 'FederationAssetFailuresAlarm', {
+        metric: federationMetric('AssetFailure'), threshold: 3, evaluationPeriods: 2, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        alarmDescription: 'Federation asset replication failures persisted for ten minutes.'
+      });
+      assetFailureAlarm.addAlarmAction(new cloudwatchActions.SnsAction(federationAlarmTopic));
+      new cloudwatch.Dashboard(this, 'FederationDashboard', { dashboardName: `${this.stackName}-federation`, widgets: [[
+        new cloudwatch.GraphWidget({ title: 'Federation callback queue', left: [federationCallbackQueue!.metricApproximateNumberOfMessagesVisible(), federationCallbackQueue!.metricApproximateAgeOfOldestMessage()] }),
+        new cloudwatch.GraphWidget({ title: 'Federation dead letters', left: [federationCallbackDlq!.metricApproximateNumberOfMessagesVisible(), federationRequestDlq!.metricApproximateNumberOfMessagesVisible()] }),
+        new cloudwatch.GraphWidget({ title: 'Federation security', left: [federationMetric('SignatureFailure'), federationMetric('ReplayAttempt'), federationMetric('InvalidSigningKey')] }),
+        new cloudwatch.GraphWidget({ title: 'Federation processing', left: [federationMetric('AssetFailure'), federationMetric('CallbackRetry'), federationMetric('ReconciliationDrift')] }),
+        new cloudwatch.GraphWidget({ title: 'Federation latency', left: [federationMetric('ModerationLatency', 'p95'), federationMetric('AssetProcessingLatency', 'p95'), federationMetric('CallbackDeliveryLatency', 'p95')] })
+      ]] });
+    }
     externalSyncQueue.grantConsumeMessages(externalSyncFn);
     vimeoUploadQueue.grantConsumeMessages(vimeoUploadFn);
     contentCoreTable.grantReadWriteData(vimeoUploadFn);

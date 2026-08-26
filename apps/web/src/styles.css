@@ -4,6 +4,32 @@
 @tailwind components;
 @tailwind utilities;
 
+.federation-dashboard, .federated-creator-page { display: grid; gap: 1.5rem; }
+.federation-heading, .federation-creator-header, .federation-publication-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.federation-destinations { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1rem; }
+.federation-work-list { display: grid; gap: 1rem; }
+.federation-publication-row + .federation-publication-row { border-top: 1px solid var(--border-color, #d8d5ce); margin-top: .75rem; padding-top: .75rem; }
+.federation-publication-row > div { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; }
+.federation-status { display: inline-flex; border: 1px solid currentColor; border-radius: 999px; padding: .15rem .55rem; font-size: .75rem; text-transform: capitalize; }
+.federation-status-published, .federation-status-active { color: #18734a; }
+.federation-status-held, .federation-status-pending, .federation-status-processing { color: #8a5b00; }
+.federation-status-rejected, .federation-status-removed, .federation-status-revoked { color: #a12626; }
+.federation-creator-header { justify-content: flex-start; }
+.federation-creator-header img { width: 7rem; height: 7rem; border-radius: 50%; object-fit: cover; }
+.federated-creator-page nav { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; }
+.federation-home-link { border-style: dashed; }
+.federation-warning-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 1rem; background: rgb(15 18 20 / 72%); }
+.federation-warning { width: min(34rem, 100%); border-radius: 1rem; background: var(--surface); color: var(--text); box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 35%); padding: 2rem; }
+.federation-form-dialog { width: min(36rem, calc(100% - 2rem)); border: 0; border-radius: 1rem; background: var(--surface); color: var(--text); box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 35%); padding: 2rem; }
+.federation-form-dialog::backdrop { background: rgb(15 18 20 / 72%); }
+.federation-form-dialog form { display: grid; gap: 1rem; }
+.federation-form-dialog label:not(.federation-check) { display: grid; gap: .4rem; font-weight: 700; }
+.federation-form-dialog input, .federation-form-dialog select, .federation-form-dialog textarea { width: 100%; }
+.federation-form-dialog fieldset { display: grid; gap: .5rem; border: 1px solid var(--border); border-radius: .75rem; padding: 1rem; }
+.federation-check { display: flex; gap: .6rem; align-items: flex-start; }
+.federation-check input { width: auto; margin-top: .2rem; }
+@media (max-width: 640px) { .federation-heading, .federation-publication-row { align-items: stretch; flex-direction: column; } }
+
 :root {
   --bg: #f6f7f8;
   --surface: #ffffff;

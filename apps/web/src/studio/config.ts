@@ -5,6 +5,7 @@ export type StudioSection =
   | 'creator-profile'
   | 'activity'
   | 'publishing'
+  | 'federation'
   | 'settings'
   | 'files-media'
   | 'posts'
@@ -25,6 +26,7 @@ export const studioSectionDefs: Array<{ key: StudioSection; label: string; descr
   { key: 'works', label: 'Works', description: 'Find, organize, and prepare work from your local catalogue.' },
   { key: 'collections', label: 'Collections', description: `Organize work into ${brand.productName} collections, galleries, and series.` },
   { key: 'publishing', label: 'Publishing', description: 'Prepare work for external publishing and review its status.' },
+  { key: 'federation', label: 'Federation', description: 'Publish selected Works to compatible Ubeeq destinations while keeping this Creator as the home authority.' },
   { key: 'integrations', label: 'Integrations', description: 'Connect and manage creator platforms such as DeviantArt.' },
   { key: 'settings', label: 'Settings', description: 'Manage creator defaults, access, and Studio preferences.' },
   { key: 'creators', label: `Manage ${brand.creatorPlural}`, description: `Create and maintain the ${brand.creatorName.toLowerCase()} identities in this account.` },
@@ -52,6 +54,7 @@ export const studioPrimaryNavSections: StudioSection[] = [
   'works',
   'collections',
   'publishing',
+  'federation',
   'integrations',
   'settings'
 ];

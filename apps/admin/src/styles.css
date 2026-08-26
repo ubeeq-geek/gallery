@@ -119,4 +119,26 @@
     @apply text-sm;
     color: #991b1b;
   }
+
+  .federation-operations {
+    @apply grid gap-4;
+  }
+
+  .federation-admin-form {
+    @apply grid gap-2 md:grid-cols-3;
+  }
+
+  .federation-admin-form label {
+    @apply grid gap-1 text-sm font-medium;
+  }
+
+  .federation-confirm-form {
+    @apply mt-3 grid gap-2 rounded-xl border p-3;
+    border-color: var(--line);
+    background: var(--surface-muted);
+  }
+
+  .federation-confirm-form label {
+    @apply grid gap-1 text-sm font-medium;
+  }
 }

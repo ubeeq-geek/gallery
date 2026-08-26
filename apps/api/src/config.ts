@@ -152,6 +152,18 @@ export interface AppConfig {
   vimeoOAuthRedirectUri?: string;
   vimeoWebhookSecret?: string;
   vimeoUploadQueueUrl?: string;
+  federationInstanceId?: string;
+  federationPublicOrigin?: string;
+  federationActorBaseUrl?: string;
+  federationPolicyVersion?: string;
+  federationActiveKeyId?: string;
+  federationSigningKeySecretArn?: string;
+  federationTrustedInstancesJson?: string;
+  federationRequestQueueUrl?: string;
+  federationCallbackQueueUrl?: string;
+  federationAssetBucket?: string;
+  federationAssetPrefix: string;
+  federationTable?: string;
 }
 
 export const loadConfig = (): AppConfig => {
@@ -171,6 +183,18 @@ export const loadConfig = (): AppConfig => {
   contentStatsTable: process.env.CONTENT_STATS_TABLE || 'content-stats',
   trendingFeedTable: process.env.TRENDING_FEED_TABLE || 'trending-feed',
   contentCoreTable: process.env.CONTENT_CORE_TABLE || 'content-core',
+  federationInstanceId: process.env.FEDERATION_INSTANCE_ID,
+  federationPublicOrigin: process.env.FEDERATION_PUBLIC_ORIGIN,
+  federationActorBaseUrl: process.env.FEDERATION_ACTOR_BASE_URL,
+  federationPolicyVersion: process.env.FEDERATION_POLICY_VERSION,
+  federationActiveKeyId: process.env.FEDERATION_ACTIVE_KEY_ID,
+  federationSigningKeySecretArn: process.env.FEDERATION_SIGNING_KEY_SECRET_ARN,
+  federationTrustedInstancesJson: process.env.FEDERATION_TRUSTED_INSTANCES_JSON,
+  federationRequestQueueUrl: process.env.FEDERATION_REQUEST_QUEUE_URL,
+  federationCallbackQueueUrl: process.env.FEDERATION_CALLBACK_QUEUE_URL,
+  federationAssetBucket: process.env.FEDERATION_ASSET_BUCKET,
+  federationAssetPrefix: process.env.FEDERATION_ASSET_PREFIX || 'federation/',
+  federationTable: process.env.FEDERATION_TABLE || process.env.CONTENT_CORE_TABLE || 'content-core',
   useContentCoreTable: (process.env.USE_CONTENT_CORE_TABLE || 'false') === 'true',
   mediaBucket: process.env.MEDIA_BUCKET || 'content-media',
   unlockJwtSecret: process.env.UNLOCK_JWT_SECRET || 'dev-secret',

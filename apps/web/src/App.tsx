@@ -15,6 +15,7 @@ import { SpaceRulesPage } from './pages/SpaceRulesPage';
 import { SelfHostingPage } from './pages/SelfHostingPage';
 import { LandingPage } from './pages/LandingPage';
 import { CreatorCollectionPage, CreatorCollectionsPage, CreatorWorkPage, CreatorWorksPage } from './pages/CanonicalSpacePages';
+import { FederatedCreatorRoute } from './federation/FederatedCreatorRoute';
 import UserProfilePage from './pages/UserProfilePage';
 import ProfileSettingsPage from './pages/SettingsPage';
 import ChallengePage from './pages/ChallengePage';
@@ -8314,6 +8315,7 @@ export default function App() {
         <Route path="/creators/:slug/works/:workSlug" element={<CreatorWorkPage />} />
         <Route path="/creators/:slug/collections" element={<CreatorCollectionsPage />} />
         <Route path="/creators/:slug/collections/:collectionSlug" element={<CreatorCollectionPage />} />
+        <Route path="/federated-creators/:actor" element={<FederatedCreatorRoute />} />
         <Route path="/gallery/:slug" element={<GalleryPage viewerProfile={myProfile} onDiscoveryDockChange={setDiscoveryDock} />} />
         <Route path="/posts/:slug" element={<PostPage />} />
         <Route path="/collections" element={<CollectionsPage />} />
