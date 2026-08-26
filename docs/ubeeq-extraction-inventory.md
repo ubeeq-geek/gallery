@@ -24,6 +24,8 @@ The provider-neutral remote-publication state transitions and idempotent retry s
 
 The provider-neutral reconciliation normalization, snapshot diffing, status classification, and confirmation-gated resolution are now represented by `@ubeeq/integrations`. Adapters remain responsible for selecting user-meaningful fields, creating any adapter-owned fingerprint, stripping their remote identifiers, and scheduling actual remote writes.
 
+The distinct Eversally provider-billing and Nightframe manual-settlement plan catalogues now live in private product modules. The Gallery billing ledger remains transitional until its neutral entitlement/usage mechanism is extracted separately; payment credentials, processor setup, finance procedures, and price terms must not move into public Ubeeq.
+
 The Eversally provider catalogue—provider ids, labels, rollout state, product surfaces, and enabled operations—is now declared and validated in the private `eversally-platform` repository. The legacy runtime registry remains temporarily until that private catalogue is consumed by the Eversally deployment.
 
 The private `@eversally/integrations` module now consumes that catalogue and the Eversally web-composition shell exposes it at runtime. Provider adapters, OAuth custody, and media/policy presentation details remain in the legacy runtime until their private implementations and product tests are migrated.
