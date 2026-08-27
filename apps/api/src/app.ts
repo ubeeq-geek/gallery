@@ -151,6 +151,8 @@ import { CommercialBillingService, emitCommercialBillingMetric } from './commerc
 import { DynamoCommercialBillingRepository } from './commercialBillingRepository';
 import { createCommercialBillingRouter } from './commercialBillingRoutes';
 import { StripePaymentProvider, verifyStripeWebhook } from './stripePaymentProvider';
+import { DurableWorkflowService, InMemoryWorkflowRepository, JsonWorkflowRepository } from './durableWorkflows';
+import { createWorkflowRouter } from './workflowRoutes';
 
 interface CreateAppOptions {
   config: AppConfig;
@@ -162,6 +164,7 @@ interface CreateAppOptions {
   tumblrRepository?: TumblrRepository;
   tumblrPublishQueue?: TumblrPublishQueue;
   supportSafetyRepository?: SupportSafetyRepository;
+  workflowService?: DurableWorkflowService;
 }
 
 let hasHandledInvocation = false;
@@ -1008,7 +1011,8 @@ export const createApp = ({
   fanvueRepository,
   tumblrRepository: injectedTumblrRepository,
   tumblrPublishQueue: injectedTumblrPublishQueue,
-  supportSafetyRepository
+  supportSafetyRepository,
+  workflowService: injectedWorkflowService
 }: CreateAppOptions) => {
   const brand = brandForConfig(config);
   const app = express();
@@ -2840,6 +2844,12 @@ export const createApp = ({
     audit: auditLog
   });
   app.use('/support', createSupportRouter(supportSafetyService));
+  const workflowService = injectedWorkflowService || new DurableWorkflowService(
+    config.localMediaDirectory
+      ? new JsonWorkflowRepository(resolve(config.localMediaDirectory, 'workflow-state.json'))
+      : new InMemoryWorkflowRepository()
+  );
+  app.use('/studio/operations/workflows', createWorkflowRouter(workflowService, config.tenantId));
   if (commercialBillingService) app.use('/billing', createCommercialBillingRouter(commercialBillingService));
   if (config.localMediaDirectory) app.use('/media/local', express.static(config.localMediaDirectory));
 
